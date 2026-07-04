@@ -37,3 +37,16 @@ export interface HomePageContentResult {
   isLoaded: boolean
   isUrl: boolean
 }
+
+/**
+ * Real-time home page metrics
+ */
+export interface HomeMetrics {
+  system_status: string
+  availability: string
+  throughput: string
+  throughput_unit: string
+  latency: string
+  encryption: string
+  certification: string
+}

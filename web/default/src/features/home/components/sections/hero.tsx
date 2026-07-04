@@ -21,6 +21,8 @@ import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
 
+import { Stats } from './stats'
+
 interface HeroProps {
   className?: string
   isAuthenticated?: boolean
@@ -105,34 +107,8 @@ export function Hero(props: HeroProps) {
           </div>
         </div>
 
-        {/* Right Column: Metrics card placeholder */}
-        <div className='rounded-3xl bg-white p-6 shadow-[0_20px_60px_rgba(120,180,160,0.15)]'>
-          <div className='flex items-center gap-2'>
-            <span className='size-2 rounded-full bg-[#7dd3c0]' />
-            <span className='font-mono text-xs text-[#5a7a72]'>
-              system_status: active
-            </span>
-          </div>
-          <div className='mt-4 grid grid-cols-2 gap-4'>
-            <div className='rounded-2xl bg-[#f5f9f7] p-4'>
-              <p className='text-xs text-[#8aa89e]'>{t('Model Coverage')}</p>
-              <p className='mt-1 text-2xl font-bold text-[#1a4a3f]'>--</p>
-            </div>
-            <div className='rounded-2xl bg-[#f5f9f7] p-4'>
-              <p className='text-xs text-[#8aa89e]'>{t('Enterprise Clients')}</p>
-              <p className='mt-1 text-2xl font-bold text-[#1a4a3f]'>--</p>
-            </div>
-            <div className='rounded-2xl bg-[#f5f9f7] p-4'>
-              <p className='text-xs text-[#8aa89e]'>{t('Uptime SLA')}</p>
-              <p className='mt-1 text-2xl font-bold text-[#1a4a3f]'>99.99%</p>
-            </div>
-            <div className='rounded-2xl bg-[#f5f9f7] p-4'>
-              <p className='text-xs text-[#8aa89e]'>{t('Daily Requests')}</p>
-              <p className='mt-1 text-2xl font-bold text-[#1a4a3f]'>--</p>
-            </div>
-          </div>
-          <div className='mt-4 h-32 rounded-2xl bg-gradient-to-br from-[#e8f4f0] to-[#f5f9f7]' />
-        </div>
+        {/* Right Column: Metrics card */}
+        <Stats metrics={undefined} />
       </div>
     </section>
   )
