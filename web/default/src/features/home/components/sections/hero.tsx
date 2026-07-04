@@ -26,7 +26,6 @@ import { getHomeMetrics } from '../../api'
 import { Stats } from './stats'
 
 interface HeroProps {
-  className?: string
   isAuthenticated?: boolean
 }
 

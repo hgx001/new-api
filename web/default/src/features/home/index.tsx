@@ -86,7 +86,7 @@ export function Home() {
   }
 
   return (
-    <PublicLayout showMainContainer={false}>
+    <PublicLayout showMainContainer={false} forceLightMode>
       <Hero isAuthenticated={isAuthenticated} />
       <Features />
       <Footer />

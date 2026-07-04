@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { cn } from '@/lib/utils'
+
 import type { TopNavLink } from '../types'
 import { PublicHeader, type PublicHeaderProps } from './public-header'
 
@@ -30,15 +32,22 @@ type PublicLayoutProps = {
   showNotifications?: boolean
   logo?: React.ReactNode
   siteName?: string
+  forceLightMode?: boolean
 }
 
 export function PublicLayout(props: PublicLayoutProps) {
+  const forceLightMode = props.forceLightMode
   return (
-    <div className='bg-background text-foreground relative min-h-svh overflow-x-clip'>
+    <div
+      className={cn(
+        'bg-background text-foreground relative min-h-svh overflow-x-clip',
+        forceLightMode && 'light'
+      )}
+    >
       <PublicHeader
         navContent={props.navContent}
         navLinks={props.navLinks}
-        showThemeSwitch={props.showThemeSwitch}
+        showThemeSwitch={forceLightMode ? false : props.showThemeSwitch}
         showAuthButtons={props.showAuthButtons}
         showNotifications={props.showNotifications}
         logo={props.logo}

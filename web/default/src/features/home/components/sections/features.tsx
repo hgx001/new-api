@@ -32,11 +32,7 @@ import { useTranslation } from 'react-i18next'
 import { AnimateInView } from '@/components/animate-in-view'
 import { useStatus } from '@/hooks/use-status'
 
-interface FeaturesProps {
-  className?: string
-}
-
-export function Features(_props: FeaturesProps) {
+export function Features() {
   const { t } = useTranslation()
   const { status } = useStatus()
   const wechatQr = status?.wechat_qrcode as string | undefined

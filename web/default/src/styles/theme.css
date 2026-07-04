@@ -237,3 +237,77 @@ For commercial licensing, please contact support@quantumnous.com
     var(--background)
   );
 }
+
+/* Force-light variant: re-applies the :root light palette so a subtree can
+   stay light even when the document root is in dark mode. Used by PublicLayout
+   for marketing pages that are designed exclusively for a light theme. */
+.light {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.13 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.95 0 0);
+  --secondary-foreground: oklch(0.145 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.49 0 0);
+  --accent: oklch(0.95 0 0);
+  --accent-foreground: oklch(0.145 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.596 0.145 163.225);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.681 0.162 75.834);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.588 0.158 241.966);
+  --info-foreground: oklch(0.985 0 0);
+  --neutral: oklch(0.708 0 0);
+  --neutral-foreground: oklch(0.145 0 0);
+  --border: oklch(0.93 0 0);
+  --input: oklch(0.93 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.975 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.13 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.92 0 0);
+  --sidebar-accent-foreground: oklch(0.145 0 0);
+  --sidebar-border: oklch(0.93 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+  --skeleton-base: oklch(0.97 0 0);
+  --skeleton-highlight: oklch(0.985 0 0);
+  --table-row: var(--background);
+  --table-header: color-mix(
+    in oklch,
+    var(--foreground) 1.5%,
+    var(--background)
+  );
+  --table-header-hover: color-mix(
+    in oklch,
+    var(--foreground) 3%,
+    var(--background)
+  );
+  --table-disabled: color-mix(
+    in oklch,
+    var(--foreground) 5.5%,
+    var(--background)
+  );
+  --table-disabled-hover: color-mix(
+    in oklch,
+    var(--foreground) 7%,
+    var(--background)
+  );
+  --table-disabled-border: color-mix(
+    in oklch,
+    var(--foreground) 24%,
+    var(--background)
+  );
+}

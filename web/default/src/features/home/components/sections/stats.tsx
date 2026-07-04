@@ -31,7 +31,7 @@ export function Stats({ metrics }: StatsProps) {
     { label: t('API Availability'), value: metrics?.availability ?? '99.99%' },
     { label: t('Throughput'), value: `${metrics?.throughput ?? '1.2M+'} ${metrics?.throughput_unit ?? 'RPM'}` },
     { label: t('Average Latency'), value: metrics?.latency ?? '24ms' },
-    { label: t('End-to-End Encryption'), value: metrics?.encryption ?? 'AES-256' },
+    { label: t('End-to-End Encryption'), value: metrics?.encryption ?? 'AES-256 Enterprise Standard' },
   ]
 
   return (
