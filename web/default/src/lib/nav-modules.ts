@@ -29,6 +29,8 @@ export type HeaderNavModules = {
   rankings: ModuleAccess
   docs: boolean
   about: boolean
+  tutorials?: boolean
+  blog?: boolean
   [key: string]: boolean | ModuleAccess
 }
 

@@ -2128,7 +2128,7 @@
     "Hit criteria: If cached tokens exist in usage, it counts as a hit.": "命中判定：usage 中存在 cached tokens 即视为命中。",
     "Hit Rate": "命中率",
     "Hit tier": "命中档位",
-    "Home": "主页",
+    "Home": "首页",
     "Home Page Content": "首页内容",
     "Hostname or IP of your SMTP provider": "您的 SMTP 提供商的主机名或 IP",
     "Hour": "小时",
