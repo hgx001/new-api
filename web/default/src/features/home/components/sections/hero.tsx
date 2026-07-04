@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
 
+import type { HomeMetrics } from '../../types'
 import { Stats } from './stats'
 
 interface HeroProps {
@@ -36,6 +37,16 @@ export function Hero(props: HeroProps) {
   const isExternalDocs = docsUrl.startsWith('http')
   const docsButtonClassName =
     'rounded-full border border-[#c8e8dc] bg-white px-6 py-2.5 text-sm font-medium text-[#3a8f7a] transition-colors hover:bg-[#f5f9f7]'
+
+  const metrics: HomeMetrics = {
+    system_status: 'active',
+    availability: '99.99%',
+    throughput: '1.2M+',
+    throughput_unit: 'RPM',
+    latency: '24ms',
+    encryption: 'AES-256',
+    certification: 'ISO 27001',
+  }
 
   return (
     <section className='relative z-10 overflow-hidden bg-[#f5f9f7] px-6 pt-28 pb-16 md:pt-36 md:pb-24'>
@@ -108,7 +119,7 @@ export function Hero(props: HeroProps) {
         </div>
 
         {/* Right Column: Metrics card */}
-        <Stats metrics={undefined} />
+        <Stats metrics={metrics} />
       </div>
     </section>
   )
