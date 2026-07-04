@@ -2150,6 +2150,7 @@
     "Hour of day": "小时",
     "Hourly token usage by model across the last 24 hours": "过去 24 小时内各模型的逐小时 Token 用量",
     "Hourly token usage by model over the past 24 hours": "过去 24 小时内按模型分布的小时级 Token 使用量",
+    "heibaidao enterprise gateway description": "heibaidao 为企业提供安全、高性能、可合规配置的大模型集成网关。支持私有化部署、高并发处理及细粒度权限管控。",
     "hours": "小时",
     "How client credentials are sent to the token endpoint": "客户端凭据如何发送至令牌端点",
     "How frequently the system checks auto-disabled channels for recovery": "系统检查自动禁用渠道是否可恢复的频率",

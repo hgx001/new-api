@@ -2150,6 +2150,7 @@
     "Hour of day": "Hour of day",
     "Hourly token usage by model across the last 24 hours": "Hourly token usage by model across the last 24 hours",
     "Hourly token usage by model over the past 24 hours": "Hourly token usage by model over the past 24 hours",
+    "heibaidao enterprise gateway description": "heibaidao provides enterprises with a secure, high-performance, and compliance-configurable large-model integration gateway. Supports private deployment, high-concurrency processing, and fine-grained permission control.",
     "hours": "hours",
     "How client credentials are sent to the token endpoint": "How client credentials are sent to the token endpoint",
     "How frequently the system checks auto-disabled channels for recovery": "How frequently the system checks auto-disabled channels for recovery",
