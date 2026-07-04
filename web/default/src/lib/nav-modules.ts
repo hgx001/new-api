@@ -31,7 +31,7 @@ export type HeaderNavModules = {
   about: boolean
   tutorials?: boolean
   blog?: boolean
-  [key: string]: boolean | ModuleAccess
+  [key: string]: boolean | ModuleAccess | undefined
 }
 
 const DEFAULT_HEADER_NAV_MODULES: HeaderNavModules = {
