@@ -31,6 +31,9 @@ export function Hero(props: HeroProps) {
   const { status } = useStatus()
   const docsUrl =
     (status?.docs_link as string | undefined) || 'https://docs.newapi.pro'
+  const isExternalDocs = docsUrl.startsWith('http')
+  const docsButtonClassName =
+    'rounded-full border border-[#c8e8dc] bg-white px-6 py-2.5 text-sm font-medium text-[#3a8f7a] transition-colors hover:bg-[#f5f9f7]'
 
   return (
     <section className='relative z-10 overflow-hidden bg-[#f5f9f7] px-6 pt-28 pb-16 md:pt-36 md:pb-24'>
@@ -73,14 +76,20 @@ export function Hero(props: HeroProps) {
                 {t('Try Now')} →
               </Link>
             )}
-            <a
-              href={docsUrl}
-              target='_blank'
-              rel='noopener noreferrer'
-              className='rounded-full border border-[#c8e8dc] bg-white px-6 py-2.5 text-sm font-medium text-[#3a8f7a] transition-colors hover:bg-[#f5f9f7]'
-            >
-              {t('Technical Docs')}
-            </a>
+            {isExternalDocs ? (
+              <a
+                href={docsUrl}
+                target='_blank'
+                rel='noopener noreferrer'
+                className={docsButtonClassName}
+              >
+                {t('Technical Docs')}
+              </a>
+            ) : (
+              <Link to={docsUrl} className={docsButtonClassName}>
+                {t('Technical Docs')}
+              </Link>
+            )}
           </div>
 
           <div className='mt-10'>
