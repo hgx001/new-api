@@ -41,6 +41,8 @@ const DEFAULT_HEADER_NAV_MODULES: HeaderNavModules = {
   rankings: { enabled: true, requireAuth: false },
   docs: true,
   about: true,
+  tutorials: true,
+  blog: true,
 }
 
 const DEFAULTS: Record<HeaderNavModule, ModuleAccess> = {

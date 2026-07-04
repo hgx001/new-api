@@ -38,9 +38,10 @@ export type TopNavLink = {
  *   home: true,
  *   console: true,
  *   pricing: { enabled: true, requireAuth: false },
- *   rankings: { enabled: true, requireAuth: false },
  *   docs: true,
- *   about: true
+ *   about: true,
+ *   tutorials: true,
+ *   blog: true
  * }
  */
 export function useTopNavLinks(): TopNavLink[] {
@@ -98,14 +99,14 @@ export function useTopNavLinks(): TopNavLink[] {
     })
   }
 
-  // Blog
-  if (modules?.blog !== false) {
-    links.push({ title: t('Blog'), href: '/blog' })
-  }
-
   // About
   if (modules?.about !== false) {
     links.push({ title: t('About'), href: '/about' })
+  }
+
+  // Blog
+  if (modules?.blog !== false) {
+    links.push({ title: t('Blog'), href: '/blog' })
   }
 
   return links
