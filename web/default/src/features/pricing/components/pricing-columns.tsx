@@ -34,7 +34,7 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { isTokenBasedModel, getModelDisplayName } from '../lib/model-helpers'
 import {
   formatPrice,
   formatRequestPrice,
@@ -83,7 +83,7 @@ export function usePricingColumns(
           <div className='flex max-w-full min-w-0 items-center gap-2'>
             {modelIcon}
             <span className='truncate font-mono text-sm font-medium'>
-              {model.model_name}
+              {getModelDisplayName(model)}
             </span>
           </div>
         )

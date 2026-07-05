@@ -735,6 +735,17 @@ export function stringToColor(str) {
   return colors[i];
 }
 
+// Display name overrides for the Model Square. The actual model_name used in
+// API calls, URLs, and copy-to-clipboard behavior is left unchanged.
+const MODEL_DISPLAY_NAME_OVERRIDES = {
+  'kimi-for-coding': 'kimi-k2.7',
+};
+
+export function getModelDisplayName(model) {
+  if (!model || !model.model_name) return model?.model_name || '';
+  return MODEL_DISPLAY_NAME_OVERRIDES[model.model_name] || model.model_name;
+}
+
 // 渲染带有模型图标的标签
 export function renderModelTag(modelName, options = {}) {
   const {
@@ -743,6 +754,7 @@ export function renderModelTag(modelName, options = {}) {
     shape = 'circle',
     onClick,
     suffixIcon,
+    displayName,
   } = options;
 
   const categories = getModelCategories(i18next.t);
@@ -764,7 +776,7 @@ export function renderModelTag(modelName, options = {}) {
           shape={shape}
           onClick={onClick}
       >
-        {modelName}
+        {displayName || modelName}
       </Tag>
   );
 }

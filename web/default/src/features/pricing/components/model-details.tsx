@@ -67,7 +67,11 @@ import {
   isDynamicPricingModel,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
+import {
+  getAvailableGroups,
+  getModelDisplayName,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
 import { formatFixedPrice, formatGroupPrice } from '../lib/price'
 import type {
   ModelCapability,
@@ -541,7 +545,7 @@ function ModelHeader(props: { model: PricingModel }) {
       <div className='flex items-center gap-2.5'>
         {modelIcon}
         <h1 className='font-mono text-xl font-bold tracking-tight sm:text-2xl'>
-          {model.model_name}
+          {getModelDisplayName(model)}
         </h1>
         <CopyButton
           value={model.model_name || ''}
@@ -1248,7 +1252,7 @@ export function ModelDetailsDrawer(props: ModelDetailsDrawerProps) {
         )}
       >
         <SheetHeader className='sr-only'>
-          <SheetTitle>{props.model.model_name}</SheetTitle>
+          <SheetTitle>{getModelDisplayName(props.model)}</SheetTitle>
           <SheetDescription>{t('Model details')}</SheetDescription>
         </SheetHeader>
         <div className='flex-1 overflow-y-auto px-4 pt-11 pb-5 sm:px-6 sm:pt-12 sm:pb-6'>

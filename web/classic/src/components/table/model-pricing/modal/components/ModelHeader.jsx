@@ -54,7 +54,9 @@ const ModelHeader = ({ modelData, vendorsMap = {}, t }) => {
     }
 
     // 如果没有供应商图标，使用模型名称的前两个字符
-    const avatarText = modelData?.model_name?.slice(0, 2).toUpperCase() || 'AI';
+    const avatarText =
+      (modelData?.display_name || modelData?.model_name)?.slice(0, 2).toUpperCase() ||
+      'AI';
     return (
       <div className={CARD_STYLES.container}>
         <Avatar
@@ -85,7 +87,7 @@ const ModelHeader = ({ modelData, vendorsMap = {}, t }) => {
           }}
         >
           <span className='truncate max-w-60 font-bold'>
-            {modelData?.model_name || t('未知模型')}
+            {modelData?.display_name || modelData?.model_name || t('未知模型')}
           </span>
         </Paragraph>
       </div>

@@ -146,14 +146,21 @@ export const getPricingTableColumns = ({
     title: t('模型名称'),
     dataIndex: 'model_name',
     render: (text, record, index) => {
-      return renderModelTag(text, {
+      return renderModelTag(record.model_name, {
+        displayName: record.display_name || record.model_name,
         onClick: () => {
-          copyText(text);
+          copyText(record.model_name);
         },
       });
     },
-    onFilter: (value, record) =>
-      record.model_name.toLowerCase().includes(value.toLowerCase()),
+    onFilter: (value, record) => {
+      const filterValue = value.toLowerCase();
+      return (
+        record.model_name.toLowerCase().includes(filterValue) ||
+        (record.display_name &&
+          record.display_name.toLowerCase().includes(filterValue))
+      );
+    },
   };
 
   const quotaColumn = {

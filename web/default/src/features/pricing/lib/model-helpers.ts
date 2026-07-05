@@ -52,3 +52,19 @@ export function replaceModelInPath(path: string, modelName: string): string {
 export function isTokenBasedModel(model: PricingModel): boolean {
   return model.quota_type === QUOTA_TYPE_VALUES.TOKEN
 }
+
+// ----------------------------------------------------------------------------
+// Display name overrides for the Model Square. The actual model_name used in
+// API calls, URLs, and copy-to-clipboard behavior is left unchanged.
+// ----------------------------------------------------------------------------
+const MODEL_DISPLAY_NAME_OVERRIDES: Record<string, string> = {
+  'kimi-for-coding': 'kimi-k2.7',
+}
+
+/**
+ * Get the user-facing display name for a model. Falls back to the internal
+ * model_name when no override is configured.
+ */
+export function getModelDisplayName(model: PricingModel): string {
+  return MODEL_DISPLAY_NAME_OVERRIDES[model.model_name] || model.model_name
+}

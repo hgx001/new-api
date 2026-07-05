@@ -23,6 +23,7 @@ import {
   QUOTA_TYPE_VALUES,
   ENDPOINT_TYPES,
 } from '../constants'
+import { getModelDisplayName } from './model-helpers'
 import type { PricingModel } from '../types'
 
 // ----------------------------------------------------------------------------
@@ -42,6 +43,7 @@ export function filterBySearch(
   return models.filter(
     (m) =>
       m.model_name?.toLowerCase().includes(lowerQuery) ||
+      getModelDisplayName(m).toLowerCase().includes(lowerQuery) ||
       m.description?.toLowerCase().includes(lowerQuery) ||
       m.tags?.toLowerCase().includes(lowerQuery) ||
       m.vendor_name?.toLowerCase().includes(lowerQuery)
@@ -117,7 +119,7 @@ export function sortModels(
   switch (sortBy) {
     case SORT_OPTIONS.NAME:
       sorted.sort((a, b) =>
-        (a.model_name || '').localeCompare(b.model_name || '')
+        getModelDisplayName(a).localeCompare(getModelDisplayName(b))
       )
       break
     case SORT_OPTIONS.PRICE_LOW:
