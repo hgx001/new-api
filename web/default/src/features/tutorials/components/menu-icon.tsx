@@ -16,29 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type SVGProps } from 'react'
-
-import { cn } from '@/lib/utils'
-
-export function Logo({ className, ...props }: SVGProps<SVGSVGElement>) {
+export function MenuIcon({ className }: { className?: string }) {
   return (
     <svg
-      id='heibaidao-logo'
-      viewBox='0 0 24 24'
       xmlns='http://www.w3.org/2000/svg'
-      height='24'
-      width='24'
+      viewBox='0 0 24 24'
       fill='none'
       stroke='currentColor'
       strokeWidth='2'
       strokeLinecap='round'
       strokeLinejoin='round'
-      className={cn('size-6', className)}
-      {...props}
+      className={className}
+      aria-hidden='true'
     >
-      <title>heibaidao</title>
-      {/* A stylized "H" monogram representing heibaidao — a gateway path motif */}
-      <path d='M3 12h7l2-3 2 6 2-3 5 3' strokeLinecap='round' />
+      <line x1='4' y1='6' x2='20' y2='6' />
+      <line x1='4' y1='12' x2='20' y2='12' />
+      <line x1='4' y1='18' x2='20' y2='18' />
     </svg>
   )
 }

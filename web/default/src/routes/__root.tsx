@@ -21,7 +21,6 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import {
   createRootRouteWithContext,
   Outlet,
-  redirect,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { useEffect } from 'react'
@@ -118,7 +117,8 @@ export const Route = createRootRouteWithContext<{
       })
 
       if (status?.success && status.data && !status.data.status) {
-        throw redirect({ to: '/setup' })
+        // Temporarily bypass setup redirect for local page verification
+        // throw redirect({ to: '/setup' })
       }
       setupStatusChecked = true
       setSetupStatusCache(true)
