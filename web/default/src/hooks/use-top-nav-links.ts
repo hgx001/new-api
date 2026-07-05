@@ -56,9 +56,6 @@ export function useTopNavLinks(): TopNavLink[] {
     )
   }, [status])
 
-  // Documentation link (may be external)
-  const docsLink: string | undefined = status?.docs_link as string | undefined
-
   const isAuthed = !!auth?.user
 
   const links: TopNavLink[] = []
@@ -80,23 +77,9 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Model Square'), href: '/pricing', requiresAuth })
   }
 
-  // Docs (supports external links)
-  if (modules?.docs !== false) {
-    if (docsLink) {
-      links.push({ title: t('Docs'), href: docsLink, external: true })
-    } else {
-      links.push({ title: t('Docs'), href: '/docs' })
-    }
-  }
-
-  // Tutorials (reuses docs link)
+  // Tutorials (internal integration guide page)
   if (modules?.tutorials !== false) {
-    const tutorialsLink = docsLink || '/docs'
-    links.push({
-      title: t('Tutorials'),
-      href: tutorialsLink,
-      external: tutorialsLink.startsWith('http'),
-    })
+    links.push({ title: t('Tutorials'), href: '/tutorials' })
   }
 
   // About
