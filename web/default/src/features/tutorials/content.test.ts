@@ -27,33 +27,54 @@ describe('tutorials content', () => {
   const title = getPageTitle()
   const pagination = getPagination()
   const index = getDocIndex()
+  const sectionsJson = JSON.stringify(sections)
+  const indexJson = JSON.stringify(index)
 
   test('page title is in Chinese and describes New API access', () => {
-    assert.equal(title.includes('Claude'), false)
-    assert.equal(title.includes('claudecode'), false)
     assert.equal(title.includes('接入'), true)
+    assert.equal(title.includes('New API'), true)
   })
 
-  test('sections do not reference Claude Code or claudecode', () => {
-    const json = JSON.stringify(sections)
-    assert.equal(json.includes('Claude Code'), false)
-    assert.equal(json.includes('claudecode'), false)
-    assert.equal(json.includes('Anthropic'), false)
+  test('sections do not reference the reference project brand', () => {
+    assert.equal(sectionsJson.includes('Indo Token'), false)
+    assert.equal(sectionsJson.includes('indotoken.ai'), false)
+    assert.equal(sectionsJson.toLowerCase().includes('indotoken'), false)
   })
 
-  test('sections reference New API platform concepts', () => {
-    const json = JSON.stringify(sections)
-    assert.equal(json.includes('New API') || json.includes('平台') || json.includes('API'), true)
+  test('sections include New API platform concepts', () => {
+    assert.equal(sectionsJson.includes('New API'), true)
+    assert.equal(sectionsJson.includes('API Key'), true)
+    assert.equal(sectionsJson.includes('Base URL'), true)
   })
 
-  test('pagination titles are in Chinese and relevant', () => {
-    assert.equal(pagination.prev.title.includes('Claude'), false)
-    assert.equal(pagination.next.title.includes('Claude'), false)
+  test('sections include AI client configuration guides', () => {
+    assert.equal(sectionsJson.includes('Claude Code'), true)
+    assert.equal(sectionsJson.includes('OpenCode'), true)
+    assert.equal(sectionsJson.includes('Cline'), true)
   })
 
-  test('doc index does not reference Claude Code', () => {
-    const json = JSON.stringify(index)
-    assert.equal(json.includes('Claude'), false)
-    assert.equal(json.includes('claudecode'), false)
+  test('dynamic platform URL is injected into code examples', () => {
+    assert.equal(sectionsJson.includes(platformUrl), true)
+    assert.equal(sectionsJson.includes(`${platformUrl}/v1`), true)
+  })
+
+  test('expected sections are present', () => {
+    const ids = new Set(sections.map((s) => s.id))
+    assert.equal(ids.has('introduction'), true)
+    assert.equal(ids.has('quickstart'), true)
+    assert.equal(ids.has('ai-client-config'), true)
+  })
+
+  test('doc index covers all major sections', () => {
+    assert.equal(indexJson.includes('平台简介'), true)
+    assert.equal(indexJson.includes('快速开始'), true)
+    assert.equal(indexJson.includes('AI 客户端配置'), true)
+    assert.equal(indexJson.includes('Claude Code CLI'), true)
+    assert.equal(indexJson.includes('OpenCode TUI'), true)
+  })
+
+  test('pagination titles are in Chinese and do not reference external project', () => {
+    assert.equal(pagination.prev.title.includes('Indo Token'), false)
+    assert.equal(pagination.next.title.includes('Indo Token'), false)
   })
 })

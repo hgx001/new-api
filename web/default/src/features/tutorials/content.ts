@@ -43,295 +43,408 @@ export function getTutorials(platformUrl: string): TutorialSection[] {
 
   return [
     {
-      id: 'platform-access',
-      title: '平台接入',
+      id: 'introduction',
+      title: '平台简介',
       level: 2,
       content: [
         {
           type: 'paragraph',
-          children: ['前置条件：'],
+          children: [
+            'New API 是一站式 AI API 管理网关，面向企业与开发者提供统一的 API 接入、密钥管理、计费审计和多渠道容灾能力。通过本平台，您无需逐一接入不同厂商的接口，即可调用 OpenAI、Claude、Gemini、Azure、AWS Bedrock 等 40 余家上游供应商的大模型。',
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'core-features',
+          children: [{ type: 'strong', value: '核心能力' }],
         },
         {
           type: 'list',
           ordered: false,
           items: [
             [
-              '一个本平台的 ',
-              { type: 'link', href: '/keys', text: '密钥/令牌（key）', external: false },
+              { type: 'strong', value: '统一接口' },
+              '：所有模型均使用与 OpenAI 兼容的接口，切换模型只需修改 model 参数，无需改动业务逻辑。',
             ],
-            ['已安装任意支持 OpenAI 格式调用的客户端或命令行工具（如 curl、Python、Node.js）'],
+            [
+              { type: 'strong', value: '多模型支持' },
+              '：支持 GPT、Claude、Gemini、DeepSeek 等主流模型，上游渠道持续扩展。',
+            ],
+            [
+              { type: 'strong', value: '弹性计费' },
+              '：按量计费，用量与余额实时可查，支持分组策略与计费表达式。',
+            ],
+            [
+              { type: 'strong', value: '团队协作' },
+              '：多用户管理、API Key 隔离、额度与模型权限灵活分配。',
+            ],
+            [
+              { type: 'strong', value: '实时监控' },
+              '：提供详细调用日志、数据看板和成本追踪，帮助优化 API 使用。',
+            ],
           ],
         },
         {
-          type: 'paragraph',
-          children: [{ type: 'strong', value: '获取 API 密钥' }],
-        },
-        {
-          type: 'paragraph',
-          children: [
-            '登录平台后，进入',
-            { type: 'link', href: '/keys', text: '密钥/令牌', external: false },
-            '页面，点击“新建密钥”即可生成一个 API Key。该密钥用于调用本平台的统一 API 接口。',
-          ],
-        },
-        {
-          type: 'hint',
-          children: [
-            '安全提示：API Key 等同于您的账户密码，请勿泄露给他人或在公开仓库中提交。',
-          ],
-        },
-        {
-          type: 'paragraph',
-          children: [{ type: 'strong', value: '配置 API 端点与密钥' }],
-        },
-        {
-          type: 'paragraph',
-          children: [
-            '本平台提供与 OpenAI 兼容的 API 格式。接入时通常需要配置两个变量：',
-          ],
+          type: 'heading',
+          level: 3,
+          id: 'platform-advantages',
+          children: [{ type: 'strong', value: '平台优势' }],
         },
         {
           type: 'list',
           ordered: false,
           items: [
             [
-              { type: 'code', value: 'OPENAI_API_KEY' },
-              '：您在平台生成的 API Key',
+              { type: 'strong', value: '开箱即用' },
+              '：注册并创建 API Key 后即可开始调用，无需复杂配置。',
             ],
             [
-              { type: 'code', value: 'OPENAI_BASE_URL' },
-              '：本平台的 API 基础地址，例如 ',
-              { type: 'link', href: url, text: url, external: true },
+              { type: 'strong', value: '高可用' },
+              '：多渠道负载均衡与自动故障切换，保障 API 请求稳定响应。',
+            ],
+            [
+              { type: 'strong', value: '开发者友好' },
+              '：兼容 OpenAI SDK，支持 Python、Node.js、cURL 等调用方式，降低接入成本。',
             ],
           ],
         },
+      ],
+    },
+    {
+      id: 'quickstart',
+      title: '快速开始',
+      level: 2,
+      content: [
         {
-          type: 'paragraph',
-          children: [{ type: 'strong', value: '方式一：使用命令行（适合 macOS / Linux / WSL）' }],
+          type: 'heading',
+          level: 3,
+          id: 'create-api-key',
+          children: [{ type: 'strong', value: '创建 API Key' }],
         },
         {
-          type: 'paragraph',
-          children: [
-            '在终端中编辑您的 shell 配置文件（如 ~/.bashrc、~/.zshrc），添加以下内容：',
-          ],
-        },
-        {
-          type: 'codeBlock',
-          value: `export OPENAI_API_KEY="sk-..."
-export OPENAI_BASE_URL="${url}/v1"`,
-          lang: 'bash',
-        },
-        {
-          type: 'paragraph',
-          children: ['保存后执行以下命令使配置生效：'],
-        },
-        {
-          type: 'codeBlock',
-          value: 'source ~/.bashrc  # 或 source ~/.zshrc',
-          lang: 'bash',
-        },
-        {
-          type: 'paragraph',
-          children: [{ type: 'strong', value: '方式二：使用 Windows 命令行（CMD / PowerShell）' }],
-        },
-        {
-          type: 'paragraph',
-          children: [
-            'Windows 命令提示符（CMD）和 PowerShell 都可以使用 setx 命令永久设置环境变量。setx 会将变量写入注册表，影响未来打开的所有终端窗口。',
+          type: 'list',
+          ordered: true,
+          items: [
+            [
+              '登录平台后，进入左侧菜单的',
+              { type: 'link', href: '/keys', text: '密钥/令牌', external: false },
+              '页面。',
+            ],
+            ['点击右上角“新建密钥”按钮。'],
+            ['在弹窗中填写密钥名称，并选择过期时间。'],
+            ['展开“高级设置”，在模型限制中选择该 Key 允许调用的模型。'],
+            ['点击“保存”——生成的密钥将显示在列表中。'],
           ],
         },
         {
           type: 'hint',
           children: [
-            '重要提示：setx 不会影响当前已经打开的窗口。设置完成后，请关闭现有终端并重新打开一个新窗口。',
+            '安全提示：API Key 等同于账户密码，弹窗关闭后将无法再次查看完整密钥。如遗失，请删除后重新创建。',
           ],
         },
         {
-          type: 'paragraph',
-          children: ['操作步骤（在 CMD 中执行）：'],
-        },
-        {
-          type: 'paragraph',
-          children: ['设置 API Key：'],
-        },
-        {
-          type: 'codeBlock',
-          value: 'setx OPENAI_API_KEY "sk-..."',
-          lang: 'bash',
-        },
-        {
-          type: 'paragraph',
-          children: ['设置 API Base URL：'],
-        },
-        {
-          type: 'codeBlock',
-          value: `setx OPENAI_BASE_URL "${url}/v1"`,
-          lang: 'bash',
-        },
-        {
-          type: 'paragraph',
-          children: [{ type: 'strong', value: '方式三：使用 Windows 图形用户界面（GUI）' }],
+          type: 'heading',
+          level: 3,
+          id: 'configure-base-url',
+          children: [{ type: 'strong', value: '配置 Base URL' }],
         },
         {
           type: 'paragraph',
           children: [
-            '这是最直观、最不容易出错的方法，推荐给所有 Windows 用户。',
-          ],
-        },
-        {
-          type: 'paragraph',
-          children: [
-            { type: 'strong', value: '打开“系统属性”' },
-            '按键盘上的 Windows 键 + R 键，打开“运行”对话框。输入 sysdm.cpl 然后按回车。',
+            '本平台提供与 OpenAI 完全兼容的 API 接口，只需将 Base URL 替换为以下地址：',
           ],
         },
         {
           type: 'codeBlock',
-          value: 'sysdm.cpl',
-          lang: 'bash',
-        },
-        {
-          type: 'paragraph',
-          children: [
-            { type: 'strong', value: '进入“环境变量”设置' },
-            '在打开的“系统属性”窗口中，切换到“高级”选项卡。点击右下角的“环境变量...”按钮。',
-          ],
-        },
-        {
-          type: 'paragraph',
-          children: [
-            { type: 'strong', value: '添加新的用户变量' },
-            '在弹出的“环境变量”窗口中，上半部分是“（您的用户名） 的用户变量”。点击“新建(N)...”按钮。变量名(N): OPENAI_API_KEY，变量值(V): sk-...（你的密钥），点击“确定”。',
-          ],
-        },
-        {
-          type: 'codeBlock',
-          value: 'OPENAI_API_KEY\nsk-...',
+          value: `${url}/v1`,
           lang: 'text',
         },
         {
           type: 'paragraph',
           children: [
-            { type: 'strong', value: '重复步骤添加第二个变量' },
-            '再次点击“新建(N)...”。变量名(N): OPENAI_BASE_URL，变量值(V): ',
-            { type: 'link', href: `${url}/v1`, text: `${url}/v1`, external: true },
-            '，点击“确定”。',
+            '兼容接口包括：',
+            { type: 'code', value: '/v1/chat/completions' },
+            '、',
+            { type: 'code', value: '/v1/models' },
+            '、',
+            { type: 'code', value: '/v1/embeddings' },
+            ' 等。',
           ],
         },
         {
-          type: 'codeBlock',
-          value: `OPENAI_BASE_URL\n${url}/v1`,
-          lang: 'text',
+          type: 'heading',
+          level: 3,
+          id: 'code-examples',
+          children: [{ type: 'strong', value: '代码调用示例' }],
         },
         {
           type: 'paragraph',
-          children: [
-            { type: 'strong', value: '保存并关闭' },
-            '在“环境变量”窗口点击“确定”。在“系统属性”窗口点击“确定”。',
-          ],
-        },
-        {
-          type: 'hint',
-          children: [
-            '重要：通过 GUI 设置完成后，请关闭所有已经打开的 CMD 或 PowerShell 窗口，然后重新打开一个新窗口，这样新的环境变量才会生效。',
-          ],
-        },
-        {
-          type: 'paragraph',
-          children: [{ type: 'strong', value: '开始使用：curl 示例' }],
-        },
-        {
-          type: 'paragraph',
-          children: [
-            '打开一个新终端，执行以下命令测试接口是否正常工作：',
-          ],
+          children: [{ type: 'strong', value: 'cURL' }],
         },
         {
           type: 'codeBlock',
           value: `curl ${url}/v1/chat/completions \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer sk-..." \\
+  -H "Authorization: Bearer sk-YOUR_API_KEY" \\
   -d '{
     "model": "gpt-4o",
-    "messages": [{"role": "user", "content": "你好"}]
+    "messages": [{"role": "user", "content": "你好"}],
+    "max_tokens": 1000
   }'`,
           lang: 'bash',
         },
         {
           type: 'paragraph',
-          children: [{ type: 'strong', value: '开始使用：Python 示例' }],
+          children: [{ type: 'strong', value: 'Python（使用 OpenAI SDK）' }],
         },
         {
           type: 'codeBlock',
           value: `from openai import OpenAI
 
 client = OpenAI(
-    api_key="sk-...",
+    api_key="sk-YOUR_API_KEY",
     base_url="${url}/v1"
 )
 
 response = client.chat.completions.create(
     model="gpt-4o",
-    messages=[{"role": "user", "content": "你好"}]
+    messages=[{"role": "user", "content": "你好"}],
+    max_tokens=1000
 )
+
 print(response.choices[0].message.content)`,
           lang: 'python',
         },
-      ],
-    },
-    {
-      id: 'platform-can-do',
-      title: '平台能为您做什么',
-      level: 2,
-      content: [
         {
-          type: 'list',
-          ordered: false,
-          items: [
-            [
-              { type: 'strong', value: '统一接入多家大模型' },
-              '：一次接入即可调用 OpenAI、Claude、Gemini、Azure、AWS Bedrock 等 40 余家上游供应商的模型，无需为每家单独适配。',
-            ],
-            [
-              { type: 'strong', value: '灵活的密钥与额度管理' },
-              '：支持创建多个 API Key，分别设置额度、速率限制和可用模型，方便团队协作与成本控制。',
-            ],
-            [
-              { type: 'strong', value: '计费与审计' },
-              '：实时记录每次调用的 token 消耗、费用和响应时间，提供明细账单与用量统计。',
-            ],
-            [
-              { type: 'strong', value: '渠道负载均衡与容灾' },
-              '：自动在多个上游渠道间分发请求，单个渠道异常时自动切换，提升服务稳定性。',
-            ],
+          type: 'paragraph',
+          children: [{ type: 'strong', value: 'Node.js（使用 OpenAI SDK）' }],
+        },
+        {
+          type: 'codeBlock',
+          value: `import OpenAI from "openai";
+
+const client = new OpenAI({
+  apiKey: "sk-YOUR_API_KEY",
+  baseURL: "${url}/v1",
+});
+
+const response = await client.chat.completions.create({
+  model: "gpt-4o",
+  messages: [{ role: "user", content: "你好" }],
+  max_tokens: 1000,
+});
+
+console.log(response.choices[0].message.content);`,
+          lang: 'javascript',
+        },
+        {
+          type: 'hint',
+          children: [
+            '模型名称请替换为您在平台中实际启用并允许该 Key 调用的模型，例如 gpt-4o、claude-3-5-sonnet-latest、deepseek-chat、gemini-1.5-pro 等。',
           ],
         },
       ],
     },
     {
-      id: 'why-developers-love',
-      title: '为什么开发者喜欢本平台',
+      id: 'ai-client-config',
+      title: 'AI 客户端配置',
       level: 2,
       content: [
+        {
+          type: 'paragraph',
+          children: [
+            '以下介绍常见 AI 编程工具与本平台对接的方式。所有示例中的 API Key、Base URL 和模型名请按实际情况替换。',
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'claude-code',
+          children: [{ type: 'strong', value: 'Claude Code CLI' }],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            'Claude Code 是 Anthropic 推出的终端 AI 编程助手。通过修改其配置文件，可将其后端指向本平台提供的兼容接口。',
+          ],
+        },
+        {
+          type: 'paragraph',
+          children: ['在 ', { type: 'code', value: '~/.claude/settings.json' }, ' 中添加如下配置：'],
+        },
+        {
+          type: 'codeBlock',
+          value: `{
+  "env": {
+    "ANTHROPIC_API_KEY": "sk-YOUR_API_KEY",
+    "ANTHROPIC_BASE_URL": "${url}",
+    "ANTHROPIC_MODEL": "claude-3-5-sonnet-latest",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-3-5-sonnet-latest",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-3-5-sonnet-latest",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-3-5-sonnet-latest",
+    "ANTHROPIC_REASONING_MODEL": "claude-3-5-sonnet-latest",
+    "API_TIMEOUT_MS": "3000000",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  }
+}`,
+          lang: 'json',
+        },
+        {
+          type: 'paragraph',
+          children: [{ type: 'strong', value: '说明' }],
+        },
         {
           type: 'list',
           ordered: false,
           items: [
             [
-              { type: 'strong', value: '与 OpenAI 兼容' },
-              '：现有使用 OpenAI SDK 的项目只需修改 base_url 和 api_key 即可迁移，无需重写业务代码。',
+              { type: 'code', value: 'ANTHROPIC_API_KEY' },
+              '：替换为您在本平台创建的 API Key。',
             ],
             [
-              { type: 'strong', value: '开箱即用' },
-              '：提供 Docker 一键部署、详细的安装文档和管理后台，几分钟即可搭建私有化 API 网关。',
+              { type: 'code', value: 'ANTHROPIC_BASE_URL' },
+              '：填写本平台地址，',
+              { type: 'strong', value: '不要' },
+              '带 ',
+              { type: 'code', value: '/v1' },
+              ' 后缀。',
             ],
             [
-              { type: 'strong', value: '开源可定制' },
-              '：基于 AGPL-3.0 开源，代码透明，可根据团队需求二次开发或扩展新的上游渠道。',
+              '模型名请替换为您实际启用的 Claude 兼容模型，例如 claude-3-5-sonnet-latest。',
+            ],
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'opencode',
+          children: [{ type: 'strong', value: 'OpenCode TUI' }],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            'OpenCode 是一款终端式 AI 编码工具，支持通过 JSON 配置文件接入 OpenAI 兼容服务商。',
+          ],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            '在 ',
+            { type: 'code', value: '~/.config/opencode/opencode.json' },
+            ' 中添加如下配置：',
+          ],
+        },
+        {
+          type: 'codeBlock',
+          value: `{
+  "providers": {
+    "newapi": {
+      "name": "New API",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "sk-YOUR_API_KEY",
+        "baseURL": "${url}/v1"
+      },
+      "models": {
+        "gpt-4o": { "name": "GPT-4o" },
+        "deepseek-chat": { "name": "DeepSeek Chat" }
+      }
+    }
+  }
+}`,
+          lang: 'json',
+        },
+        {
+          type: 'paragraph',
+          children: [{ type: 'strong', value: '说明' }],
+        },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              { type: 'code', value: 'baseURL' },
+              '：OpenAI 兼容端点需要带 ',
+              { type: 'code', value: '/v1' },
+              ' 后缀。',
             ],
             [
-              { type: 'strong', value: '企业级能力' },
-              '：支持用户体系、分组策略、模型计费表达式、日志审计和多语言前端，满足生产环境需求。',
+              { type: 'code', value: 'models' },
+              '：填写您希望在该工具中使用的模型名称与展示名。',
+            ],
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'cline',
+          children: [{ type: 'strong', value: 'Cline（VS Code 扩展）' }],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            'Cline 是 VS Code 的一款 AI 编程扩展，支持 OpenAI 兼容接口。',
+          ],
+        },
+        {
+          type: 'paragraph',
+          children: ['在 Cline 扩展设置中，按以下方式填写：'],
+        },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              { type: 'strong', value: 'API Provider' },
+              '：选择 ',
+              { type: 'code', value: 'OpenAI Compatible' },
+            ],
+            [
+              { type: 'strong', value: 'Base URL' },
+              '：',
+              { type: 'code', value: `${url}/v1` },
+            ],
+            [
+              { type: 'strong', value: 'API Key' },
+              '：',
+              { type: 'code', value: 'sk-YOUR_API_KEY' },
+            ],
+            [
+              { type: 'strong', value: 'Model' },
+              '：',
+              { type: 'code', value: 'gpt-4o' },
+            ],
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'generic-config',
+          children: [{ type: 'strong', value: '通用配置（OpenAI 兼容客户端）' }],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            '任何支持 OpenAI 兼容接口的客户端或 SDK，均可使用以下通用参数：',
+          ],
+        },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              { type: 'strong', value: 'Base URL' },
+              '：',
+              { type: 'code', value: `${url}/v1` },
+            ],
+            [
+              { type: 'strong', value: 'API Key' },
+              '：您在本平台创建的 API Key',
+            ],
+            [
+              { type: 'strong', value: '模型' },
+              '：在平台模型广场中查询当前可用模型，例如 gpt-4o、claude-3-5-sonnet-latest、deepseek-chat、gemini-1.5-pro',
             ],
           ],
         },
@@ -361,8 +474,17 @@ export function getPagination() {
 
 export function getDocIndex() {
   return [
-    { title: '平台接入', href: '#platform-access' },
-    { title: '平台能为您做什么', href: '#platform-can-do' },
-    { title: '为什么开发者喜欢本平台', href: '#why-developers-love' },
+    { title: '平台简介', href: '#introduction' },
+    { title: '核心能力', href: '#core-features' },
+    { title: '平台优势', href: '#platform-advantages' },
+    { title: '快速开始', href: '#quickstart' },
+    { title: '创建 API Key', href: '#create-api-key' },
+    { title: '配置 Base URL', href: '#configure-base-url' },
+    { title: '代码调用示例', href: '#code-examples' },
+    { title: 'AI 客户端配置', href: '#ai-client-config' },
+    { title: 'Claude Code CLI', href: '#claude-code' },
+    { title: 'OpenCode TUI', href: '#opencode' },
+    { title: 'Cline（VS Code 扩展）', href: '#cline' },
+    { title: '通用配置', href: '#generic-config' },
   ]
 }
