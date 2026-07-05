@@ -58,6 +58,23 @@ describe('tutorials content', () => {
     assert.equal(sectionsJson.includes(`${platformUrl}/v1`), true)
   })
 
+  test('documented endpoints match backend relay routes', () => {
+    assert.equal(sectionsJson.includes('/v1/chat/completions'), true)
+    assert.equal(sectionsJson.includes('/v1/models'), true)
+    assert.equal(sectionsJson.includes('/v1/embeddings'), true)
+    assert.equal(sectionsJson.includes('/v1/messages'), true)
+  })
+
+  test('Claude Code base URL omits /v1 while OpenAI-compatible URLs include /v1', () => {
+    // Claude Code ANTHROPIC_BASE_URL should be the platform root; the Anthropic
+    // SDK appends /v1/messages automatically.
+    assert.equal(sectionsJson.includes('ANTHROPIC_BASE_URL'), true)
+    assert.equal(sectionsJson.includes(`${platformUrl}/v1/messages`), true)
+    assert.equal(sectionsJson.includes(`${platformUrl}/v1"`), true)
+    // OpenAI-compatible clients (OpenCode / Cline / generic) use /v1.
+    assert.equal(sectionsJson.includes(`${platformUrl}/v1`), true)
+  })
+
   test('expected sections are present', () => {
     const ids = new Set(sections.map((s) => s.id))
     assert.equal(ids.has('introduction'), true)
