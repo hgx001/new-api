@@ -24,7 +24,7 @@ import { RichContent } from '@/components/rich-content'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { Features, Hero } from './components'
+import { CustomerServiceButton, Features, Hero } from './components'
 import { useHomePageContent } from './hooks'
 
 export function Home() {
@@ -53,6 +53,7 @@ export function Home() {
             title={t('Custom Home Page')}
             sandbox='allow-forms allow-popups allow-popups-to-escape-sandbox allow-scripts'
           />
+          <CustomerServiceButton />
         </PublicLayout>
       )
     }
@@ -68,6 +69,7 @@ export function Home() {
             content={content}
             className='custom-home-content'
           />
+          <CustomerServiceButton />
         </PublicLayout>
       )
     }
@@ -81,6 +83,7 @@ export function Home() {
             className='custom-home-content'
           />
         </div>
+        <CustomerServiceButton />
       </PublicLayout>
     )
   }
@@ -90,6 +93,7 @@ export function Home() {
       <Hero isAuthenticated={isAuthenticated} />
       <Features />
       <Footer />
+      <CustomerServiceButton />
     </PublicLayout>
   )
 }
