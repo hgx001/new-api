@@ -287,6 +287,9 @@ func updatePricing() {
 
 	pricingMap = make([]Pricing, 0)
 	for model, groups := range modelGroupsMap {
+		if !isAllowedPricingModel(model) {
+			continue
+		}
 		pricing := Pricing{
 			ModelName:              model,
 			EnableGroup:            groups.Items(),
@@ -356,6 +359,24 @@ func updatePricing() {
 	modelEnableGroupsLock.Unlock()
 
 	lastGetPricingTime = time.Now()
+}
+
+func isAllowedPricingModel(name string) bool {
+	// 文本：只保留 gpt-5.6 系列 + MiniMax-M3
+	if strings.HasPrefix(name, "gpt-5.6") {
+		return true
+	}
+	if strings.EqualFold(name, "MiniMax-M3") {
+		return true
+	}
+	// 视频：只保留 h3 + wan3.0
+	if name == "aliyun:wan-3.0" {
+		return true
+	}
+	if strings.HasPrefix(name, "hailuo-h3") {
+		return true
+	}
+	return false
 }
 
 // GetSupportedEndpointMap 返回全局端点到路径的映射
