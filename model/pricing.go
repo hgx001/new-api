@@ -362,18 +362,48 @@ func updatePricing() {
 }
 
 func isAllowedPricingModel(name string) bool {
-	// 文本：只保留 gpt-5.6 系列 + MiniMax-M3
+	// 文本模型：只保留 gpt-5.6 系列 + MiniMax-M3
 	if strings.HasPrefix(name, "gpt-5.6") {
 		return true
 	}
 	if strings.EqualFold(name, "MiniMax-M3") {
 		return true
 	}
-	// 视频：只保留 h3 + wan3.0
+	// 图像模型：gpt-image-2 + youkou 图像（doubao / gemini）
+	if name == "gpt-image-2" {
+		return true
+	}
+	if name == "doubao-seedream-5-0-260128" {
+		return true
+	}
+	if name == "gemini-3-pro-image-preview" {
+		return true
+	}
+	if name == "gemini-3.1-flash-image-preview" {
+		return true
+	}
+	// 视频模型：全部上游模型均展示
 	if name == "aliyun:wan-3.0" {
 		return true
 	}
 	if strings.HasPrefix(name, "hailuo-h3") {
+		return true
+	}
+	if strings.HasPrefix(name, "huixin:seedance-") {
+		return true
+	}
+	if strings.HasPrefix(name, "sd2.5") {
+		return true
+	}
+	if strings.HasPrefix(name, "xuan:") {
+		return true
+	}
+	// wan3.chat：只暴露 480P + 标准版（慢速档）
+	if strings.HasPrefix(name, "wan3.0-video") {
+		return true
+	}
+	// AutoDL ComfyUI：多参考生成视频分类下的 4 个工作流（autodl: 前缀）
+	if strings.HasPrefix(name, "autodl:") {
 		return true
 	}
 	return false
