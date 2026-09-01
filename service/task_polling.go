@@ -403,7 +403,12 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{
 		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
+		ChannelType:    cacheGetChannel.Type,
 	}
+	// 轮询路径的 info 是空壳：必须初始化内嵌 TaskRelayInfo，
+	// 否则适配器 Init 访问 info.PublicTaskID 等提升字段时会 nil panic
+	// （曾导致 wan3 适配器每轮轮询崩溃，见 adaptor.go Init）。
+	info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
 	info.ApiKey = cacheGetChannel.Key
 	adaptor.Init(info)
 	disablePollingSleep := cacheGetChannel.GetOtherSettings().DisableTaskPollingSleep
@@ -432,10 +437,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	baseURL := constant.ChannelBaseURLs[ch.Type]
-	if ch.GetBaseURL() != "" {
-		baseURL = ch.GetBaseURL()
-	}
+	baseURL := ch.GetBaseURL()
 	proxy := ch.GetSetting().Proxy
 
 	task := taskM[taskId]

@@ -3,13 +3,77 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGetStaticChannelModelIDsForTaskChannels(t *testing.T) {
+	tests := []struct {
+		name        string
+		channelType int
+		expected    []string
+	}{
+		{
+			name:        "Wan3",
+			channelType: constant.ChannelTypeWan3,
+			expected:    []string{"wan3.0-video"},
+		},
+		{
+			name:        "AutoDL",
+			channelType: constant.ChannelTypeAutoDL,
+			expected:    []string{"autodl:h3-video", "autodl:multiref-video-1", "autodl:multiref-video-2", "autodl:multiref-video-3"},
+		},
+		{
+			name:        "DashScope",
+			channelType: constant.ChannelTypeDashScope,
+			expected:    []string{"wan3.0-video"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			models, ok := getStaticChannelModelIDs(tt.channelType)
+			require.True(t, ok)
+			require.Equal(t, tt.expected, models)
+		})
+	}
+}
+
+func TestFetchChannelUpstreamModelIDsUnknownTypeReturnsError(t *testing.T) {
+	models, err := fetchChannelUpstreamModelIDs(&model.Channel{Type: 999})
+
+	require.Error(t, err)
+	require.Empty(t, models)
+}
+
+func TestFetchModelsUsesStaticTaskModelList(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/api/channel/fetch_models",
+		strings.NewReader(`{"type":62,"base_url":"https://dashscope.aliyuncs.com"}`),
+	)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	FetchModels(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool     `json:"success"`
+		Data    []string `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Equal(t, []string{"wan3.0-video"}, response.Data)
+}
 
 func TestNormalizeModelNames(t *testing.T) {
 	result := normalizeModelNames([]string{

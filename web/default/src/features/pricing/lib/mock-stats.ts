@@ -315,8 +315,7 @@ export function buildGroupPerformance(model: PricingModel): GroupPerformance[] {
   const spec = PROFILE_SPECS[profile]
   const baseSeed = hashStringToSeed(model.model_name)
 
-  return targets
-    .slice()
+  return [...targets]
     .sort((a, b) => a.localeCompare(b))
     .map<GroupPerformance>((group) => {
       const rand = seededRandom(baseSeed ^ hashStringToSeed(group))
@@ -763,6 +762,110 @@ const VIDEO_PARAMS: SupportedParameter[] = [
   },
 ]
 
+const WAN3_RESOLUTIONS = ['480P', '720P']
+
+function buildWan3VideoParameters(): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      type: 'integer',
+      range: '2 ~ 30',
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: WAN3_RESOLUTIONS,
+      defaultValue: '480P',
+      descriptionKey: 'Output video resolution',
+    },
+  ]
+}
+
+const AUTODL_REFERENCE_IMAGES_PARAM: SupportedParameter = {
+  name: 'images',
+  type: 'array',
+  range: '1 ~ 9',
+  required: true,
+  descriptionKey: 'Image input',
+}
+
+const AUTODL_H3_RESOLUTIONS = [
+  '480p竖',
+  '768p竖',
+  '480p横',
+  '768p横',
+  '480p(1:1)',
+  '768p(1:1)',
+]
+
+const AUTODL_V5_RESOLUTIONS = [
+  ...AUTODL_H3_RESOLUTIONS,
+  '1080p竖',
+  '1080p横',
+  '1080p(1:1)',
+]
+
+const AUTODL_B99_RESOLUTIONS = ['736p竖', '736p横', '736p(1:1)']
+
+const AUTODL_SEED_PARAM: SupportedParameter = {
+  name: 'seed',
+  type: 'integer',
+  range: '1 ~ 999999999999999',
+  descriptionKey: 'Deterministic sampling seed (best-effort)',
+}
+
+function buildAutoDLVideoParameters(modelName: string): SupportedParameter[] {
+  const isMultiReference = modelName.startsWith('autodl:multiref-video-')
+  let durationRange = '1 ~ 10'
+  let promptRange = '1 ~ 500000'
+  let resolutions = AUTODL_V5_RESOLUTIONS
+  let defaultResolution = '768p竖'
+  let supportsSeed = isMultiReference
+
+  if (modelName === 'autodl:h3-video') {
+    durationRange = '1 ~ 15'
+    promptRange = '1 ~ 200000'
+    resolutions = AUTODL_H3_RESOLUTIONS
+    supportsSeed = false
+  } else if (modelName.endsWith('-2')) {
+    durationRange = '1 ~ 15'
+    resolutions = AUTODL_H3_RESOLUTIONS
+  } else if (modelName.endsWith('-3')) {
+    durationRange = '1 ~ 12'
+    promptRange = '1 ~ 10000'
+    resolutions = AUTODL_B99_RESOLUTIONS
+    defaultResolution = '736p竖'
+  }
+
+  const params: SupportedParameter[] = [
+    { ...VIDEO_PARAMS[0], range: promptRange },
+    {
+      name: 'duration',
+      type: 'integer',
+      range: durationRange,
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: resolutions,
+      defaultValue: defaultResolution,
+      descriptionKey: 'Output video resolution',
+    },
+  ]
+
+  if (isMultiReference) {
+    params.push(AUTODL_REFERENCE_IMAGES_PARAM)
+  }
+  if (supportsSeed) {
+    params.push(AUTODL_SEED_PARAM)
+  }
+
+  return params
+}
+
 type ApiCategory = 'reasoning' | 'embedding' | 'image' | 'video' | 'chat'
 
 /**
@@ -774,12 +877,14 @@ type ApiCategory = 'reasoning' | 'embedding' | 'image' | 'video' | 'chat'
 function apiCategoryOf(model: PricingModel): ApiCategory {
   const profile = PROFILE_BY_NAME(model.model_name)
   if (profile === 'embedding' || profile === 'reasoning') return profile
-  if (profile === 'image') {
-    return /sora|veo|kling|pika|video|wan-|hunyuanvideo/i.test(model.model_name)
-      ? 'video'
-      : 'image'
+
+  // Some task/video models (for example AutoDL) do not contain one of the
+  // broad image-profile keywords, so classify video capabilities directly.
+  if (/sora|veo|kling|pika|video|wan-|hunyuanvideo/i.test(model.model_name)) {
+    return 'video'
   }
-  return 'chat'
+
+  return profile === 'image' ? 'image' : 'chat'
 }
 
 /**
@@ -794,7 +899,15 @@ export function buildSupportedParameters(
   if (cat === 'reasoning') return REASONING_PARAMS
   if (cat === 'embedding') return EMBEDDING_PARAMS
   if (cat === 'image') return IMAGE_PARAMS
-  if (cat === 'video') return VIDEO_PARAMS
+  if (cat === 'video') {
+    if (model.model_name === 'wan3.0-video') {
+      return buildWan3VideoParameters()
+    }
+    if (model.model_name.startsWith('autodl:')) {
+      return buildAutoDLVideoParameters(model.model_name)
+    }
+    return VIDEO_PARAMS
+  }
   return COMMON_CHAT_PARAMS
 }
 
@@ -813,12 +926,20 @@ export function buildRateLimits(model: PricingModel): RateLimit[] {
   const baseSeed = hashStringToSeed(`${model.model_name}:rl`)
   const isHeavy = cat === 'image' || cat === 'video'
   const isLight = cat === 'embedding'
-  const baseRpm = isHeavy ? 60 : isLight ? 5_000 : 500
-  const baseTpm = isHeavy ? 0 : isLight ? 1_000_000 : 200_000
-  const baseRpd = isHeavy ? 1_000 : isLight ? 100_000 : 10_000
+  let baseRpm = 500
+  let baseTpm = 200_000
+  let baseRpd = 10_000
+  if (isHeavy) {
+    baseRpm = 60
+    baseTpm = 0
+    baseRpd = 1_000
+  } else if (isLight) {
+    baseRpm = 5_000
+    baseTpm = 1_000_000
+    baseRpd = 100_000
+  }
 
-  return targets
-    .slice()
+  return [...targets]
     .sort((a, b) => a.localeCompare(b))
     .map((group) => {
       const rand = seededRandom(baseSeed ^ hashStringToSeed(group))
@@ -836,7 +957,8 @@ export function buildRateLimits(model: PricingModel): RateLimit[] {
 export function formatRateLimit(value: number): string {
   if (value <= 0) return '—'
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
-  if (value >= 1_000)
+  if (value >= 1_000) {
     return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`
+  }
   return value.toLocaleString()
 }

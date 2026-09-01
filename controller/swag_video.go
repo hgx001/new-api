@@ -10,6 +10,9 @@ import (
 // @Description 支持多种视频生成服务：
 // @Description - 可灵AI (Kling): https://app.klingai.com/cn/dev/document-api/apiReference/commonInfo
 // @Description - 即梦 (Jimeng): https://www.volcengine.com/docs/85621/1538636
+// @Description 图片输入兼容 `image` 单图字段；AutoDL 多参考图模型使用 `images` 数组，支持 1-9 张参考图。
+// @Description AutoDL 模型的 `duration`、`resolution`、`seed` 可用范围随模型不同，具体能力以模型详情为准。
+// @Description AutoDL 文生视频模型不支持参考图和 `seed`，具体能力以模型为准。
 // @Tags Video
 // @Accept json
 // @Produce json

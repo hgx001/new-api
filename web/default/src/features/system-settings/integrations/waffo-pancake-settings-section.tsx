@@ -66,8 +66,8 @@ interface Props {
 }
 
 const PANCAKE_DASHBOARD_URL = 'https://pancake.waffo.ai/merchant/dashboard'
-const DEFAULT_NEW_STORE_NAME = 'new-api-store'
-const DEFAULT_NEW_PRODUCT_NAME = 'new-api-charge-product'
+const DEFAULT_NEW_STORE_NAME = 'heibaidao-store'
+const DEFAULT_NEW_PRODUCT_NAME = 'heibaidao-charge-product'
 const DEFAULT_NEW_PAIR_NAME = `${DEFAULT_NEW_STORE_NAME} + ${DEFAULT_NEW_PRODUCT_NAME}`
 
 export function WaffoPancakeSettingsSection({

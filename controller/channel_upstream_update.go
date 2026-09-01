@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,8 +15,10 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
+	tasksuno "github.com/QuantumNous/new-api/relay/channel/task/suno"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -255,10 +258,49 @@ func getUpstreamModelUpdateMinCheckIntervalSeconds() int64 {
 	return interval
 }
 
+func getStaticChannelModelIDs(channelType int) ([]string, bool) {
+	var models []string
+
+	switch channelType {
+	case constant.ChannelTypeMidjourney, constant.ChannelTypeMidjourneyPlus:
+		models = lo.Keys(constant.MidjourneyModel2Action)
+	case constant.ChannelTypeSunoAPI:
+		models = tasksuno.ModelList
+	case constant.ChannelTypeKling,
+		constant.ChannelTypeJimeng,
+		constant.ChannelTypeVidu,
+		constant.ChannelTypeDoubaoVideo,
+		constant.ChannelTypeSora,
+		constant.ChannelTypeYoukou,
+		constant.ChannelTypeWan3,
+		constant.ChannelTypeAutoDL,
+		constant.ChannelTypeDashScope:
+		taskAdaptor := relay.GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelType)))
+		if taskAdaptor == nil {
+			return nil, false
+		}
+		models = taskAdaptor.GetModelList()
+	default:
+		return nil, false
+	}
+
+	return normalizeModelNames(models), true
+}
+
 func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
-	baseURL := constant.ChannelBaseURLs[channel.Type]
-	if channel.GetBaseURL() != "" {
-		baseURL = channel.GetBaseURL()
+	if channel == nil {
+		return nil, fmt.Errorf("渠道不能为空")
+	}
+
+	// 任务型渠道通常没有 OpenAI 兼容的 /v1/models 接口，使用适配器
+	// 声明的固定模型列表，避免把任务接口误请求成模型列表接口。
+	if models, ok := getStaticChannelModelIDs(channel.Type); ok {
+		return models, nil
+	}
+
+	baseURL := channel.GetBaseURL()
+	if baseURL == "" {
+		return nil, fmt.Errorf("渠道 %d 未配置 Base URL，且没有可用的内置模型列表", channel.Type)
 	}
 
 	if channel.Type == constant.ChannelTypeOllama {

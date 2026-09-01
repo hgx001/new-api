@@ -14,6 +14,7 @@ import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as authRouteRouteImport } from './routes/(auth)/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as VpnIndexRouteImport } from './routes/vpn/index'
 import { Route as TutorialsIndexRouteImport } from './routes/tutorials/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
@@ -93,6 +94,11 @@ const authRouteRoute = authRouteRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VpnIndexRoute = VpnIndexRouteImport.update({
+  id: '/vpn/',
+  path: '/vpn/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TutorialsIndexRoute = TutorialsIndexRouteImport.update({
@@ -438,6 +444,7 @@ export interface FileRoutesByFullPath {
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/tutorials/': typeof TutorialsIndexRoute
+  '/vpn/': typeof VpnIndexRoute
   '/user/reset': typeof authUserResetRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
@@ -499,6 +506,7 @@ export interface FileRoutesByTo {
   '/rankings': typeof RankingsIndexRoute
   '/setup': typeof SetupIndexRoute
   '/tutorials': typeof TutorialsIndexRoute
+  '/vpn': typeof VpnIndexRoute
   '/user/reset': typeof authUserResetRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
@@ -564,6 +572,7 @@ export interface FileRoutesById {
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/tutorials/': typeof TutorialsIndexRoute
+  '/vpn/': typeof VpnIndexRoute
   '/(auth)/user/reset': typeof authUserResetRoute
   '/_authenticated/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/_authenticated/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
@@ -628,6 +637,7 @@ export interface FileRouteTypes {
     | '/rankings/'
     | '/setup/'
     | '/tutorials/'
+    | '/vpn/'
     | '/user/reset'
     | '/chat/$chatId'
     | '/dashboard/$section'
@@ -689,6 +699,7 @@ export interface FileRouteTypes {
     | '/rankings'
     | '/setup'
     | '/tutorials'
+    | '/vpn'
     | '/user/reset'
     | '/chat/$chatId'
     | '/dashboard/$section'
@@ -753,6 +764,7 @@ export interface FileRouteTypes {
     | '/rankings/'
     | '/setup/'
     | '/tutorials/'
+    | '/vpn/'
     | '/(auth)/user/reset'
     | '/_authenticated/chat/$chatId'
     | '/_authenticated/dashboard/$section'
@@ -809,6 +821,7 @@ export interface RootRouteChildren {
   RankingsIndexRoute: typeof RankingsIndexRoute
   SetupIndexRoute: typeof SetupIndexRoute
   TutorialsIndexRoute: typeof TutorialsIndexRoute
+  VpnIndexRoute: typeof VpnIndexRoute
   PricingModelIdIndexRoute: typeof PricingModelIdIndexRoute
 }
 
@@ -847,6 +860,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/vpn/': {
+      id: '/vpn/'
+      path: '/vpn'
+      fullPath: '/vpn/'
+      preLoaderRoute: typeof VpnIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/tutorials/': {
@@ -1403,6 +1423,7 @@ const rootRouteChildren: RootRouteChildren = {
   RankingsIndexRoute: RankingsIndexRoute,
   SetupIndexRoute: SetupIndexRoute,
   TutorialsIndexRoute: TutorialsIndexRoute,
+  VpnIndexRoute: VpnIndexRoute,
   PricingModelIdIndexRoute: PricingModelIdIndexRoute,
 }
 export const routeTree = rootRouteImport

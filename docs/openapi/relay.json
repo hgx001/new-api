@@ -547,7 +547,7 @@
       "post": {
         "summary": "创建视频 ",
         "deprecated": false,
-        "description": "OpenAI 兼容的视频生成接口。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
+        "description": "OpenAI 兼容的视频生成接口。支持 `input_reference` 单图，以及 AutoDL 多参考图模型使用的 `images` 数组（1-9 张）。AutoDL 文生视频模型不支持参考图。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
         "operationId": "createVideo",
         "tags": [
           "视频生成/Sora兼容格式"
@@ -574,11 +574,36 @@
                     "example": "8",
                     "type": "string"
                   },
+                  "resolution": {
+                    "description": "AutoDL 输出分辨率（例如 480p竖、768p横、1080p(1:1)，具体枚举以模型为准）",
+                    "example": "768p竖",
+                    "type": "string"
+                  },
+                  "seed": {
+                    "description": "AutoDL 多图模型随机种子",
+                    "minimum": 1,
+                    "maximum": 999999999999999,
+                    "example": 212238359716024,
+                    "type": "integer",
+                    "format": "int64"
+                  },
                   "input_reference": {
                     "format": "binary",
                     "type": "string",
-                    "description": "参考图片文件",
+                    "description": "单张参考图片文件（兼容字段）",
                     "example": ""
+                  },
+                  "images": {
+                    "type": "array",
+                    "description": "多张参考图片 URL；AutoDL 多参考图模型支持 1-9 张，重复提交该字段即可",
+                    "minItems": 1,
+                    "maxItems": 9,
+                    "items": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "style": "form",
+                    "explode": true
                   }
                 }
               },
@@ -4181,8 +4206,23 @@
           },
           "image": {
             "type": "string",
-            "description": "图片输入 (URL 或 Base64)",
+            "description": "单张图片输入（URL 或 Base64，兼容字段）",
             "example": "https://example.com/image.jpg"
+          },
+          "images": {
+            "type": "array",
+            "description": "多张参考图片 URL；AutoDL 多参考图模型支持 1-9 张。autodl:h3-video 为文生视频，不支持参考图",
+            "minItems": 1,
+            "maxItems": 9,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "resolution": {
+            "type": "string",
+            "description": "AutoDL 输出分辨率（具体枚举以模型为准）",
+            "example": "768p竖"
           },
           "duration": {
             "type": "number",

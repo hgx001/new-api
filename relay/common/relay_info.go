@@ -689,8 +689,10 @@ type TaskSubmitReq struct {
 	Image          string                 `json:"image,omitempty"`
 	Images         []string               `json:"images,omitempty"`
 	Size           string                 `json:"size,omitempty"`
+	Resolution     string                 `json:"resolution,omitempty"`
 	Duration       int                    `json:"duration,omitempty"`
 	Seconds        string                 `json:"seconds,omitempty"`
+	Seed           *int64                 `json:"seed,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
@@ -708,6 +710,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		Duration json.RawMessage `json:"duration,omitempty"`
+		Seed     json.RawMessage `json:"seed,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -728,6 +731,26 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 					t.Duration = v
 				}
 			}
+		}
+	}
+
+	if len(aux.Seed) > 0 && string(aux.Seed) != "null" {
+		var seed int64
+		if err := common.Unmarshal(aux.Seed, &seed); err == nil {
+			t.Seed = &seed
+		} else {
+			var seedStr string
+			if err := common.Unmarshal(aux.Seed, &seedStr); err != nil {
+				return fmt.Errorf("seed must be an integer")
+			}
+			if seedStr == "" {
+				return nil
+			}
+			v, err := strconv.ParseInt(seedStr, 10, 64)
+			if err != nil {
+				return fmt.Errorf("seed must be an integer")
+			}
+			t.Seed = &v
 		}
 	}
 

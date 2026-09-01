@@ -86,18 +86,26 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 
 	formData := c.Request.PostForm
 	req = TaskSubmitReq{
-		Prompt:   formData.Get("prompt"),
-		Model:    formData.Get("model"),
-		Mode:     formData.Get("mode"),
-		Image:    formData.Get("image"),
-		Size:     formData.Get("size"),
-		Metadata: make(map[string]interface{}),
+		Prompt:     formData.Get("prompt"),
+		Model:      formData.Get("model"),
+		Mode:       formData.Get("mode"),
+		Image:      formData.Get("image"),
+		Size:       formData.Get("size"),
+		Resolution: formData.Get("resolution"),
+		Metadata:   make(map[string]interface{}),
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
 		if duration, err := strconv.Atoi(durationStr); err == nil {
 			req.Duration = duration
 		}
+	}
+	if seedStr := formData.Get("seed"); seedStr != "" {
+		seed, err := strconv.ParseInt(seedStr, 10, 64)
+		if err != nil {
+			return req, fmt.Errorf("seed must be an integer")
+		}
+		req.Seed = &seed
 	}
 
 	if images := formData["images"]; len(images) > 0 {
@@ -192,7 +200,9 @@ func isKnownTaskField(field string) bool {
 		"image":           true,
 		"images":          true,
 		"size":            true,
+		"resolution":      true,
 		"duration":        true,
+		"seed":            true,
 		"input_reference": true, // Sora 特有字段
 	}
 	return knownFields[field]

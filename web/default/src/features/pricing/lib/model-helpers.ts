@@ -59,6 +59,8 @@ export function isTokenBasedModel(model: PricingModel): boolean {
 // ----------------------------------------------------------------------------
 const MODEL_DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   'kimi-for-coding': 'kimi-k2.7',
+  // sd2.5 慢速满血版实际支持 30 秒（youkou 模型 id 仍保留 "20秒内" 以便路由）
+  'sd2.5慢速20秒内排队满血版': 'sd2.5慢速30秒内排队满血版',
 }
 
 /**

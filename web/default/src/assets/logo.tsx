@@ -37,8 +37,9 @@ export function Logo({ className, ...props }: SVGProps<SVGSVGElement>) {
       {...props}
     >
       <title>heibaidao</title>
-      {/* A stylized "H" monogram representing heibaidao — a gateway path motif */}
-      <path d='M3 12h7l2-3 2 6 2-3 5 3' strokeLinecap='round' />
+      {/* Hexagonal gateway — represents a portal/intersection (道) */}
+      <path d='M12 3L21 9v6l-9 6-9-6V9z' />
+      <path d='M4.5 12L12 16l7.5-4' strokeLinecap='round' />
     </svg>
   )
 }

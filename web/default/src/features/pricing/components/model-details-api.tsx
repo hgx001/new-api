@@ -109,7 +109,7 @@ function buildChatSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${bodyJson.replace(/\n/g, '\n     ')}'`,
+      `  -d '${bodyJson.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
 
@@ -177,7 +177,7 @@ function buildAnthropicSample(lang: Lang, ctx: SampleContext): string {
       `  -H "x-api-key: $${ctx.apiKeyEnv}" \\`,
       `  -H "anthropic-version: 2023-06-01" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -249,7 +249,7 @@ function buildGeminiSample(lang: Lang, ctx: SampleContext): string {
     return [
       `curl '${url}' \\`,
       `  -H 'Content-Type: application/json' \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -299,7 +299,7 @@ function buildEmbeddingSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -351,6 +351,142 @@ function buildEmbeddingSample(lang: Lang, ctx: SampleContext): string {
   ].join('\n')
 }
 
+function buildVideoSample(lang: Lang, ctx: SampleContext): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+  const isAutoDL = ctx.modelName.startsWith('autodl:')
+  const isWan3 = ctx.modelName === 'wan3.0-video'
+  const isAutoDLReference = ctx.modelName.startsWith(
+    'autodl:multiref-video-'
+  )
+  const isAutoDLText = ctx.modelName === 'autodl:h3-video'
+  const autoDLResolution = ctx.modelName.endsWith('-3')
+    ? '736p竖'
+    : '768p竖'
+  const autoDLSeed = '212238359716024'
+
+  if (lang === 'curl') {
+    const fields = [
+      `curl ${url} \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -F "model=${ctx.modelName}" \\`,
+      `  -F "prompt=A cinematic scene at sunrise" \\`,
+      `  -F "seconds=5"`,
+    ]
+    if (isAutoDL || isWan3) {
+      fields[fields.length - 1] += ' \\'
+      fields.push(
+        `  -F "resolution=${isWan3 ? '480P' : autoDLResolution}"`
+      )
+    }
+    if (isAutoDLReference) {
+      fields[fields.length - 1] += ' \\'
+      fields.push(
+        '  -F "images=https://example.com/reference-1.png" \\',
+        '  -F "images=https://example.com/reference-2.png" \\',
+        `  -F "seed=${autoDLSeed}"`
+      )
+    } else if (!isAutoDLText && !isWan3) {
+      fields[fields.length - 1] += ' \\'
+      fields.push('  -F "input_reference=@reference.png"')
+    }
+    return fields.join('\n')
+  }
+
+  if (lang === 'python') {
+    if (isAutoDL || isWan3) {
+      const data = [
+        `    ("model", "${ctx.modelName}"),`,
+        '    ("prompt", "A cinematic scene at sunrise"),',
+        '    ("seconds", "5"),',
+      ]
+      data.push(
+        `    ("resolution", "${isWan3 ? '480P' : autoDLResolution}"),`
+      )
+      if (isAutoDLReference) {
+        data.push(
+          '    ("images", "https://example.com/reference-1.png"),',
+          '    ("images", "https://example.com/reference-2.png"),',
+          `    ("seed", "${autoDLSeed}"),`
+        )
+      }
+      return [
+        'import os',
+        'import requests',
+        '',
+        `url = "${url}"`,
+        'headers = {"Authorization": "Bearer " + os.environ["NEW_API_KEY"]}',
+        'data = [',
+        ...data,
+        ']',
+        'response = requests.post(url, headers=headers, data=data)',
+        'response.raise_for_status()',
+        'print(response.json())',
+      ].join('\n')
+    }
+
+    return [
+      'import os',
+      'import requests',
+      '',
+      `url = "${url}"`,
+      'headers = {"Authorization": "Bearer " + os.environ["NEW_API_KEY"]}',
+      'data = {',
+      `    "model": "${ctx.modelName}",`,
+      '    "prompt": "A cinematic scene at sunrise",',
+      '    "seconds": "5",',
+      ...(isWan3 ? ['    "resolution": "480P",'] : []),
+      '}',
+      'with open("reference.png", "rb") as reference:',
+      '    response = requests.post(url, headers=headers, data=data, files={"input_reference": reference})',
+      'response.raise_for_status()',
+      'print(response.json())',
+    ].join('\\n')
+  }
+
+  const formLines = [
+    `form.append('model', '${ctx.modelName}')`,
+    `form.append('prompt', 'A cinematic scene at sunrise')`,
+    `form.append('seconds', '5')`,
+  ]
+  if (isAutoDL || isWan3) {
+    formLines.push(
+      `form.append('resolution', '${isWan3 ? '480P' : autoDLResolution}')`
+    )
+  }
+  if (isAutoDLReference) {
+    formLines.push(
+      `form.append('images', 'https://example.com/reference-1.png')`,
+      `form.append('images', 'https://example.com/reference-2.png')`,
+      `form.append('seed', '${autoDLSeed}')`
+    )
+  } else if (!isAutoDLText && !isWan3) {
+    formLines.push(`form.append('input_reference', referenceFile)`)
+  }
+
+  const referenceSetup =
+    !isAutoDL && !isWan3 && !isAutoDLText
+      ? [
+          `const referenceResponse = await fetch('https://example.com/reference.png')`,
+          `const referenceFile = await referenceResponse.blob()`,
+        ]
+      : []
+
+  return [
+    `const form = new FormData()`,
+    ...referenceSetup,
+    ...formLines,
+    '',
+    `const response = await fetch('${url}', {`,
+    `  method: 'POST',`,
+    `  headers: { Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\` },`,
+    `  body: form,`,
+    `})`,
+    '',
+    `const data = await response.json()`,
+    `console.log(data)`,
+  ].join('\n')
+}
+
 function buildImageSample(lang: Lang, ctx: SampleContext): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`
   const prompt = 'A serene koi pond at sunset, ukiyo-e style.'
@@ -365,7 +501,7 @@ function buildImageSample(lang: Lang, ctx: SampleContext): string {
       `curl ${url} \\`,
       `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
       `  -H "Content-Type: application/json" \\`,
-      `  -d '${body.replace(/\n/g, '\n     ')}'`,
+      `  -d '${body.replaceAll('\n', '\n     ')}'`,
     ].join('\n')
   }
   if (lang === 'python') {
@@ -430,9 +566,11 @@ function buildSample(
 ): string {
   if (endpointType === 'anthropic') return buildAnthropicSample(lang, ctx)
   if (endpointType === 'gemini') return buildGeminiSample(lang, ctx)
-  if (endpointType === 'embeddings' || endpointType === 'jina-rerank')
+  if (endpointType === 'embeddings' || endpointType === 'jina-rerank') {
     return buildEmbeddingSample(lang, ctx)
+  }
   if (endpointType === 'image-generation') return buildImageSample(lang, ctx)
+  if (endpointType === 'openai-video') return buildVideoSample(lang, ctx)
   return buildChatSample(lang, ctx)
 }
 

@@ -41,12 +41,15 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
+	taskwan3 "github.com/QuantumNous/new-api/relay/channel/task/wan3"
+	taskyoukou "github.com/QuantumNous/new-api/relay/channel/task/youkou"
+	taskautodl "github.com/QuantumNous/new-api/relay/channel/task/autodl"
+	taskdashscope "github.com/QuantumNous/new-api/relay/channel/task/dashscope"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/volcengine"
 	"github.com/QuantumNous/new-api/relay/channel/xai"
 	"github.com/QuantumNous/new-api/relay/channel/xunfei"
-	"github.com/QuantumNous/new-api/relay/channel/zhipu"
 	"github.com/QuantumNous/new-api/relay/channel/zhipu_4v"
 	"github.com/gin-gonic/gin"
 )
@@ -69,8 +72,6 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &tencent.Adaptor{}
 	case constant.APITypeXunfei:
 		return &xunfei.Adaptor{}
-	case constant.APITypeZhipu:
-		return &zhipu.Adaptor{}
 	case constant.APITypeZhipuV4:
 		return &zhipu_4v.Adaptor{}
 	case constant.APITypeOllama:
@@ -162,6 +163,14 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskGemini.TaskAdaptor{}
 		case constant.ChannelTypeMiniMax:
 			return &hailuo.TaskAdaptor{}
+		case constant.ChannelTypeYoukou:
+			return &taskyoukou.TaskAdaptor{}
+		case constant.ChannelTypeWan3:
+			return &taskwan3.TaskAdaptor{}
+		case constant.ChannelTypeAutoDL:
+			return &taskautodl.TaskAdaptor{}
+		case constant.ChannelTypeDashScope:
+			return &taskdashscope.TaskAdaptor{}
 		}
 	}
 	return nil

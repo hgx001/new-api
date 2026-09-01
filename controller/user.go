@@ -493,6 +493,31 @@ func GetSelf(c *gin.Context) {
 	return
 }
 
+func GetUserWallet(c *gin.Context) {
+	id := c.GetInt("id")
+	user, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"id":                user.Id,
+			"username":          user.Username,
+			"quota":             user.Quota,
+			"used_quota":        user.UsedQuota,
+			"request_count":     user.RequestCount,
+			"aff_quota":         user.AffQuota,
+			"aff_history_quota": user.AffHistoryQuota,
+			"aff_count":         user.AffCount,
+			"group":             user.Group,
+		},
+	})
+	return
+}
+
 // 计算用户权限的辅助函数
 func calculateUserPermissions(userRole int) map[string]interface{} {
 	permissions := map[string]interface{}{}

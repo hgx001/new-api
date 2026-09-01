@@ -5,7 +5,7 @@ const (
 	APITypeAnthropic
 	APITypePaLM
 	APITypeBaidu
-	APITypeZhipu
+	_ // APITypeZhipu removed (legacy v3 adaptor deleted)
 	APITypeAli
 	APITypeXunfei
 	APITypeAIProxyLibrary

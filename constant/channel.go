@@ -17,7 +17,6 @@ const (
 	ChannelTypeAIGC2D         = 13
 	ChannelTypeAnthropic      = 14
 	ChannelTypeBaidu          = 15
-	ChannelTypeZhipu          = 16
 	ChannelTypeAli            = 17
 	ChannelTypeXunfei         = 18
 	ChannelType360            = 19
@@ -56,7 +55,11 @@ const (
 	ChannelTypeReplicate      = 56
 	ChannelTypeCodex          = 57
 	ChannelTypeAdvancedCustom = 58
-	ChannelTypeDummy          // this one is only for count, do not add any channel after this
+	ChannelTypeYoukou         = 59
+	ChannelTypeWan3           = 60
+	ChannelTypeAutoDL         = 61
+	ChannelTypeDashScope      = 62
+	ChannelTypeDummy          = 63 // this one is only for count, do not add any channel after this
 
 )
 
@@ -77,7 +80,7 @@ var ChannelBaseURLs = []string{
 	"https://api.aigc2d.com",              // 13
 	"https://api.anthropic.com",           // 14
 	"https://aip.baidubce.com",            // 15
-	"https://open.bigmodel.cn",            // 16
+	"",                                    // 16 (Zhipu v3 removed)
 	"https://dashscope.aliyuncs.com",      // 17
 	"",                                    // 18
 	"https://api.360.cn",                  // 19
@@ -120,6 +123,21 @@ var ChannelBaseURLs = []string{
 	"https://api.replicate.com",                 //56
 	"https://chatgpt.com",                       //57
 	"",                                          //58
+	"https://youkou.cc",                         //59
+	"",                                          //60 (Wan3 使用渠道 base_url，不在此兜底)
+	"https://autodl.art",                        //61
+	"https://dashscope.aliyuncs.com",            //62 (DashScope 百炼)
+}
+
+// GetChannelBaseURL returns the built-in base URL for a channel type.
+// Unknown channel types return an empty string instead of panicking on an
+// out-of-range slice access. Channel records may contain newer/custom types
+// than the binary's built-in list during rolling deployments.
+func GetChannelBaseURL(channelType int) string {
+	if channelType < 0 || channelType >= len(ChannelBaseURLs) {
+		return ""
+	}
+	return ChannelBaseURLs[channelType]
 }
 
 var ChannelTypeNames = map[int]string{
@@ -139,7 +157,6 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAIGC2D:         "AIGC2D",
 	ChannelTypeAnthropic:      "Anthropic",
 	ChannelTypeBaidu:          "Baidu",
-	ChannelTypeZhipu:          "Zhipu",
 	ChannelTypeAli:            "Ali",
 	ChannelTypeXunfei:         "Xunfei",
 	ChannelType360:            "360",
@@ -178,6 +195,10 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeReplicate:      "Replicate",
 	ChannelTypeCodex:          "ChatGPT Subscription (Codex)",
 	ChannelTypeAdvancedCustom: "Advanced Custom",
+	ChannelTypeYoukou:         "Youkou",
+	ChannelTypeWan3:           "Wan3",
+	ChannelTypeAutoDL:         "AutoDL",
+	ChannelTypeDashScope:      "DashScope",
 }
 
 func GetChannelTypeName(channelType int) string {

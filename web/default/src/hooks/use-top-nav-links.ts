@@ -77,6 +77,11 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Model Square'), href: '/pricing', requiresAuth })
   }
 
+  // VPN (accelerator subscription)
+  if (modules?.vpn !== false) {
+    links.push({ title: t('VPN'), href: '/vpn' })
+  }
+
   // Tutorials (internal integration guide page)
   if (modules?.tutorials !== false) {
     links.push({ title: t('Tutorials'), href: '/tutorials' })

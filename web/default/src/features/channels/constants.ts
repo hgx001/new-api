@@ -38,7 +38,6 @@ export const CHANNEL_TYPES = {
   // 13: 'AIGC2D',
   14: 'Anthropic',
   15: 'Baidu',
-  16: 'Zhipu',
   17: 'Ali',
   18: 'Xunfei',
   19: '360',
@@ -77,12 +76,15 @@ export const CHANNEL_TYPES = {
   56: 'Replicate',
   57: 'ChatGPT Subscription (Codex)',
   58: 'Advanced Custom',
+  59: 'Youkou',
+  61: 'AutoDL',
+  62: 'DashScope',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 33, 24, 43, 3, 41, 48, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15, 46,
   23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21, 44, 2, 5, 36,
-  50, 51, 52, 53, 54, 55, 56,
+  50, 51, 52, 53, 54, 55, 56, 59, 61, 62,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -389,6 +391,9 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   50: 'Format: AccessKey|SecretKey (or just ApiKey if upstream is New API)',
   51: 'Format: Access Key ID|Secret Access Key',
   57: 'Paste Codex OAuth JSON credential (access_token / refresh_token / account_id)',
+  59: 'Youkou API Key (Bearer token from https://youkou.cc)',
+  61: 'AutoDL ComfyUI Token (Bearer token from https://autodl.art/large-model/tokens, 分组选 ComfyUI)',
+  62: 'DashScope API Key (sk-... from https://bailian.console.aliyun.com)',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {
