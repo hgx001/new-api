@@ -2,12 +2,14 @@ package common
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -352,10 +354,65 @@ func parseMultipartFormData(c *gin.Context, data []byte, v any) error {
 		}
 	}
 
+	for key, fileHeaders := range form.File {
+		strippedKey := strings.TrimSuffix(key, "[]")
+		var dataURIs []string
+		for _, fh := range fileHeaders {
+			f, err := fh.Open()
+			if err != nil {
+				return err
+			}
+			content, err := io.ReadAll(f)
+			f.Close()
+			if err != nil {
+				return err
+			}
+			mimeType := fh.Header.Get("Content-Type")
+			if mimeType == "" || mimeType == "application/octet-stream" {
+				if ext := mime.TypeByExtension(filepath.Ext(fh.Filename)); ext != "" {
+					mimeType = ext
+				}
+			}
+			if mimeType == "" {
+				mimeType = "application/octet-stream"
+			}
+			dataURI := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(content)
+			dataURIs = append(dataURIs, dataURI)
+		}
+		if len(dataURIs) == 0 {
+			continue
+		}
+		if existing, ok := formMap[strippedKey]; ok {
+			formMap[strippedKey] = mergeFormValues(existing, dataURIs)
+		} else if len(dataURIs) == 1 {
+			formMap[strippedKey] = dataURIs[0]
+		} else {
+			formMap[strippedKey] = dataURIs
+		}
+	}
+
 	return processFormMap(formMap, v)
 }
 
 var errBoundaryNotFound = errors.New("multipart boundary not found")
+
+func mergeFormValues(existing any, newVals []string) any {
+	switch ev := existing.(type) {
+	case string:
+		return append([]string{ev}, newVals...)
+	case []string:
+		return append(ev, newVals...)
+	case []any:
+		result := make([]any, 0, len(ev)+len(newVals))
+		result = append(result, ev...)
+		for _, nv := range newVals {
+			result = append(result, nv)
+		}
+		return result
+	default:
+		return newVals
+	}
+}
 
 // parseBoundary extracts the multipart boundary from the Content-Type header using mime.ParseMediaType
 func parseBoundary(contentType string) (string, error) {

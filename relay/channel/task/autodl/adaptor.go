@@ -131,6 +131,10 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	resolution := a.wf.Resolution
 	if requestedResolution := strings.TrimSpace(req.Resolution); requestedResolution != "" {
 		resolution = requestedResolution
+	} else if req.Size != "" {
+		if derived, ok := deriveResolutionFromSize(req.Size, a.wf.Resolutions); ok {
+			resolution = derived
+		}
 	}
 	ratio := a.wf.ResolutionRatios[resolution]
 	if ratio <= 0 {
@@ -195,6 +199,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			return nil, errors.Errorf("model %s does not support resolution %q", info.OriginModelName, requestedResolution)
 		}
 		resolution = requestedResolution
+	} else if req.Size != "" {
+		if derived, ok := deriveResolutionFromSize(req.Size, a.wf.Resolutions); ok {
+			resolution = derived
+		}
 	}
 
 	if req.Seed != nil {
@@ -400,6 +408,100 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 func (a *TaskAdaptor) GetModelList() []string {
 	return ModelList
+}
+
+// deriveResolutionFromSize 从 OpenAI 格式的 size（如 "768x1280"）推导 AutoDL 格式的
+// resolution（如 "768p竖"）。当客户端通过 OpenAI 兼容协议 /v1/videos 调用 autodl 模型
+// 但未传 resolution 字段时，用此函数从 size 推导，避免 resolution 永远落默认值。
+//
+// 映射规则：短边 → 分辨率档（480p/768p/1080p/736p），宽高比 → 方向后缀（竖/横/(1:1)）。
+// 推导出的 resolution 必须在 allowedResolutions 列表中；如果精确组合不在列表中
+// （如 720p 短边映射到 768p 档），选最近档位 + 同后缀；同后缀也没有则选最近档位任意后缀。
+func deriveResolutionFromSize(size string, allowedResolutions []string) (string, bool) {
+	w, h, ok := parseSize(size)
+	if !ok {
+		return "", false
+	}
+
+	var suffix string
+	if w == h {
+		suffix = "(1:1)"
+	} else if h > w {
+		suffix = "竖"
+	} else {
+		suffix = "横"
+	}
+
+	short := w
+	if h < short {
+		short = h
+	}
+
+	best := ""
+	bestDiff := -1
+	for _, allowed := range allowedResolutions {
+		if !strings.HasSuffix(allowed, suffix) {
+			continue
+		}
+		tier := extractTierValue(allowed)
+		if tier == 0 {
+			continue
+		}
+		diff := tier - short
+		if diff < 0 {
+			diff = -diff
+		}
+		if bestDiff < 0 || diff < bestDiff {
+			bestDiff = diff
+			best = allowed
+		}
+	}
+	if best != "" {
+		return best, true
+	}
+
+	for _, allowed := range allowedResolutions {
+		tier := extractTierValue(allowed)
+		if tier == 0 {
+			continue
+		}
+		diff := tier - short
+		if diff < 0 {
+			diff = -diff
+		}
+		if bestDiff < 0 || diff < bestDiff {
+			bestDiff = diff
+			best = allowed
+		}
+	}
+	return best, best != ""
+}
+
+func parseSize(size string) (int, int, bool) {
+	parts := strings.SplitN(size, "x", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	w, errW := strconv.Atoi(parts[0])
+	h, errH := strconv.Atoi(parts[1])
+	if errW != nil || errH != nil {
+		return 0, 0, false
+	}
+	return w, h, true
+}
+
+// extractTierValue 从 AutoDL resolution token（如 "768p竖"）提取分辨率数值（768）。
+func extractTierValue(resolution string) int {
+	s := resolution
+	for _, suffix := range []string{"(1:1)", "竖", "横"} {
+		s = strings.TrimSuffix(s, suffix)
+	}
+	s = strings.TrimSuffix(s, "p")
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 func (a *TaskAdaptor) GetChannelName() string {

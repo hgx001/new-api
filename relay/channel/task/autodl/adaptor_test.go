@@ -168,3 +168,66 @@ func TestBuildRequestBodyRejectsReferenceImageForAutoDLTextModel(t *testing.T) {
 	}), info)
 	require.ErrorContains(t, err, "does not support reference images")
 }
+
+func TestDeriveResolutionFromSize(t *testing.T) {
+	tests := []struct {
+		name        string
+		size        string
+		allowed     []string
+		want        string
+		wantOk      bool
+	}{
+		{"vertical 768p", "768x1280", []string{"480p竖", "768p竖", "480p横", "768p横"}, "768p竖", true},
+		{"horizontal 768p", "1280x768", []string{"480p竖", "768p竖", "480p横", "768p横"}, "768p横", true},
+		{"vertical 480p", "480x854", []string{"480p竖", "768p竖", "480p横", "768p横"}, "480p竖", true},
+		{"square 768p", "768x768", []string{"480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"}, "768p(1:1)", true},
+		{"1080p vertical maps to 1080p", "1080x1920", []string{"480p竖", "768p竖", "1080p竖", "480p横", "768p横", "1080p横"}, "1080p竖", true},
+		{"720p short edge maps to nearest 768p", "720x1280", []string{"480p竖", "768p竖", "480p横", "768p横"}, "768p竖", true},
+		{"736p only tier", "736x1280", []string{"736p竖", "736p横", "736p(1:1)"}, "736p竖", true},
+		{"736p square", "736x736", []string{"736p竖", "736p横", "736p(1:1)"}, "736p(1:1)", true},
+		{"no matching suffix falls back to any", "768x768", []string{"768p竖", "768p横"}, "768p竖", true},
+		{"invalid size returns false", "invalid", []string{"768p竖"}, "", false},
+		{"empty allowed returns false", "768x1280", []string{}, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := deriveResolutionFromSize(tt.size, tt.allowed)
+			require.Equal(t, tt.wantOk, ok)
+			if ok {
+				require.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestBuildRequestBodyDerivesResolutionFromSize(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info := autoDLRelayInfo("autodl:h3-video")
+	adaptor.Init(info)
+
+	body, err := adaptor.BuildRequestBody(autoDLTaskContext(relaycommon.TaskSubmitReq{
+		Prompt: "text only",
+		Size:   "768x1280",
+	}), info)
+	require.NoError(t, err)
+
+	encoded, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &payload))
+	require.Equal(t, "768p竖", payload["resolution"])
+}
+
+func TestEstimateBillingDerivesResolutionFromSize(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	info := autoDLRelayInfo("autodl:multiref-video-1")
+	adaptor.Init(info)
+
+	billing := adaptor.EstimateBilling(autoDLTaskContext(relaycommon.TaskSubmitReq{
+		Duration: 5,
+		Size:     "1080x1920",
+	}), info)
+	require.Equal(t, 4.5, billing["size"])
+}
