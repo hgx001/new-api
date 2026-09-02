@@ -682,12 +682,19 @@ type TaskRelayInfo struct {
 	LockedChannel any
 }
 
+// TaskMedia is a typed media input preserved for task adaptors that support multimodal references.
+type TaskMedia struct {
+	Type string `json:"type"`
+	URL  string `json:"url"`
+}
+
 type TaskSubmitReq struct {
 	Prompt         string                 `json:"prompt"`
 	Model          string                 `json:"model,omitempty"`
 	Mode           string                 `json:"mode,omitempty"`
 	Image          string                 `json:"image,omitempty"`
 	Images         []string               `json:"images,omitempty"`
+	Media          []TaskMedia            `json:"media,omitempty"`
 	Size           string                 `json:"size,omitempty"`
 	Resolution     string                 `json:"resolution,omitempty"`
 	Duration       int                    `json:"duration,omitempty"`
@@ -702,15 +709,17 @@ func (t *TaskSubmitReq) GetPrompt() string {
 }
 
 func (t *TaskSubmitReq) HasImage() bool {
-	return len(t.Images) > 0
+	return len(t.Images) > 0 || len(t.Media) > 0
 }
 
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
 	aux := &struct {
-		Metadata json.RawMessage `json:"metadata,omitempty"`
-		Duration json.RawMessage `json:"duration,omitempty"`
-		Seed     json.RawMessage `json:"seed,omitempty"`
+		Metadata       json.RawMessage `json:"metadata,omitempty"`
+		Duration       json.RawMessage `json:"duration,omitempty"`
+		Seed           json.RawMessage `json:"seed,omitempty"`
+		InputReference json.RawMessage `json:"input_reference,omitempty"`
+		Images         json.RawMessage `json:"images,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -718,6 +727,33 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 
 	if err := common.Unmarshal(data, &aux); err != nil {
 		return err
+	}
+
+	if len(aux.InputReference) > 0 && string(aux.InputReference) != "null" {
+		var inputRefStr string
+		if err := common.Unmarshal(aux.InputReference, &inputRefStr); err == nil {
+			t.InputReference = inputRefStr
+			if inputRefStr != "" {
+				t.Images = append(t.Images, inputRefStr)
+			}
+		} else {
+			var inputRefArr []string
+			if err := common.Unmarshal(aux.InputReference, &inputRefArr); err == nil && len(inputRefArr) > 0 {
+				t.Images = append(t.Images, inputRefArr...)
+			}
+		}
+	}
+
+	if len(aux.Images) > 0 && string(aux.Images) != "null" {
+		var imagesArr []string
+		if err := common.Unmarshal(aux.Images, &imagesArr); err == nil {
+			t.Images = append(t.Images, imagesArr...)
+		} else {
+			var imageStr string
+			if err := common.Unmarshal(aux.Images, &imageStr); err == nil && imageStr != "" {
+				t.Images = append(t.Images, imageStr)
+			}
+		}
 	}
 
 	if len(aux.Duration) > 0 {
