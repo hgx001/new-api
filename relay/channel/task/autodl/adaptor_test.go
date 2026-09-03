@@ -64,7 +64,7 @@ func TestBuildRequestBodyForwardsAutoDLOptionalParameters(t *testing.T) {
 	body, err := adaptor.BuildRequestBody(autoDLTaskContext(relaycommon.TaskSubmitReq{
 		Prompt:     "animate the references",
 		Duration:   10,
-		Resolution: "1080p横",
+		Resolution: "768p横",
 		Seed:       &seed,
 		Images:     []string{"https://example.com/reference.png"},
 	}), info)
@@ -76,7 +76,7 @@ func TestBuildRequestBodyForwardsAutoDLOptionalParameters(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(encoded, &payload))
 	require.Equal(t, float64(10), payload["duration"])
-	require.Equal(t, "1080p横", payload["resolution"])
+	require.Equal(t, "768p横", payload["resolution"])
 	require.Equal(t, float64(seed), payload["seed"])
 }
 
@@ -87,10 +87,10 @@ func TestEstimateBillingChargesAutoDLResolutionRatio(t *testing.T) {
 
 	require.Equal(t, map[string]float64{
 		"seconds": 5,
-		"size":    4.5,
+		"size":    1.0,
 	}, adaptor.EstimateBilling(autoDLTaskContext(relaycommon.TaskSubmitReq{
 		Duration:   5,
-		Resolution: "1080p竖",
+		Resolution: "768p竖",
 	}), info))
 }
 
@@ -181,7 +181,7 @@ func TestDeriveResolutionFromSize(t *testing.T) {
 		{"horizontal 768p", "1280x768", []string{"480p竖", "768p竖", "480p横", "768p横"}, "768p横", true},
 		{"vertical 480p", "480x854", []string{"480p竖", "768p竖", "480p横", "768p横"}, "480p竖", true},
 		{"square 768p", "768x768", []string{"480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"}, "768p(1:1)", true},
-		{"1080p vertical maps to 1080p", "1080x1920", []string{"480p竖", "768p竖", "1080p竖", "480p横", "768p横", "1080p横"}, "1080p竖", true},
+		{"1080p vertical falls back to nearest 768p", "1080x1920", []string{"480p竖", "768p竖", "480p横", "768p横"}, "768p竖", true},
 		{"720p short edge maps to nearest 768p", "720x1280", []string{"480p竖", "768p竖", "480p横", "768p横"}, "768p竖", true},
 		{"736p only tier", "736x1280", []string{"736p竖", "736p横", "736p(1:1)"}, "736p竖", true},
 		{"736p square", "736x736", []string{"736p竖", "736p横", "736p(1:1)"}, "736p(1:1)", true},
@@ -227,7 +227,7 @@ func TestEstimateBillingDerivesResolutionFromSize(t *testing.T) {
 
 	billing := adaptor.EstimateBilling(autoDLTaskContext(relaycommon.TaskSubmitReq{
 		Duration: 5,
-		Size:     "1080x1920",
+		Size:     "720x1280",
 	}), info)
-	require.Equal(t, 4.5, billing["size"])
+	require.Equal(t, 1.0, billing["size"])
 }

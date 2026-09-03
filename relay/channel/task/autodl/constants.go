@@ -40,17 +40,15 @@ type workflowConfig struct {
 //
 // 多参考图类工作流入参为 ref_image_0..ref_image_8 独立字段（必填 ref_image_0），
 // 由适配器把客户端的 images 数组按下标展开注入，见 adaptor.go BuildRequestBody。
-// v5 的 1080p 上游单价是 480p/768p 的 4.5 倍；其他分辨率价格相同。
+// v5 的 1080p 上游单价是 480p/768p 的 4.5 倍，平台停用该档（见下方 workflowByModel）；
+// 其他分辨率价格相同。
 var autodlV5ResolutionRatios = map[string]float64{
-	"480p竖":      1.0,
-	"768p竖":      1.0,
-	"1080p竖":     4.5,
-	"480p横":      1.0,
-	"768p横":      1.0,
-	"1080p横":     4.5,
-	"480p(1:1)":  1.0,
-	"768p(1:1)":  1.0,
-	"1080p(1:1)": 4.5,
+	"480p竖":     1.0,
+	"768p竖":     1.0,
+	"480p横":     1.0,
+	"768p横":     1.0,
+	"480p(1:1)": 1.0,
+	"768p(1:1)": 1.0,
 }
 
 var workflowByModel = map[string]workflowConfig{
@@ -62,11 +60,11 @@ var workflowByModel = map[string]workflowConfig{
 		MaxDuration:     15,
 		MaxPromptLength: 200000,
 	},
-	// H3 多图参考生视频：duration 1-10s；480p/768p/1080p 竖横(1:1)；ref_image_0 必填。
+	// H3 多图参考生视频：duration 1-10s；480p/768p 竖横(1:1)；ref_image_0 必填。
 	"autodl:multiref-video-1": {
 		WorkflowID:       "minimax_h3_lightx2v_v5",
 		Resolution:       "768p竖",
-		Resolutions:      []string{"480p竖", "768p竖", "1080p竖", "480p横", "768p横", "1080p横", "480p(1:1)", "768p(1:1)", "1080p(1:1)"},
+		Resolutions:      []string{"480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"},
 		MaxDuration:      10,
 		MaxPromptLength:  500000,
 		ResolutionRatios: autodlV5ResolutionRatios,
