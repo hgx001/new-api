@@ -20,6 +20,30 @@ func TestResolveResolutionAcceptsTopLevelResolution(t *testing.T) {
 	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Resolution: "720p"}))
 }
 
+func TestResolveResolutionAcceptsSizeTierString(t *testing.T) {
+	// ArcReel 客户端把分辨率档放 size 字段（如 "720P"），须与顶层 resolution 等价解析。
+	require.Equal(t, "480P", resolveResolution(relaycommon.TaskSubmitReq{Size: "480P"}))
+	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Size: "720P"}))
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Size: "1080P"}))
+	require.Equal(t, "720P", normalizeResolution("720p"))
+}
+
+func TestResolveRatioPrefersMetadataAspectRatio(t *testing.T) {
+	// ArcReel 客户端经 metadata 传 aspect_ratio（9:16/16:9 等），优先于 size 推断。
+	require.Equal(t, "9:16", resolveRatio(relaycommon.TaskSubmitReq{
+		Metadata: map[string]interface{}{"aspect_ratio": "9:16"},
+	}))
+	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{
+		Metadata: map[string]interface{}{"ratio": "16:9"},
+	}))
+	require.Equal(t, "adaptive", resolveRatio(relaycommon.TaskSubmitReq{Size: "720P"}))
+}
+
+func TestResolveRatioInfersFromWxHSize(t *testing.T) {
+	require.Equal(t, "9:16", resolveRatio(relaycommon.TaskSubmitReq{Size: "405x720"}))
+	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{Size: "720x405"}))
+}
+
 func TestEstimateBillingChargesWan3ResolutionRatio(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adaptor := &TaskAdaptor{}

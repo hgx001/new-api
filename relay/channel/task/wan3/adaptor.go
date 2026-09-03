@@ -141,6 +141,10 @@ func normalizeResolution(value string) string {
 }
 
 func resolutionFromSize(size string) (string, bool) {
+	// 兼容客户端把分辨率档直接放 size（如 "720P"），与 WxH 尺寸等价解析。
+	if normalized := normalizeResolution(size); normalized != "" {
+		return normalized, true
+	}
 	size = strings.ReplaceAll(strings.TrimSpace(size), "*", "x")
 	parts := strings.Split(size, "x")
 	if len(parts) != 2 {
