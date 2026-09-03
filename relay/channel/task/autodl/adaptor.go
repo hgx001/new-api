@@ -20,7 +20,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
-	"github.com/tidwall/sjson"
 )
 
 // ============================
@@ -508,15 +507,64 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
-// ConvertToOpenAIVideo 把任务数据转换成 OpenAI video 对象返回给客户端
+// ConvertToOpenAIVideo 把任务数据转换成 OpenAI video 对象返回给客户端。
+// 轮询同步后 task.Data 是 redactVideoResponseBody 的轮询响应体
+// （{"code":"Success","data":{"status":"SUCCEEDED","results":[{url...}]}}) ，
+// 这里解析它并映射成 OpenAI video 的 status/progress/metadata.url，
+// 否则客户端（如 OpenAI SDK videos.retrieve）永远看到 queued 无法收敛。
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	data := task.Data
-	var err error
-	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
-		return nil, errors.Wrap(err, "set id failed")
+	var res pollResponse
+	if err := common.Unmarshal(task.Data, &res); err != nil {
+		return nil, errors.Wrap(err, "unmarshal AutoDL task data failed")
 	}
-	if data, err = sjson.SetBytes(data, "object", "video"); err != nil {
-		return nil, errors.Wrap(err, "set object failed")
+
+	openAIResp := dto.NewOpenAIVideo()
+	openAIResp.ID = task.TaskID
+	openAIResp.Model = task.Properties.OriginModelName
+	openAIResp.SetProgressStr(task.Progress)
+	openAIResp.CreatedAt = task.CreatedAt
+	openAIResp.CompletedAt = task.UpdatedAt
+
+	switch strings.ToUpper(res.Code) {
+	case "FAIL", "FAILED", "FAILURE", "CANCELLED", "CANCELED":
+		openAIResp.Status = dto.VideoStatusFailed
+		openAIResp.Error = &dto.OpenAIVideoError{
+			Code:    res.Code,
+			Message: firstNonEmpty(res.Data.Message, res.Msg, "AutoDL task failed"),
+		}
+		return common.Marshal(openAIResp)
 	}
-	return data, nil
+	if res.Code != "" && res.Code != "Success" {
+		openAIResp.Status = dto.VideoStatusFailed
+		openAIResp.Error = &dto.OpenAIVideoError{
+			Code:    res.Code,
+			Message: firstNonEmpty(res.Msg, res.Data.Message, "AutoDL task failed"),
+		}
+		return common.Marshal(openAIResp)
+	}
+
+	switch strings.ToUpper(res.Data.Status) {
+	case "SUBMITTING", "QUEUED", "PENDING":
+		openAIResp.Status = dto.VideoStatusQueued
+	case "RUNNING", "STORING", "PROCESSING", "IN_PROGRESS":
+		openAIResp.Status = dto.VideoStatusInProgress
+	case "SUCCEEDED", "SUCCESS", "COMPLETED":
+		openAIResp.Status = dto.VideoStatusCompleted
+		if len(res.Data.Results) > 0 && strings.TrimSpace(res.Data.Results[0].URL) != "" {
+			openAIResp.SetMetadata("url", res.Data.Results[0].URL)
+		}
+	default:
+		openAIResp.Status = dto.VideoStatusUnknown
+	}
+	return common.Marshal(openAIResp)
+}
+
+// firstNonEmpty 返回第一个非空字符串。
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }

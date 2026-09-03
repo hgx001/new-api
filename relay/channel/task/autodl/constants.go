@@ -42,13 +42,16 @@ type workflowConfig struct {
 // 由适配器把客户端的 images 数组按下标展开注入，见 adaptor.go BuildRequestBody。
 // v5 的 1080p 上游单价是 480p/768p 的 4.5 倍，平台停用该档（见下方 workflowByModel）；
 // 其他分辨率价格相同。
-var autodlV5ResolutionRatios = map[string]float64{
+// h3ResolutionRatios 是 H3 系工作流的分辨率计费倍率（2026-09-03 起按官网调价）：
+// 480p/736p 保持基准 ¥0.10/秒，768p（720p 档）调至 ¥0.12/秒（ratio 1.2），
+// 计费公式：ModelPrice × seconds × size。
+var h3ResolutionRatios = map[string]float64{
 	"480p竖":     1.0,
-	"768p竖":     1.0,
+	"768p竖":     1.2,
 	"480p横":     1.0,
-	"768p横":     1.0,
+	"768p横":     1.2,
 	"480p(1:1)": 1.0,
-	"768p(1:1)": 1.0,
+	"768p(1:1)": 1.2,
 }
 
 var workflowByModel = map[string]workflowConfig{
@@ -59,6 +62,7 @@ var workflowByModel = map[string]workflowConfig{
 		Resolutions:     []string{"480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"},
 		MaxDuration:     15,
 		MaxPromptLength: 200000,
+		ResolutionRatios: h3ResolutionRatios,
 	},
 	// H3 多图参考生视频：duration 1-10s；480p/768p 竖横(1:1)；ref_image_0 必填。
 	"autodl:multiref-video-1": {
@@ -67,21 +71,22 @@ var workflowByModel = map[string]workflowConfig{
 		Resolutions:      []string{"480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"},
 		MaxDuration:      10,
 		MaxPromptLength:  500000,
-		ResolutionRatios: autodlV5ResolutionRatios,
+		ResolutionRatios: h3ResolutionRatios,
 		MaxSeed:          999999999999999,
 		RequiresImages:   true,
 		MaxImages:        9,
 	},
 	// H3 多图生视频15秒：duration 1-15s；480p/768p 竖横(1:1)；ref_image_0 必填。
 	"autodl:multiref-video-2": {
-		WorkflowID:      "minimax_h3_lightx2v_v5_15s",
-		Resolution:      "768p竖",
-		Resolutions:     []string{"480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"},
-		MaxDuration:     15,
-		MaxPromptLength: 500000,
-		MaxSeed:         999999999999999,
-		RequiresImages:  true,
-		MaxImages:       9,
+		WorkflowID:       "minimax_h3_lightx2v_v5_15s",
+		Resolution:       "768p竖",
+		Resolutions:      []string{"480p竖", "768p竖", "480p横", "768p横", "480p(1:1)", "768p(1:1)"},
+		MaxDuration:      15,
+		MaxPromptLength:  500000,
+		ResolutionRatios: h3ResolutionRatios,
+		MaxSeed:          999999999999999,
+		RequiresImages:   true,
+		MaxImages:        9,
 	},
 	// H3 多图生视频12秒：duration 1-12s；仅 736p 竖/横/(1:1)；ref_image_0 必填。
 	"autodl:multiref-video-3": {

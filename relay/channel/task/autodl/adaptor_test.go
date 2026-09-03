@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -87,10 +90,18 @@ func TestEstimateBillingChargesAutoDLResolutionRatio(t *testing.T) {
 
 	require.Equal(t, map[string]float64{
 		"seconds": 5,
-		"size":    1.0,
+		"size":    1.2,
 	}, adaptor.EstimateBilling(autoDLTaskContext(relaycommon.TaskSubmitReq{
 		Duration:   5,
 		Resolution: "768p竖",
+	}), info))
+
+	require.Equal(t, map[string]float64{
+		"seconds": 5,
+		"size":    1.0,
+	}, adaptor.EstimateBilling(autoDLTaskContext(relaycommon.TaskSubmitReq{
+		Duration:   5,
+		Resolution: "480p竖",
 	}), info))
 }
 
@@ -229,5 +240,53 @@ func TestEstimateBillingDerivesResolutionFromSize(t *testing.T) {
 		Duration: 5,
 		Size:     "720x1280",
 	}), info)
-	require.Equal(t, 1.0, billing["size"])
+	require.Equal(t, 1.2, billing["size"])
+}
+
+func TestConvertToOpenAIVideoReflectsTaskStatus(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(autoDLRelayInfo("autodl:multiref-video-1"))
+
+	// 轮询同步后 task.Data = redactVideoResponseBody(pollResponse)
+	// {"code":"Success","data":{"status":"SUCCEEDED","results":[{"type":"video","url":"https://...","file_type":"mp4"}]}}
+	task := &model.Task{
+		TaskID:   "public-task-abc",
+		Status:   model.TaskStatusSuccess,
+		Progress: taskcommon.ProgressComplete,
+		Data: []byte(`{"code":"Success","data":{"status":"SUCCEEDED","results":[{"type":"video","url":"https://upstream.example.com/v1.mp4","file_type":"mp4"}]}}`),
+		Properties: model.Properties{
+			OriginModelName: "autodl:multiref-video-1",
+		},
+		CreatedAt: 1788400000,
+		UpdatedAt: 1788400100,
+	}
+	raw, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var out dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(raw, &out))
+	require.Equal(t, "public-task-abc", out.ID)
+	require.Equal(t, dto.VideoStatusCompleted, out.Status)
+	require.Equal(t, "autodl:multiref-video-1", out.Model)
+	metadata := out.Metadata
+	url, _ := metadata["url"].(string)
+	require.Equal(t, "https://upstream.example.com/v1.mp4", url)
+}
+
+func TestConvertToOpenAIVideoMapsFailure(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(autoDLRelayInfo("autodl:h3-video"))
+
+	task := &model.Task{
+		TaskID: "public-task-fail",
+		Status: model.TaskStatusFailure,
+		Data:   []byte(`{"code":"Fail","msg":"quota exceeded","data":{"status":"FAILED","message":"quota exceeded"}}`),
+	}
+	raw, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var out dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(raw, &out))
+	require.Equal(t, dto.VideoStatusFailed, out.Status)
+	require.NotNil(t, out.Error)
 }
