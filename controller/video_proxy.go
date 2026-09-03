@@ -110,9 +110,9 @@ func VideoProxy(c *gin.Context) {
 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	case constant.ChannelTypeWan3:
-		// wan3 的成片下载端点是 /v1/videos/{job_id}/result?download=1（不是 /content），且必须带 Bearer 鉴权
-		videoURL = fmt.Sprintf("%s/v1/videos/%s/result?download=1", baseURL, task.GetUpstreamTaskID())
-		req.Header.Set("Authorization", "Bearer "+channel.Key)
+		// wan3 的成片是 OSS 直链：轮询时已写入 PrivateData.ResultURL（自带签名，无需
+		// 再转发上游 /result 端点——dashscope 官方没有该端点，转发必 404/502）。
+		videoURL = task.GetResultURL()
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()
