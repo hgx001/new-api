@@ -26,3 +26,10 @@ func TestWan3EndpointUsesOpenAIVideoContract(t *testing.T) {
 		common.GetEndpointTypesByChannelType(constant.ChannelTypeWan3, "wan3.0-video"),
 	)
 }
+
+func TestVolcEngineEndpointUsesOpenAIVideoContract(t *testing.T) {
+	require.Equal(t,
+		[]constant.EndpointType{constant.EndpointTypeOpenAIVideo},
+		common.GetEndpointTypesByChannelType(constant.ChannelTypeVolcEngine, "hmseedance_v2.0"),
+	)
+}
