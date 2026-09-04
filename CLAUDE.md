@@ -18,23 +18,22 @@
 - **前端文件(经典)**: `/opt/new-api/frontend/classic/dist` (备用)
 - **SSL 证书**: Let's Encrypt,覆盖 `api.heibaidao.cn`(API)、`www.heibaidao.cn`(H5商城)
 
-### 前端展示层更新 (40 秒)
+### 前端展示层更新
 
-用于 i18n 文案、模型展示名覆盖、UI 组件改动,不需要重启后端:
+用于 i18n 文案、模型展示名覆盖、UI 组件改动。采用“本地 push，服务器按提交拉取并构建”的发布流程，不需要重启后端：
 
 ```bash
-# 本地构建
-cd web/default && bun run build
-tar czf /tmp/default-dist.tar.gz dist/
-scp -P 877 /tmp/default-dist.tar.gz ubuntu@119.29.253.97:/tmp/
+# 工作区必须干净；脚本默认推送当前提交到 fork/main
+deploy/deploy-frontend.sh
 
-# 生产部署 (零停机)
-ssh -p 877 ubuntu@119.29.253.97 "
-  cd /opt/new-api/frontend/default/dist \
-  && rm -rf ./* \
-  && tar xzf /tmp/default-dist.tar.gz --strip-components=1 \
-  && sudo systemctl reload nginx"
+# 只检查部署计划，不 push、不连接服务器
+deploy/deploy-frontend.sh --dry-run
+
+# 指定已经推送到远端的提交，跳过脚本 push
+deploy/deploy-frontend.sh --no-push --ref <commit-sha>
 ```
+
+脚本会在服务器 `/home/ubuntu/new-api-src` 拉取精确提交，在服务器执行 `bun install --frozen-lockfile` 和 `bun run build`，将产物发布到带时间戳的 release 目录，原子切换 `/opt/new-api/frontend/default/dist`，执行 `nginx -t`、reload 和 HTTPS 健康检查。服务器源码目录、分支、远程和域名可通过 `DEPLOY_*` 环境变量覆盖；具体实现见 `deploy/deploy-frontend.sh`。
 
 ### Go 后端更新 (Docker)
 

@@ -24,7 +24,7 @@
 
 | 组件 | 部署位置 | 部署方式 | 更新方式 |
 |---|---|---|---|
-| 前端静态文件 (HTML/JS/CSS) | `/opt/new-api/frontend/{theme}/dist` | 文件系统 | `scp dist → nginx reload` |
+| 前端静态文件 (HTML/JS/CSS) | `/opt/new-api/frontend/{theme}/dist` | 仓库拉取后服务器构建 | `git push → deploy/deploy-frontend.sh → nginx reload` |
 | Go 后端 (API) | Docker 容器 `new-api:3000` | Docker image | `docker build → docker load → 重启` |
 | NGINX 反向代理 | host 原生包 | apt 安装 | `nginx -s reload` |
 
@@ -48,26 +48,24 @@
 适用于:修改 `i18n` 文案、展示逻辑、组件布局、模型展示名覆盖
 
 ```bash
-# Step 1: 本地构建
-cd web/default && bun run build
+# 工作区必须干净；默认 push 当前 HEAD 到 fork/main，然后 SSH 到生产机部署
+deploy/deploy-frontend.sh
 
-# Step 2: 打包
-tar czf /tmp/default-dist.tar.gz dist/
-
-# Step 3: 传输到生产
-scp -P 877 /tmp/default-dist.tar.gz ubuntu@119.29.253.97:/tmp/
-
-# Step 4: 生产解压
-ssh -p 877 ubuntu@119.29.253.97 "
-  cd /opt/new-api/frontend/default/dist \
-  && rm -rf ./* \
-  && tar xzf /tmp/default-dist.tar.gz --strip-components=1"
-
-# Step 5: 重载 NGINX (零停机)
-ssh -p 877 ubuntu@119.29.253.97 "sudo systemctl reload nginx"
+# 已经 push 的提交可跳过 push
+deploy/deploy-frontend.sh --no-push --ref <commit-sha>
 ```
 
-**耗时**: ~30s (构建) + ~5s (SCP) + ~1s (解压) + ~1s (reload) ≈ 40 秒
+脚本在服务器执行以下步骤：
+
+1. 使用远端部署锁，拒绝服务器 checkout 存在未提交修改。
+2. `git fetch` 后 checkout 精确提交 SHA，避免服务器发生未预期 merge。
+3. 在仓库根目录的 `web` workspace 执行 `bun install --frozen-lockfile`，再构建 `web/default`。
+4. 将构建结果复制到 `/opt/new-api/frontend/default/releases/<timestamp>-<sha>`，通过临时符号链接原子切换 `dist`。
+5. 执行 `nginx -t`、`systemctl reload nginx` 和 HTTPS 健康检查；失败时保留旧 release，不清空线上目录。
+
+默认服务器源码目录为 `/opt/new-api`。如实际目录不同，使用 `DEPLOY_APP_DIR=/实际目录` 覆盖；服务器地址、端口、Git 远端、分支、前端目录和健康检查地址也都支持 `DEPLOY_*` 环境变量覆盖。完整参数见 `deploy/deploy-frontend.sh --help`。
+
+**耗时**: 取决于服务器依赖安装和构建缓存；构建成功后只执行 NGINX reload，不重启后端容器。
 
 ### 3.2 后端更新 (Go 代码变更)
 
@@ -172,12 +170,17 @@ server {
 ### 前端回滚
 
 ```bash
-# 若保留了一份之前的 dist 备份
-sudo cp -r /opt/new-api/frontend/default/dist /opt/new-api/frontend/default/dist.rollback
-# 或重新解压之前版本的 tar
-tar xzf /opt/new-api/frontend/default/dist-backup.tar.gz --strip-components=1 -C /opt/new-api/frontend/default/dist
-sudo systemctl reload nginx
+# 查看已有 release
+ls -la /opt/new-api/frontend/default/releases
+
+# 原子切换到已知正常的 release
+cd /opt/new-api/frontend/default
+sudo ln -s releases/<known-good-release> .dist-rollback
+sudo mv -Tf .dist-rollback dist
+sudo nginx -t && sudo systemctl reload nginx
 ```
+
+仓库式部署的完整用法、环境变量和前置条件见 `deploy/README.md`。回滚不需要重新构建或重新拉取代码。
 
 ### 后端回滚
 
