@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+export PATH="$HOME/.bun/bin:$PATH"
 IFS=$'\n\t'
 umask 022
 
@@ -126,6 +127,7 @@ fi
 REMOTE_COMMAND="COMMIT_SHA=$(printf '%q' "$COMMIT_SHA") REMOTE_APP_DIR=$(printf '%q' "$REMOTE_APP_DIR") REMOTE_FRONTEND_DIR=$(printf '%q' "$REMOTE_FRONTEND_DIR") SERVER_GIT_REMOTE=$(printf '%q' "$SERVER_GIT_REMOTE") BRANCH=$(printf '%q' "$BRANCH") HEALTHCHECK_URL=$(printf '%q' "$HEALTHCHECK_URL") bash -s"
 ssh "${SSH_OPTS[@]}" "$REMOTE" "$REMOTE_COMMAND" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
+export PATH="$HOME/.bun/bin:$PATH"
 
 log() {
   printf '[remote-deploy] %s\n' "$*"
