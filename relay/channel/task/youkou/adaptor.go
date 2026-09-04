@@ -42,12 +42,28 @@ type TaskAdaptor struct {
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
-	if volcengineModels[info.OriginModelName] {
+	a.selectSub(info.OriginModelName)
+	a.sub.Init(info)
+}
+
+// selectSub 按模型名选择子适配器。
+func (a *TaskAdaptor) selectSub(modelName string) {
+	if volcengineModels[modelName] {
 		a.sub = &taskdoubao.TaskAdaptor{}
 	} else {
 		a.sub = &tasksora.TaskAdaptor{}
 	}
-	a.sub.Init(info)
+}
+
+// ensureSub 保证 sub 已初始化。提交路径会先调 Init，但查询/轮询路径
+// （FetchTask / ParseTaskResult / ConvertToOpenAIVideo）拿到的 adaptor 未经过
+// Init，sub 为 nil，直接使用会空指针 panic。sora/doubao 的查询与转换方法是
+// 无状态的，未 Init 的 sub 在这些路径下可安全使用。
+func (a *TaskAdaptor) ensureSub(modelName string) {
+	if a.sub != nil {
+		return
+	}
+	a.selectSub(modelName)
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -95,14 +111,17 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
+	a.ensureSub("")
 	return a.sub.FetchTask(baseUrl, key, body, proxy)
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	a.ensureSub("")
 	return a.sub.ParseTaskResult(respBody)
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
+	a.ensureSub(originTask.Properties.OriginModelName)
 	conv, ok := a.sub.(channel.OpenAIVideoConverter)
 	if !ok {
 		return nil, fmt.Errorf("adaptor %s does not support OpenAI video conversion", a.sub.GetChannelName())
