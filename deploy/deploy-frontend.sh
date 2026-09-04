@@ -87,6 +87,9 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 [[ -n "$BRANCH" ]] || die 'detached HEAD: set DEPLOY_BRANCH and use --ref'
+[[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]] || die "invalid branch name: $BRANCH"
+[[ "$GIT_REMOTE" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid local Git remote: $GIT_REMOTE"
+[[ "$SERVER_GIT_REMOTE" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid server Git remote: $SERVER_GIT_REMOTE"
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
   die 'tracked working-tree changes are present; commit or stash them before deploying'
@@ -107,7 +110,7 @@ if [[ "$SKIP_PUSH" == false ]]; then
     log "would push $COMMIT_SHA to $GIT_REMOTE ($BRANCH)"
   else
     log "pushing $COMMIT_SHA to $GIT_REMOTE ($BRANCH)"
-    git push "$GIT_REMOTE" "$COMMIT_SHA:refs/heads/$BRANCH"
+    git push -- "$GIT_REMOTE" "$COMMIT_SHA:refs/heads/$BRANCH"
   fi
 else
   log "skipping push; remote must already contain $COMMIT_SHA"
@@ -154,7 +157,7 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 log "fetching $COMMIT_SHA from $SERVER_GIT_REMOTE"
-git fetch --prune "$SERVER_GIT_REMOTE"
+git fetch --prune -- "$SERVER_GIT_REMOTE"
 git cat-file -e "$COMMIT_SHA^{commit}" || die "commit is not available after fetch: $COMMIT_SHA"
 git checkout --detach --quiet "$COMMIT_SHA"
 
@@ -233,7 +236,11 @@ trap - ERR
 # Keep the last five releases. The current symlink and legacy migration copies
 # are not matched by this cleanup pattern.
 sudo -n find "$REMOTE_FRONTEND_DIR/releases" -mindepth 1 -maxdepth 1 -type d \
-  -name '20??????T??????Z-*' -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r sudo -n rm -rf
+  -name '20??????T??????Z-*' -printf '%T@ %p\0' | sort -z -nr | tail -z -n +6 |
+  while IFS= read -r -d '' item; do
+    release_path="${item#* }"
+    sudo -n rm -rf -- "$release_path"
+  done
 
 log "deployment complete: $COMMIT_SHA"
 REMOTE_SCRIPT

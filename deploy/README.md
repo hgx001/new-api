@@ -62,5 +62,12 @@ sudo mv -Tf .dist-rollback dist
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+The deployer keeps the five newest successful releases. The server checkout is
+owned by the deploy user, while the frontend release directory is writable by
+that user in the current production setup. If ownership differs, grant only
+the exact file operations used by the script plus `nginx -t` and
+`systemctl reload nginx`; do not grant an unrestricted sudo rule for a shared
+deployment account.
+
 Do not deploy with a dirty local or server checkout. The script deploys a
 detached, exact commit SHA rather than running an unpinned `git pull`.
