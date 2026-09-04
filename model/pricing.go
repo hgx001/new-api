@@ -410,6 +410,10 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "autodl:") {
 		return true
 	}
+	// Youkou Seedance（volcengine-ark-video 协议，最小成本逐个接入）
+	if name == "hmseedance_v2.0不支持真人" {
+		return true
+	}
 	return false
 }
 
