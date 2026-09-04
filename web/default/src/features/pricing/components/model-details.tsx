@@ -71,6 +71,7 @@ import {
   getAvailableGroups,
   getModelDescriptionKey,
   getModelDisplayName,
+  isPerSecondModel,
   isTokenBasedModel,
 } from '../lib/model-helpers'
 import { formatFixedPrice, formatGroupPrice } from '../lib/price'
@@ -467,7 +468,7 @@ function ModelBackendProviderSection(props: { model: PricingModel }) {
       <CatalogTextValue>
         {model.quota_type === QUOTA_TYPE_VALUES.TOKEN
           ? t('Token-based')
-          : t('Per Second')}
+          : t(isPerSecondModel(model) ? 'Per Second' : 'Per Request')}
       </CatalogTextValue>
     </CatalogInfoCell>
   )
@@ -570,7 +571,7 @@ function ModelHeader(props: { model: PricingModel }) {
         <span className='text-muted-foreground/70'>
           {model.quota_type === QUOTA_TYPE_VALUES.TOKEN
             ? t('Token-based')
-            : t('Per Second')}
+            : t(isPerSecondModel(model) ? 'Per Second' : 'Per Request')}
         </span>
         {model.billing_mode === 'tiered_expr' && model.billing_expr && (
           <>
@@ -738,7 +739,7 @@ function PriceSection(props: {
         <SectionTitle>{t('Base Price')}</SectionTitle>
         <div className='flex items-baseline justify-between'>
           <span className='text-muted-foreground text-sm'>
-            {t('Per second')}
+            {t(isPerSecondModel(props.model) ? 'Per second' : 'Per request')}
           </span>
           <span className='text-foreground font-mono text-sm font-semibold tabular-nums'>
             {formatFixedPrice(

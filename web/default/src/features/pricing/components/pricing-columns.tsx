@@ -34,7 +34,11 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel, getModelDisplayName } from '../lib/model-helpers'
+import {
+  getModelDisplayName,
+  isPerSecondModel,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
 import {
   formatPrice,
   formatRequestPrice,
@@ -99,7 +103,11 @@ export function usePricingColumns(
         const isTokenBased = row.original.quota_type === QUOTA_TYPE_VALUES.TOKEN
         return (
           <StatusBadge
-            label={isTokenBased ? t('Token') : t('Second')}
+            label={
+              isTokenBased
+                ? t('Token')
+                : t(isPerSecondModel(row.original) ? 'Second' : 'Request')
+            }
             variant={isTokenBased ? 'info' : 'neutral'}
             copyable={false}
             className='-ml-1.5'
@@ -227,7 +235,7 @@ export function usePricingColumns(
           <div className='max-w-full min-w-0'>
             <span className='font-mono text-sm tabular-nums'>{price}</span>
             <div className='text-muted-foreground/50 text-[10px]'>
-              / {t('second')}
+                / {t(isPerSecondModel(model) ? 'second' : 'request')}
             </div>
           </div>
         )

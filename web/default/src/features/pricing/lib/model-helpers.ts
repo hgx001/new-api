@@ -53,6 +53,10 @@ export function isTokenBasedModel(model: PricingModel): boolean {
   return model.quota_type === QUOTA_TYPE_VALUES.TOKEN
 }
 
+export function isPerSecondModel(model: PricingModel): boolean {
+  return model.supported_endpoint_types?.includes('openai-video') ?? false
+}
+
 // ----------------------------------------------------------------------------
 // Display name overrides for the Model Square. The actual model_name used in
 // API calls, URLs, and copy-to-clipboard behavior is left unchanged.
