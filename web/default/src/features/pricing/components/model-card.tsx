@@ -30,7 +30,7 @@ import {
   type DynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel, getModelDisplayName } from '../lib/model-helpers'
+import { isTokenBasedModel, getModelDisplayName, getModelDescriptionKey } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
 import type { ModelPerfBadgeData } from './model-perf-badge'
@@ -157,7 +157,7 @@ function ModelCardPrice(props: {
           props.usdExchangeRate
         )}
       </span>
-      <span>/ {t('request')}</span>
+      <span>/ {t('second')}</span>
     </span>
   )
 }
@@ -176,6 +176,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const modelIconKey = props.model.icon || props.model.vendor_icon
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 28) : null
   const displayName = getModelDisplayName(props.model)
+  const descriptionKey = getModelDescriptionKey(props.model)
   const initial = displayName.charAt(0).toUpperCase() || '?'
   const isDynamicPricing =
     props.model.billing_mode === 'tiered_expr' &&
@@ -263,7 +264,9 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
 
       {/* Description */}
       <p className='text-muted-foreground mt-3 line-clamp-1 flex-1 text-[13px] leading-relaxed sm:mt-4 sm:line-clamp-2 sm:min-h-[2.5rem]'>
-        {props.model.description || t('No description available.')}
+        {props.model.description ||
+          (descriptionKey ? t(descriptionKey) : null) ||
+          t('No description available.')}
       </p>
 
       {/* Footer: metadata pills */}
@@ -274,7 +277,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           </span>
         )}
         <span className='inline-flex items-center rounded-full bg-muted/60 px-2 py-0.5 text-xs font-medium text-muted-foreground'>
-          {isTokenBased ? t('Token-based') : t('Per Request')}
+          {isTokenBased ? t('Token-based') : t('Per Second')}
         </span>
         {isDynamicPricing && (
           <StatusBadge

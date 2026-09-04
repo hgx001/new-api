@@ -63,10 +63,47 @@ const MODEL_DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   'sd2.5慢速20秒内排队满血版': 'sd2.5慢速30秒内排队满血版',
 }
 
+/** Channel namespace prefixes hidden from the user-facing display name. */
+const HIDDEN_CHANNEL_PREFIXES = ['autodl:']
+
 /**
  * Get the user-facing display name for a model. Falls back to the internal
- * model_name when no override is configured.
+ * model_name when no override is configured. Channel namespace prefixes
+ * (e.g. `autodl:`) are stripped for readability; the raw model_name is
+ * still used for API calls and copy-to-clipboard.
  */
 export function getModelDisplayName(model: PricingModel): string {
-  return MODEL_DISPLAY_NAME_OVERRIDES[model.model_name] || model.model_name
+  const override = MODEL_DISPLAY_NAME_OVERRIDES[model.model_name]
+  if (override) return override
+  for (const prefix of HIDDEN_CHANNEL_PREFIXES) {
+    if (model.model_name.startsWith(prefix)) {
+      return model.model_name.slice(prefix.length)
+    }
+  }
+  return model.model_name
+}
+
+// ----------------------------------------------------------------------------
+// Description fallbacks for the Model Square. Used only when the backend
+// provides neither a model description nor a vendor description, so admin
+// customizations in the models/vendors tables always take precedence.
+// ----------------------------------------------------------------------------
+const MODEL_DESCRIPTION_KEYS: Record<string, string> = {
+  'autodl:h3-video':
+    'Text-to-video, no reference image needed. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Billed per second.',
+  'autodl:multiref-video-1':
+    'Multi-reference video, 1-9 reference images required. Duration 1-10s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.',
+  'autodl:multiref-video-2':
+    'Multi-reference video, 15s version, 1-9 reference images required. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.',
+  'autodl:multiref-video-3':
+    'Multi-reference video, 12s version, 1-9 reference images required. Duration 1-12s; 736p only in vertical, horizontal and 1:1. Supports seed. Billed per second.',
+}
+
+/**
+ * Get the translated fallback description key for a model, or null when the
+ * model has no curated fallback. Callers should prefer backend data:
+ * `model.description || (fallback && t(fallback)) || model.vendor_description`.
+ */
+export function getModelDescriptionKey(model: PricingModel): string | null {
+  return MODEL_DESCRIPTION_KEYS[model.model_name] || null
 }

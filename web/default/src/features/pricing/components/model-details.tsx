@@ -69,6 +69,7 @@ import {
 import { parseTags } from '../lib/filters'
 import {
   getAvailableGroups,
+  getModelDescriptionKey,
   getModelDisplayName,
   isTokenBasedModel,
 } from '../lib/model-helpers'
@@ -466,7 +467,7 @@ function ModelBackendProviderSection(props: { model: PricingModel }) {
       <CatalogTextValue>
         {model.quota_type === QUOTA_TYPE_VALUES.TOKEN
           ? t('Token-based')
-          : t('Per Request')}
+          : t('Per Second')}
       </CatalogTextValue>
     </CatalogInfoCell>
   )
@@ -534,7 +535,12 @@ function ModelHeader(props: { model: PricingModel }) {
   const model = props.model
   const modelIconKey = model.icon || model.vendor_icon
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 20) : null
-  const description = model.description || model.vendor_description || null
+  const descriptionKey = getModelDescriptionKey(model)
+  const description =
+    model.description ||
+    (descriptionKey ? t(descriptionKey) : null) ||
+    model.vendor_description ||
+    null
   const isSpecialExpression =
     model.billing_mode === 'tiered_expr' &&
     Boolean(model.billing_expr) &&
@@ -564,7 +570,7 @@ function ModelHeader(props: { model: PricingModel }) {
         <span className='text-muted-foreground/70'>
           {model.quota_type === QUOTA_TYPE_VALUES.TOKEN
             ? t('Token-based')
-            : t('Per Request')}
+            : t('Per Second')}
         </span>
         {model.billing_mode === 'tiered_expr' && model.billing_expr && (
           <>
@@ -732,7 +738,7 @@ function PriceSection(props: {
         <SectionTitle>{t('Base Price')}</SectionTitle>
         <div className='flex items-baseline justify-between'>
           <span className='text-muted-foreground text-sm'>
-            {t('Per request')}
+            {t('Per second')}
           </span>
           <span className='text-foreground font-mono text-sm font-semibold tabular-nums'>
             {formatFixedPrice(
