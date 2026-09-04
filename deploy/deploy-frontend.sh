@@ -87,8 +87,11 @@ cd "$REPO_ROOT"
 
 [[ -n "$BRANCH" ]] || die 'detached HEAD: set DEPLOY_BRANCH and use --ref'
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  die 'working tree is not clean; commit or stash changes before deploying'
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  die 'tracked working-tree changes are present; commit or stash them before deploying'
+fi
+if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+  log 'ignoring unrelated untracked files; the server builds the pinned commit in a clean checkout'
 fi
 
 if [[ -z "$REF" ]]; then
