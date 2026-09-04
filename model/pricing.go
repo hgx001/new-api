@@ -369,6 +369,10 @@ func isAllowedPricingModel(name string) bool {
 	if strings.EqualFold(name, "MiniMax-M3") {
 		return true
 	}
+	// Youkou 直连文本模型
+	if name == "deepseek-v4-flash" {
+		return true
+	}
 	// 图像模型：gpt-image-2 + youkou 图像（doubao / gemini）
 	if name == "gpt-image-2" {
 		return true
