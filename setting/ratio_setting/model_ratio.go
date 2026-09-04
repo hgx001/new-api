@@ -96,6 +96,10 @@ var defaultModelRatio = map[string]float64{
 	"gpt-5-mini-2025-08-07":                     0.125,
 	"gpt-5-nano":                                0.025,
 	"gpt-5-nano-2025-08-07":                     0.025,
+	"gpt-5.6":                                   0.064212,
+	"gpt-5.6-luna":                              0.064212, // 基准价，terra/sol 按此倍数折算
+	"gpt-5.6-terra":                             0.32106,  // 5x luna
+	"gpt-5.6-sol":                               1.28424,  // 20x luna
 	"gpt-3.5-turbo":                             0.25,
 	"gpt-3.5-turbo-0613":                        0.75,
 	"gpt-3.5-turbo-16k":                         1.5, // $0.003 / 1K tokens
@@ -293,7 +297,7 @@ var defaultModelPrice = map[string]float64{
 	"sora-2":                         0.3,
 	"sora-2-pro":                     0.5,
 	"gpt-4o-mini-tts":                0.3,
-	"wan3.0-video":                   0.3, // 480P 基准价 ¥0.3/秒，720P/1080P 经 size 倍率 2/4 自动折算
+	"wan3.0-video":                   0.0369863, // 480P 基准价 ¥0.27/秒（USD 计价，0.27/7.3），720P/1080P 经 size 倍率 2/4 自动折算
 	"veo-3.0-generate-001":           0.4,
 	"veo-3.0-fast-generate-001":      0.15,
 	"veo-3.1-generate-preview":       0.4,

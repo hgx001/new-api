@@ -12,9 +12,9 @@ var ModelList = []string{
 	"wan3.0-video",
 }
 
-// resolutionSizeRatio 各分辨率相对于 480P 基准价的倍率，与官方价目精确对齐：
-// 官网 480P=¥0.3/秒、720P=¥0.6/秒、1080P=¥1.2/秒（比例 1:2:4）。
-// wan3 模型的 ModelPrice 应配置为 480P 基准单价（默认 0.3），乘以 seconds × size 即得官网价格。
+// resolutionSizeRatio 各分辨率相对于 480P 基准价的倍率（比例 1:2:4）。
+// 480P=¥0.27/秒、720P=¥0.54/秒、1080P=¥1.08/秒。
+// wan3 模型的 ModelPrice 应配置为 480P 基准单价（USD 计价，默认 0.0369863），乘以 seconds × size 即得应收价格。
 var resolutionSizeRatio = map[string]float64{
 	"480P":  1.0,
 	"720P":  2.0,

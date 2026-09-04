@@ -19,3 +19,10 @@ func TestAutoDLEndpointUsesOpenAIVideoContract(t *testing.T) {
 	require.Equal(t, "/v1/videos", endpoint.Path)
 	require.Equal(t, "POST", endpoint.Method)
 }
+
+func TestWan3EndpointUsesOpenAIVideoContract(t *testing.T) {
+	require.Equal(t,
+		[]constant.EndpointType{constant.EndpointTypeOpenAIVideo},
+		common.GetEndpointTypesByChannelType(constant.ChannelTypeWan3, "wan3.0-video"),
+	)
+}
