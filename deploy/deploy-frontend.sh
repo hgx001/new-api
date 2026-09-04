@@ -36,10 +36,10 @@ Options:
 
 Environment overrides:
   DEPLOY_GIT_REMOTE=fork
-  DEPLOY_SERVER_GIT_REMOTE=fork  (remote name in the server checkout)
+  DEPLOY_SERVER_GIT_REMOTE=origin  (remote name in the server checkout)
   DEPLOY_BRANCH=main
   DEPLOY_HOST=119.29.253.97 DEPLOY_PORT=877 DEPLOY_USER=ubuntu
-  DEPLOY_APP_DIR=/opt/new-api
+  DEPLOY_APP_DIR=/home/ubuntu/new-api-src
   DEPLOY_FRONTEND_DIR=/opt/new-api/frontend/default
   DEPLOY_HEALTHCHECK_URL=https://api.heibaidao.cn
 EOF

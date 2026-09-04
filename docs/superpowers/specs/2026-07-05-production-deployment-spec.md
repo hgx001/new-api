@@ -63,7 +63,7 @@ deploy/deploy-frontend.sh --no-push --ref <commit-sha>
 4. 将构建结果复制到 `/opt/new-api/frontend/default/releases/<timestamp>-<sha>`，通过临时符号链接原子切换 `dist`。
 5. 执行 `nginx -t`、`systemctl reload nginx` 和 HTTPS 健康检查；失败时保留旧 release，不清空线上目录。
 
-默认服务器源码目录为 `/opt/new-api`。如实际目录不同，使用 `DEPLOY_APP_DIR=/实际目录` 覆盖；服务器地址、端口、Git 远端、分支、前端目录和健康检查地址也都支持 `DEPLOY_*` 环境变量覆盖。完整参数见 `deploy/deploy-frontend.sh --help`。
+默认服务器源码目录为 `/home/ubuntu/new-api-src`。如实际目录不同，使用 `DEPLOY_APP_DIR=/实际目录` 覆盖；服务器地址、端口、Git 远端、分支、前端目录和健康检查地址也都支持 `DEPLOY_*` 环境变量覆盖。完整参数见 `deploy/deploy-frontend.sh --help`。
 
 **耗时**: 取决于服务器依赖安装和构建缓存；构建成功后只执行 NGINX reload，不重启后端容器。
 
