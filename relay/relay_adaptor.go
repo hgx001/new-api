@@ -32,6 +32,8 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/siliconflow"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
 	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
+	taskautodl "github.com/QuantumNous/new-api/relay/channel/task/autodl"
+	taskdashscope "github.com/QuantumNous/new-api/relay/channel/task/dashscope"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
@@ -43,8 +45,7 @@ import (
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
 	taskwan3 "github.com/QuantumNous/new-api/relay/channel/task/wan3"
 	taskyoukou "github.com/QuantumNous/new-api/relay/channel/task/youkou"
-	taskautodl "github.com/QuantumNous/new-api/relay/channel/task/autodl"
-	taskdashscope "github.com/QuantumNous/new-api/relay/channel/task/dashscope"
+	taskyouzanwan3 "github.com/QuantumNous/new-api/relay/channel/task/youzanwan3"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/volcengine"
@@ -171,6 +172,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskautodl.TaskAdaptor{}
 		case constant.ChannelTypeDashScope:
 			return &taskdashscope.TaskAdaptor{}
+		case constant.ChannelTypeYouzanWan3:
+			return &taskyouzanwan3.TaskAdaptor{}
 		}
 	}
 	return nil

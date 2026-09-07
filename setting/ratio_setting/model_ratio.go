@@ -297,7 +297,8 @@ var defaultModelPrice = map[string]float64{
 	"sora-2":                         0.3,
 	"sora-2-pro":                     0.5,
 	"gpt-4o-mini-tts":                0.3,
-	"wan3.0-video":                   0.0369863, // 480P 基准价 ¥0.27/秒（USD 计价，0.27/7.3），720P/1080P 经 size 倍率 2/4 自动折算
+	"wan3.0-video":                   0.0369863,  // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）
+	"wan3.0-video-prime":             0.05547945, // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
 	"veo-3.0-generate-001":           0.4,
 	"veo-3.0-fast-generate-001":      0.15,
 	"veo-3.1-generate-preview":       0.4,

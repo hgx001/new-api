@@ -27,6 +27,13 @@ func TestWan3EndpointUsesOpenAIVideoContract(t *testing.T) {
 	)
 }
 
+func TestYouzanWan3EndpointUsesOpenAIVideoContract(t *testing.T) {
+	require.Equal(t,
+		[]constant.EndpointType{constant.EndpointTypeOpenAIVideo},
+		common.GetEndpointTypesByChannelType(constant.ChannelTypeYouzanWan3, "wan3.0-video-prime"),
+	)
+}
+
 func TestVolcEngineEndpointUsesOpenAIVideoContract(t *testing.T) {
 	require.Equal(t,
 		[]constant.EndpointType{constant.EndpointTypeOpenAIVideo},

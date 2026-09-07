@@ -77,14 +77,16 @@ export const CHANNEL_TYPES = {
   57: 'ChatGPT Subscription (Codex)',
   58: 'Advanced Custom',
   59: 'Youkou',
+  60: 'Wan3',
   61: 'AutoDL',
   62: 'DashScope',
+  63: 'Youzan Wan3',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 33, 24, 43, 3, 41, 48, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15, 46,
   23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21, 44, 2, 5, 36,
-  50, 51, 52, 53, 54, 55, 56, 59, 61, 62,
+  50, 51, 52, 53, 54, 55, 56, 59, 60, 61, 62, 63,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -394,6 +396,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   59: 'Youkou API Key (Bearer token from https://youkou.cc)',
   61: 'AutoDL ComfyUI Token (Bearer token from https://autodl.art/large-model/tokens, 分组选 ComfyUI)',
   62: 'DashScope API Key (sk-... from https://bailian.console.aliyun.com)',
+  63: 'Youzan Wan3 API Key (Bearer token from https://youzan666.vip)',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {

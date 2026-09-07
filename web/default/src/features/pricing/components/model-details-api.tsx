@@ -354,7 +354,7 @@ function buildEmbeddingSample(lang: Lang, ctx: SampleContext): string {
 function buildVideoSample(lang: Lang, ctx: SampleContext): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`
   const isAutoDL = ctx.modelName.startsWith('autodl:')
-  const isWan3 = ctx.modelName === 'wan3.0-video'
+  const isWan3 = /^wan3\.0-video(?:-prime)?$/.test(ctx.modelName)
   const isAutoDLReference = ctx.modelName.startsWith(
     'autodl:multiref-video-'
   )

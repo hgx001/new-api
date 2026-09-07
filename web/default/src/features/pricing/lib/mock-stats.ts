@@ -900,7 +900,7 @@ export function buildSupportedParameters(
   if (cat === 'embedding') return EMBEDDING_PARAMS
   if (cat === 'image') return IMAGE_PARAMS
   if (cat === 'video') {
-    if (model.model_name === 'wan3.0-video') {
+    if (/^wan3\.0-video(?:-prime)?$/.test(model.model_name)) {
       return buildWan3VideoParameters()
     }
     if (model.model_name.startsWith('autodl:')) {

@@ -273,6 +273,7 @@ func getStaticChannelModelIDs(channelType int) ([]string, bool) {
 		constant.ChannelTypeSora,
 		constant.ChannelTypeYoukou,
 		constant.ChannelTypeWan3,
+		constant.ChannelTypeYouzanWan3,
 		constant.ChannelTypeAutoDL,
 		constant.ChannelTypeDashScope:
 		taskAdaptor := relay.GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelType)))

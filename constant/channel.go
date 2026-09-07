@@ -59,7 +59,8 @@ const (
 	ChannelTypeWan3           = 60
 	ChannelTypeAutoDL         = 61
 	ChannelTypeDashScope      = 62
-	ChannelTypeDummy          = 63 // this one is only for count, do not add any channel after this
+	ChannelTypeYouzanWan3     = 63
+	ChannelTypeDummy          = 64 // this one is only for count, do not add any channel after this
 
 )
 
@@ -127,6 +128,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //60 (Wan3 使用渠道 base_url，不在此兜底)
 	"https://autodl.art",                        //61
 	"https://dashscope.aliyuncs.com",            //62 (DashScope 百炼)
+	"https://youzan666.vip/v1",                  //63 (有赞 Wan3)
 }
 
 // GetChannelBaseURL returns the built-in base URL for a channel type.
@@ -199,6 +201,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeWan3:           "Wan3",
 	ChannelTypeAutoDL:         "AutoDL",
 	ChannelTypeDashScope:      "DashScope",
+	ChannelTypeYouzanWan3:     "Youzan Wan3",
 }
 
 func GetChannelTypeName(channelType int) string {

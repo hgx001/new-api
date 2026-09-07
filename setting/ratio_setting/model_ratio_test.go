@@ -36,4 +36,9 @@ func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
 	require.True(t, ok, "wan3.0-video must have an explicit per-second price")
 	require.InDelta(t, 0.27/USD2RMB, price, 1e-7, "480P base must equal ¥0.27/sec in USD")
 	require.InDelta(t, 0.0369863, price, 1e-7, "480P base must be ¥0.27/sec in USD")
+
+	primePrice, ok := GetModelPrice("wan3.0-video-prime", false)
+	require.True(t, ok, "wan3.0-video-prime must have an explicit per-second price")
+	require.InDelta(t, 0.405/USD2RMB, primePrice, 1e-8, "Prime 480P base must be ¥0.405/sec")
+	require.InDelta(t, 1.5*price, primePrice, 1e-8, "Prime price must be 1.5x standard")
 }

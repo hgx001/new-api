@@ -122,6 +122,12 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - In React components, use `useTranslation()` and call `t('English key')` for user-facing text.
 - Follow `web/default/AGENTS.md` for detailed frontend conventions, including TypeScript, component structure, styling, accessibility, testing, and build checks.
 
+### ArcReel / sub2api 联调约束
+
+- 本机 `C:\\work\\new-api-src` 与 `C:\\work\\sub2api`、`C:\\work\\即梦网站\\ArcReel` 都是生产链路源码，相关服务部署在同一台服务器上。
+- 遇到模型或媒体请求异常时，必须联合检查 ArcReel 请求、new-api 路由/适配器、sub2api 账号池/凭证及上游响应；不要仅依据 new-api 自动路由后的成功判断某个指定渠道成功。
+- 指定渠道验证应使用 new-api 强制渠道测试或该渠道真实上游直连，并用 request ID、模型、时间关联三侧日志。生产操作遵循备份、最小变更和凭证脱敏原则。
+
 ### Project Governance
 
 **Required attribution:** The footer must always include a line crediting the original project:
