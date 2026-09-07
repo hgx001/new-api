@@ -74,3 +74,18 @@ func TestParseTaskResultReadsYouzanResult(t *testing.T) {
 	require.Equal(t, "https://cdn.example/video.mp4", result.Url)
 	require.Equal(t, "100%", result.Progress)
 }
+
+func TestNormalizeAPIRootStripsVersionSuffix(t *testing.T) {
+	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip/v1"))
+	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip/v1/"))
+	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip"))
+	require.Equal(t, "https://example.com/openai", normalizeAPIRoot("https://example.com/openai"))
+}
+
+func TestParseTaskResultResolvesRelativeVideoURL(t *testing.T) {
+	adaptor := &TaskAdaptor{baseURL: normalizeAPIRoot("https://youzan666.vip/v1")}
+	result, err := adaptor.ParseTaskResult([]byte(`{"status":"success","result":{"url":"/outputs/videos/vid_1.mp4"}}`))
+	require.NoError(t, err)
+	require.Equal(t, "https://youzan666.vip/outputs/videos/vid_1.mp4", result.Url)
+	require.Equal(t, "100%", result.Progress)
+}

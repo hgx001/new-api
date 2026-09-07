@@ -70,14 +70,42 @@ type assetResponse struct {
 	} `json:"asset"`
 }
 
+var versionSuffixPattern = regexp.MustCompile(`(?i)/v\d+(beta)?$`)
+
+// normalizeAPIRoot mirrors the reference Youzan client's normalizeRoot:
+// the /api/* endpoints live at the host root, so a pasted base URL with a
+// version suffix (e.g. https://youzan666.vip/v1) must have it stripped.
+func normalizeAPIRoot(baseURL string) string {
+	root := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return versionSuffixPattern.ReplaceAllString(root, "")
+}
+
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	if info == nil {
 		return
 	}
 	a.ChannelType = info.ChannelType
-	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	a.baseURL = normalizeAPIRoot(info.ChannelBaseUrl)
 	a.apiKey = info.ApiKey
 	a.proxy = info.ChannelSetting.Proxy
+}
+
+// resolveResultURL mirrors `new URL(raw, root + '/')`: upstream returns a
+// host-relative path (e.g. /outputs/videos/xxx.mp4), which must be resolved
+// against the API root before it can be proxied or downloaded.
+func (a *TaskAdaptor) resolveResultURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if root := strings.TrimRight(a.baseURL, "/"); root != "" {
+		if base, err := url.Parse(root + "/"); err == nil {
+			if ref, err := url.Parse(raw); err == nil {
+				return base.ResolveReference(ref).String()
+			}
+		}
+	}
+	return raw
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -651,7 +679,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if err != nil {
 		return nil, err
 	}
-	request, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/task/"+url.PathEscape(taskID), nil)
+	request, err := http.NewRequest(http.MethodGet, normalizeAPIRoot(baseURL)+"/api/task/"+url.PathEscape(taskID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -674,13 +702,13 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress
 	case "succeeded", "success", "completed", "done":
-		if response.Result.URL == "" {
+		if resultURL := a.resolveResultURL(response.Result.URL); resultURL == "" {
 			result.Status = model.TaskStatusInProgress
 			result.Progress = taskcommon.ProgressInProgress
 		} else {
 			result.Status = model.TaskStatusSuccess
 			result.Progress = taskcommon.ProgressComplete
-			result.Url = response.Result.URL
+			result.Url = resultURL
 		}
 	case "failed", "failure", "canceled", "cancelled", "error":
 		result.Status = model.TaskStatusFailure
