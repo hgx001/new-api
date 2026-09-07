@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,6 +27,7 @@ func onePixelPNG(t *testing.T) string {
 
 func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 	assetIndex := 0
+	fileContentTypes := make(map[int]string)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/api/conversations":
@@ -33,6 +35,20 @@ func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"id":"conversation-1"}`))
 		case "/api/multimodal-assets":
 			assetIndex++
+			// Upstream rejects application/octet-stream parts (MEDIA_MIME_MISMATCH);
+			// the file part must declare its real MIME type.
+			if reader, err := request.MultipartReader(); err == nil {
+				for {
+					part, err := reader.NextPart()
+					if err != nil {
+						break
+					}
+					_, _ = io.Copy(io.Discard, part)
+					if part.FileName() != "" {
+						fileContentTypes[assetIndex] = part.Header.Get("Content-Type")
+					}
+				}
+			}
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write([]byte(`{"asset":{"id":"asset-` + string(rune('0'+assetIndex)) + `","displayAlias":"asset` + string(rune('0'+assetIndex)) + `"}}`))
 		default:
@@ -60,6 +76,13 @@ func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 	require.Contains(t, payload["prompt"], "@asset1")
 	require.Contains(t, payload["prompt"], "@asset2")
 	require.Len(t, payload["mentions"], 2)
+	// Upstream rejects application/octet-stream file parts (MEDIA_MIME_MISMATCH).
+	require.Len(t, fileContentTypes, 2)
+	for _, contentType := range fileContentTypes {
+		require.NotEqual(t, "application/octet-stream", contentType)
+	}
+	require.Contains(t, fileContentTypes[1], "image/")
+	require.Equal(t, "audio/mpeg", fileContentTypes[2])
 }
 
 func TestGetModelListExposesOnlyRequestedWan3Models(t *testing.T) {

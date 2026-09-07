@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"path"
 	"regexp"
@@ -436,7 +437,17 @@ func (a *TaskAdaptor) uploadAsset(conversationID, kind, source string) (string, 
 	if err := writer.WriteField("kind", kind); err != nil {
 		return "", "", err
 	}
-	part, err := writer.CreateFormFile("file", fileName(kind, sourceName, mimeType))
+	// Upstream validates the file part's declared MIME against the actual
+	// content (MEDIA_MIME_MISMATCH otherwise); CreateFormFile would send
+	// application/octet-stream, so build the part header explicitly.
+	contentType := strings.TrimSpace(mimeType)
+	if contentType == "" {
+		contentType = http.DetectContentType(data)
+	}
+	partHeader := make(textproto.MIMEHeader)
+	partHeader.Set("Content-Disposition", `form-data; name="file"; filename=`+strconv.Quote(fileName(kind, sourceName, mimeType)))
+	partHeader.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(partHeader)
 	if err != nil {
 		return "", "", err
 	}
@@ -467,7 +478,11 @@ func (a *TaskAdaptor) uploadAsset(conversationID, kind, source string) (string, 
 	}
 	var parsed assetResponse
 	if err := common.Unmarshal(dataResponse, &parsed); err != nil || response.StatusCode < 200 || response.StatusCode >= 300 || parsed.Asset.ID == "" {
-		return "", "", errors.Errorf("youzan wan3 asset upload failed: HTTP %d", response.StatusCode)
+		detail := strings.TrimSpace(string(dataResponse))
+		if len(detail) > 300 {
+			detail = detail[:300]
+		}
+		return "", "", errors.Errorf("youzan wan3 asset upload failed: HTTP %d: %s", response.StatusCode, detail)
 	}
 	alias := parsed.Asset.DisplayAlias
 	if alias == "" {
