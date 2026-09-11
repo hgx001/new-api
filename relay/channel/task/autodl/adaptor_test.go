@@ -455,6 +455,30 @@ func TestEstimateBillingChargesAutoDLResolutionRatio(t *testing.T) {
 		Duration:   5,
 		Resolution: "480p竖",
 	}), info))
+
+	require.Equal(t, map[string]float64{
+		"seconds": 5,
+		"size":    2.0,
+	}, adaptor.EstimateBilling(autoDLTaskContext(relaycommon.TaskSubmitReq{
+		Duration:   5,
+		Resolution: "1080p竖",
+	}), info))
+}
+
+func TestAutoDLResolutionPriceTiers(t *testing.T) {
+	want := map[string]float64{
+		"480p竖":  0.10,
+		"768p竖":  0.12, // AutoDL 的 720p 档使用 768p 标识
+		"1080p竖": 0.20,
+	}
+
+	for _, ratios := range []map[string]float64{h3ResolutionRatios, h3V2ResolutionRatios} {
+		for resolution, wantCNY := range want {
+			ratio, ok := ratios[resolution]
+			require.True(t, ok, "resolution tier must be configured: %s", resolution)
+			require.InDelta(t, wantCNY, pricePerSecondCNY*ratio, 1e-12, "resolution price: %s", resolution)
+		}
+	}
 }
 
 func TestBuildRequestBodyUsesAutoDLWorkflowSpecificLimits(t *testing.T) {

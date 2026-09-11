@@ -61,28 +61,29 @@ type workflowConfig struct {
 //
 // 多参考图/多音频工作流的媒体入参均为带下标的独立字段，由适配器把客户端
 // 的 images/audios 数组按下标展开注入，见 adaptor.go BuildRequestBody。
-// h3ResolutionRatios 是 H3 系工作流的分辨率计费倍率（2026-09-03 起按官网调价）：
-// 480p/736p 保持基准 ¥0.10/秒，768p（720p 档）调至 ¥0.12/秒（ratio 1.2），
+// h3ResolutionRatios 是 H3 系工作流的分辨率计费倍率：
+// 480p/736p 为基准 ¥0.10/秒，768p（720p 档）为 ¥0.12/秒（ratio 1.2），
+// 1080p 为 ¥0.20/秒（ratio 2.0）。
 // 计费公式：ModelPrice × seconds × size。
 var h3ResolutionRatios = map[string]float64{
 	"480p竖":      1.0,
 	"768p竖":      1.2,
-	"1080p竖":     4.5,
+	"1080p竖":     2.0,
 	"480p横":      1.0,
 	"768p横":      1.2,
-	"1080p横":     4.5,
+	"1080p横":     2.0,
 	"480p(1:1)":  1.0,
 	"768p(1:1)":  1.2,
-	"1080p(1:1)": 4.5,
+	"1080p(1:1)": 2.0,
 }
 
 var h3V2ResolutionRatios = map[string]float64{
 	"480p竖":  1.0,
 	"768p竖":  1.2,
-	"1080p竖": 5.0,
+	"1080p竖": 2.0,
 	"480p横":  1.0,
 	"768p横":  1.2,
-	"1080p横": 5.0,
+	"1080p横": 2.0,
 }
 
 var workflowByModel = map[string]workflowConfig{
@@ -240,10 +241,8 @@ const (
 	// baseURLDefault AutoDL ComfyUI API 固定域名；渠道 base_url 为空时兜底。
 	baseURLDefault = "https://autodl.art"
 
-	// 计费：¥0.1/秒。new-api 内部 ModelPrice 以 USD 计，换算 0.1/7.3；
-	// 实际值写在渠道的 ModelPrice 字段，这里仅作常量说明，不硬编码进逻辑。
-	// 上游参考价（2026-09-01 限时活动）：480p/768p 白天 ¥0.02/秒、夜间 ¥0.01/秒；
-	// v5 工作流 1080p 白天 ¥0.09/秒、夜间 ¥0.05/秒。对外基准价仍由渠道 ModelPrice 配置。
+	// 对外计价：480p ¥0.10/秒，768p（720p 档）¥0.12/秒，1080p ¥0.20/秒。
+	// 基础价由 ratio_setting.defaultModelPrice 提供，分辨率倍率由上面的工作流配置提供。
 	pricePerSecondCNY = 0.1
 
 	minDuration     = 1

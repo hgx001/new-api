@@ -42,3 +42,26 @@ func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
 	require.InDelta(t, 0.405/USD2RMB, primePrice, 1e-8, "Prime 480P base must be ¥0.405/sec")
 	require.InDelta(t, 1.5*price, primePrice, 1e-8, "Prime price must be 1.5x standard")
 }
+
+func TestDefaultModelPriceAutoDLPerSecond(t *testing.T) {
+	InitRatioSettings()
+
+	want := 0.1 / USD2RMB
+	models := []string{
+		"autodl:minimax-h3-text-to-video",
+		"autodl:minimax-h3-lightx2v-v5",
+		"autodl:minimax-h3-lightx2v-v5-15s",
+		"autodl:minimax-h3-b99-12s",
+		"autodl:minimax-h3-u24",
+		"autodl:minimax-h3-u08",
+		"autodl:minimax-h3-image-audio-10s",
+		"autodl:minimax-h3-image-audio-15s",
+		"autodl:minimax-h3-lipsync",
+	}
+
+	for _, model := range models {
+		price, ok := GetModelPrice(model, false)
+		require.True(t, ok, "AutoDL model must have an explicit per-second price: %s", model)
+		require.InDelta(t, want, price, 1e-12, "AutoDL base price must be ¥0.10/sec: %s", model)
+	}
+}

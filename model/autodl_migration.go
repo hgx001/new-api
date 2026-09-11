@@ -10,10 +10,13 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"gorm.io/gorm"
 )
 
@@ -72,5 +75,53 @@ func migrateAutoDLModelNames() error {
 			return fmt.Errorf("migrate AutoDL channel %d model names: %w", channel.Id, err)
 		}
 	}
-	return nil
+	return migrateAutoDLModelPriceOption()
+}
+
+func migrateAutoDLModelPriceOption() error {
+	var option Option
+	result := DB.Where("key = ?", "ModelPrice").First(&option)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if result.Error != nil {
+		return result.Error
+	}
+
+	prices := make(map[string]float64)
+	if err := common.UnmarshalJsonStr(option.Value, &prices); err != nil {
+		return fmt.Errorf("decode ModelPrice option: %w", err)
+	}
+
+	changed := false
+	for modelName, price := range prices {
+		migrated, modelChanged := constant.MigrateAutoDLModelNames([]string{modelName})
+		if !modelChanged || len(migrated) != 1 || migrated[0] == modelName {
+			continue
+		}
+		if _, exists := prices[migrated[0]]; !exists {
+			prices[migrated[0]] = price
+		}
+		delete(prices, modelName)
+		changed = true
+	}
+	for modelName, defaultPrice := range ratio_setting.GetDefaultModelPriceMap() {
+		if !strings.HasPrefix(modelName, "autodl:") {
+			continue
+		}
+		if _, exists := prices[modelName]; exists {
+			continue
+		}
+		prices[modelName] = defaultPrice
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+
+	value, err := common.Marshal(prices)
+	if err != nil {
+		return fmt.Errorf("encode ModelPrice option: %w", err)
+	}
+	return DB.Model(&Option{}).Where("key = ?", "ModelPrice").Update("value", string(value)).Error
 }

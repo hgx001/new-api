@@ -127,3 +127,29 @@ func TestMigrateAutoDLLiveChannelAliases(t *testing.T) {
 		"autodl:minimax-h3-b99-12s",
 	}, abilityModelNames)
 }
+
+func TestMigrateAutoDLModelPriceOptionAliases(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	t.Cleanup(func() {
+		DB.Where("key = ?", "ModelPrice").Delete(&Option{})
+	})
+
+	require.NoError(t, DB.Save(&Option{
+		Key:   "ModelPrice",
+		Value: `{"autodl:h3-video":0.01369863,"autodl:multiref-video-1":0.02,"existing-model":0.5}`,
+	}).Error)
+
+	require.NoError(t, migrateAutoDLModelNames())
+
+	var stored Option
+	require.NoError(t, DB.First(&stored, "key = ?", "ModelPrice").Error)
+	prices := make(map[string]float64)
+	require.NoError(t, common.UnmarshalJsonStr(stored.Value, &prices))
+	assert.Equal(t, 0.01369863, prices["autodl:minimax-h3-text-to-video"])
+	assert.Equal(t, 0.02, prices["autodl:minimax-h3-lightx2v-v5"])
+	assert.Equal(t, 0.5, prices["existing-model"])
+	assert.InDelta(t, 0.1/7.3, prices["autodl:minimax-h3-lipsync"], 1e-12)
+	assert.NotContains(t, prices, "autodl:h3-video")
+	assert.NotContains(t, prices, "autodl:multiref-video-1")
+}

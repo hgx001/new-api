@@ -13,6 +13,8 @@ const (
 	USD2RMB = 7.3 // 暂定 1 USD = 7.3 RMB
 	USD     = 500 // $0.002 = 1 -> $1 = 500
 	RMB     = USD / USD2RMB
+	// AutoDL video base price: ¥0.10 per second, stored as USD for billing.
+	autoDLVideoBasePrice = 0.1 / USD2RMB
 )
 
 // modelRatio
@@ -270,39 +272,48 @@ var defaultModelRatio = map[string]float64{
 }
 
 var defaultModelPrice = map[string]float64{
-	"suno_music":                     0.1,
-	"suno_lyrics":                    0.01,
-	"dall-e-3":                       0.04,
-	"imagen-3.0-generate-002":        0.03,
-	"black-forest-labs/flux-1.1-pro": 0.04,
-	"gpt-4-gizmo-*":                  0.1,
-	"mj_video":                       0.8,
-	"mj_imagine":                     0.1,
-	"mj_edits":                       0.1,
-	"mj_variation":                   0.1,
-	"mj_reroll":                      0.1,
-	"mj_blend":                       0.1,
-	"mj_modal":                       0.1,
-	"mj_zoom":                        0.1,
-	"mj_shorten":                     0.1,
-	"mj_high_variation":              0.1,
-	"mj_low_variation":               0.1,
-	"mj_pan":                         0.1,
-	"mj_inpaint":                     0,
-	"mj_custom_zoom":                 0,
-	"mj_describe":                    0.05,
-	"mj_upscale":                     0.05,
-	"swap_face":                      0.05,
-	"mj_upload":                      0.05,
-	"sora-2":                         0.3,
-	"sora-2-pro":                     0.5,
-	"gpt-4o-mini-tts":                0.3,
-	"wan3.0-video":                   0.0369863,  // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）
-	"wan3.0-video-prime":             0.05547945, // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
-	"veo-3.0-generate-001":           0.4,
-	"veo-3.0-fast-generate-001":      0.15,
-	"veo-3.1-generate-preview":       0.4,
-	"veo-3.1-fast-generate-preview":  0.15,
+	"suno_music":                        0.1,
+	"suno_lyrics":                       0.01,
+	"dall-e-3":                          0.04,
+	"imagen-3.0-generate-002":           0.03,
+	"black-forest-labs/flux-1.1-pro":    0.04,
+	"gpt-4-gizmo-*":                     0.1,
+	"mj_video":                          0.8,
+	"mj_imagine":                        0.1,
+	"mj_edits":                          0.1,
+	"mj_variation":                      0.1,
+	"mj_reroll":                         0.1,
+	"mj_blend":                          0.1,
+	"mj_modal":                          0.1,
+	"mj_zoom":                           0.1,
+	"mj_shorten":                        0.1,
+	"mj_high_variation":                 0.1,
+	"mj_low_variation":                  0.1,
+	"mj_pan":                            0.1,
+	"mj_inpaint":                        0,
+	"mj_custom_zoom":                    0,
+	"mj_describe":                       0.05,
+	"mj_upscale":                        0.05,
+	"swap_face":                         0.05,
+	"mj_upload":                         0.05,
+	"sora-2":                            0.3,
+	"sora-2-pro":                        0.5,
+	"gpt-4o-mini-tts":                   0.3,
+	"wan3.0-video":                      0.0369863,  // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）
+	"wan3.0-video-prime":                0.05547945, // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
+	"autodl:minimax-h3-text-to-video":   autoDLVideoBasePrice,
+	"autodl:minimax-h3-lightx2v-v5":     autoDLVideoBasePrice,
+	"autodl:minimax-h3-lightx2v-v5-15s": autoDLVideoBasePrice,
+	"autodl:minimax-h3-b99-12s":         autoDLVideoBasePrice,
+	"autodl:minimax-h3-u24":             autoDLVideoBasePrice,
+	"autodl:minimax-h3-u08":             autoDLVideoBasePrice,
+	"autodl:minimax-h3-image-audio-10s": autoDLVideoBasePrice,
+	"autodl:minimax-h3-image-audio-15s": autoDLVideoBasePrice,
+	"autodl:minimax-h3-lipsync":         autoDLVideoBasePrice,
+	"veo-3.0-generate-001":              0.4,
+	"veo-3.0-fast-generate-001":         0.15,
+	"veo-3.1-generate-preview":          0.4,
+	"veo-3.1-fast-generate-preview":     0.15,
 }
 
 var defaultAudioRatio = map[string]float64{
