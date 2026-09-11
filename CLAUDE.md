@@ -35,14 +35,11 @@ deploy/deploy-frontend.sh --no-push --ref <commit-sha>
 
 脚本会在服务器 `/home/ubuntu/new-api-src` 拉取精确提交，在服务器执行 `bun install --frozen-lockfile` 和 `bun run build`，将产物发布到带时间戳的 release 目录，原子切换 `/opt/new-api/frontend/default/dist`，执行 `nginx -t`、reload 和 HTTPS 健康检查。服务器源码目录、分支、远程和域名可通过 `DEPLOY_*` 环境变量覆盖；具体实现见 `deploy/deploy-frontend.sh`。
 
-### Go 后端更新 (Docker)
+### Go 后端更新 (远程构建 Docker)
 
-```bash
-docker build -f Dockerfile.deploy -t new-api-custom:latest .
-docker save -o new-api-custom.tar new-api-custom:latest
-scp -P 877 new-api-custom.tar ubuntu@119.29.253.97:/tmp/
-ssh -p 877 ubuntu@119.29.253.97 "docker load -i /tmp/new-api-custom.tar && docker restart new-api"
-```
+后端发布默认通过 SSH 在生产服务器上构建 Docker 镜像，再重建 `new-api` 容器；本地不需要启动 Docker Desktop，也不需要在本地执行 `docker build` 或 `docker save`。发布脚本必须将源码精确固定到待发布 commit，完成远程构建、容器重建、健康检查和业务接口验证。
+
+`deploy/deploy-frontend.sh` 仅用于前端静态文件发布，不能代替后端发布流程。后端变更不得按“只发布前端”处理。
 
 ### 模型广场展示名覆盖
 

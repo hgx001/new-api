@@ -122,6 +122,13 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - In React components, use `useTranslation()` and call `t('English key')` for user-facing text.
 - Follow `web/default/AGENTS.md` for detailed frontend conventions, including TypeScript, component structure, styling, accessibility, testing, and build checks.
 
+### Deployment Rules
+
+- Production Go backend releases MUST use the remote-build flow: SSH to the production server, check out the exact committed SHA there, build `Dockerfile.deploy` on the server, then recreate the backend container and run the health checks.
+- A local Docker daemon MUST NOT be a prerequisite for backend deployment. Do not ask the user to start Docker Desktop or build the production image locally when the production server can build it remotely.
+- The frontend and backend have separate deployment paths. `deploy/deploy-frontend.sh` is for the frontend static release only; backend changes must use the backend remote-build deployment flow and must not be treated as frontend-only changes.
+- Before deployment, keep the source checkout pinned to the exact commit being released, preserve unrelated local files, use the smallest necessary production change, and verify the container status, application health endpoint, and relevant business API after release.
+
 ### ArcReel / sub2api 联调约束
 
 - 本机 `C:\\work\\new-api-src` 与 `C:\\work\\sub2api`、`C:\\work\\即梦网站\\ArcReel` 都是生产链路源码，相关服务部署在同一台服务器上。

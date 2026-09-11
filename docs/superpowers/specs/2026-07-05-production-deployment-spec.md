@@ -25,7 +25,7 @@
 | 组件 | 部署位置 | 部署方式 | 更新方式 |
 |---|---|---|---|
 | 前端静态文件 (HTML/JS/CSS) | `/opt/new-api/frontend/{theme}/dist` | 仓库拉取后服务器构建 | `git push → deploy/deploy-frontend.sh → nginx reload` |
-| Go 后端 (API) | Docker 容器 `new-api:3000` | Docker image | `docker build → docker load → 重启` |
+| Go 后端 (API) | Docker 容器 `new-api:3000` | 生产服务器远程构建 Docker image | `SSH → 精确 checkout → docker build → 重建容器 → 健康检查` |
 | NGINX 反向代理 | host 原生包 | apt 安装 | `nginx -s reload` |
 
 ## 2. 目录结构
@@ -71,21 +71,17 @@ deploy/deploy-frontend.sh --no-push --ref <commit-sha>
 
 适用于:修改 API、middleware、relay 适配器、模型处理逻辑等
 
+后端发布默认通过部署脚本 SSH 到生产服务器执行，不要求本地启动 Docker Desktop。脚本需要在服务器源码目录固定到待发布的精确 commit，然后在服务器执行以下等价步骤：
+
 ```bash
-# Build Docker image
+cd /home/ubuntu/new-api-src
+git checkout --detach <commit-sha>
 docker build -f Dockerfile.deploy -t new-api-custom:latest .
-docker save -o new-api-custom.tar new-api-custom:latest
-
-# 传输到生产
-scp -P 877 new-api-custom.tar ubuntu@119.29.253.97:/tmp/
-
-# 生产加载并重启
-ssh -p 877 ubuntu@119.29.253.97 "
-  docker load -i /tmp/new-api-custom.tar \
-  && docker restart new-api"
+docker compose -f /home/ubuntu/new-api/docker-compose.yml \
+  up -d --force-recreate new-api
 ```
 
-**耗时**: ~2-3 min (build) + ~10s (传输 74MB) + ~5s (load + restart) ≈ 3 min
+完成后必须检查 `new-api` 容器为 healthy，并请求 HTTPS 健康检查地址及本次变更涉及的业务接口。只有在生产服务器无法构建时，才允许将本地构建 Docker 作为明确的应急回退方案。
 
 ### 3.3 前后端同时更新
 
