@@ -21,6 +21,7 @@ import React from 'react';
 import { Avatar, Typography, Tag, Space } from '@douyinfe/semi-ui';
 import { IconInfoCircle } from '@douyinfe/semi-icons';
 import { stringToColor } from '../../../../../helpers';
+import { getAutoDLDescription } from '../../model-capabilities';
 
 const { Text } = Typography;
 
@@ -32,6 +33,11 @@ const ModelBasicInfo = ({ modelData, vendorsMap = {}, t }) => {
     // 优先使用后端提供的描述
     if (modelData.description) {
       return modelData.description;
+    }
+
+    const autoDLDescription = getAutoDLDescription(modelData.model_name, t);
+    if (autoDLDescription) {
+      return autoDLDescription;
     }
 
     // 如果没有描述但有供应商描述，显示供应商信息

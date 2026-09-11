@@ -19,7 +19,7 @@ func TestParseMultipartFormDataHandlesFileFields(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	require.NoError(t, writer.WriteField("model", "autodl:multiref-video-2"))
+	require.NoError(t, writer.WriteField("model", "autodl:minimax-h3-lightx2v-v5-15s"))
 	require.NoError(t, writer.WriteField("prompt", "animate"))
 
 	part1, err := writer.CreateFormFile("input_reference", "ref1.png")
@@ -42,7 +42,7 @@ func TestParseMultipartFormDataHandlesFileFields(t *testing.T) {
 	err = commonpkg.UnmarshalBodyReusable(context, &req)
 	require.NoError(t, err)
 
-	require.Equal(t, "autodl:multiref-video-2", req.Model)
+	require.Equal(t, "autodl:minimax-h3-lightx2v-v5-15s", req.Model)
 	require.Equal(t, "animate", req.Prompt)
 	require.Len(t, req.Images, 2)
 	require.True(t, req.HasImage())
@@ -124,7 +124,7 @@ func TestParseMultipartFormDataMergesTextAndFileFields(t *testing.T) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	require.NoError(t, writer.WriteField("model", "autodl:multiref-video-2"))
+	require.NoError(t, writer.WriteField("model", "autodl:minimax-h3-lightx2v-v5-15s"))
 	require.NoError(t, writer.WriteField("prompt", "animate"))
 	require.NoError(t, writer.WriteField("images", "https://example.com/url-ref.png"))
 
@@ -149,13 +149,13 @@ func TestParseMultipartFormDataMergesTextAndFileFields(t *testing.T) {
 }
 
 func TestTaskSubmitReqUnmarshalJSONHandlesArrayInputReference(t *testing.T) {
-	jsonData := `{"model":"autodl:multiref-video-2","prompt":"animate","input_reference":["data:image/png;base64,AAA","data:image/png;base64,BBB"]}`
+	jsonData := `{"model":"autodl:minimax-h3-lightx2v-v5-15s","prompt":"animate","input_reference":["data:image/png;base64,AAA","data:image/png;base64,BBB"]}`
 
 	var req TaskSubmitReq
 	err := commonpkg.Unmarshal([]byte(jsonData), &req)
 	require.NoError(t, err)
 
-	require.Equal(t, "autodl:multiref-video-2", req.Model)
+	require.Equal(t, "autodl:minimax-h3-lightx2v-v5-15s", req.Model)
 	require.Empty(t, req.InputReference)
 	require.Len(t, req.Images, 2)
 	require.Equal(t, "data:image/png;base64,AAA", req.Images[0])
@@ -170,4 +170,67 @@ func TestTaskSubmitReqUnmarshalJSONHandlesStringInputReference(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, "https://example.com/ref.png", req.InputReference)
+}
+
+func TestTaskSubmitReqUnmarshalJSONHandlesAudioInputs(t *testing.T) {
+	jsonData := `{"model":"autodl:minimax-h3-u24","prompt":"animate","images":["https://example.com/ref.png"],"audios":["https://example.com/voice.mp3","https://example.com/music.wav"],"audio_duration":"12","seed":0}`
+
+	var req TaskSubmitReq
+	err := commonpkg.Unmarshal([]byte(jsonData), &req)
+	require.NoError(t, err)
+
+	require.Equal(t, []string{"https://example.com/voice.mp3", "https://example.com/music.wav"}, req.Audios)
+	require.NotNil(t, req.AudioDuration)
+	require.Equal(t, 12, *req.AudioDuration)
+	require.True(t, req.HasAudio())
+	require.NotNil(t, req.Seed)
+	require.Equal(t, int64(0), *req.Seed)
+}
+
+func TestTaskSubmitReqUnmarshalJSONHandlesAutoDLNativeAudioFields(t *testing.T) {
+	jsonData := `{"model":"autodl:minimax-h3-u08","prompt":"animate","ref_audio_0":"https://example.com/voice.mp3","ref_audio_1":"https://example.com/music.wav"}`
+
+	var req TaskSubmitReq
+	err := commonpkg.Unmarshal([]byte(jsonData), &req)
+	require.NoError(t, err)
+	require.Equal(t, []string{"https://example.com/voice.mp3", "https://example.com/music.wav"}, req.Audios)
+	require.True(t, req.HasAudio())
+}
+
+func TestParseMultipartFormDataHandlesAutoDLAudioFiles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	require.NoError(t, writer.WriteField("model", "autodl:minimax-h3-lipsync"))
+	require.NoError(t, writer.WriteField("audio_duration", "7"))
+
+	imagePart, err := writer.CreateFormFile("images", "portrait.png")
+	require.NoError(t, err)
+	_, err = imagePart.Write([]byte("fake-image"))
+	require.NoError(t, err)
+
+	audioPart, err := writer.CreateFormFile("audios", "speech.mp3")
+	require.NoError(t, err)
+	_, err = audioPart.Write([]byte("fake-audio"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	request := httptest.NewRequest("POST", "/v1/videos", body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = request
+
+	var req TaskSubmitReq
+	err = commonpkg.UnmarshalBodyReusable(context, &req)
+	require.NoError(t, err)
+
+	require.Len(t, req.Images, 1)
+	require.Len(t, req.Audios, 1)
+	require.NotNil(t, req.AudioDuration)
+	require.Equal(t, 7, *req.AudioDuration)
+	require.True(t, req.HasImage())
+	require.True(t, req.HasAudio())
+	require.Equal(t, "data:audio/mpeg;base64,ZmFrZS1hdWRpbw==", req.Audios[0])
 }

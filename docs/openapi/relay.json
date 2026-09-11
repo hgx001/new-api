@@ -547,7 +547,7 @@
       "post": {
         "summary": "创建视频 ",
         "deprecated": false,
-        "description": "OpenAI 兼容的视频生成接口。支持 `input_reference` 单图，以及 AutoDL 多参考图模型使用的 `images` 数组（1-9 张）。AutoDL 文生视频模型不支持参考图。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
+        "description": "OpenAI 兼容的视频生成接口。支持 `input_reference` 单图，以及 AutoDL 模型使用的 `images`、`audio`、`audios` 输入。AutoDL 图片+音频模型名称为 `autodl:minimax-h3-u24`、`autodl:minimax-h3-u08`、`autodl:minimax-h3-image-audio-10s`、`autodl:minimax-h3-image-audio-15s`；自动对口型模型为 `autodl:minimax-h3-lipsync`。具体必填字段和范围以模型详情为准。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
         "operationId": "createVideo",
         "tags": [
           "视频生成/Sora兼容格式"
@@ -581,7 +581,6 @@
                   },
                   "seed": {
                     "description": "AutoDL 多图模型随机种子",
-                    "minimum": 1,
                     "maximum": 999999999999999,
                     "example": 212238359716024,
                     "type": "integer",
@@ -595,15 +594,34 @@
                   },
                   "images": {
                     "type": "array",
-                    "description": "多张参考图片 URL；AutoDL 多参考图模型支持 1-9 张，重复提交该字段即可",
-                    "minItems": 1,
+                    "description": "多张参考图片 URL 或 Base64；是否必填及数量限制以模型能力为准，AutoDL 多参考图模型最多支持 9 张",
                     "maxItems": 9,
                     "items": {
-                      "type": "string",
-                      "format": "uri"
+                      "type": "string"
                     },
                     "style": "form",
                     "explode": true
+                  },
+                  "audio": {
+                    "type": "string",
+                    "description": "单条音频输入（URL 或 Base64）",
+                    "example": "https://example.com/audio.mp3"
+                  },
+                  "audios": {
+                    "type": "array",
+                    "description": "多条参考音频 URL 或 Base64；是否必填及数量限制以模型能力为准，AutoDL 多音频模型最多支持 3 条",
+                    "maxItems": 3,
+                    "items": {
+                      "type": "string"
+                    },
+                    "style": "form",
+                    "explode": true
+                  },
+                  "audio_duration": {
+                    "type": "integer",
+                    "format": "int32",
+                    "description": "AutoDL 单图音频同步模型的音频时长（秒）",
+                    "example": 5
                   }
                 }
               },
@@ -4211,12 +4229,25 @@
           },
           "images": {
             "type": "array",
-            "description": "多张参考图片 URL；AutoDL 多参考图模型支持 1-9 张。autodl:h3-video 为文生视频，不支持参考图",
-            "minItems": 1,
+            "description": "多张参考图片 URL 或 Base64；AutoDL 多图模型最多支持 9 张，单图音频同步模型要求 1 张。autodl:minimax-h3-text-to-video 为文生视频，不支持参考图",
+            "minItems": 0,
             "maxItems": 9,
             "items": {
-              "type": "string",
-              "format": "uri"
+              "type": "string"
+            }
+          },
+          "audio": {
+            "type": "string",
+            "description": "单条音频输入（URL 或 Base64）",
+            "example": "https://example.com/audio.mp3"
+          },
+          "audios": {
+            "type": "array",
+            "description": "多条参考音频 URL；AutoDL 多音频模型最多支持 3 条，音频同步模型要求 1 条",
+            "minItems": 0,
+            "maxItems": 3,
+            "items": {
+              "type": "string"
             }
           },
           "resolution": {
@@ -4227,6 +4258,12 @@
           "duration": {
             "type": "number",
             "description": "视频时长（秒）",
+            "example": 5
+          },
+          "audio_duration": {
+            "type": "integer",
+            "format": "int32",
+            "description": "AutoDL 单图音频同步工作流的音频时长（秒）",
             "example": 5
           },
           "width": {

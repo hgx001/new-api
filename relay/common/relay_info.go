@@ -694,10 +694,13 @@ type TaskSubmitReq struct {
 	Mode           string                 `json:"mode,omitempty"`
 	Image          string                 `json:"image,omitempty"`
 	Images         []string               `json:"images,omitempty"`
+	Audio          string                 `json:"audio,omitempty"`
+	Audios         []string               `json:"audios,omitempty"`
 	Media          []TaskMedia            `json:"media,omitempty"`
 	Size           string                 `json:"size,omitempty"`
 	Resolution     string                 `json:"resolution,omitempty"`
 	Duration       int                    `json:"duration,omitempty"`
+	AudioDuration  *int                   `json:"audio_duration,omitempty"`
 	Seconds        string                 `json:"seconds,omitempty"`
 	Seed           *int64                 `json:"seed,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
@@ -712,6 +715,18 @@ func (t *TaskSubmitReq) HasImage() bool {
 	return len(t.Images) > 0 || len(t.Media) > 0
 }
 
+func (t *TaskSubmitReq) HasAudio() bool {
+	if strings.TrimSpace(t.Audio) != "" || len(t.Audios) > 0 {
+		return true
+	}
+	for _, media := range t.Media {
+		if strings.Contains(strings.ToLower(media.Type), "audio") && strings.TrimSpace(media.URL) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	type Alias TaskSubmitReq
 	aux := &struct {
@@ -720,6 +735,12 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		Seed           json.RawMessage `json:"seed,omitempty"`
 		InputReference json.RawMessage `json:"input_reference,omitempty"`
 		Images         json.RawMessage `json:"images,omitempty"`
+		Audio          json.RawMessage `json:"audio,omitempty"`
+		Audios         json.RawMessage `json:"audios,omitempty"`
+		AudioDuration  json.RawMessage `json:"audio_duration,omitempty"`
+		RefAudio0      json.RawMessage `json:"ref_audio_0,omitempty"`
+		RefAudio1      json.RawMessage `json:"ref_audio_1,omitempty"`
+		RefAudio2      json.RawMessage `json:"ref_audio_2,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -756,6 +777,51 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		}
 	}
 
+	parseStringValues := func(raw json.RawMessage) ([]string, error) {
+		var values []string
+		if err := common.Unmarshal(raw, &values); err == nil {
+			return values, nil
+		}
+		var value string
+		if err := common.Unmarshal(raw, &value); err != nil {
+			return nil, err
+		}
+		return []string{value}, nil
+	}
+
+	if len(aux.Audio) > 0 && string(aux.Audio) != "null" {
+		values, err := parseStringValues(aux.Audio)
+		if err != nil {
+			return fmt.Errorf("audio must be a string or array")
+		}
+		if len(values) > 0 {
+			if len(values) == 1 {
+				t.Audio = values[0]
+			} else {
+				t.Audios = append(t.Audios, values...)
+			}
+		}
+	}
+
+	if len(aux.Audios) > 0 && string(aux.Audios) != "null" {
+		values, err := parseStringValues(aux.Audios)
+		if err != nil {
+			return fmt.Errorf("audios must be a string or array")
+		}
+		t.Audios = append(t.Audios, values...)
+	}
+
+	for _, raw := range []json.RawMessage{aux.RefAudio0, aux.RefAudio1, aux.RefAudio2} {
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		values, err := parseStringValues(raw)
+		if err != nil {
+			return fmt.Errorf("reference audio must be a string")
+		}
+		t.Audios = append(t.Audios, values...)
+	}
+
 	if len(aux.Duration) > 0 {
 		var durationInt int
 		if err := common.Unmarshal(aux.Duration, &durationInt); err == nil {
@@ -768,6 +834,26 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 				}
 			}
 		}
+	}
+
+	if len(aux.AudioDuration) > 0 && string(aux.AudioDuration) != "null" {
+		var durationInt int
+		if err := common.Unmarshal(aux.AudioDuration, &durationInt); err != nil {
+			var durationStr string
+			if stringErr := common.Unmarshal(aux.AudioDuration, &durationStr); stringErr != nil {
+				return fmt.Errorf("audio_duration must be an integer")
+			}
+			durationStr = strings.TrimSpace(durationStr)
+			if durationStr == "" {
+				return fmt.Errorf("audio_duration must be an integer")
+			}
+			var parseErr error
+			durationInt, parseErr = strconv.Atoi(durationStr)
+			if parseErr != nil {
+				return fmt.Errorf("audio_duration must be an integer")
+			}
+		}
+		t.AudioDuration = &durationInt
 	}
 
 	if len(aux.Seed) > 0 && string(aux.Seed) != "null" {

@@ -33,6 +33,7 @@ import { parseTags } from '../lib/filters'
 import {
   getModelDescriptionKey,
   getModelDisplayName,
+  getModelHighlightKeys,
   isPerSecondModel,
   isTokenBasedModel,
 } from '../lib/model-helpers'
@@ -78,12 +79,12 @@ function ModelCardPrice(props: {
           {dynamicSummary.primaryEntries.map((entry) => (
             <span
               key={entry.key}
-              className='inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5'
+              className='bg-muted/60 inline-flex items-center gap-1 rounded-full px-2 py-0.5'
             >
               <span className='text-muted-foreground'>
                 {t(entry.shortLabel)}
               </span>
-              <span className='font-mono font-semibold text-foreground'>
+              <span className='text-foreground font-mono font-semibold'>
                 {entry.formatted}
               </span>
               <span className='text-muted-foreground/70'>
@@ -105,9 +106,9 @@ function ModelCardPrice(props: {
   if (props.isTokenBased) {
     return (
       <>
-        <span className='inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5'>
+        <span className='bg-muted/60 inline-flex items-center gap-1 rounded-full px-2 py-0.5'>
           <span className='text-muted-foreground'>{t('Input')}</span>
-          <span className='font-mono font-semibold text-foreground'>
+          <span className='text-foreground font-mono font-semibold'>
             {formatPrice(
               props.model,
               'input',
@@ -119,9 +120,9 @@ function ModelCardPrice(props: {
           </span>
           <span className='text-muted-foreground/70'>/{tokenUnitLabel}</span>
         </span>
-        <span className='inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5'>
+        <span className='bg-muted/60 inline-flex items-center gap-1 rounded-full px-2 py-0.5'>
           <span className='text-muted-foreground'>{t('Output')}</span>
-          <span className='font-mono font-semibold text-foreground'>
+          <span className='text-foreground font-mono font-semibold'>
             {formatPrice(
               props.model,
               'output',
@@ -134,9 +135,9 @@ function ModelCardPrice(props: {
           <span className='text-muted-foreground/70'>/{tokenUnitLabel}</span>
         </span>
         {props.model.cache_ratio != null && (
-          <span className='inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-0.5'>
+          <span className='bg-muted/40 inline-flex items-center gap-1 rounded-full px-2 py-0.5'>
             <span className='text-muted-foreground/70'>{t('Cached')}</span>
-            <span className='font-mono text-muted-foreground'>
+            <span className='text-muted-foreground font-mono'>
               {formatPrice(
                 props.model,
                 'cache',
@@ -182,6 +183,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const modelIcon = modelIconKey ? getLobeIcon(modelIconKey, 28) : null
   const displayName = getModelDisplayName(props.model)
   const descriptionKey = getModelDescriptionKey(props.model)
+  const modelHighlightKeys = getModelHighlightKeys(props.model)
   const initial = displayName.charAt(0).toUpperCase() || '?'
   const isDynamicPricing =
     props.model.billing_mode === 'tiered_expr' &&
@@ -217,20 +219,20 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
       )}
     >
       {/* 顶部渐变高亮条 */}
-      <div className='pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent opacity-70' />
+      <div className='via-primary/50 pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent to-transparent opacity-70' />
 
       {/* Header: icon + name + price + actions */}
       <div className='flex items-start justify-between gap-3'>
         <div className='flex min-w-0 items-start gap-3'>
-          <div className='relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 ring-1 ring-inset ring-primary/10 sm:size-12'>
+          <div className='from-primary/15 to-primary/5 ring-primary/10 relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br ring-1 ring-inset sm:size-12'>
             {modelIcon || (
-              <span className='text-base font-bold text-primary/80'>
+              <span className='text-primary/80 text-base font-bold'>
                 {initial}
               </span>
             )}
           </div>
           <div className='min-w-0'>
-            <h3 className='truncate font-mono text-[15px] leading-tight font-bold text-foreground'>
+            <h3 className='text-foreground truncate font-mono text-[15px] leading-tight font-bold'>
               {displayName}
             </h3>
             <div className='mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs'>
@@ -274,14 +276,27 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           t('No description available.')}
       </p>
 
+      {modelHighlightKeys.length > 0 && (
+        <div className='mt-3 flex flex-wrap gap-1.5 sm:mt-4'>
+          {modelHighlightKeys.map((key) => (
+            <span
+              key={key}
+              className='bg-primary/10 text-primary/80 ring-primary/10 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset'
+            >
+              {t(key)}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Footer: metadata pills */}
       <div className='mt-3 flex flex-wrap items-center gap-1.5 sm:mt-4'>
         {primaryGroup && (
-          <span className='inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary'>
+          <span className='bg-primary/10 text-primary inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium'>
             {primaryGroup} {t('Groups')}
           </span>
         )}
-        <span className='inline-flex items-center rounded-full bg-muted/60 px-2 py-0.5 text-xs font-medium text-muted-foreground'>
+        <span className='bg-muted/60 text-muted-foreground inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium'>
           {isTokenBased
             ? t('Token-based')
             : t(isPerSecondModel(props.model) ? 'Per Second' : 'Per Request')}
@@ -297,13 +312,13 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         {bottomTags.map((item) => (
           <span
             key={item}
-            className='inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground/70'
+            className='bg-muted/40 text-muted-foreground/70 inline-flex items-center rounded-full px-2 py-0.5 text-xs'
           >
             {item}
           </span>
         ))}
         {hiddenCount > 0 && (
-          <span className='inline-flex items-center rounded-full bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground/50'>
+          <span className='bg-muted/40 text-muted-foreground/50 inline-flex items-center rounded-full px-2 py-0.5 text-xs'>
             +{hiddenCount}
           </span>
         )}

@@ -521,6 +521,7 @@ func (channel *Channel) GetStatusCodeMapping() string {
 
 func (channel *Channel) Insert() error {
 	var err error
+	normalizeAutoDLChannelModels(channel)
 	err = DB.Create(channel).Error
 	if err != nil {
 		return err
@@ -568,6 +569,7 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
+	normalizeAutoDLChannelModels(channel)
 	var err error
 	err = DB.Model(channel).Updates(channel).Error
 	if err != nil {

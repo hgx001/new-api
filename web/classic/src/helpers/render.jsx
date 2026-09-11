@@ -743,7 +743,13 @@ const MODEL_DISPLAY_NAME_OVERRIDES = {
 
 export function getModelDisplayName(model) {
   if (!model || !model.model_name) return model?.model_name || '';
-  return MODEL_DISPLAY_NAME_OVERRIDES[model.model_name] || model.model_name;
+  if (MODEL_DISPLAY_NAME_OVERRIDES[model.model_name]) {
+    return MODEL_DISPLAY_NAME_OVERRIDES[model.model_name];
+  }
+  if (model.model_name.startsWith('autodl:')) {
+    return model.model_name.slice('autodl:'.length);
+  }
+  return model.model_name;
 }
 
 // 渲染带有模型图标的标签

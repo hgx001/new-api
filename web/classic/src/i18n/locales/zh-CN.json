@@ -3813,6 +3813,15 @@
     "默认折叠侧边栏": "默认折叠侧边栏",
     "默认测试模型": "默认测试模型",
     "默认用户消息": "你好",
-    "默认补全倍率": "默认补全倍率"
+    "默认补全倍率": "默认补全倍率",
+    "Text-to-video, no reference image needed. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Billed per second.": "文生视频，无需参考图。时长 1-15 秒；支持竖屏、横屏和 1:1 的 480p/768p。按秒计费。",
+    "Multi-reference video, 1-9 reference images required. Duration 1-10s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.": "多参考图生视频，需 1-9 张参考图。时长 1-10 秒；支持竖屏、横屏和 1:1 的 480p/768p。支持 seed。按秒计费。",
+    "Multi-reference video, 15s version, 1-9 reference images required. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.": "多参考图生视频，15 秒版，需 1-9 张参考图。时长 1-15 秒；支持竖屏、横屏和 1:1 的 480p/768p。支持 seed。按秒计费。",
+    "Multi-reference video, 12s version, 1-9 reference images required. Duration 1-12s; 736p only in vertical, horizontal and 1:1. Supports seed. Billed per second.": "多参考图生视频，12 秒版，需 1-9 张参考图。时长 1-12 秒；仅支持 736p，支持竖屏、横屏和 1:1。支持 seed。按秒计费。",
+    "Multi-reference video with audio, 10-second variant. Images and audio are optional; up to 9 images and 3 audio tracks; duration 1-10s; 480p/768p/1080p in vertical and horizontal.": "带音频的多图参考生视频，10 秒版。图片和音频均可选；最多 9 张图片和 3 条音频；时长 1-10 秒；支持竖屏和横屏的 480p/768p/1080p。",
+    "Multi-reference video with audio, 15-second variant. Images and audio are optional; up to 9 images and 3 audio tracks; duration 1-15s; 480p/768p in vertical and horizontal; no 1080p.": "带音频的多图参考生视频，15 秒版。图片和音频均可选；最多 9 张图片和 3 条音频；时长 1-15 秒；支持竖屏和横屏的 480p/768p，不支持 1080p。",
+    "Multi-reference video with audio, quality-priority variant. Requires 1-9 images and accepts up to 3 audio tracks; duration 1-15s; 480p/768p in vertical, horizontal and 1:1; seed accepts 0.": "带音频的多图参考生视频，画质优先版。需要 1-9 张图片，可选最多 3 条音频；时长 1-15 秒；支持竖屏、横屏和 1:1 的 480p/768p；seed 支持 0。",
+    "Multi-reference video with audio, speed-priority variant. Requires 1-9 images and accepts up to 3 audio tracks; duration 1-15s; 480p/768p in vertical, horizontal and 1:1; seed accepts 0.": "带音频的多图参考生视频，速度优先版。需要 1-9 张图片，可选最多 3 条音频；时长 1-15 秒；支持竖屏、横屏和 1:1 的 480p/768p；seed 支持 0。",
+    "Single-image audio-synchronized video with automatic lip sync. Requires exactly one image and one audio track; uses audio_duration for 1-15s; supports 480p/768p/1080p and has no prompt field.": "单图音频同步生视频，自动对口型。必须正好 1 张图片和 1 条音频；通过 audio_duration 设置 1-15 秒；支持 480p/768p/1080p，无 prompt 字段。"
   }
 }

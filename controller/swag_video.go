@@ -10,9 +10,10 @@ import (
 // @Description 支持多种视频生成服务：
 // @Description - 可灵AI (Kling): https://app.klingai.com/cn/dev/document-api/apiReference/commonInfo
 // @Description - 即梦 (Jimeng): https://www.volcengine.com/docs/85621/1538636
-// @Description 图片输入兼容 `image` 单图字段；AutoDL 多参考图模型使用 `images` 数组，支持 1-9 张参考图。
-// @Description AutoDL 模型的 `duration`、`resolution`、`seed` 可用范围随模型不同，具体能力以模型详情为准。
-// @Description AutoDL 文生视频模型不支持参考图和 `seed`，具体能力以模型为准。
+// @Description 图片输入兼容 `image` 单图字段；AutoDL 多参考图模型使用 `images` 数组，支持 1-9 张参考图（音频同步模型为 1 张）。
+// @Description 音频输入兼容 `audio` 单值和 `audios` 数组；AutoDL 多音频模型支持最多 3 条音频，单图音频同步模型要求 1 条音频。
+// @Description AutoDL 模型的 `duration`/`audio_duration`、`resolution`、`seed` 可用范围随模型不同，具体能力以模型详情为准。
+// @Description AutoDL 多图多音频模型包括 `minimax-h3-u24`（画质优先）、`minimax-h3-u08`（高速）、`minimax-h3-image-audio-10s`（10 秒）和 `minimax-h3-image-audio-15s`（15 秒）四种工作流；`minimax-h3-lipsync` 为单图自动对口型工作流。
 // @Tags Video
 // @Accept json
 // @Produce json

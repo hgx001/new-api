@@ -313,6 +313,9 @@ func migrateDB() error {
 			return err
 		}
 	}
+	if err := migrateAutoDLModelNames(); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -28,7 +28,7 @@ func TestGetStaticChannelModelIDsForTaskChannels(t *testing.T) {
 		{
 			name:        "AutoDL",
 			channelType: constant.ChannelTypeAutoDL,
-			expected:    []string{"autodl:h3-video", "autodl:multiref-video-1", "autodl:multiref-video-2", "autodl:multiref-video-3"},
+			expected:    []string{"autodl:minimax-h3-text-to-video", "autodl:minimax-h3-lightx2v-v5", "autodl:minimax-h3-lightx2v-v5-15s", "autodl:minimax-h3-b99-12s", "autodl:minimax-h3-u24", "autodl:minimax-h3-u08", "autodl:minimax-h3-image-audio-10s", "autodl:minimax-h3-image-audio-15s", "autodl:minimax-h3-lipsync"},
 		},
 		{
 			name:        "DashScope",
@@ -44,6 +44,27 @@ func TestGetStaticChannelModelIDsForTaskChannels(t *testing.T) {
 			require.Equal(t, tt.expected, models)
 		})
 	}
+}
+
+func TestAutoDLUsesDescriptiveCanonicalModelNames(t *testing.T) {
+	models, ok := getStaticChannelModelIDs(constant.ChannelTypeAutoDL)
+	require.True(t, ok)
+	require.Equal(t, []string{
+		"autodl:minimax-h3-text-to-video",
+		"autodl:minimax-h3-lightx2v-v5",
+		"autodl:minimax-h3-lightx2v-v5-15s",
+		"autodl:minimax-h3-b99-12s",
+		"autodl:minimax-h3-u24",
+		"autodl:minimax-h3-u08",
+		"autodl:minimax-h3-image-audio-10s",
+		"autodl:minimax-h3-image-audio-15s",
+		"autodl:minimax-h3-lipsync",
+	}, models)
+	require.NotContains(t, models, "autodl:multiaudio-video-1")
+	require.NotContains(t, models, "autodl:multiaudio-video-2")
+	require.NotContains(t, models, "autodl:multiaudio-video-3")
+	require.NotContains(t, models, "autodl:multiaudio-video-4")
+	require.NotContains(t, models, "autodl:audio-sync-video")
 }
 
 func TestFetchChannelUpstreamModelIDsUnknownTypeReturnsError(t *testing.T) {

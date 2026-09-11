@@ -351,18 +351,133 @@ function buildEmbeddingSample(lang: Lang, ctx: SampleContext): string {
   ].join('\n')
 }
 
+function buildAutoDLAudioVideoSample(lang: Lang, ctx: SampleContext): string {
+  const url = ctx.baseUrl + ctx.endpointPath
+  const modelName = ctx.modelName
+  const isSync = modelName === 'autodl:minimax-h3-lipsync'
+  const isMulti =
+    modelName === 'autodl:minimax-h3-u24' ||
+    modelName === 'autodl:minimax-h3-u08' ||
+    modelName === 'autodl:minimax-h3-image-audio-10s' ||
+    modelName === 'autodl:minimax-h3-image-audio-15s'
+  const durationField = isSync ? 'audio_duration' : 'seconds'
+  const resolution =
+    modelName === 'autodl:minimax-h3-image-audio-10s' ||
+    modelName === 'autodl:minimax-h3-lipsync'
+      ? '1080p竖'
+      : '768p竖'
+
+  if (lang === 'curl') {
+    const fields = [
+      `curl ${url}`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}"`,
+      `  -F "model=${modelName}"`,
+    ]
+    if (!isSync) {
+      fields.push('  -F "prompt=A cinematic scene at sunrise"')
+    }
+    fields.push(
+      `  -F "${durationField}=5"`,
+      `  -F "resolution=${resolution}"`,
+      '  -F "images=https://example.com/reference-1.png"'
+    )
+    if (isMulti) {
+      fields.push('  -F "images=https://example.com/reference-2.png"')
+    }
+    fields.push('  -F "audios=https://example.com/reference.mp3"')
+    if (isMulti) {
+      fields.push('  -F "seed=212238359716024"')
+    }
+    return fields.join(' ')
+  }
+
+  if (lang === 'python') {
+    const data = [
+      `    ("model", "${modelName}"),`,
+      ...(!isSync ? ['    ("prompt", "A cinematic scene at sunrise"),'] : []),
+      `    ("${durationField}", "5"),`,
+      `    ("resolution", "${resolution}"),`,
+      '    ("images", "https://example.com/reference-1.png"),',
+      ...(isMulti
+        ? ['    ("images", "https://example.com/reference-2.png"),']
+        : []),
+      '    ("audios", "https://example.com/reference.mp3"),',
+      ...(isMulti ? ['    ("seed", "212238359716024"),'] : []),
+    ]
+    return [
+      'import os',
+      'import requests',
+      '',
+      `url = "${url}"`,
+      'headers = {"Authorization": "Bearer " + os.environ["NEW_API_KEY"]}',
+      'data = [',
+      ...data,
+      ']',
+      'response = requests.post(url, headers=headers, data=data)',
+      'response.raise_for_status()',
+      'print(response.json())',
+    ].join('\n')
+  }
+
+  const formLines = [`form.append('model', '${modelName}')`]
+  if (!isSync) {
+    formLines.push("form.append('prompt', 'A cinematic scene at sunrise')")
+  }
+  formLines.push(
+    `form.append('${durationField}', '5')`,
+    `form.append('resolution', '${resolution}')`,
+    "form.append('images', 'https://example.com/reference-1.png')"
+  )
+  if (isMulti) {
+    formLines.push(
+      "form.append('images', 'https://example.com/reference-2.png')"
+    )
+  }
+  formLines.push("form.append('audios', 'https://example.com/reference.mp3')")
+  if (isMulti) {
+    formLines.push("form.append('seed', '212238359716024')")
+  }
+  return [
+    'const form = new FormData()',
+    ...formLines,
+    '',
+    `const response = await fetch('${url}', {`,
+    "  method: 'POST',",
+    `  headers: { Authorization: "Bearer " + process.env.${ctx.apiKeyEnv} },`,
+    '  body: form,',
+    '})',
+    '',
+    'const data = await response.json()',
+    'console.log(data)',
+  ].join('\n')
+}
+
 function buildVideoSample(lang: Lang, ctx: SampleContext): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`
   const isAutoDL = ctx.modelName.startsWith('autodl:')
   const isWan3 = /^wan3\.0-video(?:-prime)?$/.test(ctx.modelName)
-  const isAutoDLReference = ctx.modelName.startsWith(
-    'autodl:multiref-video-'
-  )
-  const isAutoDLText = ctx.modelName === 'autodl:h3-video'
-  const autoDLResolution = ctx.modelName.endsWith('-3')
-    ? '736p竖'
-    : '768p竖'
+  const isAutoDLMultiReference =
+    ctx.modelName === 'autodl:minimax-h3-lightx2v-v5' ||
+    ctx.modelName === 'autodl:minimax-h3-lightx2v-v5-15s' ||
+    ctx.modelName === 'autodl:minimax-h3-b99-12s' ||
+    ctx.modelName === 'autodl:minimax-h3-u24' ||
+    ctx.modelName === 'autodl:minimax-h3-u08' ||
+    ctx.modelName === 'autodl:minimax-h3-image-audio-10s' ||
+    ctx.modelName === 'autodl:minimax-h3-image-audio-15s'
+  const isAutoDLAudio =
+    ctx.modelName === 'autodl:minimax-h3-u24' ||
+    ctx.modelName === 'autodl:minimax-h3-u08' ||
+    ctx.modelName === 'autodl:minimax-h3-image-audio-10s' ||
+    ctx.modelName === 'autodl:minimax-h3-image-audio-15s' ||
+    ctx.modelName === 'autodl:minimax-h3-lipsync'
+  const isAutoDLText = ctx.modelName === 'autodl:minimax-h3-text-to-video'
+  const isAutoDLB99 = ctx.modelName === 'autodl:minimax-h3-b99-12s'
+  const autoDLResolution = isAutoDLB99 ? '736p竖' : '768p竖'
   const autoDLSeed = '212238359716024'
+
+  if (isAutoDLAudio) {
+    return buildAutoDLAudioVideoSample(lang, ctx)
+  }
 
   if (lang === 'curl') {
     const fields = [
@@ -374,11 +489,9 @@ function buildVideoSample(lang: Lang, ctx: SampleContext): string {
     ]
     if (isAutoDL || isWan3) {
       fields[fields.length - 1] += ' \\'
-      fields.push(
-        `  -F "resolution=${isWan3 ? '480P' : autoDLResolution}"`
-      )
+      fields.push(`  -F "resolution=${isWan3 ? '480P' : autoDLResolution}"`)
     }
-    if (isAutoDLReference) {
+    if (isAutoDLMultiReference) {
       fields[fields.length - 1] += ' \\'
       fields.push(
         '  -F "images=https://example.com/reference-1.png" \\',
@@ -399,10 +512,8 @@ function buildVideoSample(lang: Lang, ctx: SampleContext): string {
         '    ("prompt", "A cinematic scene at sunrise"),',
         '    ("seconds", "5"),',
       ]
-      data.push(
-        `    ("resolution", "${isWan3 ? '480P' : autoDLResolution}"),`
-      )
-      if (isAutoDLReference) {
+      data.push(`    ("resolution", "${isWan3 ? '480P' : autoDLResolution}"),`)
+      if (isAutoDLMultiReference) {
         data.push(
           '    ("images", "https://example.com/reference-1.png"),',
           '    ("images", "https://example.com/reference-2.png"),',
@@ -453,7 +564,7 @@ function buildVideoSample(lang: Lang, ctx: SampleContext): string {
       `form.append('resolution', '${isWan3 ? '480P' : autoDLResolution}')`
     )
   }
-  if (isAutoDLReference) {
+  if (isAutoDLMultiReference) {
     formLines.push(
       `form.append('images', 'https://example.com/reference-1.png')`,
       `form.append('images', 'https://example.com/reference-2.png')`,

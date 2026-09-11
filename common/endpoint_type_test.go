@@ -11,7 +11,7 @@ import (
 func TestAutoDLEndpointUsesOpenAIVideoContract(t *testing.T) {
 	require.Equal(t,
 		[]constant.EndpointType{constant.EndpointTypeOpenAIVideo},
-		common.GetEndpointTypesByChannelType(constant.ChannelTypeAutoDL, "autodl:multiref-video-1"),
+	common.GetEndpointTypesByChannelType(constant.ChannelTypeAutoDL, "autodl:minimax-h3-lightx2v-v5"),
 	)
 
 	endpoint, ok := common.GetDefaultEndpointInfo(constant.EndpointTypeOpenAIVideo)

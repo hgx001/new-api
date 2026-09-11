@@ -3653,6 +3653,15 @@
     "默认折叠侧边栏": "サイドバーをデフォルトで折りたたむ",
     "默认测试模型": "デフォルトテストモデル",
     "默认用户消息": "こんにちは",
-    "默认补全倍率": "デフォルト補完倍率"
+    "默认补全倍率": "デフォルト補完倍率",
+    "Text-to-video, no reference image needed. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Billed per second.": "テキストから動画を生成、参照画像不要。長さ 1〜15 秒；480p/768p、縦・横・1:1 対応。秒単位の課金。",
+    "Multi-reference video, 1-9 reference images required. Duration 1-10s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.": "マルチ参照動画、参照画像 1〜9 枚が必須。長さ 1〜10 秒；480p/768p、縦・横・1:1 対応。シード対応。秒単位の課金。",
+    "Multi-reference video, 15s version, 1-9 reference images required. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.": "マルチ参照動画 15 秒版、参照画像 1〜9 枚が必須。長さ 1〜15 秒；480p/768p、縦・横・1:1 対応。シード対応。秒単位の課金。",
+    "Multi-reference video, 12s version, 1-9 reference images required. Duration 1-12s; 736p only in vertical, horizontal and 1:1. Supports seed. Billed per second.": "マルチ参照動画 12 秒版、参照画像 1〜9 枚が必須。長さ 1〜12 秒；736p のみ、縦・横・1:1 対応。シード対応。秒単位の課金。",
+    "Multi-reference video with audio, 10-second variant. Images and audio are optional; up to 9 images and 3 audio tracks; duration 1-10s; 480p/768p/1080p in vertical and horizontal.": "音声付きマルチ参照動画、10 秒版。画像と音声は任意；画像 9 枚、音声 3 トラックまで；長さ 1〜10 秒；縦・横の 480p/768p/1080p 対応。",
+    "Multi-reference video with audio, 15-second variant. Images and audio are optional; up to 9 images and 3 audio tracks; duration 1-15s; 480p/768p in vertical and horizontal; no 1080p.": "音声付きマルチ参照動画、15 秒版。画像と音声は任意；画像 9 枚、音声 3 トラックまで；長さ 1〜15 秒；縦・横の 480p/768p 対応、1080p 非対応。",
+    "Multi-reference video with audio, quality-priority variant. Requires 1-9 images and accepts up to 3 audio tracks; duration 1-15s; 480p/768p in vertical, horizontal and 1:1; seed accepts 0.": "音声付きマルチ参照動画、画質優先版。画像 1〜9 枚が必須、音声 3 トラックまで；長さ 1〜15 秒；480p/768p の縦・横・1:1 対応；seed は 0 から。",
+    "Multi-reference video with audio, speed-priority variant. Requires 1-9 images and accepts up to 3 audio tracks; duration 1-15s; 480p/768p in vertical, horizontal and 1:1; seed accepts 0.": "音声付きマルチ参照動画、速度優先版。画像 1〜9 枚が必須、音声 3 トラックまで；長さ 1〜15 秒；480p/768p の縦・横・1:1 対応；seed は 0 から。",
+    "Single-image audio-synchronized video with automatic lip sync. Requires exactly one image and one audio track; uses audio_duration for 1-15s; supports 480p/768p/1080p and has no prompt field.": "単一画像と音声による同期動画、自動リップシンク。画像 1 枚と音声 1 トラックが必須；audio_duration で 1〜15 秒；480p/768p/1080p 対応、prompt フィールドなし。"
   }
 }

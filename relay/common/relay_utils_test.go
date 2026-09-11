@@ -13,7 +13,7 @@ import (
 
 func TestValidateMultipartDirectParsesResolutionAndSeed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := strings.NewReader(`{"model":"autodl:multiref-video-1","prompt":"animate","resolution":"1080p横","seed":999}`)
+	body := strings.NewReader(`{"model":"autodl:minimax-h3-lightx2v-v5","prompt":"animate","resolution":"1080p横","seed":999}`)
 	request := httptest.NewRequest(http.MethodPost, "/v1/videos", body)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -33,7 +33,7 @@ func TestValidateMultipartDirectParsesResolutionAndSeed(t *testing.T) {
 
 func TestValidateMultipartDirectRejectsInvalidSeed(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := strings.NewReader(`{"model":"autodl:multiref-video-1","prompt":"animate","seed":"not-a-number"}`)
+	body := strings.NewReader(`{"model":"autodl:minimax-h3-lightx2v-v5","prompt":"animate","seed":"not-a-number"}`)
 	request := httptest.NewRequest(http.MethodPost, "/v1/videos", body)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -87,4 +87,25 @@ func TestValidateMultipartDirectNormalizesImageField(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"https://example.com/first.png"}, storedReq.Images)
 	require.Equal(t, constant.TaskActionGenerate, info.Action)
+}
+
+func TestValidateMultipartDirectWithPromptAllowsAudioSyncRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := strings.NewReader(`{"model":"autodl:minimax-h3-lipsync","images":["https://example.com/portrait.png"],"audios":["https://example.com/speech.mp3"],"audio_duration":12}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/videos", body)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Request = request
+	info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+
+	taskErr := ValidateMultipartDirectWithPrompt(context, info, false)
+	require.Nil(t, taskErr)
+	storedReq, err := GetTaskRequest(context)
+	require.NoError(t, err)
+	require.Equal(t, constant.TaskActionGenerate, info.Action)
+	require.Len(t, storedReq.Images, 1)
+	require.Len(t, storedReq.Audios, 1)
+	require.NotNil(t, storedReq.AudioDuration)
+	require.Equal(t, 12, *storedReq.AudioDuration)
 }

@@ -4218,6 +4218,15 @@
     "默认折叠侧边栏": "Mặc định thu gọn thanh bên",
     "默认测试模型": "Mô hình kiểm tra mặc định",
     "默认用户消息": "Xin chào",
-    "默认补全倍率": "Tỷ lệ hoàn thành mặc định"
+    "默认补全倍率": "Tỷ lệ hoàn thành mặc định",
+    "Text-to-video, no reference image needed. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Billed per second.": "Tạo video từ văn bản, không cần ảnh tham chiếu. Thời lượng 1–15 giây; hỗ trợ 480p/768p dọc, ngang và 1:1. Tính phí theo giây.",
+    "Multi-reference video, 1-9 reference images required. Duration 1-10s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.": "Video nhiều ảnh tham chiếu, yêu cầu 1–9 ảnh. Thời lượng 1–10 giây; hỗ trợ 480p/768p dọc, ngang và 1:1. Hỗ trợ seed. Tính phí theo giây.",
+    "Multi-reference video, 15s version, 1-9 reference images required. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.": "Video nhiều ảnh tham chiếu, phiên bản 15 giây, yêu cầu 1–9 ảnh. Thời lượng 1–15 giây; hỗ trợ 480p/768p dọc, ngang và 1:1. Hỗ trợ seed. Tính phí theo giây.",
+    "Multi-reference video, 12s version, 1-9 reference images required. Duration 1-12s; 736p only in vertical, horizontal and 1:1. Supports seed. Billed per second.": "Video nhiều ảnh tham chiếu, phiên bản 12 giây, yêu cầu 1–9 ảnh. Thời lượng 1–12 giây; chỉ hỗ trợ 736p dọc, ngang và 1:1. Hỗ trợ seed. Tính phí theo giây.",
+    "Multi-reference video with audio, 10-second variant. Images and audio are optional; up to 9 images and 3 audio tracks; duration 1-10s; 480p/768p/1080p in vertical and horizontal.": "Video nhiều ảnh tham chiếu có âm thanh, phiên bản 10 giây. Ảnh và âm thanh là tùy chọn; tối đa 9 ảnh và 3 rãnh âm thanh; thời lượng 1–10 giây; hỗ trợ 480p/768p/1080p dọc và ngang.",
+    "Multi-reference video with audio, 15-second variant. Images and audio are optional; up to 9 images and 3 audio tracks; duration 1-15s; 480p/768p in vertical and horizontal; no 1080p.": "Video nhiều ảnh tham chiếu có âm thanh, phiên bản 15 giây. Ảnh và âm thanh là tùy chọn; tối đa 9 ảnh và 3 rãnh âm thanh; thời lượng 1–15 giây; hỗ trợ 480p/768p dọc và ngang, không hỗ trợ 1080p.",
+    "Multi-reference video with audio, quality-priority variant. Requires 1-9 images and accepts up to 3 audio tracks; duration 1-15s; 480p/768p in vertical, horizontal and 1:1; seed accepts 0.": "Video nhiều ảnh tham chiếu có âm thanh, phiên bản ưu tiên chất lượng. Yêu cầu 1–9 ảnh và nhận tối đa 3 rãnh âm thanh; thời lượng 1–15 giây; hỗ trợ 480p/768p dọc, ngang và 1:1; seed bắt đầu từ 0.",
+    "Multi-reference video with audio, speed-priority variant. Requires 1-9 images and accepts up to 3 audio tracks; duration 1-15s; 480p/768p in vertical, horizontal and 1:1; seed accepts 0.": "Video nhiều ảnh tham chiếu có âm thanh, phiên bản ưu tiên tốc độ. Yêu cầu 1–9 ảnh và nhận tối đa 3 rãnh âm thanh; thời lượng 1–15 giây; hỗ trợ 480p/768p dọc, ngang và 1:1; seed bắt đầu từ 0.",
+    "Single-image audio-synchronized video with automatic lip sync. Requires exactly one image and one audio track; uses audio_duration for 1-15s; supports 480p/768p/1080p and has no prompt field.": "Video đồng bộ âm thanh từ một ảnh, tự động khớp chuyển động môi. Yêu cầu chính xác 1 ảnh và 1 rãnh âm thanh; dùng audio_duration cho 1–15 giây; hỗ trợ 480p/768p/1080p và không có trường prompt."
   }
 }

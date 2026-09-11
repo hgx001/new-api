@@ -27,13 +27,16 @@ import (
 // ============================
 
 // submitRequest 提交生成任务的请求体（autodl ComfyUI 自定义协议，非 OpenAI 格式）。
-// Images 由 BuildRequestBody 按工作流配置展开为 ref_image_0..N 字段，不直接序列化。
+// Images/Audios 由 BuildRequestBody 按工作流配置展开为 ref_image_0..N、
+// ref_audio_0..N 字段，不直接序列化。
 type submitRequest struct {
-	Prompt     string   `json:"prompt"`
-	Duration   int      `json:"duration"`
-	Resolution string   `json:"resolution"`
-	Seed       *int64   `json:"seed,omitempty"`
-	Images     []string `json:"-"`
+	Prompt        string   `json:"prompt,omitempty"`
+	Duration      int      `json:"duration,omitempty"`
+	AudioDuration *int     `json:"audio_duration,omitempty"`
+	Resolution    string   `json:"resolution"`
+	Seed          *int64   `json:"seed,omitempty"`
+	Images        []string `json:"-"`
+	Audios        []string `json:"-"`
 }
 
 // submitResponse 提交响应：{"code":"Success","data":{"task_id":...},"msg":"","request_id":"..."}
@@ -94,12 +97,15 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	return relaycommon.ValidateMultipartDirect(c, info)
+	return relaycommon.ValidateMultipartDirectWithPrompt(c, info, a.wf.PromptRequired)
 }
 
 // resolveDuration 解析时长并钳制到 1 秒 ~ 当前工作流允许的最大时长
 func (a *TaskAdaptor) resolveDuration(req relaycommon.TaskSubmitReq) int {
 	d := req.Duration
+	if a.wf.UsesAudioDuration && req.AudioDuration != nil {
+		d = *req.AudioDuration
+	}
 	if d <= 0 {
 		if s, err := strconv.Atoi(req.Seconds); err == nil {
 			d = s
@@ -178,11 +184,28 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.Errorf("model %s is not mapped to an AutoDL workflow_id", info.OriginModelName)
 	}
 	prompt := strings.TrimSpace(req.Prompt)
-	if prompt == "" {
+	if !a.wf.PromptSupported && prompt != "" {
+		return nil, errors.Errorf("model %s does not support prompt", info.OriginModelName)
+	}
+	if a.wf.PromptRequired && prompt == "" {
 		return nil, errors.New("field prompt is required")
 	}
-	if max := a.wf.MaxPromptLength; max > 0 && utf8.RuneCountInString(prompt) > max {
-		return nil, errors.Errorf("model %s supports prompts up to %d characters", info.OriginModelName, max)
+	if a.wf.PromptSupported {
+		if max := a.wf.MaxPromptLength; max > 0 && utf8.RuneCountInString(prompt) > max {
+			return nil, errors.Errorf("model %s supports prompts up to %d characters", info.OriginModelName, max)
+		}
+	}
+	if req.AudioDuration != nil && !a.wf.UsesAudioDuration {
+		return nil, errors.Errorf("model %s does not support audio_duration", info.OriginModelName)
+	}
+	if a.wf.UsesAudioDuration && req.AudioDuration != nil {
+		max := maxDuration
+		if a.wf.MaxDuration > 0 {
+			max = a.wf.MaxDuration
+		}
+		if *req.AudioDuration < minDuration || *req.AudioDuration > max {
+			return nil, errors.Errorf("model %s audio_duration must be between %d and %d", info.OriginModelName, minDuration, max)
+		}
 	}
 
 	resolution := a.wf.Resolution
@@ -208,42 +231,89 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if a.wf.MaxSeed <= 0 {
 			return nil, errors.Errorf("model %s does not support seed", info.OriginModelName)
 		}
-		if *req.Seed < 1 || *req.Seed > a.wf.MaxSeed {
-			return nil, errors.Errorf("model %s seed must be between 1 and %d", info.OriginModelName, a.wf.MaxSeed)
+		if *req.Seed < a.wf.MinSeed || *req.Seed > a.wf.MaxSeed {
+			return nil, errors.Errorf("model %s seed must be between %d and %d", info.OriginModelName, a.wf.MinSeed, a.wf.MaxSeed)
 		}
 	}
 
 	body := map[string]interface{}{
-		"prompt":     req.Prompt,
-		"duration":   a.resolveDuration(req),
 		"resolution": resolution,
+	}
+	if a.wf.PromptSupported {
+		body["prompt"] = req.Prompt
+	}
+	if a.wf.UsesAudioDuration {
+		body["audio_duration"] = a.resolveDuration(req)
+	} else {
+		body["duration"] = a.resolveDuration(req)
 	}
 	if req.Seed != nil {
 		body["seed"] = *req.Seed
 	}
-	// 多参考图：autodl 多图工作流用 ref_image_0..ref_image_8 独立字段（首张必填），
-	// 把客户端的 images 数组按下标展开注入。单图工作流不应静默丢弃图片，
-	// 超出工作流上限时也要明确报错，避免客户端误以为所有图片都已提交。
+	// AutoDL 工作流用 ref_image_0..ref_image_8 独立字段，把客户端的 images
+	// 数组按下标展开注入。Media 中的图片也兼容为参考图输入。
 	images := make([]string, 0, len(req.Images))
 	for _, image := range req.Images {
 		if image = strings.TrimSpace(image); image != "" {
 			images = append(images, image)
 		}
 	}
-	if !a.wf.RequiresImages {
-		if len(images) > 0 {
-			return nil, errors.Errorf("model %s does not support reference images", info.OriginModelName)
+	if len(images) == 0 {
+		if image := strings.TrimSpace(req.InputReference); image != "" {
+			images = append(images, image)
+		} else if image := strings.TrimSpace(req.Image); image != "" {
+			images = append(images, image)
 		}
-	} else {
-		if len(images) == 0 {
-			return nil, errors.Errorf("model %s requires at least one reference image (images field)", info.OriginModelName)
+	}
+	for _, media := range req.Media {
+		if strings.Contains(strings.ToLower(media.Type), "image") {
+			if image := strings.TrimSpace(media.URL); image != "" {
+				images = append(images, image)
+			}
 		}
-		if max := a.wf.MaxImages; max > 0 && len(images) > max {
-			return nil, errors.Errorf("model %s supports at most %d reference images", info.OriginModelName, max)
+	}
+	if !a.wf.SupportsImages && len(images) > 0 {
+		return nil, errors.Errorf("model %s does not support reference images", info.OriginModelName)
+	}
+	if a.wf.RequiresImages && len(images) == 0 {
+		return nil, errors.Errorf("model %s requires at least one reference image (images field)", info.OriginModelName)
+	}
+	if a.wf.MaxImages > 0 && len(images) > a.wf.MaxImages {
+		return nil, errors.Errorf("model %s supports at most %d reference images", info.OriginModelName, a.wf.MaxImages)
+	}
+	for i, image := range images {
+		body[fmt.Sprintf("ref_image_%d", i)] = image
+	}
+
+	// 多音频工作流用 ref_audio_0..ref_audio_2 独立字段。除了 audios/audio
+	// 数组和单值字段，也兼容带 type 的 media 输入。
+	audios := make([]string, 0, len(req.Audios)+1)
+	if audio := strings.TrimSpace(req.Audio); audio != "" {
+		audios = append(audios, audio)
+	}
+	for _, audio := range req.Audios {
+		if audio = strings.TrimSpace(audio); audio != "" {
+			audios = append(audios, audio)
 		}
-		for i, image := range images {
-			body[fmt.Sprintf("ref_image_%d", i)] = image
+	}
+	for _, media := range req.Media {
+		if strings.Contains(strings.ToLower(media.Type), "audio") {
+			if audio := strings.TrimSpace(media.URL); audio != "" {
+				audios = append(audios, audio)
+			}
 		}
+	}
+	if !a.wf.SupportsAudios && len(audios) > 0 {
+		return nil, errors.Errorf("model %s does not support reference audio", info.OriginModelName)
+	}
+	if a.wf.RequiresAudios && len(audios) == 0 {
+		return nil, errors.Errorf("model %s requires at least one reference audio (audios field)", info.OriginModelName)
+	}
+	if a.wf.MaxAudios > 0 && len(audios) > a.wf.MaxAudios {
+		return nil, errors.Errorf("model %s supports at most %d reference audios", info.OriginModelName, a.wf.MaxAudios)
+	}
+	for i, audio := range audios {
+		body[fmt.Sprintf("ref_audio_%d", i)] = audio
 	}
 
 	encoded, err := common.Marshal(body)

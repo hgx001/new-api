@@ -127,6 +127,17 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 }
 
 func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
+	return validateMultipartDirect(c, info, true)
+}
+
+// ValidateMultipartDirectWithPrompt validates the shared video request shape
+// while allowing task adaptors whose native workflow does not have a prompt
+// field (for example AutoDL audio-synchronization workflows).
+func ValidateMultipartDirectWithPrompt(c *gin.Context, info *RelayInfo, requirePrompt bool) *dto.TaskError {
+	return validateMultipartDirect(c, info, requirePrompt)
+}
+
+func validateMultipartDirect(c *gin.Context, info *RelayInfo, requirePrompt bool) *dto.TaskError {
 	var prompt string
 	var model string
 	var seconds int
@@ -156,12 +167,14 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		return createTaskError(fmt.Errorf("model field is required"), "missing_model", http.StatusBadRequest, true)
 	}
 
-	if req.HasImage() {
+	if req.HasImage() || req.HasAudio() {
 		hasInputReference = true
 	}
 
-	if taskErr := validatePrompt(prompt); taskErr != nil {
-		return taskErr
+	if requirePrompt {
+		if taskErr := validatePrompt(prompt); taskErr != nil {
+			return taskErr
+		}
 	}
 
 	action := constant.TaskActionTextGenerate
@@ -199,11 +212,20 @@ func isKnownTaskField(field string) bool {
 		"mode":            true,
 		"image":           true,
 		"images":          true,
+		"audio":           true,
+		"audios":          true,
 		"size":            true,
 		"resolution":      true,
 		"duration":        true,
+		"audio_duration":  true,
+		"seconds":         true,
 		"seed":            true,
 		"input_reference": true, // Sora 特有字段
+		"media":           true,
+		"metadata":        true,
+		"ref_audio_0":     true,
+		"ref_audio_1":     true,
+		"ref_audio_2":     true,
 	}
 	return knownFields[field]
 }

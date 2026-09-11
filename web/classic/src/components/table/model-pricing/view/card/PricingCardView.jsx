@@ -45,6 +45,7 @@ import PricingCardSkeleton from './PricingCardSkeleton';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
 import { renderLimitedItems } from '../../../../common/ui/RenderUtils';
 import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
+import { getAutoDLDescription } from '../../model-capabilities';
 
 const CARD_STYLES = {
   container:
@@ -128,7 +129,9 @@ const PricingCardView = ({
 
     // 如果没有供应商图标，使用模型名称生成头像
 
-    const avatarText = (model.display_name || model.model_name).slice(0, 2).toUpperCase();
+    const avatarText = (model.display_name || model.model_name)
+      .slice(0, 2)
+      .toUpperCase();
     return (
       <div className={CARD_STYLES.container}>
         <Avatar
@@ -149,7 +152,7 @@ const PricingCardView = ({
 
   // 获取模型描述
   const getModelDescription = (record) => {
-    return record.description || '';
+    return record.description || getAutoDLDescription(record.model_name, t);
   };
 
   // 渲染标签
@@ -268,11 +271,13 @@ const PricingCardView = ({
                         {model.display_name || model.model_name}
                       </h3>
                       <div className='flex flex-col gap-1 text-xs mt-1'>
-                        {priceData.isDynamicPricing ? (
-                          formatDynamicPriceSummary(priceData.billingExpr, t, priceData.usedGroupRatio)
-                        ) : (
-                          formatPriceInfo(priceData, t, siteDisplayType)
-                        )}
+                        {priceData.isDynamicPricing
+                          ? formatDynamicPriceSummary(
+                              priceData.billingExpr,
+                              t,
+                              priceData.usedGroupRatio,
+                            )
+                          : formatPriceInfo(priceData, t, siteDisplayType)}
                       </div>
                     </div>
                   </div>

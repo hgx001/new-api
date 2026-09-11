@@ -43,7 +43,7 @@ export function getAvailableGroups(
  * Replace model placeholder in endpoint path
  */
 export function replaceModelInPath(path: string, modelName: string): string {
-  return path.replace(/\{model\}/g, modelName)
+  return path.replaceAll('{model}', modelName)
 }
 
 /**
@@ -93,14 +93,24 @@ export function getModelDisplayName(model: PricingModel): string {
 // customizations in the models/vendors tables always take precedence.
 // ----------------------------------------------------------------------------
 const MODEL_DESCRIPTION_KEYS: Record<string, string> = {
-  'autodl:h3-video':
+  'autodl:minimax-h3-text-to-video':
     'Text-to-video, no reference image needed. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Billed per second.',
-  'autodl:multiref-video-1':
+  'autodl:minimax-h3-lightx2v-v5':
     'Multi-reference video, 1-9 reference images required. Duration 1-10s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.',
-  'autodl:multiref-video-2':
+  'autodl:minimax-h3-lightx2v-v5-15s':
     'Multi-reference video, 15s version, 1-9 reference images required. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Supports seed. Billed per second.',
-  'autodl:multiref-video-3':
+  'autodl:minimax-h3-b99-12s':
     'Multi-reference video, 12s version, 1-9 reference images required. Duration 1-12s; 736p only in vertical, horizontal and 1:1. Supports seed. Billed per second.',
+  'autodl:minimax-h3-u24':
+    'Multi-reference video with audio, quality-priority variant. Requires 1-9 images and accepts up to 3 audio tracks; duration 1-15s; 480p/768p in vertical, horizontal and 1:1; seed accepts 0.',
+  'autodl:minimax-h3-u08':
+    'Multi-reference video with audio, speed-priority variant. Requires 1-9 images and accepts up to 3 audio tracks; duration 1-15s; 480p/768p in vertical, horizontal and 1:1; seed accepts 0.',
+  'autodl:minimax-h3-image-audio-10s':
+    'Multi-reference video with audio, 10-second variant. Images and audio are optional; up to 9 images and 3 audio tracks; duration 1-10s; 480p/768p/1080p in vertical and horizontal.',
+  'autodl:minimax-h3-image-audio-15s':
+    'Multi-reference video with audio, 15-second variant. Images and audio are optional; up to 9 images and 3 audio tracks; duration 1-15s; 480p/768p in vertical and horizontal; no 1080p.',
+  'autodl:minimax-h3-lipsync':
+    'Single-image audio-synchronized video with automatic lip sync. Requires exactly one image and one audio track; uses audio_duration for 1-15s; supports 480p/768p/1080p and has no prompt field.',
 }
 
 /**
@@ -110,4 +120,60 @@ const MODEL_DESCRIPTION_KEYS: Record<string, string> = {
  */
 export function getModelDescriptionKey(model: PricingModel): string | null {
   return MODEL_DESCRIPTION_KEYS[model.model_name] || null
+}
+
+/**
+ * Get concise capability badges for Model Square cards. These are deliberately
+ * separate from the description so the key differences remain visible even
+ * when an administrator has configured a custom model description.
+ */
+export function getModelHighlightKeys(model: PricingModel): string[] {
+  switch (model.model_name) {
+    case 'autodl:minimax-h3-u24':
+      return [
+        'Quality priority',
+        '1-15s',
+        '1-9 images required',
+        'Up to 3 audio tracks',
+        '1:1 supported',
+        'Seed starts at 0',
+      ]
+    case 'autodl:minimax-h3-u08':
+      return [
+        'Speed priority',
+        '1-15s',
+        '1-9 images required',
+        'Up to 3 audio tracks',
+        '1:1 supported',
+        'Seed starts at 0',
+      ]
+    case 'autodl:minimax-h3-image-audio-10s':
+      return [
+        'Images/audio optional',
+        '1-10s',
+        'Up to 9 images',
+        'Up to 3 audio tracks',
+        '1080p supported',
+        'No 1:1',
+      ]
+    case 'autodl:minimax-h3-image-audio-15s':
+      return [
+        'Images/audio optional',
+        '1-15s',
+        'Up to 9 images',
+        'Up to 3 audio tracks',
+        'Up to 768p',
+        'No 1080p',
+      ]
+    case 'autodl:minimax-h3-lipsync':
+      return [
+        'Auto lip sync',
+        '1 image + 1 audio required',
+        '1-15s via audio_duration',
+        '1080p supported',
+        'No prompt',
+      ]
+    default:
+      return []
+  }
 }

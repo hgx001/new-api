@@ -791,6 +791,44 @@ const AUTODL_REFERENCE_IMAGES_PARAM: SupportedParameter = {
   descriptionKey: 'Image input',
 }
 
+const AUTODL_OPTIONAL_REFERENCE_IMAGES_PARAM: SupportedParameter = {
+  name: 'images',
+  type: 'array',
+  range: '0 ~ 9',
+  descriptionKey: 'Image input',
+}
+
+const AUTODL_SINGLE_REFERENCE_IMAGE_PARAM: SupportedParameter = {
+  name: 'images',
+  type: 'array',
+  range: '1 ~ 1',
+  required: true,
+  descriptionKey: 'Image input',
+}
+
+const AUTODL_REFERENCE_AUDIOS_PARAM: SupportedParameter = {
+  name: 'audios',
+  type: 'array',
+  range: '0 ~ 3',
+  descriptionKey: 'Audio input',
+}
+
+const AUTODL_REQUIRED_AUDIO_PARAM: SupportedParameter = {
+  name: 'audios',
+  type: 'array',
+  range: '1 ~ 1',
+  required: true,
+  descriptionKey: 'Audio input',
+}
+
+const AUTODL_AUDIO_DURATION_PARAM: SupportedParameter = {
+  name: 'audio_duration',
+  type: 'integer',
+  defaultValue: 5,
+  range: '1 ~ 15',
+  descriptionKey: 'Video length in seconds',
+}
+
 const AUTODL_H3_RESOLUTIONS = [
   '480p竖',
   '768p竖',
@@ -816,53 +854,109 @@ const AUTODL_SEED_PARAM: SupportedParameter = {
   descriptionKey: 'Deterministic sampling seed (best-effort)',
 }
 
+const AUTODL_SEED_ZERO_PARAM: SupportedParameter = {
+  ...AUTODL_SEED_PARAM,
+  range: '0 ~ 999999999999999',
+}
+
 function buildAutoDLVideoParameters(modelName: string): SupportedParameter[] {
-  const isMultiReference = modelName.startsWith('autodl:multiref-video-')
-  let durationRange = '1 ~ 10'
   let promptRange = '1 ~ 500000'
+  let durationRange = '1 ~ 10'
   let resolutions = AUTODL_V5_RESOLUTIONS
   let defaultResolution = '768p竖'
-  let supportsSeed = isMultiReference
+  let imageParam: SupportedParameter | undefined
+  let audioParam: SupportedParameter | undefined
+  let seedParam: SupportedParameter | undefined
+  let audioDuration = false
+  let promptSupported = true
 
-  if (modelName === 'autodl:h3-video') {
-    durationRange = '1 ~ 15'
-    promptRange = '1 ~ 200000'
-    resolutions = AUTODL_H3_RESOLUTIONS
-    supportsSeed = false
-  } else if (modelName.endsWith('-2')) {
-    durationRange = '1 ~ 15'
-    resolutions = AUTODL_H3_RESOLUTIONS
-  } else if (modelName.endsWith('-3')) {
-    durationRange = '1 ~ 12'
-    promptRange = '1 ~ 10000'
-    resolutions = AUTODL_B99_RESOLUTIONS
-    defaultResolution = '736p竖'
+  switch (modelName) {
+    case 'autodl:minimax-h3-text-to-video':
+      promptRange = '1 ~ 200000'
+      durationRange = '1 ~ 15'
+      resolutions = AUTODL_H3_RESOLUTIONS
+      break
+    case 'autodl:minimax-h3-lightx2v-v5':
+      imageParam = AUTODL_REFERENCE_IMAGES_PARAM
+      seedParam = AUTODL_SEED_PARAM
+      break
+    case 'autodl:minimax-h3-lightx2v-v5-15s':
+      imageParam = AUTODL_REFERENCE_IMAGES_PARAM
+      seedParam = AUTODL_SEED_PARAM
+      durationRange = '1 ~ 15'
+      resolutions = AUTODL_H3_RESOLUTIONS
+      break
+    case 'autodl:minimax-h3-b99-12s':
+      imageParam = AUTODL_REFERENCE_IMAGES_PARAM
+      seedParam = AUTODL_SEED_PARAM
+      promptRange = '1 ~ 10000'
+      durationRange = '1 ~ 12'
+      resolutions = AUTODL_B99_RESOLUTIONS
+      defaultResolution = '736p竖'
+      break
+    case 'autodl:minimax-h3-u24':
+    case 'autodl:minimax-h3-u08':
+      imageParam = AUTODL_REFERENCE_IMAGES_PARAM
+      audioParam = AUTODL_REFERENCE_AUDIOS_PARAM
+      seedParam = AUTODL_SEED_ZERO_PARAM
+      promptRange = '1 ~ 10000'
+      durationRange = '1 ~ 15'
+      resolutions = AUTODL_H3_RESOLUTIONS
+      break
+    case 'autodl:minimax-h3-image-audio-10s':
+      imageParam = AUTODL_OPTIONAL_REFERENCE_IMAGES_PARAM
+      audioParam = AUTODL_REFERENCE_AUDIOS_PARAM
+      seedParam = AUTODL_SEED_PARAM
+      promptRange = '1 ~ 10000'
+      resolutions = AUTODL_V5_RESOLUTIONS.filter(
+        (resolution) => !resolution.includes('(1:1)')
+      )
+      break
+    case 'autodl:minimax-h3-image-audio-15s':
+      imageParam = AUTODL_OPTIONAL_REFERENCE_IMAGES_PARAM
+      audioParam = AUTODL_REFERENCE_AUDIOS_PARAM
+      seedParam = AUTODL_SEED_PARAM
+      promptRange = '1 ~ 10000'
+      durationRange = '1 ~ 15'
+      resolutions = AUTODL_H3_RESOLUTIONS.filter(
+        (resolution) => !resolution.includes('(1:1)')
+      )
+      break
+    case 'autodl:minimax-h3-lipsync':
+      promptSupported = false
+      imageParam = AUTODL_SINGLE_REFERENCE_IMAGE_PARAM
+      audioParam = AUTODL_REQUIRED_AUDIO_PARAM
+      audioDuration = true
+      resolutions = AUTODL_V5_RESOLUTIONS.filter(
+        (resolution) => !resolution.includes('(1:1)')
+      )
+      break
   }
 
-  const params: SupportedParameter[] = [
-    { ...VIDEO_PARAMS[0], range: promptRange },
-    {
-      name: 'duration',
-      type: 'integer',
-      range: durationRange,
-      descriptionKey: 'Video length in seconds',
-    },
+  const params: SupportedParameter[] = []
+  if (promptSupported) {
+    params.push({ ...VIDEO_PARAMS[0], range: promptRange })
+  }
+  params.push(
+    audioDuration
+      ? AUTODL_AUDIO_DURATION_PARAM
+      : {
+          name: 'duration',
+          type: 'integer',
+          range: durationRange,
+          descriptionKey: 'Video length in seconds',
+        },
     {
       name: 'resolution',
       type: 'enum',
       enumValues: resolutions,
       defaultValue: defaultResolution,
       descriptionKey: 'Output video resolution',
-    },
-  ]
-
-  if (isMultiReference) {
-    params.push(AUTODL_REFERENCE_IMAGES_PARAM)
-  }
-  if (supportsSeed) {
-    params.push(AUTODL_SEED_PARAM)
-  }
-
+    }
+  )
+  if (imageParam) params.push(imageParam)
+  if (audioParam) params.push(audioParam)
+  if (seedParam) params.push(seedParam)
   return params
 }
 
@@ -880,7 +974,10 @@ function apiCategoryOf(model: PricingModel): ApiCategory {
 
   // Some task/video models (for example AutoDL) do not contain one of the
   // broad image-profile keywords, so classify video capabilities directly.
-  if (/sora|veo|kling|pika|video|wan-|hunyuanvideo/i.test(model.model_name)) {
+  if (
+    /^autodl:/i.test(model.model_name) ||
+    /sora|veo|kling|pika|video|wan-|hunyuanvideo/i.test(model.model_name)
+  ) {
     return 'video'
   }
 
