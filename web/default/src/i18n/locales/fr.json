@@ -5062,7 +5062,8 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "h3ResolutionTierNote": "480p ¥0,1/s · niveau 720p ¥0,12/s · 1080p ¥0,2/s"
   },
   "Integration Tutorial": "Tutoriel d'intégration",
   "Claude Code Installation": "Installation de Claude Code",
@@ -5105,6 +5106,5 @@
   "Updated just now": "Updated just now",
   "Page index": "Page index",
   "Link to this section": "Link to this section",
-  "Image placeholder": "Image placeholder",
-  "h3ResolutionTierNote": "480p ¥0,1/s · niveau 720p ¥0,12/s · 1080p ¥0,2/s"
+  "Image placeholder": "Image placeholder"
 }
