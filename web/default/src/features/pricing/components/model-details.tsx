@@ -71,6 +71,7 @@ import {
   getAvailableGroups,
   getModelDescriptionKey,
   getModelDisplayName,
+  getResolutionTierNoteKey,
   isPerSecondModel,
   isTokenBasedModel,
 } from '../lib/model-helpers'
@@ -542,6 +543,8 @@ function ModelHeader(props: { model: PricingModel }) {
     (descriptionKey ? t(descriptionKey) : null) ||
     model.vendor_description ||
     null
+  const resolutionTierKey = getResolutionTierNoteKey(model)
+  const resolutionTierNote = resolutionTierKey ? t(resolutionTierKey) : null
   const isSpecialExpression =
     model.billing_mode === 'tiered_expr' &&
     Boolean(model.billing_expr) &&
@@ -587,6 +590,11 @@ function ModelHeader(props: { model: PricingModel }) {
       {description && (
         <p className='text-muted-foreground mt-2 text-sm leading-relaxed'>
           {description}
+        </p>
+      )}
+      {resolutionTierNote && (
+        <p className='text-muted-foreground mt-1 text-xs leading-relaxed'>
+          {resolutionTierNote}
         </p>
       )}
     </header>

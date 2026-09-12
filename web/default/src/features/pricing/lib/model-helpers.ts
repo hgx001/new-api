@@ -124,6 +124,45 @@ const MODEL_DESCRIPTION_KEYS: Record<string, string> = {
 }
 
 /**
+ * H3 resolution tier multipliers and effective CNY per second.
+ * 480p/736p is the base (¥0.10/s), 768p is the 720p tier (×1.2 = ¥0.12/s),
+ * 1080p is ×2.0 = ¥0.20/s. Formula: ModelPrice × seconds × size ratio.
+ *
+ * Displayed in the model detail drawer so users see the real per-second cost
+ * instead of the 480p baseline. The four shared-tier workflows use the same
+ * constants; b99 is included so the note surfaces even though b99 only
+ * supports 736p (1080p unsupported upstream, but the note warns the user).
+ */
+export const H3_RESOLUTION_TIER_NOTE =
+  '480p ¥0.1/s · 768p档 ¥0.12/s · 1080p ¥0.2/s'
+
+const H3_RESOLUTION_TIERED_MODELS = [
+  'autodl:minimax-h3-text-to-video',
+  'autodl:minimax-h3-lightx2v-v5',
+  'autodl:minimax-h3-lightx2v-v5-15s',
+  'autodl:minimax-h3-b99-12s',
+]
+
+/**
+ * Names of the four H3 workflows that share the same resolution tier table.
+ */
+export function getResolutionTieredModels(): string[] {
+  return [...H3_RESOLUTION_TIERED_MODELS]
+}
+
+/**
+ * Per-model resolution tier note shown in the Model Square detail drawer.
+ * Returns the note for the four H3 workflows, null for everything else so
+ * callers can fall back to existing description rendering.
+ */
+export function getResolutionTierNoteKey(model: PricingModel): string | null {
+  if (H3_RESOLUTION_TIERED_MODELS.includes(model.model_name ?? '')) {
+    return H3_RESOLUTION_TIER_NOTE
+  }
+  return null
+}
+
+/**
  * Get the translated fallback description key for a model, or null when the
  * model has no curated fallback. Callers should prefer backend data:
  * `model.description || (fallback && t(fallback)) || model.vendor_description`.
