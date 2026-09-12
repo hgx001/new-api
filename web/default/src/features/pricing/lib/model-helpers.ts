@@ -124,17 +124,14 @@ const MODEL_DESCRIPTION_KEYS: Record<string, string> = {
 }
 
 /**
- * H3 resolution tier multipliers and effective CNY per second.
- * 480p/736p is the base (¥0.10/s), 768p is the 720p tier (×1.2 = ¥0.12/s),
- * 1080p is ×2.0 = ¥0.20/s. Formula: ModelPrice × seconds × size ratio.
+ * i18n key for the H3 resolution tier note. ASCII-only on purpose: the
+ * project convention is English source strings as keys, and non-ASCII keys
+ * silently miss at runtime (t() falls back to the raw key).
  *
- * Displayed in the model detail drawer so users see the real per-second cost
- * instead of the 480p baseline. The four shared-tier workflows use the same
- * constants; b99 is included so the note surfaces even though b99 only
- * supports 736p (1080p unsupported upstream, but the note warns the user).
+ * Tiers: 480p/736p base (¥0.10/s), 768p 720p-tier (×1.2 = ¥0.12/s),
+ * 1080p ×2.0 = ¥0.20/s. Formula: ModelPrice × seconds × size ratio.
  */
-export const H3_RESOLUTION_TIER_NOTE =
-  '480p ¥0.1/s · 768p档 ¥0.12/s · 1080p ¥0.2/s'
+export const H3_RESOLUTION_TIER_NOTE = 'h3ResolutionTierNote'
 
 const H3_RESOLUTION_TIERED_MODELS = [
   'autodl:minimax-h3-text-to-video',

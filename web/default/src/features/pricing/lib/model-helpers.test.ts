@@ -52,19 +52,19 @@ describe('AutoDL H3 resolution tier note', () => {
   test('returns the per-model note key only for the four H3 workflows', () => {
     assert.equal(
       getResolutionTierNoteKey(autoDLModel('autodl:minimax-h3-text-to-video')),
-      '480p ¥0.1/s · 768p档 ¥0.12/s · 1080p ¥0.2/s'
+      'h3ResolutionTierNote'
     )
     assert.equal(
       getResolutionTierNoteKey(autoDLModel('autodl:minimax-h3-lightx2v-v5')),
-      '480p ¥0.1/s · 768p档 ¥0.12/s · 1080p ¥0.2/s'
+      'h3ResolutionTierNote'
     )
     assert.equal(
       getResolutionTierNoteKey(autoDLModel('autodl:minimax-h3-lightx2v-v5-15s')),
-      '480p ¥0.1/s · 768p档 ¥0.12/s · 1080p ¥0.2/s'
+      'h3ResolutionTierNote'
     )
     assert.equal(
       getResolutionTierNoteKey(autoDLModel('autodl:minimax-h3-b99-12s')),
-      '480p ¥0.1/s · 768p档 ¥0.12/s · 1080p ¥0.2/s'
+      'h3ResolutionTierNote'
     )
   })
 
