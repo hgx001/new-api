@@ -399,7 +399,10 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "hailuo-h3") {
 		return true
 	}
-	if strings.HasPrefix(name, "huixin:seedance-") {
+	if name == "seedance2.0特惠版" {
+		return true
+	}
+	if name == "seedance2.5特惠版" {
 		return true
 	}
 	if strings.HasPrefix(name, "sd2.5") {
