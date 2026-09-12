@@ -2530,6 +2530,8 @@
     "Media pricing": "メディア料金",
     "Median time-to-first-token (TTFT) sampled hourly per group": "グループ別に毎時サンプリングした最初のトークンまでの中央値レイテンシ (TTFT)",
     "Medical Q&A, mental health support": "医療Q&A・メンタルヘルスサポート",
+    "MegaAI": "MegaAI",
+    "MegaAI API Key": "MegaAI API Key",
     "Memory": "メモリ",
     "Memory Hits": "メモリヒット",
     "Memory Threshold (%)": "メモリ閾値 (%)",

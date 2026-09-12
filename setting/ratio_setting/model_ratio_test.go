@@ -43,6 +43,17 @@ func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
 	require.InDelta(t, 1.5*price, primePrice, 1e-8, "Prime price must be 1.5x standard")
 }
 
+// sd-2.5 按次计费：上游 ¥2/次，我方 3 倍定价 ¥6/次，USD 计价（USD2RMB=7.3）。
+// 6/7.3 = 0.821918；任务链路按 ModelPrice 固定扣费，禁止乘 seconds。
+func TestDefaultModelPriceSD25PerUse(t *testing.T) {
+	InitRatioSettings()
+
+	price, ok := GetModelPrice("sd-2.5", false)
+	require.True(t, ok, "sd-2.5 must have an explicit per-use price")
+	require.InDelta(t, 6.0/USD2RMB, price, 1e-6, "sd-2.5 must equal ¥6/call in USD")
+	require.InDelta(t, 0.821918, price, 1e-6, "sd-2.5 must be ¥6/call in USD")
+}
+
 func TestDefaultModelPriceAutoDLPerSecond(t *testing.T) {
 	InitRatioSettings()
 

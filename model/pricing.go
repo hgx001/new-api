@@ -408,6 +408,9 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "sd2.5") {
 		return true
 	}
+	if name == "sd-2.5" {
+		return true
+	}
 	if strings.HasPrefix(name, "xuan:") {
 		return true
 	}

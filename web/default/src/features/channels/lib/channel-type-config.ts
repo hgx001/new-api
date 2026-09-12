@@ -156,6 +156,18 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'wan3.0-video, wan3.0-video-prime',
     },
   },
+  64: {
+    id: 64,
+    name: CHANNEL_TYPES[64],
+    icon: 'openai',
+    defaultBaseUrl: 'https://newapi.megabyai.cc',
+    supportedModels: ['sd-2.5'],
+    hints: {
+      baseUrl: 'Default: https://newapi.megabyai.cc',
+      key: 'MegaAI API Key',
+      models: 'sd-2.5',
+    },
+  },
 }
 
 /**

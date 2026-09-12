@@ -60,7 +60,8 @@ const (
 	ChannelTypeAutoDL         = 61
 	ChannelTypeDashScope      = 62
 	ChannelTypeYouzanWan3     = 63
-	ChannelTypeDummy          = 64 // this one is only for count, do not add any channel after this
+	ChannelTypeMegaAI         = 64
+	ChannelTypeDummy          = 65 // this one is only for count, do not add any channel after this
 
 )
 
@@ -129,6 +130,8 @@ var ChannelBaseURLs = []string{
 	"https://autodl.art",                        //61
 	"https://dashscope.aliyuncs.com",            //62 (DashScope 百炼)
 	"https://youzan666.vip/v1",                  //63 (有赞 Wan3)
+	"https://newapi.megabyai.cc",                //64 (MegaAI)
+	"",                                          //65
 }
 
 // GetChannelBaseURL returns the built-in base URL for a channel type.

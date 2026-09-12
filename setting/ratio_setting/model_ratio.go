@@ -301,6 +301,7 @@ var defaultModelPrice = map[string]float64{
 	"gpt-4o-mini-tts":                   0.3,
 	"wan3.0-video":                      0.0369863,  // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）
 	"wan3.0-video-prime":                0.05547945, // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
+	"sd-2.5":                            0.821918,   // 按次对外 ¥6/次（上游 ¥2/次 3 倍定价）；内部按 USD 等值存储（6/7.3）
 	"autodl:minimax-h3-text-to-video":   autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5":     autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5-15s": autoDLVideoBasePrice,
