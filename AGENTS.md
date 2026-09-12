@@ -129,6 +129,15 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - The frontend and backend have separate deployment paths. `deploy/deploy-frontend.sh` is for the frontend static release only; backend changes must use the backend remote-build deployment flow and must not be treated as frontend-only changes.
 - Before deployment, keep the source checkout pinned to the exact commit being released, preserve unrelated local files, use the smallest necessary production change, and verify the container status, application health endpoint, and relevant business API after release.
 
+### Model Pricing and Catalog Rules
+
+- Separate display-only changes from billing changes. Model names, descriptions, badges, and card layout may be frontend-only; any price that affects quota deduction, task settlement, or `/api/pricing` MUST be defined and validated in the backend.
+- Before changing a provider price, check the provider's latest official pricing page and the exact deployment region, currency, model variant, and promotion status. Historical commits, old code comments, reseller prices, and search snippets are not authoritative. If a discounted or reseller price is intentional, document that explicitly instead of calling it the official price.
+- For per-second video models, verify the complete chain: backend `defaultModelPrice`/persisted `ModelPrice` base price, provider adaptor duration and resolution multipliers, `quota_type` and supported endpoint, frontend currency conversion, and the final settlement calculation. The frontend must never be the only source of truth for an actual price.
+- Validate model pricing at multiple layers: deterministic unit tests for every tier and model variant, `/api/pricing`, production database `ModelPrice`, and a forced-channel or real upstream billing/settlement check when applicable. Recheck the model-square card separately because it can cache API data and may show only the base price while tiered rates are applied at request time.
+- Keep internal currency conversion explicit. When the project stores a CNY price as an internal USD value, use `CNY price / usd_exchange_rate`, and verify the configured exchange rate before comparing displayed values.
+- Dated pricing notes from the 2026-09-12 audit: the official Alibaba Cloud North China prices are `wan3.0-video` = ¥0.30/0.60/1.20 per second for 480P/720P/1080P and `wan3.0-video-prime` = ¥0.45/0.90/1.80; AutoDL's requested public tiers are ¥0.10/0.12/0.20 per second, where the upstream `768p` parameter represents the 720P tier. These values must be revalidated before future price changes.
+
 ### ArcReel / sub2api 联调约束
 
 - 本机 `C:\\work\\new-api-src` 与 `C:\\work\\sub2api`、`C:\\work\\即梦网站\\ArcReel` 都是生产链路源码，相关服务部署在同一台服务器上。
