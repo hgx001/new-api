@@ -373,6 +373,12 @@ func isAllowedPricingModel(name string) bool {
 	if name == "deepseek-v4-flash" {
 		return true
 	}
+	if name == "deepseek-v4-flash-vision-exp" {
+		return true
+	}
+	if name == "deepseek-v4-pro" {
+		return true
+	}
 	// 图像模型：gpt-image-2 + youkou 图像（doubao / gemini）
 	if name == "gpt-image-2" {
 		return true

@@ -13,9 +13,13 @@ var (
 		"dall-e-3",
 		"dall-e-2",
 		"gpt-image-1",
+		"gpt-image-2",
 		"prefix:imagen-",
 		"flux-",
 		"flux.1-",
+		"gemini-3-pro-image-preview",
+		"gemini-3.1-flash-image-preview",
+		"doubao-seedream-5-0-260128",
 	}
 	OpenAITextModels = []string{
 		"gpt-",
