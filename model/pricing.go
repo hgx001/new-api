@@ -379,8 +379,11 @@ func isAllowedPricingModel(name string) bool {
 	if name == "deepseek-v4-pro" {
 		return true
 	}
-	// 图像模型：gpt-image-2 + youkou 图像（doubao / gemini）
+	// 图像模型：gpt-image-2/2.5 + youkou 图像（doubao / gemini）
 	if name == "gpt-image-2" {
+		return true
+	}
+	if name == "gpt-image-2.5" {
 		return true
 	}
 	if name == "doubao-seedream-5-0-260128" {
