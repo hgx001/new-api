@@ -5,7 +5,7 @@ const ChannelName = "Youzan Wan3"
 // 有赞 Wan3 官方工作台支持的模型（2026-09-18 起仅剩智能调度版，
 // 旧 wan3.0-video / wan3.0-video-prime 已下线）。
 var ModelList = []string{
-	"wan3.0-video-smart",
+	"wan3.0-smart",
 }
 
 // smartResolutionSizeRatio 智能调度版各分辨率相对于 480P 基准价的倍率：
