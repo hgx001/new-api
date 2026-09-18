@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
@@ -107,6 +108,24 @@ func isYoukouImageChannel(info *relaycommon.RelayInfo) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(info.ChannelBaseUrl), "youkou")
+}
+
+// normalizeYoukouAcceptedStatus treats a 202 Accepted from a Youkou image
+// upstream as success. ImageHelper only forwards 200 to DoResponse (plus 201
+// for Replicate), while the task-style submit answers 200 or 202 depending on
+// upstream behavior; without this the 202 body never reaches the shape-based
+// task detection in DoResponse.
+func normalizeYoukouAcceptedStatus(resp *http.Response, info *relaycommon.RelayInfo) {
+	if resp == nil || resp.StatusCode != http.StatusAccepted || info == nil {
+		return
+	}
+	if info.RelayMode != relayconstant.RelayModeImagesGenerations && info.RelayMode != relayconstant.RelayModeImagesEdits {
+		return
+	}
+	if !isYoukouImageChannel(info) {
+		return
+	}
+	resp.StatusCode = http.StatusOK
 }
 
 // resolveYoukouImageModel maps a downstream image model to its upstream mdl

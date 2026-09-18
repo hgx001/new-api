@@ -632,7 +632,12 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 	} else if info.RelayMode == relayconstant.RelayModeRealtime {
 		return channel.DoWssRequest(a, c, info, requestBody)
 	} else {
-		return channel.DoApiRequest(a, c, info, requestBody)
+		resp, err := channel.DoApiRequest(a, c, info, requestBody)
+		if err != nil {
+			return nil, err
+		}
+		normalizeYoukouAcceptedStatus(resp, info)
+		return resp, nil
 	}
 }
 

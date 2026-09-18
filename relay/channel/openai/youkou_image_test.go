@@ -93,6 +93,42 @@ func TestConvertYoukouImageRequestMinimal(t *testing.T) {
 	require.True(t, isImageRequest)
 }
 
+// A 202 Accepted from a Youkou image upstream must reach DoResponse as 200:
+// ImageHelper only forwards 200 (plus 201 for Replicate), while the
+// task-style submit answers 200 or 202 depending on upstream behavior.
+func TestNormalizeYoukouAcceptedStatus(t *testing.T) {
+	newResp := func(status int) *http.Response {
+		return &http.Response{StatusCode: status, Header: make(http.Header)}
+	}
+
+	youkou := youkouImageTestInfo("https://api.erchun.youkou.cc")
+	resp := newResp(http.StatusAccepted)
+	normalizeYoukouAcceptedStatus(resp, youkou)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Sync 200 responses are untouched.
+	resp = newResp(http.StatusOK)
+	normalizeYoukouAcceptedStatus(resp, youkou)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Non-Youkou channels keep 202 as-is.
+	plain := youkouImageTestInfo("https://api.openai.com")
+	resp = newResp(http.StatusAccepted)
+	normalizeYoukouAcceptedStatus(resp, plain)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	// Non-image relay modes keep 202 as-is.
+	chat := youkouImageTestInfo("https://api.erchun.youkou.cc")
+	chat.RelayMode = relayconstant.RelayModeChatCompletions
+	resp = newResp(http.StatusAccepted)
+	normalizeYoukouAcceptedStatus(resp, chat)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	// Nil inputs are safe.
+	normalizeYoukouAcceptedStatus(nil, youkou)
+	normalizeYoukouAcceptedStatus(newResp(http.StatusAccepted), nil)
+}
+
 // Submits must carry an auto Idempotency-Key when the caller did not supply
 // one; a caller-supplied key is preserved for safe retries.
 func TestSetupRequestHeaderImageIdempotencyKey(t *testing.T) {
