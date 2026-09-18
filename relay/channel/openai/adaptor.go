@@ -31,6 +31,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/google/uuid"
 	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
@@ -223,6 +224,13 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 		if header.Get("X-OpenRouter-Title") == "" {
 			header.Set("X-OpenRouter-Title", "New API")
 		}
+	}
+	if info.RelayMode == relayconstant.RelayModeImagesGenerations && header.Get("Idempotency-Key") == "" {
+		// Youkou-style async image upstreams reject submits without an
+		// Idempotency-Key; other OpenAI-compatible upstreams ignore it.
+		// A caller-supplied key is always preserved so network retries can
+		// safely reuse the same request (same key + same body).
+		header.Set("Idempotency-Key", uuid.NewString())
 	}
 	return nil
 }
@@ -556,6 +564,16 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		return &requestBody, nil
 
 	default:
+		if info.RelayMode == relayconstant.RelayModeImagesGenerations && isYoukouImageChannel(info) {
+			// Youkou async image upstream accepts exactly {model,prompt} with
+			// the mdl_* id; request.Model already carries the ModelMapping
+			// result, and resolveYoukouImageModel is the fallback when the
+			// channel has no mapping configured.
+			return youkouImageSubmitRequest{
+				Model:  resolveYoukouImageModel(request.Model),
+				Prompt: request.Prompt,
+			}, nil
+		}
 		return request, nil
 	}
 }
@@ -629,6 +647,14 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeAudioTranscription:
 		err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
+		if taskID, statusURL, ok := peekYoukouImageTask(resp); ok {
+			// Async task-style image upstream (Youkou TT Image 2/2.5): poll
+			// to completion and convert to a standard OpenAI images
+			// response. Detection is shape-based, so sync upstreams are
+			// unaffected.
+			usage, err = doYoukouImageTaskFlow(c, info, resp, taskID, statusURL)
+			break
+		}
 		if info.IsStream {
 			usage, err = OpenaiImageStreamHandler(c, info, resp)
 		} else {
