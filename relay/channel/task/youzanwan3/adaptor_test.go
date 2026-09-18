@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,4 +135,35 @@ func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
 	require.Equal(t, dto.VideoStatusFailed, response.Status)
 	require.NotNil(t, response.Error)
 	require.Equal(t, task.FailReason, response.Error.Message)
+}
+
+func TestEstimateBillingChargesPrimeResolutionTiers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adaptor := &TaskAdaptor{}
+	cases := []struct {
+		model      string
+		resolution string
+		wantSize   float64
+	}{
+		// 标准版保持 1:2:4（480P=¥0.27/秒基准）。
+		{"wan3.0-video", "480P", 1.0},
+		{"wan3.0-video", "720P", 2.0},
+		{"wan3.0-video", "1080P", 4.0},
+		// 高速版独立档位：480P=¥0.28/秒、720P=¥0.35/秒、1080P=¥0.40/秒。
+		{"wan3.0-video-prime", "480P", 1.0},
+		{"wan3.0-video-prime", "720P", 1.25},
+		{"wan3.0-video-prime", "1080P", 1.4285714286},
+	}
+	for _, tc := range cases {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Set("task_request", relaycommon.TaskSubmitReq{
+			Duration:   5,
+			Resolution: tc.resolution,
+		})
+		info := &relaycommon.RelayInfo{OriginModelName: tc.model}
+		require.Equal(t, map[string]float64{
+			"seconds": 5,
+			"size":    tc.wantSize,
+		}, adaptor.EstimateBilling(context, info), "model=%s resolution=%s", tc.model, tc.resolution)
+	}
 }

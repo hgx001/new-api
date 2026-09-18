@@ -609,11 +609,37 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	ratio := resolutionSizeRatio[resolveResolution(req)]
-	if ratio == 0 {
-		ratio = 1
-	}
+	ratio := resolutionRatioForModel(billingModelName(info), resolveResolution(req))
 	return map[string]float64{"seconds": float64(resolveDuration(req)), "size": ratio}
+}
+
+// billingModelName 取本次请求的下游模型名（优先 OriginModelName，回退上游名）。
+func billingModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(info.OriginModelName); name != "" {
+		return name
+	}
+	if info.ChannelMeta != nil {
+		return strings.TrimSpace(info.ChannelMeta.UpstreamModelName)
+	}
+	return ""
+}
+
+// resolutionRatioForModel 按模型返回分辨率倍率：高速版 prime 用独立档位表，
+// 其余模型沿用标准版 1:2:4。
+func resolutionRatioForModel(model, resolution string) float64 {
+	if model == "wan3.0-video-prime" {
+		if ratio := primeResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
+	if ratio := resolutionSizeRatio[resolution]; ratio > 0 {
+		return ratio
+	}
+	return 1
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
