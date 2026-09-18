@@ -421,6 +421,10 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "wan3.0-video") {
 		return true
 	}
+	// 有赞智能调度版（独立模型名，不带 wan3.0-video 前缀）
+	if name == "wan3.0-smart" {
+		return true
+	}
 	// AutoDL ComfyUI：全部已配置工作流（autodl: 前缀）
 	if strings.HasPrefix(name, "autodl:") {
 		return true
