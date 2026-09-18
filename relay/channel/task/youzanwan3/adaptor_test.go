@@ -116,6 +116,19 @@ func TestParseTaskResultResolvesRelativeVideoURL(t *testing.T) {
 	require.Equal(t, "100%", result.Progress)
 }
 
+func TestParseTaskResultUnifiesUnexplainedFailureAsModeration(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	// 上游只回 status=failed、无任何原因：统一记为内容审核不通过。
+	result, err := adaptor.ParseTaskResult([]byte(`{"model":"wan3.0-video-prime","status":"failed","taskId":"wan3_45ea34d8"}`))
+	require.NoError(t, err)
+	require.Equal(t, "内容审核不通过", result.Reason)
+
+	// 上游给了原因则原样保留。
+	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","message":"balance insufficient"}`))
+	require.NoError(t, err)
+	require.Equal(t, "balance insufficient", result.Reason)
+}
+
 func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	task := &model.Task{

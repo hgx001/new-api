@@ -25,6 +25,10 @@ var primeResolutionSizeRatio = map[string]float64{
 }
 
 const (
+	// reasonContentModeration 是无理由失败的统一口径：任务已运行一段时间
+	// 才失败、且上游未返回任何原因时，归因为内容审核不通过。
+	reasonContentModeration = "内容审核不通过"
+
 	defaultResolution = "480P"
 	defaultRatio      = "adaptive"
 	defaultAudio      = true

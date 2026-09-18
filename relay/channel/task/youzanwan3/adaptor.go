@@ -754,7 +754,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "failed", "failure", "canceled", "cancelled", "error":
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = firstNonEmpty(response.Error, response.Message, "Youzan Wan3 task failed")
+		result.Reason = firstNonEmpty(response.Error, response.Message, reasonContentModeration)
 	default:
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress
@@ -799,7 +799,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	}
 	if task.Status == model.TaskStatusFailure {
 		result.Error = &dto.OpenAIVideoError{
-			Message: firstNonEmpty(task.FailReason, "Youzan Wan3 task failed"),
+			Message: firstNonEmpty(task.FailReason, reasonContentModeration),
 		}
 	}
 	return common.Marshal(result)
