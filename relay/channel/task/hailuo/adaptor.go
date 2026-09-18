@@ -213,7 +213,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
 		if taskResult.Reason == "" {
-			taskResult.Reason = "task failed"
+			taskResult.Reason = taskcommon.ReasonContentModeration
 		}
 	default:
 		taskResult.Status = model.TaskStatusInProgress
@@ -232,8 +232,12 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo := originTask.ToOpenAIVideo()
 	if hailuoResp.BaseResp.StatusCode != StatusSuccess {
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: hailuoResp.BaseResp.StatusMsg,
+			Message: taskcommon.NormalizeFailureReason(hailuoResp.BaseResp.StatusMsg),
 			Code:    strconv.Itoa(hailuoResp.BaseResp.StatusCode),
+		}
+	} else if originTask.Status == model.TaskStatusFailure {
+		openAIVideo.Error = &dto.OpenAIVideoError{
+			Message: taskcommon.NormalizeFailureReason(originTask.FailReason),
 		}
 	}
 

@@ -576,7 +576,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		} else if aliResp.Output.Message != "" {
 			taskResult.Reason = fmt.Sprintf("task failed, code: %s , message: %s", aliResp.Output.Code, aliResp.Output.Message)
 		} else {
-			taskResult.Reason = "task failed"
+			taskResult.Reason = taskcommon.ReasonContentModeration
 		}
 	default:
 		taskResult.Status = model.TaskStatusQueued
@@ -606,12 +606,16 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if aliResp.Code != "" {
 		openAIResp.Error = &dto.OpenAIVideoError{
 			Code:    aliResp.Code,
-			Message: aliResp.Message,
+			Message: taskcommon.NormalizeFailureReason(aliResp.Message),
 		}
 	} else if aliResp.Output.Code != "" {
 		openAIResp.Error = &dto.OpenAIVideoError{
 			Code:    aliResp.Output.Code,
-			Message: aliResp.Output.Message,
+			Message: taskcommon.NormalizeFailureReason(aliResp.Output.Message),
+		}
+	} else if task.Status == model.TaskStatusFailure {
+		openAIResp.Error = &dto.OpenAIVideoError{
+			Message: taskcommon.NormalizeFailureReason(task.FailReason),
 		}
 	}
 

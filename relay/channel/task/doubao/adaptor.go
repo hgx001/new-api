@@ -334,7 +334,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "failed":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
-		taskResult.Reason = resTask.Error.Message
+		taskResult.Reason = taskcommon.NormalizeFailureReason(resTask.Error.Message)
 	default:
 		// Unknown status, treat as processing
 		taskResult.Status = model.TaskStatusInProgress
@@ -362,8 +362,12 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 	if dResp.Status == "failed" {
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: dResp.Error.Message,
+			Message: taskcommon.NormalizeFailureReason(dResp.Error.Message),
 			Code:    dResp.Error.Code,
+		}
+	} else if originTask.Status == model.TaskStatusFailure {
+		openAIVideo.Error = &dto.OpenAIVideoError{
+			Message: taskcommon.NormalizeFailureReason(originTask.FailReason),
 		}
 	}
 

@@ -366,6 +366,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 	case "failed":
 		taskInfo.Status = model.TaskStatusFailure
+		taskInfo.Reason = taskcommon.NormalizeFailureReason(resPayload.Data.TaskStatusMsg)
 	default:
 		return nil, fmt.Errorf("unknown task status: %s", status)
 	}

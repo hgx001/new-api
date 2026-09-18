@@ -435,7 +435,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Code = 0
 	} else {
 		taskResult.Code = resTask.Code // todo uni code
-		taskResult.Reason = resTask.Message
+		taskResult.Reason = taskcommon.NormalizeFailureReason(resTask.Message)
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
 	}

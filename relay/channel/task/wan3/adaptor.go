@@ -559,7 +559,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if res.Code != "" || res.Output.Code != "" {
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = taskcommon.ProgressComplete
-		taskResult.Reason = firstNonEmpty(res.Message, res.Output.Message, res.Code, res.Output.Code, "Wan3 task failed")
+		taskResult.Reason = firstNonEmpty(res.Message, res.Output.Message, res.Code, res.Output.Code, taskcommon.ReasonContentModeration)
 		return taskResult, nil
 	}
 
@@ -582,7 +582,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "FAILED", "FAILURE", "CANCELED", "CANCELLED", "UNKNOWN":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = taskcommon.ProgressComplete
-		taskResult.Reason = firstNonEmpty(res.Message, res.Output.Message, "Wan3 task failed")
+		taskResult.Reason = firstNonEmpty(res.Message, res.Output.Message, taskcommon.ReasonContentModeration)
 	default:
 		taskResult.Status = model.TaskStatusInProgress
 		taskResult.Progress = taskcommon.ProgressInProgress
@@ -619,7 +619,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if res.Code != "" || res.Output.Code != "" {
 		openAIResp.Error = &dto.OpenAIVideoError{
 			Code:    firstNonEmpty(res.Code, res.Output.Code),
-			Message: firstNonEmpty(res.Message, res.Output.Message, "Wan3 task failed"),
+			Message: firstNonEmpty(res.Message, res.Output.Message, taskcommon.ReasonContentModeration),
 		}
 	}
 	return common.Marshal(openAIResp)

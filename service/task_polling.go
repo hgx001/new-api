@@ -549,7 +549,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		if task.FinishTime == 0 {
 			task.FinishTime = now
 		}
-		task.FailReason = taskResult.Reason
+		// 上游无理由失败统一为内容审核不通过，方便下游对接时定位
+		// （视频任务跑一段时间才失败时，上游常不返回具体原因）。
+		task.FailReason = taskcommon.NormalizeFailureReason(taskResult.Reason)
+		taskResult.Reason = task.FailReason
 		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
 		taskResult.Progress = taskcommon.ProgressComplete
 		if quota != 0 {

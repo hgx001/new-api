@@ -429,7 +429,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Reason = res.Msg
 		}
 		if taskResult.Reason == "" {
-			taskResult.Reason = "task failed"
+			taskResult.Reason = taskcommon.ReasonContentModeration
 		}
 		return taskResult, nil
 	}
@@ -442,7 +442,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Reason = res.Data.Message
 		}
 		if taskResult.Reason == "" {
-			taskResult.Reason = "task failed"
+			taskResult.Reason = taskcommon.ReasonContentModeration
 		}
 		return taskResult, nil
 	}
@@ -600,7 +600,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		openAIResp.Status = dto.VideoStatusFailed
 		openAIResp.Error = &dto.OpenAIVideoError{
 			Code:    res.Code,
-			Message: firstNonEmpty(res.Data.Message, res.Msg, "AutoDL task failed"),
+			Message: firstNonEmpty(res.Data.Message, res.Msg, taskcommon.ReasonContentModeration),
 		}
 		return common.Marshal(openAIResp)
 	}
@@ -608,7 +608,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		openAIResp.Status = dto.VideoStatusFailed
 		openAIResp.Error = &dto.OpenAIVideoError{
 			Code:    res.Code,
-			Message: firstNonEmpty(res.Msg, res.Data.Message, "AutoDL task failed"),
+			Message: firstNonEmpty(res.Msg, res.Data.Message, taskcommon.ReasonContentModeration),
 		}
 		return common.Marshal(openAIResp)
 	}

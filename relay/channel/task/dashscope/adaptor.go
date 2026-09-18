@@ -392,7 +392,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Reason = res.Message
 		if taskResult.Reason == "" {
-			taskResult.Reason = "task failed"
+			taskResult.Reason = taskcommon.ReasonContentModeration
 		}
 		return taskResult, nil
 	}
@@ -425,7 +425,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Reason = res.Message
 		if taskResult.Reason == "" {
-			taskResult.Reason = "task failed"
+			taskResult.Reason = taskcommon.ReasonContentModeration
 		}
 		return taskResult, nil
 	default:
@@ -479,7 +479,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	}
 
 	if originTask.Status == model.TaskStatusFailure {
-		openAIVideo.Error = &dto.OpenAIVideoError{Message: originTask.FailReason}
+		openAIVideo.Error = &dto.OpenAIVideoError{Message: taskcommon.NormalizeFailureReason(originTask.FailReason)}
 	}
 
 	return common.Marshal(openAIVideo)

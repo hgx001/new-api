@@ -3,6 +3,7 @@ package taskcommon
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -73,6 +74,26 @@ const (
 	ProgressInProgress = "30%"
 	ProgressComplete   = "100%"
 )
+
+// ReasonContentModeration 是无理由失败的统一口径：视频任务已运行一段时间
+// 才失败、且上游未返回任何原因时，归因为内容审核不通过，方便下游对接时定位。
+const ReasonContentModeration = "内容审核不通过"
+
+// NormalizeFailureReason 将空原因或上游未给出的通用占位原因统一为内容审核不通过。
+// 保留上游返回的任何具体错误信息不变。
+func NormalizeFailureReason(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	if trimmed == "" {
+		return ReasonContentModeration
+	}
+	switch strings.ToLower(trimmed) {
+	case "task failed", "autodl task failed", "wan3 task failed",
+		"upstream returned error", "upstream returned empty status",
+		"upstream returned unrecognized message":
+		return ReasonContentModeration
+	}
+	return trimmed
+}
 
 // ---------------------------------------------------------------------------
 // BaseBilling — embeddable no-op implementations for TaskAdaptor billing methods.

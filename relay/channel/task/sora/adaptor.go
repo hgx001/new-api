@@ -308,9 +308,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "failed", "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		if resTask.Error != nil {
-			taskResult.Reason = resTask.Error.Message
+			taskResult.Reason = taskcommon.NormalizeFailureReason(resTask.Error.Message)
 		} else {
-			taskResult.Reason = "task failed"
+			taskResult.Reason = taskcommon.ReasonContentModeration
 		}
 	default:
 	}
