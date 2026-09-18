@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/require"
 )
@@ -111,4 +113,25 @@ func TestParseTaskResultResolvesRelativeVideoURL(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "https://youzan666.vip/outputs/videos/vid_1.mp4", result.Url)
 	require.Equal(t, "100%", result.Progress)
+}
+
+func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		TaskID:     "task-youzan-failure",
+		Status:     model.TaskStatusFailure,
+		Progress:   "100%",
+		FailReason: "WAN3_QUOTA_CAPACITY_INSUFFICIENT: max duration is 4 seconds",
+		Properties: model.Properties{OriginModelName: "wan3.0-video-prime"},
+		Data:       []byte(`{"status":"failed"}`),
+	}
+
+	raw, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var response dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(raw, &response))
+	require.Equal(t, dto.VideoStatusFailed, response.Status)
+	require.NotNil(t, response.Error)
+	require.Equal(t, task.FailReason, response.Error.Message)
 }

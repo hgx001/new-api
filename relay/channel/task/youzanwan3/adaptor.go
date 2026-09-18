@@ -771,5 +771,10 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if task.GetResultURL() != "" {
 		result.SetMetadata("url", task.GetResultURL())
 	}
+	if task.Status == model.TaskStatusFailure {
+		result.Error = &dto.OpenAIVideoError{
+			Message: firstNonEmpty(task.FailReason, "Youzan Wan3 task failed"),
+		}
+	}
 	return common.Marshal(result)
 }
