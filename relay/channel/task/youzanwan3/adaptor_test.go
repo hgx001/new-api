@@ -62,7 +62,7 @@ func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 
 	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
 	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
-		Model:  "wan3.0-video-prime",
+		Model:  "wan3.0-video-smart",
 		Prompt: "让@图片1配合@音频1运动",
 		Media: []relaycommon.TaskMedia{
 			{Type: "reference_image", URL: onePixelPNG(t)},
@@ -74,7 +74,7 @@ func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
-	require.Equal(t, "wan3.0-video-prime", payload["model"])
+	require.Equal(t, "wan3.0-video-smart", payload["model"])
 	require.Equal(t, "conversation-1", payload["conversationId"])
 	require.Contains(t, payload["prompt"], "@asset1")
 	require.Contains(t, payload["prompt"], "@asset2")
@@ -88,9 +88,9 @@ func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 	require.Equal(t, "audio/mpeg", fileContentTypes[2])
 }
 
-func TestGetModelListExposesOnlyRequestedWan3Models(t *testing.T) {
+func TestGetModelListExposesOnlySmartModel(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	require.Equal(t, []string{"wan3.0-video", "wan3.0-video-prime"}, adaptor.GetModelList())
+	require.Equal(t, []string{"wan3.0-video-smart"}, adaptor.GetModelList())
 }
 
 func TestParseTaskResultReadsYouzanResult(t *testing.T) {
@@ -119,7 +119,7 @@ func TestParseTaskResultResolvesRelativeVideoURL(t *testing.T) {
 func TestParseTaskResultUnifiesUnexplainedFailureAsModeration(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	// 上游只回 status=failed、无任何原因：统一记为内容审核不通过。
-	result, err := adaptor.ParseTaskResult([]byte(`{"model":"wan3.0-video-prime","status":"failed","taskId":"wan3_45ea34d8"}`))
+	result, err := adaptor.ParseTaskResult([]byte(`{"model":"wan3.0-video-smart","status":"failed","taskId":"wan3_45ea34d8"}`))
 	require.NoError(t, err)
 	require.Equal(t, "内容审核不通过", result.Reason)
 
@@ -136,7 +136,7 @@ func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
 		Status:     model.TaskStatusFailure,
 		Progress:   "100%",
 		FailReason: "WAN3_QUOTA_CAPACITY_INSUFFICIENT: max duration is 4 seconds",
-		Properties: model.Properties{OriginModelName: "wan3.0-video-prime"},
+		Properties: model.Properties{OriginModelName: "wan3.0-video-smart"},
 		Data:       []byte(`{"status":"failed"}`),
 	}
 
@@ -150,7 +150,7 @@ func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
 	require.Equal(t, task.FailReason, response.Error.Message)
 }
 
-func TestEstimateBillingChargesPrimeResolutionTiers(t *testing.T) {
+func TestEstimateBillingChargesSmartResolutionTiers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adaptor := &TaskAdaptor{}
 	cases := []struct {
@@ -158,14 +158,12 @@ func TestEstimateBillingChargesPrimeResolutionTiers(t *testing.T) {
 		resolution string
 		wantSize   float64
 	}{
-		// 标准版保持 1:2:4（480P=¥0.27/秒基准）。
-		{"wan3.0-video", "480P", 1.0},
-		{"wan3.0-video", "720P", 2.0},
-		{"wan3.0-video", "1080P", 4.0},
-		// 高速版独立档位：480P=¥0.28/秒、720P=¥0.35/秒、1080P=¥0.40/秒。
-		{"wan3.0-video-prime", "480P", 1.0},
-		{"wan3.0-video-prime", "720P", 1.25},
-		{"wan3.0-video-prime", "1080P", 1.4285714286},
+		// 智能调度版档位：480P=¥0.28/秒、720P=¥0.45/秒、1080P=¥0.65/秒。
+		{"wan3.0-video-smart", "480P", 1.0},
+		{"wan3.0-video-smart", "720P", 0.45 / 0.28},
+		{"wan3.0-video-smart", "1080P", 0.65 / 0.28},
+		// 未知档位回退 1，避免多扣费。
+		{"wan3.0-video-smart", "4K", 1.0},
 	}
 	for _, tc := range cases {
 		context, _ := gin.CreateTestContext(httptest.NewRecorder())

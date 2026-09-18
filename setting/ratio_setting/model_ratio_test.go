@@ -43,7 +43,25 @@ func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
 	require.InDelta(t, 1.5*price, primePrice, 1e-8, "Prime price must be 1.5x standard")
 }
 
-// sd-2.5 按次计费：上游 ¥2/次，我方 3 倍定价 ¥6/次，USD 计价（USD2RMB=7.3）。
+// wan3.0-video-smart（有赞智能调度版）按秒计费：480P 基准 ¥0.28/秒，
+// 720P ¥0.45/秒、1080P ¥0.65/秒走分辨率倍率（0.45/0.28、0.65/0.28）。
+// wan3.0-video-官网是官方渠道独立模型名，上游同 wan3.0-video，同价。
+func TestDefaultModelPriceWan3SmartPerSecond(t *testing.T) {
+	InitRatioSettings()
+
+	smart, ok := GetModelPrice("wan3.0-video-smart", false)
+	require.True(t, ok, "wan3.0-video-smart must have an explicit per-second price")
+	require.InDelta(t, 0.28/USD2RMB, smart, 1e-12, "smart 480P base must equal ¥0.28/sec in USD")
+	require.InDelta(t, 0.45/USD2RMB, smart*(0.45/0.28), 1e-12, "smart 720P tier must equal ¥0.45/sec in USD")
+	require.InDelta(t, 0.65/USD2RMB, smart*(0.65/0.28), 1e-12, "smart 1080P tier must equal ¥0.65/sec in USD")
+
+	official, ok := GetModelPrice("wan3.0-video-官网", false)
+	require.True(t, ok, "wan3.0-video-官网 must have an explicit per-second price")
+	base, ok := GetModelPrice("wan3.0-video", false)
+	require.True(t, ok)
+	require.Equal(t, base, official, "official alias must share wan3.0-video base price")
+}
+
 // 6/7.3 = 0.821918；任务链路按 ModelPrice 固定扣费，禁止乘 seconds。
 func TestDefaultModelPriceSD25PerUse(t *testing.T) {
 	InitRatioSettings()

@@ -627,16 +627,10 @@ func billingModelName(info *relaycommon.RelayInfo) string {
 	return ""
 }
 
-// resolutionRatioForModel 按模型返回分辨率倍率：高速版 prime 用独立档位表，
-// 其余模型沿用标准版 1:2:4。
-func resolutionRatioForModel(model, resolution string) float64 {
-	if model == "wan3.0-video-prime" {
-		if ratio := primeResolutionSizeRatio[resolution]; ratio > 0 {
-			return ratio
-		}
-		return 1
-	}
-	if ratio := resolutionSizeRatio[resolution]; ratio > 0 {
+// resolutionRatioForModel 返回分辨率倍率：智能调度版档位
+// （480P=¥0.28/秒、720P=¥0.45/秒、1080P=¥0.65/秒），未知档位回退 1。
+func resolutionRatioForModel(_, resolution string) float64 {
+	if ratio := smartResolutionSizeRatio[resolution]; ratio > 0 {
 		return ratio
 	}
 	return 1
