@@ -58,6 +58,12 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if operation_setting.ShouldDisableByStatusCode(err.StatusCode) {
 		return true
 	}
+	// 上游渠道账户余额/额度耗尽时同样下线该渠道（需渠道开启 AutoBan）：
+	// 没钱的渠道对所有模型都不可用，留着只会让每个请求先撞一次再切换，
+	// 且自动测试/被动恢复会在充值后把它重新启用。
+	if IsUpstreamAccountBalanceError(err.StatusCode, err.Error()) {
+		return true
+	}
 
 	lowerMessage := strings.ToLower(err.Error())
 	search, _ := AcSearch(lowerMessage, operation_setting.AutomaticDisableKeywords, true)

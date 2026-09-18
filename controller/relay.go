@@ -626,6 +626,12 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
+	// 上游渠道账户余额/额度耗尽：必须切换到同模型下一优先级的备选渠道重试，
+	// 不能因为状态码是 400 就直接失败（余额类错误常见形状就是 400+余额不足）。
+	// 本地参数错误均为 LocalError，不会误入此分支。
+	if !taskErr.LocalError && service.IsUpstreamAccountBalanceError(taskErr.StatusCode, taskErr.Message) {
+		return true
+	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
