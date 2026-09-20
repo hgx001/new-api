@@ -29,8 +29,10 @@ import type { PricingModel } from '../types'
 import {
   H3_RESOLUTION_TIER_NOTE,
   getModelDisplayName,
+  getModelDescriptionKey,
   getResolutionTierNoteKey,
   getResolutionTieredModels,
+  isPerSecondModel,
 } from './model-helpers'
 
 const locales: Record<string, { translation: Record<string, string> }> = {
@@ -80,7 +82,9 @@ describe('AutoDL H3 resolution tier note', () => {
       null
     )
     assert.equal(
-      getResolutionTierNoteKey(autoDLModel('autodl:minimax-h3-image-audio-10s')),
+      getResolutionTierNoteKey(
+        autoDLModel('autodl:minimax-h3-image-audio-10s')
+      ),
       null
     )
     assert.equal(getResolutionTierNoteKey(autoDLModel('wan3.0-video')), null)
@@ -94,6 +98,15 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(
       getModelDisplayName(autoDLModel('autodl:minimax-h3-lightx2v-v5')),
       'minimax-h3-lightx2v-v5'
+    )
+  })
+
+  test('shows wan2.7-r2v as a per-second reference-to-video model', () => {
+    const model = autoDLModel('wan2.7-r2v')
+    assert.equal(isPerSecondModel(model), true)
+    assert.equal(
+      getModelDescriptionKey(model),
+      'Reference-to-video generation with image, video, and audio references. Supports 720P/1080P and 2-15s output; reference-video requests support 2-10s.'
     )
   })
 

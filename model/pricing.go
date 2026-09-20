@@ -425,6 +425,9 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan3.0-smart" {
 		return true
 	}
+	if name == "wan2.7-r2v" {
+		return true
+	}
 	// AutoDL ComfyUI：全部已配置工作流（autodl: 前缀）
 	if strings.HasPrefix(name, "autodl:") {
 		return true

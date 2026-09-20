@@ -2112,6 +2112,7 @@
     "Guardrails": "安全护栏",
     "Guest": "访客",
     "h": "小时",
+    "h3ResolutionTierNote": "480p ¥0.1/秒 · 768p档（720p）¥0.12/秒 · 1080p ¥0.2/秒",
     "Haiku Model": "Haiku 模型",
     "Hang tight while we finish connecting your account.": "请稍等，我们正在完成连接您的账户。",
     "Hang tight while we securely link this account to your profile.": "请稍等，我们正在安全地将此账户链接到您的个人资料。",
@@ -3571,6 +3572,7 @@
     "Redirecting to payment page...": "正在重定向到支付页面...",
     "Redirecting to sign in in {{seconds}} seconds.": "将在 {{seconds}} 秒后跳转到登录页。",
     "Reference Video": "参照生视频",
+    "Reference-to-video generation with image, video, and audio references. Supports 720P/1080P and 2-15s output; reference-video requests support 2-10s.": "参考生视频，支持图片、视频和音频参考。支持 720P/1080P 输出；使用参考视频时支持 2-10 秒。",
     "Referral link:": "推荐链接：",
     "Referral Program": "推荐计划",
     "Referral reward transfer is disabled until the administrator confirms compliance terms.": "管理员确认合规条款之前，邀请奖励转移功能不可用。",
@@ -5062,8 +5064,7 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放",
-    "h3ResolutionTierNote": "480p ¥0.1/秒 · 768p档（720p）¥0.12/秒 · 1080p ¥0.2/秒"
+    "Zoom": "缩放"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",

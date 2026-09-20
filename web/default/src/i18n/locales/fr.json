@@ -2112,6 +2112,7 @@
     "Guardrails": "Garde-fous",
     "Guest": "Invité",
     "h": "h",
+    "h3ResolutionTierNote": "480p ¥0,1/s · niveau 720p ¥0,12/s · 1080p ¥0,2/s",
     "Haiku Model": "Modèle Haiku",
     "Hang tight while we finish connecting your account.": "Patientez pendant que nous terminons la connexion de votre compte.",
     "Hang tight while we securely link this account to your profile.": "Patientez pendant que nous lions en toute sécurité ce compte à votre profil.",
@@ -3571,6 +3572,7 @@
     "Redirecting to payment page...": "Redirection vers la page de paiement...",
     "Redirecting to sign in in {{seconds}} seconds.": "Redirection vers la connexion dans {{seconds}} secondes.",
     "Reference Video": "Vidéo de référence",
+    "Reference-to-video generation with image, video, and audio references. Supports 720P/1080P and 2-15s output; reference-video requests support 2-10s.": "Génération vidéo à partir de références image, vidéo et audio. Prend en charge le 720P/1080P et une sortie de 2 à 15 s ; les requêtes avec vidéo de référence prennent en charge 2 à 10 s.",
     "Referral link:": "Lien de parrainage :",
     "Referral Program": "Programme de parrainage",
     "Referral reward transfer is disabled until the administrator confirms compliance terms.": "Le transfert des récompenses de parrainage est désactivé jusqu’à ce que l’administrateur confirme les conditions de conformité.",
@@ -5062,8 +5064,7 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "h3ResolutionTierNote": "480p ¥0,1/s · niveau 720p ¥0,12/s · 1080p ¥0,2/s"
+    "Zoom": "Zoom"
   },
   "Integration Tutorial": "Tutoriel d'intégration",
   "Claude Code Installation": "Installation de Claude Code",

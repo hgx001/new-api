@@ -2112,6 +2112,7 @@
     "Guardrails": "Ограничители",
     "Guest": "Гость",
     "h": "h",
+    "h3ResolutionTierNote": "480p ¥0,1/с · уровень 720p ¥0,12/с · 1080p ¥0,2/с",
     "Haiku Model": "Модель Haiku",
     "Hang tight while we finish connecting your account.": "Подождите, пока мы завершим подключение вашего аккаунта.",
     "Hang tight while we securely link this account to your profile.": "Подождите, пока мы безопасно привяжем этот аккаунт к вашему профилю.",
@@ -3571,6 +3572,7 @@
     "Redirecting to payment page...": "Перенаправление на страницу оплаты...",
     "Redirecting to sign in in {{seconds}} seconds.": "Переход на страницу входа через {{seconds}} сек.",
     "Reference Video": "Эталонное видео",
+    "Reference-to-video generation with image, video, and audio references. Supports 720P/1080P and 2-15s output; reference-video requests support 2-10s.": "Генерация видео по изображениям, видео и аудио-референсам. Поддерживаются 720P/1080P и длительность 2–15 с; при использовании референсного видео — 2–10 с.",
     "Referral link:": "Реферальная ссылка:",
     "Referral Program": "Реферальная программа",
     "Referral reward transfer is disabled until the administrator confirms compliance terms.": "Перевод реферальных наград отключен, пока администратор не подтвердит условия соответствия.",
@@ -5062,8 +5064,7 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom",
-    "h3ResolutionTierNote": "480p ¥0,1/с · уровень 720p ¥0,12/с · 1080p ¥0,2/с"
+    "Zoom": "Zoom"
   },
   "Integration Tutorial": "Руководство по интеграции",
   "Claude Code Installation": "Установка Claude Code",

@@ -2,10 +2,10 @@ package youzanwan3
 
 const ChannelName = "Youzan Wan3"
 
-// 有赞 Wan3 官方工作台支持的模型（2026-09-18 起仅剩智能调度版，
-// 旧 wan3.0-video / wan3.0-video-prime 已下线）。
+// 有赞 Wan3 官方工作台支持的模型。
 var ModelList = []string{
 	"wan3.0-smart",
+	"wan2.7-r2v",
 }
 
 // smartResolutionSizeRatio 智能调度版各分辨率相对于 480P 基准价的倍率：
@@ -16,6 +16,15 @@ var smartResolutionSizeRatio = map[string]float64{
 	"720P":  0.45 / 0.28,
 	"1080P": 0.65 / 0.28,
 }
+
+// r2vResolutionSizeRatio 以官网 720P ¥0.60/秒为基准，换算 1080P ¥1.00/秒。
+// wan2.7-r2v 不支持 480P，默认使用 1080P。
+var r2vResolutionSizeRatio = map[string]float64{
+	"720P":  1.0,
+	"1080P": 1.0 / 0.6,
+}
+
+const r2vModel = "wan2.7-r2v"
 
 const (
 	// reasonContentModeration 是无理由失败的统一口径：任务已运行一段时间

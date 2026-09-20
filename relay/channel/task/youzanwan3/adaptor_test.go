@@ -88,9 +88,24 @@ func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 	require.Equal(t, "audio/mpeg", fileContentTypes[2])
 }
 
-func TestGetModelListExposesOnlySmartModel(t *testing.T) {
+func TestGetModelListExposesSmartAndR2VModels(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	require.Equal(t, []string{"wan3.0-smart"}, adaptor.GetModelList())
+	require.Equal(t, []string{"wan3.0-smart", "wan2.7-r2v"}, adaptor.GetModelList())
+}
+
+func TestBuildRequestBodyUsesR2VDefaults(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
+		Model:  r2vModel,
+		Prompt: "让画面自然运动",
+	})
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, r2vModel, payload["model"])
+	require.Equal(t, "1080P", payload["resolution"])
+	require.Equal(t, float64(defaultDuration), payload["duration"])
 }
 
 func TestParseTaskResultReadsYouzanResult(t *testing.T) {
@@ -162,6 +177,11 @@ func TestEstimateBillingChargesSmartResolutionTiers(t *testing.T) {
 		{"wan3.0-smart", "480P", 1.0},
 		{"wan3.0-smart", "720P", 0.45 / 0.28},
 		{"wan3.0-smart", "1080P", 0.65 / 0.28},
+		// R2V 以 720P ¥0.60/秒为基准，1080P 为 ¥1.00/秒。
+		{"wan2.7-r2v", "720P", 1.0},
+		{"wan2.7-r2v", "1080P", 1.0 / 0.6},
+		// R2V 不支持 480P，缺省/非法档位回退到官网默认 1080P。
+		{"wan2.7-r2v", "480P", 1.0 / 0.6},
 		// 未知档位回退 1，避免多扣费。
 		{"wan3.0-smart", "4K", 1.0},
 	}
@@ -177,4 +197,24 @@ func TestEstimateBillingChargesSmartResolutionTiers(t *testing.T) {
 			"size":    tc.wantSize,
 		}, adaptor.EstimateBilling(context, info), "model=%s resolution=%s", tc.model, tc.resolution)
 	}
+}
+
+func TestR2VResolutionAndDurationLimits(t *testing.T) {
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: r2vModel}))
+	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{
+		Model:      r2vModel,
+		Resolution: "720P",
+	}))
+	require.Equal(t, 15, resolveDuration(relaycommon.TaskSubmitReq{
+		Model:    r2vModel,
+		Duration: 30,
+	}))
+	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{
+		Model:    r2vModel,
+		Duration: 30,
+		Media: []relaycommon.TaskMedia{{
+			Type: "reference_video",
+			URL:  "https://example.com/reference.mp4",
+		}},
+	}))
 }

@@ -126,21 +126,56 @@ func normalizeResolution(value string) string {
 	}
 }
 
-func resolveResolution(req relaycommon.TaskSubmitReq) string {
-	if value := normalizeResolution(req.Resolution); value != "" {
+func isR2VModel(model string) bool {
+	return strings.TrimSpace(model) == r2vModel
+}
+
+func normalizeResolutionForModel(model, resolution string) string {
+	if isR2VModel(model) && resolution == "480P" {
+		return ""
+	}
+	return resolution
+}
+
+func defaultResolutionForModel(model string) string {
+	if isR2VModel(model) {
+		return "1080P"
+	}
+	return defaultResolution
+}
+
+func resolveResolutionForModel(req relaycommon.TaskSubmitReq, model string) string {
+	if value := normalizeResolutionForModel(model, normalizeResolution(req.Resolution)); value != "" {
 		return value
 	}
 	if req.Metadata != nil {
 		if value, ok := req.Metadata["resolution"].(string); ok {
-			if value = normalizeResolution(value); value != "" {
+			if value = normalizeResolutionForModel(model, normalizeResolution(value)); value != "" {
 				return value
 			}
 		}
 	}
-	if value := normalizeResolution(req.Size); value != "" {
+	if value := normalizeResolutionForModel(model, normalizeResolution(req.Size)); value != "" {
 		return value
 	}
-	return defaultResolution
+	return defaultResolutionForModel(model)
+}
+
+func resolveResolution(req relaycommon.TaskSubmitReq) string {
+	return resolveResolutionForModel(req, req.Model)
+}
+
+func hasReferenceVideo(req relaycommon.TaskSubmitReq) bool {
+	media := req.Media
+	if len(media) == 0 {
+		media, _ = metadataMedia(req.Metadata)
+	}
+	for _, item := range media {
+		if item.Type == "reference_video" {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveDuration(req relaycommon.TaskSubmitReq) int {
@@ -154,8 +189,15 @@ func resolveDuration(req relaycommon.TaskSubmitReq) int {
 	if duration < minDuration {
 		return minDuration
 	}
-	if duration > maxDuration {
-		return maxDuration
+	maxAllowedDuration := maxDuration
+	if isR2VModel(req.Model) {
+		maxAllowedDuration = 15
+		if hasReferenceVideo(req) {
+			maxAllowedDuration = 10
+		}
+	}
+	if duration > maxAllowedDuration {
+		return maxAllowedDuration
 	}
 	return duration
 }
@@ -609,7 +651,15 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	ratio := resolutionRatioForModel(billingModelName(info), resolveResolution(req))
+	modelName := billingModelName(info)
+	if strings.TrimSpace(req.Model) == "" {
+		req.Model = modelName
+	}
+	if strings.TrimSpace(modelName) == "" {
+		modelName = req.Model
+	}
+	resolution := resolveResolutionForModel(req, modelName)
+	ratio := resolutionRatioForModel(modelName, resolution)
 	return map[string]float64{"seconds": float64(resolveDuration(req)), "size": ratio}
 }
 
@@ -627,9 +677,14 @@ func billingModelName(info *relaycommon.RelayInfo) string {
 	return ""
 }
 
-// resolutionRatioForModel 返回分辨率倍率：智能调度版档位
-// （480P=¥0.28/秒、720P=¥0.45/秒、1080P=¥0.65/秒），未知档位回退 1。
-func resolutionRatioForModel(_, resolution string) float64 {
+// resolutionRatioForModel 返回对应模型的分辨率倍率，未知档位回退 1。
+func resolutionRatioForModel(model, resolution string) float64 {
+	if isR2VModel(model) {
+		if ratio := r2vResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
 	if ratio := smartResolutionSizeRatio[resolution]; ratio > 0 {
 		return ratio
 	}

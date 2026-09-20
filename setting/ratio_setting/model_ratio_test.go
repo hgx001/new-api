@@ -62,6 +62,17 @@ func TestDefaultModelPriceWan3SmartPerSecond(t *testing.T) {
 	require.Equal(t, base, official, "official alias must share wan3.0-video base price")
 }
 
+// wan2.7-r2v 官方北京地域价格：720P ¥0.60/秒，1080P ¥1.00/秒。
+// 默认价以 720P 为基准，任务适配器再按分辨率倍率计算。
+func TestDefaultModelPriceWan27R2VPerSecond(t *testing.T) {
+	InitRatioSettings()
+
+	price, ok := GetModelPrice("wan2.7-r2v", false)
+	require.True(t, ok, "wan2.7-r2v must have an explicit per-second price")
+	require.InDelta(t, 0.6/USD2RMB, price, 1e-12, "720P base must equal ¥0.60/sec in USD")
+	require.InDelta(t, 1.0/USD2RMB, price*(1.0/0.6), 1e-12, "1080P tier must equal ¥1.00/sec in USD")
+}
+
 // 6/7.3 = 0.821918；任务链路按 ModelPrice 固定扣费，禁止乘 seconds。
 func TestDefaultModelPriceSD25PerUse(t *testing.T) {
 	InitRatioSettings()

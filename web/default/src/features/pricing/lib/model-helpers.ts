@@ -57,14 +57,19 @@ export function isTokenBasedModel(model: PricingModel): boolean {
  * Check if a video model is billed per second.
  *
  * Only adaptors whose EstimateBilling returns a `seconds` ratio bill per
- * second: wan3/youzanwan3 (wan3.0-video*) and autodl (autodl:* workflows).
+ * second: wan3/youzanwan3 (wan3.0-video*, wan2.7-r2v) and autodl
+ * (autodl:* workflows).
  * Every other openai-video model (e.g. seedance* via doubao) is billed a
  * fixed price per call, so it must NOT show the per-second suffix.
  * If a new per-second adaptor (e.g. sora) goes live, add its model prefix here.
  */
 export function isPerSecondModel(model: PricingModel): boolean {
   const name = model.model_name ?? ''
-  return name.startsWith('wan3.0-video') || name.startsWith('autodl:')
+  return (
+    name.startsWith('wan3.0-video') ||
+    name.startsWith('wan2.7-r2v') ||
+    name.startsWith('autodl:')
+  )
 }
 
 // ----------------------------------------------------------------------------
@@ -103,6 +108,8 @@ export function getModelDisplayName(model: PricingModel): string {
 // customizations in the models/vendors tables always take precedence.
 // ----------------------------------------------------------------------------
 const MODEL_DESCRIPTION_KEYS: Record<string, string> = {
+  'wan2.7-r2v':
+    'Reference-to-video generation with image, video, and audio references. Supports 720P/1080P and 2-15s output; reference-video requests support 2-10s.',
   'autodl:minimax-h3-text-to-video':
     'Text-to-video, no reference image needed. Duration 1-15s; 480p/768p in vertical, horizontal and 1:1. Billed per second.',
   'autodl:minimax-h3-lightx2v-v5':

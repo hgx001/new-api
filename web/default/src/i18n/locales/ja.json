@@ -2112,6 +2112,7 @@
     "Guardrails": "ガードレール",
     "Guest": "ゲスト",
     "h": "h",
+    "h3ResolutionTierNote": "480p ¥0.1/s · 720pティア ¥0.12/s · 1080p ¥0.2/s",
     "Haiku Model": "Haiku モデル",
     "Hang tight while we finish connecting your account.": "アカウントの接続を完了するまでお待ちください。",
     "Hang tight while we securely link this account to your profile.": "このアカウントをプロファイルに安全にリンクするまでお待ちください。",
@@ -3571,6 +3572,7 @@
     "Redirecting to payment page...": "支払いページにリダイレクト中...",
     "Redirecting to sign in in {{seconds}} seconds.": "{{seconds}} 秒後にログインページへ移動します。",
     "Reference Video": "参照動画",
+    "Reference-to-video generation with image, video, and audio references. Supports 720P/1080P and 2-15s output; reference-video requests support 2-10s.": "画像・動画・音声を参照した動画生成。720P/1080Pと2〜15秒の出力に対応し、参照動画使用時は2〜10秒に対応。",
     "Referral link:": "紹介リンク:",
     "Referral Program": "紹介プログラム",
     "Referral reward transfer is disabled until the administrator confirms compliance terms.": "管理者がコンプライアンス条件を確認するまで、紹介報酬の移転は無効です。",
@@ -5062,8 +5064,7 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム",
-    "h3ResolutionTierNote": "480p ¥0.1/s · 720pティア ¥0.12/s · 1080p ¥0.2/s"
+    "Zoom": "ズーム"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",
