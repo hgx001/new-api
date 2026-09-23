@@ -6,25 +6,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// gpt-5.6 家族定价：luna 为基准，terra = 5x luna，sol = 20x luna。
+// gpt-6 家族定价：与 gpt-5.6 同名模型同价（luna 为基准，sol = 20x luna），
 // 后端按 (prompt + completion*completionRatio) * modelRatio * groupRatio 结算，
 // modelRatio 等比放大即等比放大整单费用，无需动 completionRatio。
-func TestDefaultModelRatioGpt56Family(t *testing.T) {
+func TestDefaultModelRatioGpt6Family(t *testing.T) {
 	InitRatioSettings()
 
-	luna, ok, _ := GetModelRatio("gpt-5.6-luna")
-	require.True(t, ok, "gpt-5.6-luna must have an explicit ratio")
-	require.Equal(t, 0.064212, luna, "luna price must stay unchanged")
+	luna, ok, _ := GetModelRatio("gpt-6-luna")
+	require.True(t, ok, "gpt-6-luna must have an explicit ratio")
+	require.Equal(t, 0.064212, luna, "gpt-6-luna must match gpt-5.6-luna price")
 
-	terra, ok, _ := GetModelRatio("gpt-5.6-terra")
-	require.True(t, ok, "gpt-5.6-terra must have an explicit ratio")
-	require.Equal(t, 0.32106, terra)
-	require.InDelta(t, 5*luna, terra, 1e-12, "terra must be 5x luna")
-
-	sol, ok, _ := GetModelRatio("gpt-5.6-sol")
-	require.True(t, ok, "gpt-5.6-sol must have an explicit ratio")
-	require.Equal(t, 1.28424, sol)
+	sol, ok, _ := GetModelRatio("gpt-6-sol")
+	require.True(t, ok, "gpt-6-sol must have an explicit ratio")
+	require.Equal(t, 1.28424, sol, "gpt-6-sol must match gpt-5.6-sol price")
 	require.InDelta(t, 20*luna, sol, 1e-12, "sol must be 20x luna")
+	require.Equal(t, 8.0, GetCompletionRatio("gpt-6-luna"), "gpt-6 must inherit the gpt-5 completion ratio")
+	require.Equal(t, 8.0, GetCompletionRatio("gpt-6-sol"))
+
+	// 5.6 全家族已下线，不应再有显式倍率。
+	for _, retired := range []string{"gpt-5.6", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"} {
+		_, exists := defaultModelRatio[retired]
+		require.False(t, exists, "%s must be removed from default ratios", retired)
+	}
 }
 
 // wan3.0-video 按秒计费：480P 基准 ¥0.27/秒，USD 计价（USD2RMB=7.3）。

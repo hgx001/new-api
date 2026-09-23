@@ -21,3 +21,13 @@ func TestIsAllowedPricingModelWanVideo(t *testing.T) {
 	// 注：已下线的错误 id（wan3.0-video-smart）仍命中 wan3.0-video 前缀规则，
 	// 但它已无任何 ability 指向，不会出现在广场上，故不在此断言。
 }
+
+// GPT 文本模型只放行 gpt-6 系列；5.6 全家族下线后必须从广场隐藏。
+func TestIsAllowedPricingModelGpt6(t *testing.T) {
+	for _, name := range []string{"gpt-6-luna", "gpt-6-sol"} {
+		require.True(t, isAllowedPricingModel(name), "model %q must show in pricing square", name)
+	}
+	for _, retired := range []string{"gpt-5.6", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"} {
+		assert.False(t, isAllowedPricingModel(retired), "%s must be hidden after retirement", retired)
+	}
+}

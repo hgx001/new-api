@@ -362,8 +362,8 @@ func updatePricing() {
 }
 
 func isAllowedPricingModel(name string) bool {
-	// 文本模型：只保留 gpt-5.6 系列 + MiniMax-M3
-	if strings.HasPrefix(name, "gpt-5.6") {
+	// 文本模型：只保留 gpt-6 系列 + MiniMax-M3
+	if strings.HasPrefix(name, "gpt-6") {
 		return true
 	}
 	if strings.EqualFold(name, "MiniMax-M3") {
