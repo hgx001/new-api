@@ -23,8 +23,16 @@ func TestDefaultModelRatioGpt6Family(t *testing.T) {
 	require.Equal(t, 8.0, GetCompletionRatio("gpt-6-luna"), "gpt-6 must inherit the gpt-5 completion ratio")
 	require.Equal(t, 8.0, GetCompletionRatio("gpt-6-sol"))
 
-	// 5.6 全家族已下线，不应再有显式倍率。
-	for _, retired := range []string{"gpt-5.6", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"} {
+	// gpt-5.6 只保留 luna/sol 两个兼容别名（渠道映射到 gpt-6），
+	// 同名同价：下游无需改模型名即可平滑迁移。
+	for alias, target := range map[string]string{"gpt-5.6-luna": "gpt-6-luna", "gpt-5.6-sol": "gpt-6-sol"} {
+		aliasRatio, ok := defaultModelRatio[alias]
+		require.True(t, ok, "%s compat alias must keep an explicit ratio", alias)
+		require.Equal(t, defaultModelRatio[target], aliasRatio, "%s must match %s price", alias, target)
+	}
+
+	// 其余 5.6 名字彻底下线，不应再有显式倍率。
+	for _, retired := range []string{"gpt-5.6", "gpt-5.6-terra"} {
 		_, exists := defaultModelRatio[retired]
 		require.False(t, exists, "%s must be removed from default ratios", retired)
 	}
