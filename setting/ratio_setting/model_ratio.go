@@ -307,6 +307,7 @@ var defaultModelPrice = map[string]float64{
 	"wan3.0-video-官网":                   0.0369863,      // 官方渠道独立模型名，上游同 wan3.0-video，480P 对外 ¥0.27/秒
 	"wan2.7-r2v":                        0.6 / USD2RMB,  // 官方 720P 对外 ¥0.60/秒（1080P ¥1.00/秒走分辨率倍率）
 	"sd-2.5":                            0.821918,       // 按次对外 ¥6/次（上游 ¥2/次 3 倍定价）；内部按 USD 等值存储（6/7.3）
+	"dola-seedance-2.5":                 0.01,           // 漫屋 ArcReel 视频，按秒计费基准价 USD 占位，待运营定价
 	"autodl:minimax-h3-text-to-video":   autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5":     autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5-15s": autoDLVideoBasePrice,

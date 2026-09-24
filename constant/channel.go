@@ -61,7 +61,8 @@ const (
 	ChannelTypeDashScope      = 62
 	ChannelTypeYouzanWan3     = 63
 	ChannelTypeMegaAI         = 64
-	ChannelTypeDummy          = 65 // this one is only for count, do not add any channel after this
+	ChannelTypeManwu          = 66
+	ChannelTypeDummy          = 67 // this one is only for count, do not add any channel after this
 
 )
 
@@ -132,6 +133,7 @@ var ChannelBaseURLs = []string{
 	"https://youzan666.vip/v1",                  //63 (有赞 Wan3)
 	"https://newapi.megabyai.cc",                //64 (MegaAI)
 	"",                                          //65
+	"https://arcreel.heibaidao.cn",              //66 (漫屋 ArcReel)
 }
 
 // GetChannelBaseURL returns the built-in base URL for a channel type.
@@ -205,6 +207,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeAutoDL:         "AutoDL",
 	ChannelTypeDashScope:      "DashScope",
 	ChannelTypeYouzanWan3:     "Youzan Wan3",
+	ChannelTypeManwu:          "漫屋",
 }
 
 func GetChannelTypeName(channelType int) string {
