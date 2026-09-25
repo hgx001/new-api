@@ -386,6 +386,10 @@ func isAllowedPricingModel(name string) bool {
 	if name == "gpt-image-2.5" {
 		return true
 	}
+	// 官方渠道图片模型：上游同为 gpt-image-2，独立命名以区分二手图片渠道
+	if name == "gpt-image-2.5-官方" {
+		return true
+	}
 	if name == "doubao-seedream-5-0-260128" {
 		return true
 	}

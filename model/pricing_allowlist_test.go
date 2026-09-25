@@ -31,3 +31,10 @@ func TestIsAllowedPricingModelGpt6(t *testing.T) {
 		assert.False(t, isAllowedPricingModel(retired), "%s must be hidden after retirement", retired)
 	}
 }
+
+// 官方渠道图片模型 gpt-image-2.5-官方 需与二手渠道的 gpt-image-2/2.5 同时在广场展示。
+func TestIsAllowedPricingModelGptImageOfficial(t *testing.T) {
+	for _, name := range []string{"gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-官方"} {
+		require.True(t, isAllowedPricingModel(name), "model %q must show in pricing square", name)
+	}
+}
