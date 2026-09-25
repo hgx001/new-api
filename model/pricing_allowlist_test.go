@@ -38,3 +38,8 @@ func TestIsAllowedPricingModelGptImageOfficial(t *testing.T) {
 		require.True(t, isAllowedPricingModel(name), "model %q must show in pricing square", name)
 	}
 }
+
+// 漫屋 ArcReel dola 视频模型必须在广场展示。
+func TestIsAllowedPricingModelDolaSeedance(t *testing.T) {
+	require.True(t, isAllowedPricingModel("dola-seedance-2.5"), "dola-seedance-2.5 must show in pricing square")
+}
