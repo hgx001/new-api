@@ -114,12 +114,6 @@ func updatePricing() {
 		common.SysLog(fmt.Sprintf("GetAllEnableAbilityWithChannels error: %v", err))
 		return
 	}
-	// TODO(debug): 临时定位 dola-seedance-2.5 未上广场问题，验证后移除
-	for _, ab := range enableAbilities {
-		if strings.Contains(ab.Model, "dola") {
-			common.SysLog(fmt.Sprintf("[dola-debug] ability model=%q group=%q channelType=%d", ab.Model, ab.Group, ab.ChannelType))
-		}
-	}
 	// 预加载模型元数据与供应商一次，避免循环查询
 	var allMeta []Model
 	_ = DB.Find(&allMeta).Error
@@ -293,9 +287,6 @@ func updatePricing() {
 
 	pricingMap = make([]Pricing, 0)
 	for model, groups := range modelGroupsMap {
-		if model == "dola-seedance-2.5" {
-			common.SysLog(fmt.Sprintf("[dola-debug] reached loop, allowed=%v groups=%v", isAllowedPricingModel(model), groups.Items()))
-		}
 		if !isAllowedPricingModel(model) {
 			continue
 		}
