@@ -367,6 +367,46 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return taskResult, nil
 }
 
+// ConvertToOpenAIVideo 把轮询同步后的 task.Data（ArcReel jobResponse 原始 JSON）
+// 映射成 OpenAI video 查询响应；否则客户端永远看到 queued 无法收敛。
+func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
+	var res jobResponse
+	if err := common.Unmarshal(task.Data, &res); err != nil {
+		return nil, errors.Wrap(err, "unmarshal manwu task data failed")
+	}
+
+	openAIResp := dto.NewOpenAIVideo()
+	openAIResp.ID = task.TaskID
+	openAIResp.Model = task.Properties.OriginModelName
+	openAIResp.SetProgressStr(task.Progress)
+	openAIResp.CreatedAt = task.CreatedAt
+	openAIResp.CompletedAt = task.UpdatedAt
+
+	switch strings.ToLower(strings.TrimSpace(res.Status)) {
+	case "ready":
+		openAIResp.Status = dto.VideoStatusCompleted
+		if url := firstNonEmpty(res.SourceURL, res.SourceURLAlt); url != "" {
+			openAIResp.SetMetadata("url", url)
+		}
+	case "failed", "url_unavailable":
+		openAIResp.Status = dto.VideoStatusFailed
+		openAIResp.Error = &dto.OpenAIVideoError{
+			Code:    strings.ToLower(strings.TrimSpace(res.Status)),
+			Message: firstNonEmpty(res.Error, taskcommon.ReasonContentModeration),
+		}
+	case "cancelled":
+		openAIResp.Status = dto.VideoStatusFailed
+		openAIResp.Error = &dto.OpenAIVideoError{Code: "cancelled", Message: reasonCancelled}
+	case "queued":
+		openAIResp.Status = dto.VideoStatusQueued
+	case "assigned", "accepted", "submitting", "provider_running", "provider_succeeded", "url_validating":
+		openAIResp.Status = dto.VideoStatusInProgress
+	default:
+		openAIResp.Status = dto.VideoStatusUnknown
+	}
+	return common.Marshal(openAIResp)
+}
+
 // ============================
 // helpers
 // ============================
