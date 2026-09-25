@@ -440,6 +440,10 @@ func isAllowedPricingModel(name string) bool {
 	if name == "hmseedance_v2.0不支持真人" {
 		return true
 	}
+	// 漫屋 ArcReel dola 视频生成
+	if name == "dola-seedance-2.5" {
+		return true
+	}
 	return false
 }
 
