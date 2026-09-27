@@ -130,7 +130,15 @@ func isR2VModel(model string) bool {
 	return strings.TrimSpace(model) == r2vModel
 }
 
+func isPrimeModel(model string) bool {
+	return strings.TrimSpace(model) == primeModel
+}
+
 func normalizeResolutionForModel(model, resolution string) string {
+	if isPrimeModel(model) {
+		// 上游该档位仅支持 1080P，请求里的其它分辨率一律按 1080P 执行。
+		return primeResolution
+	}
 	if !isR2VModel(model) {
 		return resolution
 	}
@@ -174,6 +182,10 @@ func resolveResolution(req relaycommon.TaskSubmitReq) string {
 }
 
 func resolveDuration(req relaycommon.TaskSubmitReq) int {
+	if isPrimeModel(req.Model) {
+		// 上游该档位固定 30 秒，忽略请求里的其它时长。
+		return primeDuration
+	}
 	duration := req.Duration
 	if duration <= 0 {
 		duration, _ = strconv.Atoi(req.Seconds)
@@ -306,8 +318,11 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 		return errors.New("youzan wan3 accepts at most one first_frame and one last_frame")
 	}
 	imageLimit := maxReferenceImages
-	if isR2VModel(model) {
+	switch {
+	case isR2VModel(model):
 		imageLimit = r2vMaxReferenceImages
+	case isPrimeModel(model):
+		imageLimit = primeMaxReferenceImages
 	}
 	if counts["reference_image"] > imageLimit {
 		return errors.Errorf("youzan wan3 accepts at most %d reference images", imageLimit)
@@ -680,6 +695,10 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 	if strings.TrimSpace(modelName) == "" {
 		modelName = req.Model
+	}
+	if isPrimeModel(modelName) {
+		// 按次计费：ModelPrice 已是一次任务的价格，不能再乘时长/分辨率倍率。
+		return nil
 	}
 	resolution := resolveResolutionForModel(req, modelName)
 	ratio := resolutionRatioForModel(modelName, resolution)

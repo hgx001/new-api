@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -88,9 +89,9 @@ func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 	require.Equal(t, "audio/mpeg", fileContentTypes[2])
 }
 
-func TestGetModelListExposesSmartAndR2VModels(t *testing.T) {
+func TestGetModelListExposesYouzanModels(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	require.Equal(t, []string{"wan3.0-smart", "wan2.7-r2v"}, adaptor.GetModelList())
+	require.Equal(t, []string{"wan3.0-smart", primeModel, "wan2.7-r2v"}, adaptor.GetModelList())
 }
 
 func TestBuildRequestBodyUsesR2VDefaults(t *testing.T) {
@@ -199,6 +200,52 @@ func TestEstimateBillingChargesSmartResolutionTiers(t *testing.T) {
 			"size":    tc.wantSize,
 		}, adaptor.EstimateBilling(context, info), "model=%s resolution=%s", tc.model, tc.resolution)
 	}
+}
+
+func TestPrimeForces1080PAnd30Seconds(t *testing.T) {
+	// 上游满血档仅支持 1080P，请求里的其它分辨率被忽略。
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel}))
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel, Resolution: "480P"}))
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel, Resolution: "720P"}))
+	// 时长固定 30 秒。
+	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: primeModel, Duration: 2}))
+	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: primeModel, Duration: 30}))
+}
+
+func TestPrimeBillsPerCall(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 30, Resolution: "1080P"})
+	info := &relaycommon.RelayInfo{OriginModelName: primeModel}
+	// 按次计费：不返回 seconds/size 倍率，一次任务的价格直接由 ModelPrice 决定。
+	require.Nil(t, (&TaskAdaptor{}).EstimateBilling(context, info))
+}
+
+func TestPrimeBodyShapeAndReferenceLimit(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
+		Model:    primeModel,
+		Prompt:   "海边的日落延时",
+		Duration: 5,
+	})
+	require.NoError(t, err)
+
+	var payload map[string]interface{}
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, float64(30), payload["duration"])
+	require.Equal(t, "1080P", payload["resolution"])
+
+	// 参考图上限 8 张（smart 为 10 张）。
+	images := make([]relaycommon.TaskMedia, 0, 9)
+	for index := 0; index < 9; index++ {
+		images = append(images, relaycommon.TaskMedia{
+			Type: "reference_image",
+			URL:  "https://cdn.example/" + strconv.Itoa(index) + ".png",
+		})
+	}
+	require.Error(t, validateMedia(images, primeModel))
+	require.NoError(t, validateMedia(images[:8], primeModel))
+	require.NoError(t, validateMedia(images, "wan3.0-smart"))
 }
 
 func TestR2VResolutionAndDurationLimits(t *testing.T) {

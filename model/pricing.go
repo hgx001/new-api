@@ -421,7 +421,7 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "xuan:") {
 		return true
 	}
-	// wan3.chat：只暴露 480P + 标准版（慢速档）
+	// wan3.chat：官方标准版、有赞满血 30 秒档（wan3.0-video-prime-1080p）
 	if strings.HasPrefix(name, "wan3.0-video") {
 		return true
 	}
