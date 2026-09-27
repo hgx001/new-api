@@ -303,9 +303,9 @@ var defaultModelPrice = map[string]float64{
 	"gpt-4o-mini-tts":                   0.3,
 	"wan3.0-video":                      0.0369863,      // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）
 	"wan3.0-video-prime":                0.05547945,     // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
-	"wan3.0-smart":                      0.28 / USD2RMB, // 有赞智能调度版 480P 对外 ¥0.28/秒（720P ¥0.45/秒、1080P ¥0.65/秒走分辨率倍率）
+	"wan3.0-smart":                      0.28 / USD2RMB, // 有赞智能调度版 480P 对外 ¥0.28/秒（720P ¥0.32/秒、1080P ¥0.40/秒走分辨率倍率）
 	"wan3.0-video-官网":                   0.0369863,      // 官方渠道独立模型名，上游同 wan3.0-video，480P 对外 ¥0.27/秒
-	"wan2.7-r2v":                        0.6 / USD2RMB,  // 官方 720P 对外 ¥0.60/秒（1080P ¥1.00/秒走分辨率倍率）
+	"wan2.7-r2v":                        0.1 / USD2RMB,  // 有赞 r2v 对外统一 ¥0.10/秒（720P/1080P 同价，上游约 2 点数/秒）
 	"sd-2.5":                            0.821918,       // 按次对外 ¥6/次（上游 ¥2/次 3 倍定价）；内部按 USD 等值存储（6/7.3）
 	"dola-seedance-2.5":                 0.01,           // 漫屋 ArcReel 视频，按秒计费基准价 USD 占位，待运营定价
 	"autodl:minimax-h3-text-to-video":   autoDLVideoBasePrice,

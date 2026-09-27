@@ -55,7 +55,7 @@ func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
 }
 
 // wan3.0-smart（有赞智能调度版）按秒计费：480P 基准 ¥0.28/秒，
-// 720P ¥0.45/秒、1080P ¥0.65/秒走分辨率倍率（0.45/0.28、0.65/0.28）。
+// 720P ¥0.32/秒、1080P ¥0.40/秒走分辨率倍率（0.32/0.28、0.40/0.28）。
 // wan3.0-video-官网是官方渠道独立模型名，上游同 wan3.0-video，同价。
 func TestDefaultModelPriceWan3SmartPerSecond(t *testing.T) {
 	InitRatioSettings()
@@ -63,8 +63,8 @@ func TestDefaultModelPriceWan3SmartPerSecond(t *testing.T) {
 	smart, ok := GetModelPrice("wan3.0-smart", false)
 	require.True(t, ok, "wan3.0-smart must have an explicit per-second price")
 	require.InDelta(t, 0.28/USD2RMB, smart, 1e-12, "smart 480P base must equal ¥0.28/sec in USD")
-	require.InDelta(t, 0.45/USD2RMB, smart*(0.45/0.28), 1e-12, "smart 720P tier must equal ¥0.45/sec in USD")
-	require.InDelta(t, 0.65/USD2RMB, smart*(0.65/0.28), 1e-12, "smart 1080P tier must equal ¥0.65/sec in USD")
+	require.InDelta(t, 0.32/USD2RMB, smart*(0.32/0.28), 1e-12, "smart 720P tier must equal ¥0.32/sec in USD")
+	require.InDelta(t, 0.40/USD2RMB, smart*(0.40/0.28), 1e-12, "smart 1080P tier must equal ¥0.40/sec in USD")
 
 	official, ok := GetModelPrice("wan3.0-video-官网", false)
 	require.True(t, ok, "wan3.0-video-官网 must have an explicit per-second price")
@@ -73,15 +73,14 @@ func TestDefaultModelPriceWan3SmartPerSecond(t *testing.T) {
 	require.Equal(t, base, official, "official alias must share wan3.0-video base price")
 }
 
-// wan2.7-r2v 官方北京地域价格：720P ¥0.60/秒，1080P ¥1.00/秒。
-// 默认价以 720P 为基准，任务适配器再按分辨率倍率计算。
+// wan2.7-r2v 对外全分辨率统一 ¥0.10/秒（无 480P，720P/1080P 同价）。
+// 上游为按秒计费，约 2 点数/秒。
 func TestDefaultModelPriceWan27R2VPerSecond(t *testing.T) {
 	InitRatioSettings()
 
 	price, ok := GetModelPrice("wan2.7-r2v", false)
 	require.True(t, ok, "wan2.7-r2v must have an explicit per-second price")
-	require.InDelta(t, 0.6/USD2RMB, price, 1e-12, "720P base must equal ¥0.60/sec in USD")
-	require.InDelta(t, 1.0/USD2RMB, price*(1.0/0.6), 1e-12, "1080P tier must equal ¥1.00/sec in USD")
+	require.InDelta(t, 0.1/USD2RMB, price, 1e-12, "r2v base must equal ¥0.10/sec in USD")
 }
 
 // 6/7.3 = 0.821918；任务链路按 ModelPrice 固定扣费，禁止乘 seconds。

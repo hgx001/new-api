@@ -9,19 +9,19 @@ var ModelList = []string{
 }
 
 // smartResolutionSizeRatio 智能调度版各分辨率相对于 480P 基准价的倍率：
-// 480P=¥0.28/秒、720P=¥0.45/秒、1080P=¥0.65/秒（上游成本 ¥0.18/秒）。
+// 480P=¥0.28/秒、720P=¥0.32/秒、1080P=¥0.40/秒（上游成本 20 点数/秒，约 ¥0.20/秒）。
 // smart 模型的 ModelPrice 应配置为 480P 基准单价（USD 计价，0.28/7.3）。
 var smartResolutionSizeRatio = map[string]float64{
 	"480P":  1.0,
-	"720P":  0.45 / 0.28,
-	"1080P": 0.65 / 0.28,
+	"720P":  0.32 / 0.28,
+	"1080P": 0.40 / 0.28,
 }
 
-// r2vResolutionSizeRatio 以官网 720P ¥0.60/秒为基准，换算 1080P ¥1.00/秒。
-// wan2.7-r2v 不支持 480P，默认使用 1080P。
+// r2vResolutionSizeRatio：wan2.7-r2v 对外全分辨率统一价，所以各档倍率均为 1。
+// 基准单价由 ModelPrice 提供（¥0.10/秒）；wan2.7-r2v 不支持 480P，默认使用 1080P。
 var r2vResolutionSizeRatio = map[string]float64{
 	"720P":  1.0,
-	"1080P": 1.0 / 0.6,
+	"1080P": 1.0,
 }
 
 const r2vModel = "wan2.7-r2v"
