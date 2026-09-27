@@ -27,7 +27,7 @@ import (
 // ============================
 
 // submitRequest 提交生成任务的请求体（DashScope 原生视频合成协议，非 OpenAI 格式）。
-// model 固定为上游 wan3.0-video；分辨率经 resolution（480P/720P）+ ratio（16:9/9:16...）区分。
+// model 固定为上游 wan3.0-video；分辨率经 resolution（480P/720P/1080P）+ ratio（16:9/9:16...）区分。
 type submitRequest struct {
 	Model      string       `json:"model"`
 	Input      submitInput  `json:"input"`
@@ -102,8 +102,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 }
 
 // resolveResolution 从请求参数解析分辨率，优先级：
-// 1. 顶层 resolution（"480P" / "720P"）
-// 2. metadata.resolution（"480P" / "720P"）
+// 1. 顶层 resolution（"480P" / "720P" / "1080P"）
+// 2. metadata.resolution（"480P" / "720P" / "1080P"）
 // 3. size 映射（"960x540" → 480P, "1280x720" → 720P）
 // 4. Init 阶段通过模型名设置的值（兼容旧调用方式）
 // 5. 默认 480P
@@ -220,7 +220,7 @@ func ratioFromSize(size string) (string, bool) {
 
 // EstimateBilling 返回计费倍率：seconds（时长）+ size（分辨率倍率）。
 // 框架用 ModelPrice × seconds × size 计算配额。
-// 基准价为 480P（size=1.0），720P 时 size≈1.955。
+// 基准价为 480P（size=1.0），720P 时 size≈1.955，1080P 时 size≈3.148。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {

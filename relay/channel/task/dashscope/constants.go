@@ -5,8 +5,8 @@ const ChannelName = "DashScope"
 
 // ModelList 对外暴露的模型（阿里云百炼 wan3.0-video）。
 // 底层同一个 upstream 模型 wan3.0-video，分辨率通过请求参数控制：
-//   - resolution / metadata.resolution: "480P" | "720P"（推荐）
-//   - size: "960x540" → 480P, "1280x720" → 720P（兼容）
+//   - resolution / metadata.resolution: "480P" | "720P" | "1080P"（推荐）
+//   - size: "960x540" → 480P, "1280x720" → 720P, "1920x1080" → 1080P（兼容）
 //   - 默认 480P
 var ModelList = []string{
 	"wan3.0-video",
@@ -21,22 +21,25 @@ var resolutionByModel = map[string]string{
 
 // sizeToResolution 将 size 字符串（"1280x720"）映射到 DashScope resolution 参数。
 var sizeToResolution = map[string]string{
-	"960x540":  "480P",
-	"1280x720": "720P",
+	"960x540":   "480P",
+	"1280x720":  "720P",
+	"1920x1080": "1080P",
 }
 
 // resolutionPriceCNY 各分辨率的每秒对外售价（人民币）。
-// new-api 内部 ModelPrice 以 USD 计，基准价取 480P（¥2.66/7.3≈0.36438 USD/s）。
-// 720P 通过 EstimateBilling 返回 size ratio（5.2/2.66≈1.955）乘以基准价。
+// new-api 内部 ModelPrice 以 USD 计，基准价取 480P（¥0.27/7.3≈0.0369863 USD/s）。
+// 720P/1080P 通过 EstimateBilling 返回 size ratio 乘以基准价。
 var resolutionPriceCNY = map[string]float64{
-	"480P": 2.66,
-	"720P": 5.2,
+	"480P":  0.27,
+	"720P":  0.53,
+	"1080P": 0.85,
 }
 
 // resolutionSizeRatio 各分辨率相对于 480P 基准价的倍率。
 var resolutionSizeRatio = map[string]float64{
-	"480P": 1.0,
-	"720P": 5.2 / 2.66, // ≈1.9549
+	"480P":  1.0,
+	"720P":  5.2 / 2.66,  // ≈1.9549 → ¥0.5278/秒
+	"1080P": 0.85 / 0.27, // ≈3.1481 → ¥0.85/秒
 }
 
 const (
