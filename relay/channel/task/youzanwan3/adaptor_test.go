@@ -98,13 +98,15 @@ func TestBuildRequestBodyUsesR2VDefaults(t *testing.T) {
 	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
 		Model:  r2vModel,
 		Prompt: "让画面自然运动",
+		Images: []string{"https://cdn.example/a.png"},
 	})
 	require.NoError(t, err)
 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
 	require.Equal(t, r2vModel, payload["model"])
-	require.Equal(t, "1080P", payload["resolution"])
+	require.Equal(t, "1080p", payload["resolution"])
+	require.Equal(t, "16:9", payload["ratio"])
 	require.Equal(t, float64(defaultDuration), payload["duration"])
 }
 
@@ -177,9 +179,9 @@ func TestEstimateBillingChargesSmartResolutionTiers(t *testing.T) {
 		{"wan3.0-smart", "480P", 1.0},
 		{"wan3.0-smart", "720P", 0.32 / 0.28},
 		{"wan3.0-smart", "1080P", 0.40 / 0.28},
-		// R2V 对外全分辨率统一价（¥0.10/秒），各档倍率均为 1。
-		{"wan2.7-r2v", "720P", 1.0},
-		{"wan2.7-r2v", "1080P", 1.0},
+		// R2V 对外全分辨率统一价（¥0.10/秒），各档倍率均为 1（上游只认小写分辨率）。
+		{"wan2.7-r2v", "720p", 1.0},
+		{"wan2.7-r2v", "1080p", 1.0},
 		// R2V 不支持 480P，缺省/非法档位回退 1（落在统一价上）。
 		{"wan2.7-r2v", "480P", 1.0},
 		// 未知档位回退 1，避免多扣费。
@@ -200,10 +202,16 @@ func TestEstimateBillingChargesSmartResolutionTiers(t *testing.T) {
 }
 
 func TestR2VResolutionAndDurationLimits(t *testing.T) {
-	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: r2vModel}))
-	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{
+	// 上游只认小写 720p / 1080p，缺省 1080p。
+	require.Equal(t, "1080p", resolveResolution(relaycommon.TaskSubmitReq{Model: r2vModel}))
+	require.Equal(t, "720p", resolveResolution(relaycommon.TaskSubmitReq{
 		Model:      r2vModel,
 		Resolution: "720P",
+	}))
+	// 480P 不支持，回退上游默认 1080p。
+	require.Equal(t, "1080p", resolveResolution(relaycommon.TaskSubmitReq{
+		Model:      r2vModel,
+		Resolution: "480P",
 	}))
 	// 上游 wan2.7-r2v 时长仅支持 5s / 10s，就近取档。
 	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 2}))
@@ -212,6 +220,33 @@ func TestR2VResolutionAndDurationLimits(t *testing.T) {
 	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 30}))
 	// wan3.0-smart 仍按 2-30s 保留原值。
 	require.Equal(t, 7, resolveDuration(relaycommon.TaskSubmitReq{Model: "wan3.0-smart", Duration: 7}))
+}
+
+func TestR2VBodyUsesFlatReferenceImages(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
+		Model:    r2vModel,
+		Prompt:   "@图片1 中的人物转身",
+		Duration: 7,
+		Images:   []string{"https://cdn.example/a.png", "https://cdn.example/b.png"},
+	})
+	require.NoError(t, err)
+
+	var payload map[string]interface{}
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, []interface{}{"https://cdn.example/a.png", "https://cdn.example/b.png"}, payload["referenceImages"])
+	require.Equal(t, float64(10), payload["duration"], "7s 应就近取 10s 档")
+	// r2v 不走 assets/mentions 协议。
+	require.NotContains(t, payload, "conversationId")
+	require.NotContains(t, payload, "mentions")
+
+	// 没有参考图时本地就拒绝，不消耗上游调用。
+	_, err = adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
+		Model:    r2vModel,
+		Prompt:   "no image",
+		Duration: 5,
+	})
+	require.Error(t, err)
 }
 
 func TestR2VRatioAndReferenceImageLimits(t *testing.T) {

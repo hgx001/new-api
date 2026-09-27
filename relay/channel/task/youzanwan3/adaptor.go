@@ -131,15 +131,23 @@ func isR2VModel(model string) bool {
 }
 
 func normalizeResolutionForModel(model, resolution string) string {
-	if isR2VModel(model) && resolution == "480P" {
+	if !isR2VModel(model) {
+		return resolution
+	}
+	// 上游 wan2.7-r2v 只接受小写 720p / 1080p，且不支持 480P。
+	switch resolution {
+	case "720P", "720p":
+		return "720p"
+	case "1080P", "1080p":
+		return "1080p"
+	default:
 		return ""
 	}
-	return resolution
 }
 
 func defaultResolutionForModel(model string) string {
 	if isR2VModel(model) {
-		return "1080P"
+		return "1080p"
 	}
 	return defaultResolution
 }
@@ -589,6 +597,21 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 		"ratio":      resolveRatio(req),
 		"resolution": resolveResolution(req),
 		"duration":   resolveDuration(req),
+	}
+	if isR2VModel(req.Model) {
+		// r2v 走上游扁平参考图字段（referenceImages）；assets + mentions 是
+		// all_in_one 智能调度的约定，r2v 不识别，会导致上游报缺少参考图。
+		referenceImages := make([]string, 0, len(media))
+		for _, item := range media {
+			if item.Type == "reference_image" {
+				referenceImages = append(referenceImages, item.URL)
+			}
+		}
+		if len(referenceImages) == 0 {
+			return nil, errors.New("wan2.7-r2v requires at least one reference image")
+		}
+		body["referenceImages"] = referenceImages
+		return common.Marshal(body)
 	}
 	if req.Metadata != nil {
 		if audio, ok := metadataBool(req.Metadata, "audio", "generate_audio"); ok {

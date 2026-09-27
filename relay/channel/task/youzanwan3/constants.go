@@ -18,10 +18,11 @@ var smartResolutionSizeRatio = map[string]float64{
 }
 
 // r2vResolutionSizeRatio：wan2.7-r2v 对外全分辨率统一价，所以各档倍率均为 1。
-// 基准单价由 ModelPrice 提供（¥0.10/秒）；wan2.7-r2v 不支持 480P，默认使用 1080P。
+// 基准单价由 ModelPrice 提供（¥0.10/秒）；wan2.7-r2v 不支持 480P，默认使用 1080p，
+// 上游只认小写分辨率，键名与适配器输出保持一致。
 var r2vResolutionSizeRatio = map[string]float64{
-	"720P":  1.0,
-	"1080P": 1.0,
+	"720p":  1.0,
+	"1080p": 1.0,
 }
 
 // smartRatios 智能调度版允许的成片比例；智能调度会自适应当前比例。
