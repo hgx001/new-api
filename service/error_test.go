@@ -3,9 +3,11 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -158,4 +160,35 @@ func withDebugEnabled(t *testing.T, enabled bool) {
 	t.Cleanup(func() {
 		common.DebugEnabled = oldDebug
 	})
+}
+
+func TestIsSubmitOutcomeUnknown(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		err     error
+		message string
+		want    bool
+	}{
+		{
+			name: "request timeout",
+			err:  &url.Error{Op: "Post", URL: "https://youzan666.vip/api/generate-video", Err: context.DeadlineExceeded},
+			want: true,
+		},
+		{name: "context canceled by client", err: context.Canceled, want: true},
+		{
+			name:    "upstream asks for reconciliation",
+			message: `{"code":"WAN3_SUBMISSION_RECONCILIATION_REQUIRED"}`,
+			want:    true,
+		},
+		{name: "connection refused means not accepted", err: errors.New("dial tcp: connect: connection refused"), want: false},
+		{name: "plain upstream rejection", err: errors.New("invalid resolution"), message: "invalid resolution", want: false},
+		{name: "empty", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsSubmitOutcomeUnknown(tt.err, tt.message))
+		})
+	}
 }

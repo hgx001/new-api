@@ -34,6 +34,9 @@ func TestShouldRetryTaskRelayOnBalanceError(t *testing.T) {
 		{name: "400 plain bad request stays", taskErr: testTaskError(400, "invalid resolution", false), retryTimes: 1, want: false},
 		{name: "400 local validation stays", taskErr: testTaskError(400, "prompt is required", true), retryTimes: 1, want: false},
 		{name: "no retry budget stays", taskErr: testTaskError(400, "账户余额不足", false), retryTimes: 0, want: false},
+		// 提交结果未知（超时/要求对账）不能重试：上游可能已受理，重发会重复计费。
+		{name: "408 unknown submit outcome stays", taskErr: testTaskError(408, "context deadline exceeded", false), retryTimes: 1, want: false},
+		{name: "408 reconciliation stays", taskErr: testTaskError(408, "WAN3_SUBMISSION_RECONCILIATION_REQUIRED", false), retryTimes: 1, want: false},
 	}
 
 	for _, tt := range tests {

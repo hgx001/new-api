@@ -317,6 +317,16 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	if counts["first_frame"] > 1 || counts["last_frame"] > 1 {
 		return errors.New("youzan wan3 accepts at most one first_frame and one last_frame")
 	}
+	// 上游文档：首尾帧单独使用，不能和普通参考素材混用；
+	// 混用会被上游拒绝（WAN3_API_REFERENCE_MODE / WAN3_REFERENCE_MODE_CONFLICT）。
+	if counts["first_frame"]+counts["last_frame"] > 0 &&
+		counts["reference_image"]+counts["reference_video"]+counts["reference_audio"] > 0 {
+		return errors.New("youzan wan3 does not accept first_frame/last_frame mixed with reference media")
+	}
+	if isR2VModel(model) && counts["first_frame"]+counts["last_frame"] > 0 {
+		// wan2.7-r2v 上游只支持参考图，首尾帧会被静默丢弃，这里直接拒绝。
+		return errors.New("youzan wan2.7-r2v does not accept first_frame/last_frame")
+	}
 	imageLimit := maxReferenceImages
 	switch {
 	case isR2VModel(model):
@@ -759,7 +769,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
-	return channel.DoTaskApiRequest(a, c, info, requestBody)
+	resp, err := channel.DoTaskApiRequest(a, c, info, requestBody)
+	if err != nil {
+		return nil, err
+	}
+	// 2xx 统一归一成 200：框架 relay_task.go 仅认 200，而上游提交可能返回 202，
+	// 不归一会被误判为 fail_to_fetch_task（任务其实已受理并计费）。
+	if resp != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.StatusCode != http.StatusOK {
+		resp.StatusCode = http.StatusOK
+	}
+	return resp, nil
 }
 
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {

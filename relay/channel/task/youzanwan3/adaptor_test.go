@@ -221,6 +221,19 @@ func TestPrimeBillsPerCall(t *testing.T) {
 	require.Nil(t, (&TaskAdaptor{}).EstimateBilling(context, info))
 }
 
+func TestValidateMediaRejectsFrameReferenceMixing(t *testing.T) {
+	frame := relaycommon.TaskMedia{Type: "first_frame", URL: "https://cdn.example/first.png"}
+	lastFrame := relaycommon.TaskMedia{Type: "last_frame", URL: "https://cdn.example/last.png"}
+	reference := relaycommon.TaskMedia{Type: "reference_image", URL: "https://cdn.example/ref.png"}
+
+	// 首尾帧可成对使用，但不能和普通参考素材混用（上游会拒绝）。
+	require.NoError(t, validateMedia([]relaycommon.TaskMedia{frame, lastFrame}, "wan3.0-smart"))
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{frame, reference}, "wan3.0-smart"))
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{lastFrame, reference}, "wan3.0-smart"))
+	// wan2.7-r2v 只支持参考图，首尾帧会被上游静默丢弃，本地直接拒绝。
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{frame}, r2vModel))
+}
+
 func TestPrimeBodyShapeAndReferenceLimit(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{

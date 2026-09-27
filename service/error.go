@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -210,6 +211,30 @@ func TaskErrorWrapper(err error, code string, statusCode int) *dto.TaskError {
 }
 
 // TaskErrorFromAPIError 将 PreConsumeBilling 返回的 NewAPIError 转换为 TaskError。
+// SubmitOutcomeUnknownStatusCode 是「上游提交结果未知」时对下游返回的状态码。
+// 复用框架既有的 408（超时不重试）语义：上游可能已受理并计费，重试会造成重复提交。
+const SubmitOutcomeUnknownStatusCode = http.StatusRequestTimeout
+
+// IsSubmitOutcomeUnknown 判断一次任务提交失败是否属于「结果未知」：
+//   - 网络超时或请求被中断：请求可能已到达上游，无法确认是否受理；
+//   - 上游明确要求先对账（有赞 WAN3_SUBMISSION_RECONCILIATION_REQUIRED 等）。
+//
+// 这类失败必须不重试，否则上游会重复计费；连接被拒/DNS 失败等
+// 「确定未受理」的错误不在此列，仍可正常切换备选渠道。
+func IsSubmitOutcomeUnknown(err error, message string) bool {
+	if strings.Contains(message, "SUBMISSION_RECONCILIATION_REQUIRED") {
+		return true
+	}
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
 func TaskErrorFromAPIError(apiErr *types.NewAPIError) *dto.TaskError {
 	if apiErr == nil {
 		return nil

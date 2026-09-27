@@ -219,11 +219,22 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
+		// 提交超时/请求中断属于「结果未知」：上游可能已受理，重试会重复提交计费，
+		// 用 408 告诉重试策略不要换渠道重发。
+		statusCode := http.StatusInternalServerError
+		if service.IsSubmitOutcomeUnknown(err, err.Error()) {
+			statusCode = service.SubmitOutcomeUnknownStatusCode
+		}
+		return nil, service.TaskErrorWrapper(err, "do_request_failed", statusCode)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		message := string(responseBody)
+		statusCode := resp.StatusCode
+		if service.IsSubmitOutcomeUnknown(nil, message) {
+			statusCode = service.SubmitOutcomeUnknownStatusCode
+		}
+		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", message), "fail_to_fetch_task", statusCode)
 	}
 
 	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
