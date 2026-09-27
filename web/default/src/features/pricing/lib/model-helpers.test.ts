@@ -110,6 +110,18 @@ describe('AutoDL H3 resolution tier note', () => {
     )
   })
 
+  // wan3.0-smart 按秒计费（EstimateBilling 返回 seconds），
+  // wan3.0-video-prime-1080p 按次计费（EstimateBilling 返回 nil）。
+  test('marks wan3.0-smart per second and wan3.0-video-prime-1080p per request', () => {
+    assert.equal(isPerSecondModel(autoDLModel('wan3.0-smart')), true)
+    assert.equal(
+      isPerSecondModel(autoDLModel('wan3.0-video-prime-1080p')),
+      false
+    )
+    // 官方渠道标准版仍是按秒。
+    assert.equal(isPerSecondModel(autoDLModel('wan3.0-video-官网')), true)
+  })
+
   // Regression guard: i18n keys MUST live under the `translation` namespace
   // object. Keys added at the JSON root are bundled but invisible to t(),
   // which then renders the raw key (this exact bug shipped once).
