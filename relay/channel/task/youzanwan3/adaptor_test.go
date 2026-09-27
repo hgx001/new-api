@@ -205,16 +205,42 @@ func TestR2VResolutionAndDurationLimits(t *testing.T) {
 		Model:      r2vModel,
 		Resolution: "720P",
 	}))
-	require.Equal(t, 15, resolveDuration(relaycommon.TaskSubmitReq{
+	// 上游 wan2.7-r2v 时长仅支持 5s / 10s，就近取档。
+	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 2}))
+	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 5}))
+	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 7}))
+	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 30}))
+	// wan3.0-smart 仍按 2-30s 保留原值。
+	require.Equal(t, 7, resolveDuration(relaycommon.TaskSubmitReq{Model: "wan3.0-smart", Duration: 7}))
+}
+
+func TestR2VRatioAndReferenceImageLimits(t *testing.T) {
+	// r2v 不接受 adaptive，缺省回退 16:9；显式传入的合法比例原样保留。
+	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{Model: r2vModel}))
+	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{
 		Model:    r2vModel,
-		Duration: 30,
+		Metadata: map[string]interface{}{"ratio": "adaptive"},
 	}))
-	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{
+	require.Equal(t, "9:16", resolveRatio(relaycommon.TaskSubmitReq{
 		Model:    r2vModel,
-		Duration: 30,
-		Media: []relaycommon.TaskMedia{{
-			Type: "reference_video",
-			URL:  "https://example.com/reference.mp4",
-		}},
+		Metadata: map[string]interface{}{"ratio": "9:16"},
 	}))
+	// smart 保留 adaptive 与 4:3 / 3:4。
+	require.Equal(t, "adaptive", resolveRatio(relaycommon.TaskSubmitReq{Model: "wan3.0-smart"}))
+	require.Equal(t, "4:3", resolveRatio(relaycommon.TaskSubmitReq{
+		Model:    "wan3.0-smart",
+		Metadata: map[string]interface{}{"ratio": "4:3"},
+	}))
+
+	// r2v 上游最多 3 张参考图，第 4 张要报错；smart 上限仍是 10。
+	media := func(n int) []relaycommon.TaskMedia {
+		items := make([]relaycommon.TaskMedia, 0, n)
+		for i := 0; i < n; i++ {
+			items = append(items, relaycommon.TaskMedia{Type: "reference_image", URL: "https://example.com/i.png"})
+		}
+		return items
+	}
+	require.NoError(t, validateMedia(media(3), r2vModel))
+	require.Error(t, validateMedia(media(4), r2vModel))
+	require.NoError(t, validateMedia(media(4), "wan3.0-smart"))
 }

@@ -24,6 +24,12 @@ var r2vResolutionSizeRatio = map[string]float64{
 	"1080P": 1.0,
 }
 
+// smartRatios 智能调度版允许的成片比例；智能调度会自适应当前比例。
+var smartRatios = []string{"adaptive", "16:9", "9:16", "1:1", "4:3", "3:4"}
+
+// r2vRatios：上游 wan2.7-r2v 仅支持固定比例，不接受 adaptive。
+var r2vRatios = []string{"16:9", "9:16", "1:1"}
+
 const r2vModel = "wan2.7-r2v"
 
 const (
@@ -33,7 +39,14 @@ const (
 
 	defaultResolution = "480P"
 	defaultRatio      = "adaptive"
-	defaultAudio      = true
+
+	// wan2.7-r2v 上游限制：时长仅 5s / 10s 两档，比例固定 16:9 / 9:16 / 1:1，
+	// 参考图最多 3 张（wan3 系为 10 张）。
+	r2vMinDuration        = 5
+	r2vMaxDuration        = 10
+	r2vDefaultRatio       = "16:9"
+	r2vMaxReferenceImages = 3
+	defaultAudio          = true
 
 	minDuration     = 2
 	maxDuration     = 30

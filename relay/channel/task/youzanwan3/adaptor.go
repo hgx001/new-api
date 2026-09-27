@@ -165,19 +165,6 @@ func resolveResolution(req relaycommon.TaskSubmitReq) string {
 	return resolveResolutionForModel(req, req.Model)
 }
 
-func hasReferenceVideo(req relaycommon.TaskSubmitReq) bool {
-	media := req.Media
-	if len(media) == 0 {
-		media, _ = metadataMedia(req.Metadata)
-	}
-	for _, item := range media {
-		if item.Type == "reference_video" {
-			return true
-		}
-	}
-	return false
-}
-
 func resolveDuration(req relaycommon.TaskSubmitReq) int {
 	duration := req.Duration
 	if duration <= 0 {
@@ -186,16 +173,17 @@ func resolveDuration(req relaycommon.TaskSubmitReq) int {
 	if duration <= 0 {
 		return defaultDuration
 	}
+	if isR2VModel(req.Model) {
+		// 上游仅接受 5 秒和 10 秒两档，就近取档。
+		if duration <= r2vMinDuration {
+			return r2vMinDuration
+		}
+		return r2vMaxDuration
+	}
 	if duration < minDuration {
 		return minDuration
 	}
 	maxAllowedDuration := maxDuration
-	if isR2VModel(req.Model) {
-		maxAllowedDuration = 15
-		if hasReferenceVideo(req) {
-			maxAllowedDuration = 10
-		}
-	}
 	if duration > maxAllowedDuration {
 		return maxAllowedDuration
 	}
@@ -203,17 +191,25 @@ func resolveDuration(req relaycommon.TaskSubmitReq) int {
 }
 
 func resolveRatio(req relaycommon.TaskSubmitReq) string {
+	allowedRatios := smartRatios
+	fallback := defaultRatio
+	if isR2VModel(req.Model) {
+		allowedRatios = r2vRatios
+		fallback = r2vDefaultRatio
+	}
 	if req.Metadata != nil {
 		for _, key := range []string{"ratio", "aspect_ratio"} {
 			if value, ok := req.Metadata[key].(string); ok {
 				value = strings.TrimSpace(value)
-				if value == "adaptive" || value == "16:9" || value == "9:16" || value == "1:1" || value == "4:3" || value == "3:4" {
-					return value
+				for _, allowed := range allowedRatios {
+					if value == allowed {
+						return value
+					}
 				}
 			}
 		}
 	}
-	return defaultRatio
+	return fallback
 }
 
 func metadataBool(metadata map[string]interface{}, keys ...string) (bool, bool) {
@@ -282,10 +278,10 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 			}
 		}
 	}
-	return media, validateMedia(media)
+	return media, validateMedia(media, req.Model)
 }
 
-func validateMedia(media []relaycommon.TaskMedia) error {
+func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	counts := make(map[string]int)
 	for _, item := range media {
 		if strings.TrimSpace(item.URL) == "" {
@@ -301,8 +297,12 @@ func validateMedia(media []relaycommon.TaskMedia) error {
 	if counts["first_frame"] > 1 || counts["last_frame"] > 1 {
 		return errors.New("youzan wan3 accepts at most one first_frame and one last_frame")
 	}
-	if counts["reference_image"] > maxReferenceImages {
-		return errors.Errorf("youzan wan3 accepts at most %d reference images", maxReferenceImages)
+	imageLimit := maxReferenceImages
+	if isR2VModel(model) {
+		imageLimit = r2vMaxReferenceImages
+	}
+	if counts["reference_image"] > imageLimit {
+		return errors.Errorf("youzan wan3 accepts at most %d reference images", imageLimit)
 	}
 	if counts["reference_video"] > maxReferenceVideos {
 		return errors.Errorf("youzan wan3 accepts at most %d reference videos", maxReferenceVideos)
