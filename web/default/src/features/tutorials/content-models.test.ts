@@ -113,6 +113,25 @@ describe('tutorials model guide content', () => {
     }
   })
 
+  // 回归守卫：seconds 在网关里是字符串字段，JSON 示例里写数字会直接报 invalid_json。
+  test('json examples use duration instead of numeric seconds', () => {
+    const codeBlocks: string[] = []
+    for (const section of sections) {
+      for (const node of section.content ?? []) {
+        if (node.type === 'codeBlock') codeBlocks.push(node.value)
+      }
+    }
+    const code = codeBlocks.join('\n')
+    assert.equal(code.includes('"seconds": 5'), false)
+    assert.equal(code.includes('"duration": 5'), true)
+  })
+
+  // 配额不足在网关里是 403 insufficient_user_quota，不是 402。
+  test('error table documents 403 for insufficient quota', () => {
+    assert.equal(sectionsJson.includes('insufficient_user_quota'), true)
+    assert.equal(sectionsJson.includes('402：'), false)
+  })
+
   test('every doc index anchor resolves to a real section or heading id', () => {
     const anchorIds = collectAnchorIds()
     for (const entry of getDocIndex()) {

@@ -51,7 +51,7 @@ const VIDEO_FLOW_ITEMS = [
 const VIDEO_COMMON_FIELDS = [
   'model：必填，模型名',
   'prompt：必填，文本描述；引用素材可用 @图片1 / @视频1 / @音频1（也支持 Image 1 等英文写法）',
-  'seconds / duration：时长（秒），seconds 支持数字或字符串，两者都传时以 duration 为准',
+  'seconds / duration：时长（秒），duration 传整数（推荐）；seconds 为字符串（OpenAI 风格，如 "5"），传数字会报 invalid_json；两者都传时以 duration 为准',
   'resolution：分辨率档位，大小写均可（720p / 720P）',
   'ratio / aspect_ratio：画幅比例（官网渠道请放在 metadata.ratio，或用 size）',
   'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链',
@@ -235,7 +235,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
   -d '{
     "model": "wan3.0-smart",
     "prompt": "一只橘猫在窗台晒太阳，午后暖光",
-    "seconds": 5,
+    "duration": 5,
     "resolution": "720P",
     "ratio": "16:9"
   }'`,
@@ -394,7 +394,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
     "model": "wan2.7-r2v",
     "prompt": "@图片1 中的人物转身走向镜头",
     "images": ["https://your-cdn.com/girl.png"],
-    "seconds": 5,
+    "duration": 5,
     "resolution": "720P",
     "ratio": "16:9"
   }'`,
