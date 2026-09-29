@@ -110,10 +110,20 @@ func TestValidateResolvesAliases(t *testing.T) {
 	assert.Equal(t, []string{"https://a.example/1.png"}, req2.Images)
 }
 
+// dola 官网真机验证支持 10 张参考图，中转层按官网口径放行（11 张起拒绝）。
+func TestValidateAcceptsTenReferenceImages(t *testing.T) {
+	imgs := `["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png","https://a.example/6.png","https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png"]`
+	c, info, a := postVideoCtx(t, `{"model":"dola-seedance-2.5","prompt":"hi","input_reference":`+imgs+`}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	require.Len(t, req.Images, 10)
+}
+
 // 非法组合必须在本地拦截，错误码指明原因（上游 ArcReel 对非法时长会静默回落 30，
 // 厂商侧必须显式拒绝，避免计费与实际生成时长脱节）。
 func TestValidateRejectsIllegalRequests(t *testing.T) {
-	threeImgs := `["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png"]`
+	elevenImgs := `["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png","https://a.example/6.png","https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png","https://a.example/11.png"]`
 	cases := map[string]struct {
 		body string
 		code string
@@ -127,7 +137,7 @@ func TestValidateRejectsIllegalRequests(t *testing.T) {
 		"seconds malformed":  {`{"model":"dola-seedance-2.5","prompt":"hi","seconds":"abc"}`, "invalid_duration"},
 		"seconds float":      {`{"model":"dola-seedance-2.5","prompt":"hi","seconds":10.5}`, "invalid_duration"},
 		"ratio not allowed":  {`{"model":"dola-seedance-2.5","prompt":"hi","ratio":"16:10"}`, "invalid_ratio"},
-		"too many images":    {`{"model":"dola-seedance-2.5","prompt":"hi","input_reference":` + threeImgs + `}`, "invalid_input_reference"},
+		"too many images":    {`{"model":"dola-seedance-2.5","prompt":"hi","input_reference":` + elevenImgs + `}`, "invalid_input_reference"},
 		"non http url":       {`{"model":"dola-seedance-2.5","prompt":"hi","input_reference":["ftp://a.example/x.png"]}`, "invalid_input_reference"},
 		"url without host":   {`{"model":"dola-seedance-2.5","prompt":"hi","input_reference":["not-a-url"]}`, "invalid_input_reference"},
 	}
@@ -195,12 +205,12 @@ func TestBuildRequestBodyOmitsEmptyInputs(t *testing.T) {
 	assert.Equal(t, defaultRatio, vp["ratio"])
 }
 
-// EstimateBilling 返回 seconds 倍率（ModelPrice × seconds 计费）；未校验的 context 返回 nil。
-func TestEstimateBilling(t *testing.T) {
+// EstimateBilling 必须返回 nil：dola-seedance-2.5 按次计费（¥2.5/次），
+// 带 seconds 倍率会把 30 秒任务扣到 ¥75。
+func TestEstimateBillingIsPerCall(t *testing.T) {
 	c, info, a := postVideoCtx(t, `{"model":"dola-seedance-2.5","prompt":"hi","seconds":15}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
-	assert.Equal(t, map[string]float64{"seconds": 15}, a.EstimateBilling(c, info))
-
+	assert.Nil(t, a.EstimateBilling(c, info))
 	assert.Nil(t, a.EstimateBilling(nil, nil))
 
 	emptyC, _ := gin.CreateTestContext(httptest.NewRecorder())

@@ -45,7 +45,8 @@ const (
 	// 这里缺省显式传 30，保证预扣计费与上游实际生成时长一致。
 	defaultDuration = 30
 
-	maxReferenceImages = 2
+	// 参考图上限按 dola 官网真机口径取 10（与 ArcReel openai 后端 manwu 分支同口径）。
+	maxReferenceImages = 10
 
 	idempotencyKeyPrefix = "manwu-"
 
@@ -210,18 +211,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
-// EstimateBilling 返回计费倍率：seconds（时长）。框架用 ModelPrice × seconds 计算配额。
-func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	if c == nil {
-		return nil
-	}
-	req, err := getNormalizedRequest(c)
-	if err != nil {
-		return nil
-	}
-	return map[string]float64{
-		"seconds": float64(req.Duration),
-	}
+// EstimateBilling 返回 nil：漫屋 dola-seedance-2.5 按次计费（ModelPrice 即一次任务的价格），
+// 不能带 seconds 倍率，否则 30 秒任务会被扣到 ¥75。
+func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
+	return nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -472,7 +465,7 @@ func resolveRatio(req clientRequest) (string, error) {
 }
 
 // resolveReferenceImages 解析参考图：input_reference（首选）→ images。
-// dola 最多 2 张参考图，且每张必须是 http(s) URL。
+// dola 最多 10 张参考图，且每张必须是 http(s) URL。
 func resolveReferenceImages(req clientRequest) ([]string, error) {
 	images := parseStringList(req.InputReference)
 	if len(images) == 0 {

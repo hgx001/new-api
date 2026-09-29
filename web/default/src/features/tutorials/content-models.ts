@@ -33,7 +33,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan3.0-video-prime-1080p｜视频（按次）｜¥8.00 / 次，固定 1080P、30 秒',
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s',
-  'dola-seedance-2.5｜视频（按秒）｜¥2.50/s',
+  'dola-seedance-2.5｜视频（按次）｜¥2.50 / 次',
 ]
 
 const COMPAT_MODEL_ITEMS = [
@@ -78,7 +78,7 @@ const BILLING_ITEMS = [
   '文本：输入、输出 token 分别计价',
   '图片：按张计费，¥0.15 / 张（n=2 扣两次）',
   '视频（按秒）：单价 × 秒数 × 分辨率档位倍率',
-  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次',
+  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，dola-seedance-2.5 固定 ¥2.50 / 次',
   '任务失败：自动全额退还，无需申请',
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
@@ -424,7 +424,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['seconds：5 / 10 / 15 / 30，默认 30'],
           ['ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9，也可用 size 传比例字符串'],
           ['input_reference / images：可选，≤2 张，必须是 http/https URL'],
-          ['计费：按秒 ¥2.50'],
+          ['计费：按次 ¥2.50，与时长无关（30 秒也是 ¥2.50）'],
         ] },
       ],
     },
