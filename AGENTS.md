@@ -144,6 +144,14 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - 遇到模型或媒体请求异常时，必须联合检查 ArcReel 请求、new-api 路由/适配器、sub2api 账号池/凭证及上游响应；不要仅依据 new-api 自动路由后的成功判断某个指定渠道成功。
 - 指定渠道验证应使用 new-api 强制渠道测试或该渠道真实上游直连，并用 request ID、模型、时间关联三侧日志。生产操作遵循备份、最小变更和凭证脱敏原则。
 
+### Manwu（dola）通道维护约束
+
+- 通道定位：`relay/channel/task/manwu/` 经 OpenAI 兼容 `POST /v1/videos` 承接 `dola-seedance-2.5`，再转 ArcReel 远端建单（`platformId: dola`，默认基址 `https://arcreel.heibaidao.cn`，提交路径 `/api/v1/remote-generation/jobs`）。完整链路：ArcReel 本地任务 → 本中转（heibaidao）→ ArcReel 远端建单 → worker → dola 官网。排查必须按此链路逐段确认，不要跳段。
+- 请求口径（`adaptor.go::clientRequest`）：`model` 必须精确等于 `dola-seedance-2.5`；`prompt` 必填；时长只认 5/10/15/30（`seconds`/`duration` 宽容数字/字符串，缺省显式 30，保证预扣与实际一致）；比例只认 16:9/9:16/1:1/4:3/3:4/21:9，按 `size`→`ratio`→`aspect_ratio` 优先级解析——Sora 式 WxH（如 `1280x720`）会报 `invalid_ratio`；参考图走 `input_reference` 优先→`images` 兜底，每张必须是 http(s) URL（multipart 文件与 data URI 报 `invalid_input_reference`），上限 `maxReferenceImages = 10`（2026-09-29 按 dola 官网真机口径从 2 放开）。
+- 双仓库同口径：ArcReel 侧 `lib/video_backends/openai.py` 的 manwu 分支（`_MANWU_MODEL_PATTERN` / `_MANWU_MAX_REFERENCE_IMAGES` / `_manwu_ratio`，ratio 形态 + 参考图公网 URL 透传）必须与本通道同口径。任一侧改上限、比例档或字段语义，必须双侧同步改、同步发版，否则一侧放行另一侧 400。注意 ArcReel 的部署脚本只更新 ArcReel 两台服务器，不会更新本中转；本中转发版走上面的 Deployment Rules 远程构建流程。
+- 本地错误码均为 400：`invalid_model` / `invalid_request` / `invalid_duration` / `invalid_ratio` / `invalid_input_reference`，改动错误语义时同步更新 `adaptor_test.go` 的拒绝用例表。
+- 测试：`go test ./relay/channel/task/manwu/`。改上限必须同步维护边界用例（10 张放行见 `TestValidateAcceptsTenReferenceImages`，11 张拒绝见 `TestValidateRejectsIllegalRequests` 的 `too many images`），禁止只改常量不改测试。
+
 ### Project Governance
 
 **Required attribution:** The footer must always include a line crediting the original project:
