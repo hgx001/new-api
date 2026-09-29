@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { getModelGuideIndex, getModelGuideSections } from './content-models'
+
 export type TextNode =
   | string
   | { type: 'link'; href: string; text: string; external?: boolean }
@@ -452,6 +454,8 @@ console.log(response.choices[0].message.content);`,
         },
       ],
     },
+    // 下游模型对接文档（模型总览 / 文本 / 图片 / 视频 / 计费 / 错误码）。
+    ...getModelGuideSections(url),
   ]
 }
 
@@ -488,5 +492,6 @@ export function getDocIndex() {
     { title: 'OpenCode TUI', href: '#opencode' },
     { title: 'Cline（VS Code 扩展）', href: '#cline' },
     { title: '通用配置', href: '#generic-config' },
+    ...getModelGuideIndex(),
   ]
 }
