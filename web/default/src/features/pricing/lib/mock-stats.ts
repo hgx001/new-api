@@ -762,7 +762,19 @@ const VIDEO_PARAMS: SupportedParameter[] = [
   },
 ]
 
-const WAN3_RESOLUTIONS = ['480P', '720P']
+const WAN3_RESOLUTIONS = ['480P', '720P', '1080P']
+
+/**
+ * wan3 系（官网 + 有赞）视频模型：smart/官网/标准版共享档位参数表，
+ * prime 固定 1080P/30 秒，r2v 另有一套参数。
+ */
+function isWan3VideoModel(modelName: string): boolean {
+  return (
+    modelName === 'wan3.0-smart' ||
+    modelName === 'wan2.7-r2v' ||
+    modelName.startsWith('wan3.0-video')
+  )
+}
 
 function buildWan3VideoParameters(): SupportedParameter[] {
   return [
@@ -779,6 +791,63 @@ function buildWan3VideoParameters(): SupportedParameter[] {
       enumValues: WAN3_RESOLUTIONS,
       defaultValue: '480P',
       descriptionKey: 'Output video resolution',
+    },
+  ]
+}
+
+/** wan3.0-video-prime-1080p：分辨率固定 1080P、时长固定 30 秒。 */
+function buildWan3PrimeVideoParameters(): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      type: 'integer',
+      range: '30',
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: ['1080P'],
+      defaultValue: '1080P',
+      descriptionKey: 'Output video resolution',
+    },
+  ]
+}
+
+/**
+ * wan2.7-r2v：上游只支持 720p/1080p（且要求小写）、时长仅 5/10 秒、
+ * 比例三选一，并且必须带 1~3 张参考图。
+ */
+function buildR2VVideoParameters(): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      type: 'integer',
+      range: '5 / 10',
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: ['720p', '1080p'],
+      defaultValue: '1080p',
+      descriptionKey: 'Output video resolution',
+    },
+    {
+      name: 'ratio',
+      type: 'enum',
+      enumValues: ['16:9', '9:16', '1:1'],
+      defaultValue: '16:9',
+      descriptionKey: 'Output aspect ratio',
+    },
+    {
+      name: 'images',
+      type: 'array',
+      range: '1 ~ 3',
+      required: true,
+      descriptionKey: 'Image input',
     },
   ]
 }
@@ -976,6 +1045,7 @@ function apiCategoryOf(model: PricingModel): ApiCategory {
   // broad image-profile keywords, so classify video capabilities directly.
   if (
     /^autodl:/i.test(model.model_name) ||
+    isWan3VideoModel(model.model_name) ||
     /sora|veo|kling|pika|video|wan-|hunyuanvideo/i.test(model.model_name)
   ) {
     return 'video'
@@ -997,7 +1067,13 @@ export function buildSupportedParameters(
   if (cat === 'embedding') return EMBEDDING_PARAMS
   if (cat === 'image') return IMAGE_PARAMS
   if (cat === 'video') {
-    if (/^wan3\.0-video(?:-prime)?$/.test(model.model_name)) {
+    if (model.model_name === 'wan2.7-r2v') {
+      return buildR2VVideoParameters()
+    }
+    if (model.model_name === 'wan3.0-video-prime-1080p') {
+      return buildWan3PrimeVideoParameters()
+    }
+    if (isWan3VideoModel(model.model_name)) {
       return buildWan3VideoParameters()
     }
     if (model.model_name.startsWith('autodl:')) {

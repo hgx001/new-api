@@ -32,6 +32,7 @@ import {
   getModelDescriptionKey,
   getResolutionTierNoteKey,
   getResolutionTieredModels,
+  getWan3SampleResolution,
   isPerSecondModel,
 } from './model-helpers'
 
@@ -120,6 +121,18 @@ describe('AutoDL H3 resolution tier note', () => {
     )
     // 官方渠道标准版仍是按秒。
     assert.equal(isPerSecondModel(autoDLModel('wan3.0-video-官网')), true)
+  })
+
+  // 有赞/官网 wan3 系模型都接受 resolution 参数，示例值按模型给：
+  // smart/官网 默认 480P，r2v 只能 720p/1080p（上游要小写），prime 固定 1080P。
+  test('returns the wan3 sample resolution per model', () => {
+    assert.equal(getWan3SampleResolution('wan3.0-smart'), '480P')
+    assert.equal(getWan3SampleResolution('wan3.0-video-官网'), '480P')
+    assert.equal(getWan3SampleResolution('wan2.7-r2v'), '720p')
+    assert.equal(getWan3SampleResolution('wan3.0-video-prime-1080p'), '1080P')
+    // 非 wan3 系模型没有该参数，示例里不应出现 resolution。
+    assert.equal(getWan3SampleResolution('autodl:minimax-h3-u24'), null)
+    assert.equal(getWan3SampleResolution('gpt-6-luna'), null)
   })
 
   // Regression guard: i18n keys MUST live under the `translation` namespace

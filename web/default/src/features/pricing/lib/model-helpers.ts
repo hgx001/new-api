@@ -54,6 +54,24 @@ export function isTokenBasedModel(model: PricingModel): boolean {
 }
 
 /**
+ * Sample `resolution` value for wan3-family video models, or null when the
+ * model takes no resolution parameter (callers then skip the field).
+ *
+ * - `wan3.0-smart` / `wan3.0-video` / `wan3.0-video-官网`: 480P is the default,
+ *   720P and 1080P are also accepted and billed at a higher per-second tier.
+ * - `wan2.7-r2v`: only 720p/1080p, and the upstream expects lowercase.
+ * - `wan3.0-video-prime-1080p`: fixed 1080P.
+ */
+export function getWan3SampleResolution(modelName: string): string | null {
+  if (modelName === 'wan2.7-r2v') return '720p'
+  if (modelName === 'wan3.0-video-prime-1080p') return '1080P'
+  if (modelName === 'wan3.0-smart' || modelName.startsWith('wan3.0-video')) {
+    return '480P'
+  }
+  return null
+}
+
+/**
  * Check if a video model is billed per second.
  *
  * Only adaptors whose EstimateBilling returns a `seconds` ratio bill per

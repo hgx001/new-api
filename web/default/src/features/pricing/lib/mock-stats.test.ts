@@ -159,3 +159,51 @@ describe('AutoDL Model Square API parameters', () => {
     assert.equal(lipSync.resolution.enumValues?.includes('1080p横'), true)
   })
 })
+
+describe('Wan3 Model Square API parameters', () => {
+  test('lists the resolution tiers for smart and the official channel', () => {
+    for (const modelName of ['wan3.0-smart', 'wan3.0-video-官网']) {
+      const params = parametersByName(modelName)
+      assert.deepEqual(parameterNames(modelName), [
+        'prompt',
+        'duration',
+        'resolution',
+      ])
+      assert.deepEqual(params.resolution.enumValues, ['480P', '720P', '1080P'])
+      assert.equal(params.resolution.defaultValue, '480P')
+      assert.equal(params.duration.range, '2 ~ 30')
+    }
+  })
+
+  test('pins wan3.0-video-prime-1080p to 1080P and 30 seconds', () => {
+    const params = parametersByName('wan3.0-video-prime-1080p')
+    assert.deepEqual(params.resolution.enumValues, ['1080P'])
+    assert.equal(params.resolution.defaultValue, '1080P')
+    assert.equal(params.duration.range, '30')
+  })
+
+  test('describes wan2.7-r2v limits including the required reference images', () => {
+    const params = parametersByName('wan2.7-r2v')
+    assert.deepEqual(parameterNames('wan2.7-r2v'), [
+      'prompt',
+      'duration',
+      'resolution',
+      'ratio',
+      'images',
+    ])
+    assert.equal(params.duration.range, '5 / 10')
+    assert.deepEqual(params.resolution.enumValues, ['720p', '1080p'])
+    assert.deepEqual(params.ratio.enumValues, ['16:9', '9:16', '1:1'])
+    assert.equal(params.images.range, '1 ~ 3')
+    assert.equal(params.images.required, true)
+  })
+
+  test('keeps generic video parameters for non-wan3 video models', () => {
+    assert.deepEqual(parameterNames('sora-2'), [
+      'prompt',
+      'duration',
+      'aspect_ratio',
+      'fps',
+    ])
+  })
+})
