@@ -86,16 +86,16 @@ const BILLING_ITEMS = [
 const ERROR_ITEMS = [
   '400：参数错误（时长/比例/分辨率非法、缺少必填素材、首尾帧与参考素材混用等），按 message 修正后重试',
   '401：Key 缺失 / 无效 / 过期，检查 Authorization 头',
-  '402：配额不足，充值后重试',
-  '403：该 Key 无此模型权限，找管理员开通',
+  '403：配额不足（insufficient_user_quota），或该 Key 无此模型权限',
   '404：任务不存在或不属于该账号',
   '408：提交结果未知（超时），不要立即重复提交，先查询任务状态',
   '429：触发限流或并发上限，建议指数退避重试',
+  '500：请求构建失败（build_request_failed）或内部错误，检查参数后重试',
   '502 / 503：上游暂时不可用或模型不可用（model_not_found），稍后重试或改用其它模型',
 ]
 
 const FAQ_ITEMS = [
-  '轮询：建议 5–10 秒一次；普通视频通常 1–5 分钟完成，wan3.0-video-prime-1080p 约 4–8 分钟',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，dola-seedance-2.5 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
@@ -344,6 +344,12 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['计费：按秒 ¥0.27 / ¥0.53 / ¥0.85（480P / 720P / 1080P）'],
         ] },
         {
+          type: 'hint',
+          children: [
+            '该渠道目前仅支持文生视频：传入参考图/视频/音频会被忽略（不会报错）。需要图生视频或多模态参考请改用 wan3.0-smart。',
+          ],
+        },
+        {
           type: 'heading',
           level: 3,
           id: 'model-wan30-prime',
@@ -376,7 +382,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['seconds：仅 5 或 10，传其它值就近取档'],
           ['ratio：16:9（默认）/ 9:16 / 1:1'],
           ['计费：按秒 ¥0.10，两档同价'],
-          ['不支持首尾帧、参考视频与参考音频；不传参考图会直接报错（不消耗费用）'],
+          ['不支持首尾帧、参考视频、参考音频（传了会直接报错，不消耗费用）；不传参考图同样会报错'],
         ] },
         {
           type: 'codeBlock',

@@ -110,7 +110,19 @@ func (a *TaskAdaptor) resolveResultURL(raw string) string {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	return relaycommon.ValidateMultipartDirect(c, info)
+	if taskErr := relaycommon.ValidateMultipartDirect(c, info); taskErr != nil {
+		return taskErr
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	// 素材组合/数量错误（首尾帧混用、r2v 缺参考图等）属于客户端参数错误：
+	// 在这里以 400 本地错误返回，既给出正确状态码，也不会被当成 5xx 触发渠道重试。
+	if _, mediaErr := buildMedia(req); mediaErr != nil {
+		return service.TaskErrorWrapperLocal(mediaErr, "invalid_request", http.StatusBadRequest)
+	}
+	return nil
 }
 
 func normalizeResolution(value string) string {
@@ -326,6 +338,14 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	if isR2VModel(model) && counts["first_frame"]+counts["last_frame"] > 0 {
 		// wan2.7-r2v 上游只支持参考图，首尾帧会被静默丢弃，这里直接拒绝。
 		return errors.New("youzan wan2.7-r2v does not accept first_frame/last_frame")
+	}
+	if isR2VModel(model) && counts["reference_image"] == 0 {
+		// 上游要求至少 1 张参考图，本地先拦住，不消耗上游调用。
+		return errors.New("wan2.7-r2v requires at least one reference image")
+	}
+	if isR2VModel(model) && counts["reference_video"]+counts["reference_audio"] > 0 {
+		// r2v 只发参考图，参考视频/音频会被静默丢弃，这里直接拒绝。
+		return errors.New("youzan wan2.7-r2v does not accept reference video or audio")
 	}
 	imageLimit := maxReferenceImages
 	switch {
@@ -633,6 +653,7 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 			}
 		}
 		if len(referenceImages) == 0 {
+			// validateMedia 已拦住缺图情况，这里只是防御性检查。
 			return nil, errors.New("wan2.7-r2v requires at least one reference image")
 		}
 		body["referenceImages"] = referenceImages

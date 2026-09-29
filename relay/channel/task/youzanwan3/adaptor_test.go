@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -230,8 +231,16 @@ func TestValidateMediaRejectsFrameReferenceMixing(t *testing.T) {
 	require.NoError(t, validateMedia([]relaycommon.TaskMedia{frame, lastFrame}, "wan3.0-smart"))
 	require.Error(t, validateMedia([]relaycommon.TaskMedia{frame, reference}, "wan3.0-smart"))
 	require.Error(t, validateMedia([]relaycommon.TaskMedia{lastFrame, reference}, "wan3.0-smart"))
-	// wan2.7-r2v 只支持参考图，首尾帧会被上游静默丢弃，本地直接拒绝。
+	// wan2.7-r2v 只支持参考图：首尾帧、参考视频、参考音频都会被静默丢弃，本地直接拒绝。
 	require.Error(t, validateMedia([]relaycommon.TaskMedia{frame}, r2vModel))
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{
+		reference,
+		{Type: "reference_video", URL: "https://cdn.example/v.mp4"},
+	}, r2vModel))
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{
+		reference,
+		{Type: "reference_audio", URL: "https://cdn.example/a.mp3"},
+	}, r2vModel))
 }
 
 func TestPrimeBodyShapeAndReferenceLimit(t *testing.T) {
@@ -338,4 +347,33 @@ func TestR2VRatioAndReferenceImageLimits(t *testing.T) {
 	require.NoError(t, validateMedia(media(3), r2vModel))
 	require.Error(t, validateMedia(media(4), r2vModel))
 	require.NoError(t, validateMedia(media(4), "wan3.0-smart"))
+}
+
+func TestValidateRequestRejectsBadMediaAsLocal400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adaptor := &TaskAdaptor{}
+
+	// r2v 缺参考图：客户端参数错误，必须是 400 本地错误（不触发渠道重试）。
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public001"},
+	}
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos",
+		strings.NewReader(`{"model":"wan2.7-r2v","prompt":"x","seconds":5}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	taskErr := adaptor.ValidateRequestAndSetAction(context, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.True(t, taskErr.LocalError)
+
+	// 首尾帧与参考素材混用：同样是 400 本地错误。
+	context, _ = gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(
+		`{"model":"wan3.0-smart","prompt":"x","metadata":{"media":[{"type":"first_frame","url":"https://cdn.example/a.png"},{"type":"reference_image","url":"https://cdn.example/b.png"}]}}`))
+	context.Request.Header.Set("Content-Type", "application/json")
+	taskErr = adaptor.ValidateRequestAndSetAction(context, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	require.True(t, taskErr.LocalError)
 }
