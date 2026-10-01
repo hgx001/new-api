@@ -243,6 +243,15 @@ func TaskErrorFromAPIError(apiErr *types.NewAPIError) *dto.TaskError {
 		Code:       string(apiErr.GetErrorCode()),
 		Message:    apiErr.Err.Error(),
 		StatusCode: apiErr.StatusCode,
+		// 必须把 skip-retry 语义透传成 LocalError：billing/pre-consume 这类**本端**
+		// 错误（insufficient_user_quota 等）都带 ErrOptionWithSkipRetry，含义是
+		// 「就地失败、不要换渠道、更不归咎渠道」。转换时丢掉它会让两条本端保护同时失效：
+		//   1. shouldRetryTaskRelay 的 `!taskErr.LocalError` 余额关键词分支 → 白白换渠道重试；
+		//   2. controller/relay.go 的 `if !taskErr.LocalError { processChannelError }`
+		//      → 本端「用户额度不足, 剩余额度: ¥0」被 IsUpstreamAccountBalanceError
+		//      误判为上游余额耗尽，AutoBan 直接下线渠道（一个欠费客户端即可打掉整条渠道）。
+		// 上游真实返回的错误不带 skipRetry，行为不变。
+		LocalError: types.IsSkipRetryError(apiErr),
 		Error:      apiErr.Err,
 	}
 }
