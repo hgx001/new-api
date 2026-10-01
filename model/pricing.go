@@ -444,6 +444,14 @@ func isAllowedPricingModel(name string) bool {
 	if name == "dola-seedance-2.5" {
 		return true
 	}
+	// 漫屋 ArcReel Gemini 官网视频 / 远端图片：价格与 ArcReel 站点口径一致
+	//（¥2.5/次、¥0.3/张），上广场。
+	if name == "gemini-web-video" || name == "manwu-image" {
+		return true
+	}
+	// ⚠️ jimeng-video-reverse 故意**不**上广场：反解定价（¥1.0/次）是占位值，
+	// 尚未商务核定。在价格确认前只保证可调用（白名单只管广场展示，不影响调用），
+	// 确认后再加这一行并同步 downstream_api_guide.md。
 	return false
 }
 

@@ -100,6 +100,8 @@ type TaskPrivateData struct {
 	Key            string `json:"key,omitempty"`
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	// ResultText 文本类交付物（如即梦视频反解的提示词）。JSON 列，无需 DB 迁移。
+	ResultText string `json:"result_text,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -386,6 +388,7 @@ type taskSnapshot struct {
 	FinishTime int64
 	FailReason string
 	ResultURL  string
+	ResultText string
 	Data       json.RawMessage
 }
 
@@ -396,6 +399,7 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.FinishTime == other.FinishTime &&
 		s.FailReason == other.FailReason &&
 		s.ResultURL == other.ResultURL &&
+		s.ResultText == other.ResultText &&
 		bytes.Equal(s.Data, other.Data)
 }
 
@@ -407,6 +411,7 @@ func (t *Task) Snapshot() taskSnapshot {
 		FinishTime: t.FinishTime,
 		FailReason: t.FailReason,
 		ResultURL:  t.PrivateData.ResultURL,
+		ResultText: t.PrivateData.ResultText,
 		Data:       t.Data,
 	}
 }

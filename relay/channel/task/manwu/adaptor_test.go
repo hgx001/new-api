@@ -374,6 +374,415 @@ func TestFetchTask(t *testing.T) {
 
 func TestModelListAndChannelName(t *testing.T) {
 	a := &TaskAdaptor{}
-	assert.Equal(t, []string{ModelName}, a.GetModelList())
+	assert.Equal(t, []string{
+		"dola-seedance-2.5",
+		"gemini-web-video",
+		"jimeng-video-reverse",
+		"manwu-image",
+	}, a.GetModelList())
 	assert.Equal(t, ChannelName, a.GetChannelName())
+}
+
+// ── 多模型路由 ──
+
+func TestSpecForRoutesEveryModel(t *testing.T) {
+	dola, ok := SpecFor(ModelDola)
+	require.True(t, ok)
+	assert.Equal(t, PlatformID, dola.PlatformID)
+	assert.Equal(t, OutputModeVideo, dola.OutputMode)
+	assert.Equal(t, kindDolaVideo, dola.Kind)
+
+	veo, ok := SpecFor(ModelVideo)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDGemini, veo.PlatformID)
+	assert.Equal(t, OutputModeVideo, veo.OutputMode)
+	assert.Equal(t, kindVeoVideo, veo.Kind)
+
+	image, ok := SpecFor(ModelImage)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDImage, image.PlatformID)
+	assert.Equal(t, OutputModeImage, image.OutputMode)
+	assert.Equal(t, kindImage, image.Kind)
+
+	reverse, ok := SpecFor(ModelReverse)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDJimeng, reverse.PlatformID)
+	assert.Equal(t, OutputModeText, reverse.OutputMode)
+	assert.Equal(t, kindReverse, reverse.Kind)
+
+	// 未知模型必须 miss（不能默默落到 dola）。
+	_, ok = SpecFor("veo-3.1-generate-preview")
+	assert.False(t, ok, "官方 Gemini 模型名不得被本渠道误接")
+	_, ok = SpecFor("")
+	assert.False(t, ok)
+}
+
+// ── manwu-image ──
+
+func TestValidateImageAcceptsMinimal(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"manwu-image","prompt":"一只柴犬"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, kindImage, req.Kind)
+	assert.Equal(t, defaultImageCount, req.Count, "缺省出 1 张")
+	assert.Equal(t, defaultRatio, req.Ratio)
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := decodePayload(t, reader)
+	assert.Equal(t, PlatformIDImage, payload["platformId"])
+	assert.Equal(t, OutputModeImage, payload["outputMode"])
+
+	ip, ok := payload["imageParams"].(map[string]any)
+	require.True(t, ok, "图片任务必须走 imageParams")
+	assert.Equal(t, float64(1), ip["count"])
+	assert.Equal(t, defaultRatio, ip["aspectRatio"])
+	_, hasVideoParams := payload["videoParams"]
+	assert.False(t, hasVideoParams, "图片任务不得带 videoParams")
+}
+
+// 图片按张计费：n/count 都认，张数作为 n 倍率乘到 ¥0.3/张。
+func TestImageCountDrivesBillingMultiplier(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"manwu-image","prompt":"猫","n":3}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	assert.Equal(t, map[string]float64{"n": 3}, a.EstimateBilling(c, info))
+
+	c2, info2, a2 := postVideoCtx(t, `{"model":"manwu-image","prompt":"猫","count":"4","size":"9:16"}`)
+	require.Nil(t, a2.ValidateRequestAndSetAction(c2, info2))
+	assert.Equal(t, map[string]float64{"n": 4}, a2.EstimateBilling(c2, info2))
+
+	req, err := getNormalizedRequest(c2)
+	require.NoError(t, err)
+	assert.Equal(t, 4, req.Count)
+	assert.Equal(t, "9:16", req.Ratio)
+
+	// 张数为 1 时不注入倍率（避免无意义的 quota 乘 1 误差）。
+	c3, info3, a3 := postVideoCtx(t, `{"model":"manwu-image","prompt":"猫","n":1}`)
+	require.Nil(t, a3.ValidateRequestAndSetAction(c3, info3))
+	assert.Nil(t, a3.EstimateBilling(c3, info3))
+}
+
+// 图片参考图：支持 URL 列表，上限 10 张（与 dola 同上限）。
+func TestImageRejectsIllegalRequests(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		code string
+	}{
+		{"missing prompt", `{"model":"manwu-image"}`, "invalid_request"},
+		{"count above cap", `{"model":"manwu-image","prompt":"x","n":11}`, "invalid_count"},
+		{"count below one", `{"model":"manwu-image","prompt":"x","n":0}`, "invalid_count"},
+		{"non integer count", `{"model":"manwu-image","prompt":"x","n":"many"}`, "invalid_count"},
+		{"bad ratio", `{"model":"manwu-image","prompt":"x","ratio":"21:10"}`, "invalid_ratio"},
+		{"data uri reference", `{"model":"manwu-image","prompt":"x","input_reference":"data:image/png;base64,AAAA"}`, "invalid_input_reference"},
+		{"video seconds on image", `{"model":"manwu-image","prompt":"x","seconds":5}`, "invalid_request"},
+		{"resolution on image", `{"model":"manwu-image","prompt":"x","resolution":"2k"}`, "invalid_request"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info, a := postVideoCtx(t, tc.body)
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr, tc.name)
+			assert.Equal(t, tc.code, taskErr.Code)
+		})
+	}
+
+	// 10 张放行 / 11 张拒绝。
+	okCtx, okInfo, okAdaptor := postVideoCtx(t, `{"model":"manwu-image","prompt":"x","input_reference":[
+		"https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png",
+		"https://a.example/6.png","https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png"]}`)
+	require.Nil(t, okAdaptor.ValidateRequestAndSetAction(okCtx, okInfo))
+
+	overCtx, overInfo, overAdaptor := postVideoCtx(t, `{"model":"manwu-image","prompt":"x","images":[
+		"https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png","https://a.example/6.png",
+		"https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png","https://a.example/11.png"]}`)
+	taskErr := overAdaptor.ValidateRequestAndSetAction(overCtx, overInfo)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_input_reference", taskErr.Code)
+}
+
+// ── gemini-web-video ──
+
+func TestVeoVideoRejectsUnsupportedParams(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"gemini-web-video","prompt":"海浪","ratio":"9:16"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, kindVeoVideo, req.Kind)
+	assert.Equal(t, "9:16", req.Ratio)
+	assert.Nil(t, a.EstimateBilling(c, info), "Veo 按次计费，不乘任何倍率")
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := decodePayload(t, reader)
+	assert.Equal(t, PlatformIDGemini, payload["platformId"])
+	assert.Equal(t, OutputModeVideo, payload["outputMode"])
+
+	// 官网无时长/分辨率/模型控件：Worker 会 fail-fast，这里提前 400。
+	cases := []struct {
+		name string
+		body string
+		code string
+	}{
+		{"seconds", `{"model":"gemini-web-video","prompt":"x","seconds":8}`, "invalid_request"},
+		{"duration", `{"model":"gemini-web-video","prompt":"x","duration":5}`, "invalid_request"},
+		{"resolution", `{"model":"gemini-web-video","prompt":"x","resolution":"1080p"}`, "invalid_request"},
+		{"missing prompt", `{"model":"gemini-web-video"}`, "invalid_request"},
+		{"bad ratio", `{"model":"gemini-web-video","prompt":"x","size":"4:2"}`, "invalid_ratio"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info, a := postVideoCtx(t, tc.body)
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr, tc.name)
+			assert.Equal(t, tc.code, taskErr.Code)
+		})
+	}
+}
+
+// ── jimeng-video-reverse ──
+
+func TestReverseBuildsPromptModeJob(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"jimeng-video-reverse","input_reference":"https://cdn.example/clip.mp4"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := decodePayload(t, reader)
+	assert.Equal(t, PlatformIDJimeng, payload["platformId"])
+	assert.Equal(t, OutputModeText, payload["outputMode"])
+
+	_, hasVideoParams := payload["videoParams"]
+	assert.False(t, hasVideoParams, "反解不得带 videoParams")
+	_, hasImageParams := payload["imageParams"]
+	assert.False(t, hasImageParams, "反解不得带 imageParams")
+
+	inputs, ok := payload["inputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, inputs, 1, "ArcReel 要求反解恰好 1 个参考视频")
+	first, ok := inputs[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, InputTypeVideo, first["type"])
+	assert.Equal(t, "https://cdn.example/clip.mp4", first["url"])
+}
+
+// 反解的 prompt 可选（ArcReel 建单允许空 prompt），带 prompt 则当附加指令透传。
+func TestReversePromptIsOptional(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"jimeng-video-reverse","input_reference":"https://cdn.example/c.mp4","prompt":"突出镜头运动"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	assert.Equal(t, "突出镜头运动", decodePayload(t, reader)["prompt"])
+}
+
+func TestReverseRejectsIllegalRequests(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		code string
+	}{
+		{"missing video", `{"model":"jimeng-video-reverse"}`, "invalid_input_reference"},
+		{"two videos", `{"model":"jimeng-video-reverse","videos":["https://a.example/1.mp4","https://a.example/2.mp4"]}`, "invalid_input_reference"},
+		{"relative path video", `{"model":"jimeng-video-reverse","input_reference":"/tmp/clip.mp4"}`, "invalid_input_reference"},
+		{"data uri video", `{"model":"jimeng-video-reverse","video":"data:video/mp4;base64,AAAA"}`, "invalid_input_reference"},
+		{"ratio", `{"model":"jimeng-video-reverse","video":"https://a.example/1.mp4","ratio":"16:9"}`, "invalid_request"},
+		{"seconds", `{"model":"jimeng-video-reverse","video":"https://a.example/1.mp4","seconds":10}`, "invalid_request"},
+		{"images instead of video", `{"model":"jimeng-video-reverse","images":["https://a.example/1.png"]}`, "invalid_request"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info, a := postVideoCtx(t, tc.body)
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr, tc.name)
+			assert.Equal(t, tc.code, taskErr.Code)
+		})
+	}
+}
+
+// 反解传 multipart 文件直传时要给可读原因，而不是 JSON 语法错误。
+func TestReverseRejectsMultipartUpload(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader("whatever"))
+	c.Request.Header.Set("Content-Type", "multipart/form-data; boundary=xyz")
+
+	info := fixedModelInfo()
+	info.OriginModelName = ModelReverse
+	a := &TaskAdaptor{}
+	taskErr := a.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_input_reference", taskErr.Code)
+}
+
+// ── 结果收敛 ──
+
+// ready 时的文本结果（视频反解）落入 TaskInfo.ResultText，不占用 Url。
+func TestParseTaskResultSurfacesTextResult(t *testing.T) {
+	a := &TaskAdaptor{}
+	res, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"ready","sourceUrl":null,"resultPrompt":"一只猫在屋顶奔跑，逆光"}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSuccess, res.Status)
+	assert.Equal(t, "一只猫在屋顶奔跑，逆光", res.ResultText)
+	assert.Empty(t, res.Url)
+
+	// result_prompt 兼容字段。
+	alt, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"ready","result_prompt":"alt text"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "alt text", alt.ResultText)
+
+	// ready 但既无 URL 也无文本 → 失败（触发退款），不能算成功交付。
+	empty, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"ready"}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailure, empty.Status)
+	assert.Equal(t, reasonEmptyResult, empty.Reason)
+}
+
+// ArcReel 托管产物是相对路径（需渠道密钥），不得当作可直交付 URL 透传出去。
+func TestParseTaskResultHidesSelfHostedRelativeURL(t *testing.T) {
+	a := &TaskAdaptor{}
+	res, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"ready","sourceUrl":"/api/v1/remote-generation/jobs/job-1/outputs/output-a.png"}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSuccess, res.Status)
+	assert.Empty(t, res.Url, "相对路径必须留给 content 代理，不能透传给客户端")
+
+	// 公网 CDN 直链照旧透传（dola 既有行为不变）。
+	direct, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"ready","sourceUrl":"https://v19-dola.dola.com/v/clip.mp4"}`))
+	require.NoError(t, err)
+	assert.Equal(t, "https://v19-dola.dola.com/v/clip.mp4", direct.Url)
+}
+
+// ConvertToOpenAIVideo：文本结果进 metadata.prompt，图片/视频进 metadata.url + media_type。
+func TestConvertToOpenAIVideoExposesResults(t *testing.T) {
+	a := &TaskAdaptor{}
+
+	textTask := &model.Task{
+		TaskID:     "task_public001",
+		Progress:   "100%",
+		Properties: model.Properties{OriginModelName: ModelReverse},
+		Data:       []byte(`{"jobId":"job-1","status":"ready","resultPrompt":"镜头缓慢推近"}`),
+	}
+	raw, err := a.ConvertToOpenAIVideo(textTask)
+	require.NoError(t, err)
+	var ov map[string]any
+	require.NoError(t, json.Unmarshal(raw, &ov))
+	assert.Equal(t, "completed", ov["status"])
+	metadata, ok := ov["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "镜头缓慢推近", metadata["prompt"])
+	assert.Equal(t, "text", metadata["media_type"])
+
+	videoTask := &model.Task{
+		TaskID:     "task_public002",
+		Progress:   "100%",
+		Properties: model.Properties{OriginModelName: ModelDola},
+		Data:       []byte(`{"jobId":"job-2","status":"ready","sourceUrl":"https://v19-dola.dola.com/v/clip.mp4"}`),
+	}
+	rawVideo, err := a.ConvertToOpenAIVideo(videoTask)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(rawVideo, &ov))
+	metadata = ov["metadata"].(map[string]any)
+	assert.Equal(t, "https://v19-dola.dola.com/v/clip.mp4", metadata["url"])
+	assert.Equal(t, "video", metadata["media_type"])
+
+	imageTask := &model.Task{
+		TaskID:     "task_public003",
+		Progress:   "100%",
+		Properties: model.Properties{OriginModelName: ModelImage},
+		Data:       []byte(`{"jobId":"job-3","status":"ready","sourceUrl":"/api/v1/remote-generation/jobs/job-3/outputs/o.png"}`),
+	}
+	rawImage, err := a.ConvertToOpenAIVideo(imageTask)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(rawImage, &ov))
+	metadata = ov["metadata"].(map[string]any)
+	// 相对路径 → 回落到 content 代理地址，客户端不会拿到打不开的链接。
+	assert.Contains(t, metadata["url"], "/v1/videos/task_public003/content")
+}
+
+func decodePayload(t *testing.T, reader io.Reader) map[string]any {
+	t.Helper()
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	return payload
+}
+
+// 拒绝原因里必须带**模型名**而不是占位符，否则用户看到 "prompt is fixed-duration
+// web Veo" 这种无法定位的错误。
+func TestRejectionMessagesNameTheModel(t *testing.T) {
+	cases := []struct {
+		body       string
+		wantSubstr string
+	}{
+		{`{"model":"gemini-web-video","prompt":"x","seconds":8}`, "gemini-web-video"},
+		{`{"model":"manwu-image","prompt":"x","resolution":"2k"}`, "manwu-image"},
+		{`{"model":"jimeng-video-reverse","video":"https://a.example/1.mp4","ratio":"16:9"}`, "jimeng-video-reverse"},
+	}
+	for _, tc := range cases {
+		c, info, a := postVideoCtx(t, tc.body)
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, tc.body)
+		assert.Contains(t, taskErr.Message, tc.wantSubstr, tc.body)
+	}
+}
+
+// Veo 不下发 duration：官网没有时长控件，写进载荷只会让人误以为时长被执行了。
+func TestVeoPayloadOmitsDuration(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"gemini-web-video","prompt":"x","ratio":"1:1"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	vp, ok := decodePayload(t, reader)["videoParams"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "1:1", vp["ratio"])
+	_, hasDuration := vp["duration"]
+	assert.False(t, hasDuration, "Veo 载荷不得含 duration")
+}
+
+// multipart 拒绝对四个模型都成立（ArcReel 只吃公网 URL），文案不能说成只讲反解。
+func TestMultipartRejectionIsModelAgnostic(t *testing.T) {
+	for _, model := range ModelList() {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader("whatever"))
+		c.Request.Header.Set("Content-Type", "multipart/form-data; boundary=xyz")
+
+		info := fixedModelInfo()
+		info.OriginModelName = model
+		a := &TaskAdaptor{}
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, model)
+		assert.Equal(t, "invalid_input_reference", taskErr.Code, model)
+		assert.Contains(t, taskErr.Message, "公网可访问", model)
+		assert.NotContains(t, taskErr.Message, "视频反解暂不支持", model)
+	}
+}
+
+// 反解的文本结果优先取落库的 PrivateData（权威副本），task.Data 缺字段也能返回。
+func TestConvertToOpenAIVideoPrefersStoredResultText(t *testing.T) {
+	a := &TaskAdaptor{}
+	task := &model.Task{
+		TaskID:     "task_text_only",
+		Progress:   "100%",
+		Properties: model.Properties{OriginModelName: ModelReverse},
+		PrivateData: model.TaskPrivateData{
+			ResultText: "落库的权威提示词",
+		},
+		// 快照里没有 resultPrompt（模拟脱敏/字段丢失）
+		Data: []byte(`{"jobId":"job-1","status":"ready"}`),
+	}
+	raw, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var ov map[string]any
+	require.NoError(t, json.Unmarshal(raw, &ov))
+	assert.Equal(t, "completed", ov["status"])
+	metadata, ok := ov["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "落库的权威提示词", metadata["prompt"])
+	// 文本交付物不得给 url（否则客户端会去拉不存在的媒体文件）。
+	_, hasURL := metadata["url"]
+	assert.False(t, hasURL, "文本任务不得带 metadata.url")
 }

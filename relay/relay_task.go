@@ -561,6 +561,7 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Status:     string(task.Status),
 		FailReason: task.FailReason,
 		ResultURL:  task.GetResultURL(),
+		ResultText: task.PrivateData.ResultText,
 		SubmitTime: task.SubmitTime,
 		StartTime:  task.StartTime,
 		FinishTime: task.FinishTime,

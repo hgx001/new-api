@@ -919,6 +919,9 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	// ResultText 文本类交付物（如视频反解返回的提示词）。与 Url 互斥：
+	// 文本任务成功时 Url 为空、ResultText 非空。
+	ResultText string `json:"result_text,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

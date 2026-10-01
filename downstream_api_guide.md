@@ -35,6 +35,9 @@
 | `wan2.7-r2v` | 视频 | `/v1/videos` | 按秒 | ¥0.10/s（720p / 1080p 同价） |
 | `autodl:minimax-h3-u24` | 视频 | `/v1/videos` | 按秒 | 480p ¥0.10/s、768p ¥0.12/s |
 | `dola-seedance-2.5` | 视频 | `/v1/videos` | **按次** | ¥2.50 / 次 |
+| `gemini-web-video` | 视频 | `/v1/videos` | **按次** | ¥2.50 / 次 |
+| `manwu-image` | 图片 | `/v1/videos` | 按张 | ¥0.30 / 张 |
+| `jimeng-video-reverse` | 文本（提示词） | `/v1/videos` | **按次** | ¥1.00 / 次 |
 
 **兼容/隐藏模型**（可调用，但不在模型广场展示）：
 
@@ -251,8 +254,57 @@ curl https://api.heibaidao.cn/v1/videos \
 |---|---|
 | `seconds` | `5` / `10` / `15` / `30`（默认 30） |
 | `ratio` | `16:9`（默认）/ `9:16` / `1:1` / `4:3` / `3:4` / `21:9`（也可用 `size` 传比例字符串） |
-| `input_reference` / `images` | 可选，≤2 张，必须是 http/https URL |
+| `input_reference` / `images` | 可选，≤10 张，必须是 http/https URL |
 | 计费 | **按次 ¥2.50**，与时长无关（30 秒也是 ¥2.50） |
+
+#### `gemini-web-video`（漫屋 Gemini 官网 Veo）
+
+与 `dola-seedance-2.5` 同渠道（漫屋 → ArcReel → 浏览器 Worker → Gemini 官网），差异：
+
+| 参数 | 取值 |
+|---|---|
+| `prompt` | **必填** |
+| `ratio` | 同 dola 六档（默认 `16:9`） |
+| `input_reference` / `images` | 可选，≤10 张 http/https URL |
+| `seconds` / `duration` / `resolution` | **不支持**，传入直接 400 |
+| 计费 | **按次 ¥2.50**（官网固定时长，不随时长变化） |
+
+> 不叫 `veo-*`：官方 Gemini 渠道已占用那些模型名，重名会被路由到错渠道。
+
+#### `manwu-image`（漫屋远端图片）
+
+| 参数 | 取值 |
+|---|---|
+| `prompt` | **必填** |
+| `n` / `count` | 出图张数，1–10（默认 1） |
+| `ratio` | 同 dola 六档（默认 `16:9`） |
+| `input_reference` / `images` | 可选，≤10 张 http/https URL |
+| `seconds` / `duration` / `resolution` | **不支持**，传入直接 400 |
+| 计费 | 按张 ¥0.30 × 张数 |
+
+产物在 `metadata.url`，`metadata.media_type = "image"`。因为走异步任务端点，响应是
+OpenAI video 对象（`object: "video"`），取图请读 `metadata.url`。
+
+#### `jimeng-video-reverse`（漫屋即梦视频反解）
+
+输入一个视频，输出**提示词文本**（不是媒体）。
+
+| 参数 | 取值 |
+|---|---|
+| `input_reference`（或 `video` / `videos`） | **必填**，恰好 1 个公网 http/https 视频 URL（服务端代下载，mp4/mov/webm，≤100MB） |
+| `prompt` | 可选，作为给即梦助手的附加指令 |
+| `ratio` / `seconds` / `images` | **不支持**，传入直接 400 |
+| 计费 | **按次 ¥1.00** |
+
+产物在 `metadata.prompt`（文本），`metadata.media_type = "text"`；**没有媒体产物**，
+`metadata.url` 不存在（去拉 content 代理会返回 502）。实测 30 秒视频约 90 秒出结果，
+上限 5 分钟。
+
+**暂不支持文件直传**：请先把视频传到公网可访问的地址再传 URL；`multipart/form-data`
+直传会返回 400。
+
+> 提交反解任务时服务端会先**代下载**该视频（≤100MB），因此 `POST /v1/videos` 的响应
+> 可能慢到 1–2 分钟；请把提交超时设为 ≥180s。视频越大越慢，超过 100MB 直接 400。
 
 ### 5.4 参考素材要求
 
@@ -271,7 +323,7 @@ curl https://api.heibaidao.cn/v1/videos \
 | 文本 | 输入/输出 token 分别计价（见模型表） |
 | 图片 | 按张，¥0.15/张 |
 | 视频（按秒） | 单价 × 秒数 × 分辨率档位倍率 |
-| 视频（按次） | 固定价：`wan3.0-video-prime-1080p` ¥8/次、`dola-seedance-2.5` ¥2.50/次 |
+| 视频（按次） | 固定价：`wan3.0-video-prime-1080p` ¥8/次、`dola-seedance-2.5` ¥2.50/次、`gemini-web-video` ¥2.50/次、`jimeng-video-reverse` ¥1.00/次 |
 | 任务失败 | 自动全额退还，无需申请 |
 | 内容审核 | 提示词或素材触发上游审核 → 任务失败并退款，失败原因为 `内容审核不通过` |
 

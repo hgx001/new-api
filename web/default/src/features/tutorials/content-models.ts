@@ -34,6 +34,9 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s',
   'dola-seedance-2.5｜视频（按次）｜¥2.50 / 次',
+  'gemini-web-video｜视频（按次）｜¥2.50 / 次',
+  'manwu-image｜图片（按张）｜¥0.30 / 张',
+  'jimeng-video-reverse｜提示词（按次）｜¥1.00 / 次',
 ]
 
 const COMPAT_MODEL_ITEMS = [
@@ -78,7 +81,7 @@ const BILLING_ITEMS = [
   '文本：输入、输出 token 分别计价',
   '图片：按张计费，¥0.15 / 张（n=2 扣两次）',
   '视频（按秒）：单价 × 秒数 × 分辨率档位倍率',
-  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，dola-seedance-2.5 固定 ¥2.50 / 次',
+  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，dola-seedance-2.5 与 gemini-web-video 固定 ¥2.50 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
   '任务失败：自动全额退还，无需申请',
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
@@ -423,8 +426,48 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         { type: 'list', ordered: false, items: [
           ['seconds：5 / 10 / 15 / 30，默认 30'],
           ['ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9，也可用 size 传比例字符串'],
-          ['input_reference / images：可选，≤2 张，必须是 http/https URL'],
+          ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
           ['计费：按次 ¥2.50，与时长无关（30 秒也是 ¥2.50）'],
+        ] },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-gemini-web-video',
+          children: [{ type: 'strong', value: 'gemini-web-video（漫屋 Gemini 官网 Veo）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['prompt：必填'],
+          ['ratio：同 dola 六档，默认 16:9'],
+          ['input_reference / images：可选，≤10 张 http/https URL'],
+          ['seconds / duration / resolution：不支持，传入直接 400'],
+          ['计费：按次 ¥2.50（官网固定时长，不随时长变化）'],
+        ] },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-manwu-image',
+          children: [{ type: 'strong', value: 'manwu-image（漫屋远端图片）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['prompt：必填'],
+          ['n / count：出图张数，1–10，默认 1'],
+          ['ratio：同 dola 六档，默认 16:9'],
+          ['input_reference / images：可选，≤10 张 http/https URL'],
+          ['产物：metadata.url，metadata.media_type = image'],
+          ['计费：按张 ¥0.30 × 张数'],
+        ] },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-jimeng-video-reverse',
+          children: [{ type: 'strong', value: 'jimeng-video-reverse（即梦视频反解）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['input_reference（或 video / videos）：必填，恰好 1 个公网 http/https 视频 URL（服务端代下载，mp4/mov/webm，≤100MB）'],
+          ['prompt：可选，作为给即梦助手的附加指令'],
+          ['ratio / seconds / images：不支持，传入直接 400'],
+          ['产物：metadata.prompt（文本），metadata.media_type = text；无媒体产物'],
+          ['计费：按次 ¥1.00；30 秒视频实测约 90 秒出结果，上限 5 分钟'],
         ] },
       ],
     },

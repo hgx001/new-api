@@ -144,13 +144,26 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - 遇到模型或媒体请求异常时，必须联合检查 ArcReel 请求、new-api 路由/适配器、sub2api 账号池/凭证及上游响应；不要仅依据 new-api 自动路由后的成功判断某个指定渠道成功。
 - 指定渠道验证应使用 new-api 强制渠道测试或该渠道真实上游直连，并用 request ID、模型、时间关联三侧日志。生产操作遵循备份、最小变更和凭证脱敏原则。
 
-### Manwu（dola）通道维护约束
+### Manwu（漫屋）通道维护约束
 
-- 通道定位：`relay/channel/task/manwu/` 经 OpenAI 兼容 `POST /v1/videos` 承接 `dola-seedance-2.5`，再转 ArcReel 远端建单（`platformId: dola`，默认基址 `https://arcreel.heibaidao.cn`，提交路径 `/api/v1/remote-generation/jobs`）。完整链路：ArcReel 本地任务 → 本中转（heibaidao）→ ArcReel 远端建单 → worker → dola 官网。排查必须按此链路逐段确认，不要跳段。
-- 请求口径（`adaptor.go::clientRequest`）：`model` 必须精确等于 `dola-seedance-2.5`；`prompt` 必填；时长只认 5/10/15/30（`seconds`/`duration` 宽容数字/字符串，缺省显式 30，保证预扣与实际一致）；比例只认 16:9/9:16/1:1/4:3/3:4/21:9，按 `size`→`ratio`→`aspect_ratio` 优先级解析——Sora 式 WxH（如 `1280x720`）会报 `invalid_ratio`；参考图走 `input_reference` 优先→`images` 兜底，每张必须是 http(s) URL（multipart 文件与 data URI 报 `invalid_input_reference`），上限 `maxReferenceImages = 10`（2026-09-29 按 dola 官网真机口径从 2 放开）。
+- 通道定位：`relay/channel/task/manwu/` 经 OpenAI 兼容 `POST /v1/videos` 承接四个远端模型，再转 ArcReel 远端建单（默认基址 `https://arcreel.heibaidao.cn`，提交路径 `/api/v1/remote-generation/jobs`）。完整链路：ArcReel 本地任务 → 本中转（heibaidao）→ ArcReel 远端建单 → worker（燃境 App）→ 目标官网。排查必须按此链路逐段确认，不要跳段。
+- 模型路由表（`adaptor.go::modelSpecs`，四个模型共用一条建单链路，差异只在 platformId/outputMode/白名单；新增模型先加表项，禁止新开 adaptor）：
+  - `dola-seedance-2.5` → `platformId: dola` + `outputMode: video`（历史模型，行为不得改）
+  - `gemini-web-video` → `platformId: gemini` + `outputMode: video`。**故意不叫 `veo-*`**：官方 Gemini 渠道已占那些名字，重名会被路由到错渠道
+  - `manwu-image` → `platformId: manwu-image`（ArcReel 抽象平台，服务端按 `MANWU_REMOTE_IMAGE_PROVIDER` 决定实际走 gemini/jimeng，客户端不感知）+ `outputMode: image`
+  - `jimeng-video-reverse` → `platformId: jimeng` + `outputMode: prompt`，**文本出参**（`prompt` 可选；视频入参恰好 1 个 http(s) URL）
+- 拒绝口径统一：官网没有可实现控件的参数**一律 400，不静默丢弃**（Worker 侧 `RemoteTaskAdapter` 对 Gemini/Veo 的 unsupported params 同样 fail-fast）。Veo 不接受 `seconds`/`duration`/`resolution`；图片与反解不接受时长/分辨率/比例。反解的 multipart 文件直传报 `invalid_input_reference`（提示改传公网 URL）。
+- 结果收敛分两类（`ParseTaskResult` / `VideoProxy::resolveManwuResultURL`）：
+  - ArcReel 托管产物（Gemini 图片 blob、Veo 的 data: mp4）的 `sourceUrl` 是**相对路径**且需渠道密钥 → adaptor **不吐** URL，让 new-api 落成 `/v1/videos/{task_id}/content` 代理，由 `controller/video_proxy.go` 的 `ChannelTypeManwu` 分支回查 job 取 sourceUrl 再带密钥下载。
+  - dola/tiktok 这类公网 CDN 直链照旧透传，**绝不带渠道密钥**（否则凭证泄露给第三方 CDN）。禁止去掉这个区分。
+- 文本结果链路：`relaycommon.TaskInfo.ResultText` → `model.TaskPrivateData.ResultText`（JSON 列，免迁移）→ `dto.TaskDto.ResultText`；OpenAI video 响应里落在 `metadata.prompt`（`metadata.media_type = "text"`）。新增文本型任务沿用这条链路。
+- 计费：`setting/ratio_setting/model_ratio.go` 定义单价；`gemini-web-video` / `jimeng-video-reverse` 按次（`EstimateBilling` 返回 nil）；`manwu-image` 按张，张数走 `EstimateBilling` 的 `{"n": N}` 倍率。
+  - ⚠️ **`manwu-image` 绝不能进 `TASK_PRICE_PATCH` 环境变量**：进了会被 `relay_task.go` 当按次计费跳过倍率相乘，n 张只扣 1 张的钱（静默少收费）。`dola-seedance-2.5` 在该变量里，属正常。
+- 提交耗时：反解的参考视频由 ArcReel 代下载（≤100MB，上限对齐 Worker 硬限制），`POST /v1/videos` 可能阻塞 1–2 分钟。本中转 `RELAY_TIMEOUT` 默认为 0（不超时），不要为了「快」把它调到 60s 以下，否则大视频会出现「网关报错但上游已建单」。
+- 模型广场可见性：`gemini-web-video` / `manwu-image` 已在 `model/pricing.go isAllowedPricingModel` 放行；`jimeng-video-reverse` **故意未放行**——¥1.0/次是占位价，商务核定前不得对外展示价格（白名单只管广场，不影响调用）。
+- 本地错误码均为 400：`invalid_model` / `invalid_request` / `invalid_duration` / `invalid_ratio` / `invalid_count` / `invalid_input_reference`，改动错误语义时同步更新 `adaptor_test.go` 的拒绝用例表。
+- 测试：`go test ./relay/channel/task/manwu/`。改上限必须同步维护边界用例（dola 10 张放行见 `TestValidateAcceptsTenReferenceImages`，11 张拒绝见 `TestValidateRejectsIllegalRequests` 的 `too many images`；图片张数上界、反解单视频约束各有独立用例），禁止只改常量不改测试。
 - 双仓库同口径：ArcReel 侧 `lib/video_backends/openai.py` 的 manwu 分支（`_MANWU_MODEL_PATTERN` / `_MANWU_MAX_REFERENCE_IMAGES` / `_manwu_ratio`，ratio 形态 + 参考图公网 URL 透传）必须与本通道同口径。任一侧改上限、比例档或字段语义，必须双侧同步改、同步发版，否则一侧放行另一侧 400。注意 ArcReel 的部署脚本只更新 ArcReel 两台服务器，不会更新本中转；本中转发版走上面的 Deployment Rules 远程构建流程。
-- 本地错误码均为 400：`invalid_model` / `invalid_request` / `invalid_duration` / `invalid_ratio` / `invalid_input_reference`，改动错误语义时同步更新 `adaptor_test.go` 的拒绝用例表。
-- 测试：`go test ./relay/channel/task/manwu/`。改上限必须同步维护边界用例（10 张放行见 `TestValidateAcceptsTenReferenceImages`，11 张拒绝见 `TestValidateRejectsIllegalRequests` 的 `too many images`），禁止只改常量不改测试。
 
 ### Project Governance
 
