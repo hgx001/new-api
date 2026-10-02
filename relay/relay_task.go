@@ -213,6 +213,14 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
+		// 适配器可能已经给出「请求不合法」的**本端**错误（能力越界、入参非法）。
+		// 直接降级成 500 build_request_failed 有两个坏后果：① 归咎渠道，500 会
+		// 触发重试与 AutoBan，一个用户传错参数就能把渠道打掉；② 客户端拿到
+		// 「服务端错误」而不是可读的原因。所以 taskcommon.UserError 转成 400 透传。
+		var userErr *taskcommon.UserError
+		if errors.As(err, &userErr) {
+			return nil, service.TaskErrorWrapperLocal(userErr.Err, userErr.Code, http.StatusBadRequest)
+		}
 		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 	}
 

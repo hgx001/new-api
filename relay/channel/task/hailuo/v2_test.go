@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -392,4 +393,84 @@ func TestValidateV2NormalizesSingleImageField(t *testing.T) {
 	stored, err := relaycommon.GetTaskRequest(c)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"https://x.example/a.jpg"}, stored.Images)
+}
+
+// 回归：这两条以前只在 BuildRequestPayload 里查，漏到建单阶段变成 500。
+// 用户自己能修的错误必须是 400 + 可读原因。
+func TestValidateV2RejectsMissingPromptAndT2VRatio(t *testing.T) {
+	spec := specFor(t, ModelH3)
+
+	t.Run("缺 prompt", func(t *testing.T) {
+		taskErr := validateV2Request(&relaycommon.TaskSubmitReq{
+			Metadata: map[string]interface{}{"ratio": "16:9"},
+		}, spec)
+		require.NotNil(t, taskErr)
+		assert.Equal(t, "invalid_request", taskErr.Code)
+		assert.Contains(t, taskErr.Message, "prompt is required")
+		assert.Equal(t, 400, taskErr.StatusCode)
+	})
+
+	t.Run("Context-IR 同样必填 prompt", func(t *testing.T) {
+		taskErr := validateV2Request(&relaycommon.TaskSubmitReq{
+			InputReference: "https://cdn.example.com/clip.mp4",
+			Metadata:       map[string]interface{}{"ratio": "16:9"},
+		}, specFor(t, ModelH3ContextIR))
+		require.NotNil(t, taskErr)
+		assert.Contains(t, taskErr.Message, "prompt is required")
+		assert.Equal(t, 400, taskErr.StatusCode)
+	})
+
+	t.Run("纯文生视频缺 ratio", func(t *testing.T) {
+		taskErr := validateV2Request(&relaycommon.TaskSubmitReq{Prompt: "a cat"}, spec)
+		require.NotNil(t, taskErr)
+		assert.Contains(t, taskErr.Message, "ratio is required for text-to-video")
+		assert.Equal(t, 400, taskErr.StatusCode)
+	})
+
+	t.Run("有图时允许 adaptive（跟随首帧）", func(t *testing.T) {
+		require.Nil(t, validateV2Request(&relaycommon.TaskSubmitReq{
+			Prompt: "a cat", Images: []string{"https://cdn.example.com/a.jpg"},
+		}, spec))
+	})
+
+	t.Run("显式 ratio 的文生视频通过", func(t *testing.T) {
+		require.Nil(t, validateV2Request(&relaycommon.TaskSubmitReq{
+			Prompt: "a cat", Metadata: map[string]interface{}{"ratio": "16:9"},
+		}, spec))
+	})
+
+	t.Run("素材 URL 报错带 scheme，不用 kind 混着说", func(t *testing.T) {
+		err := validateV2Media(&relaycommon.TaskSubmitReq{
+			Prompt: "p", Images: []string{"data:image/png;base64,AAA"},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `got scheme "data"`)
+	})
+}
+
+// 回归：建单阶段的入参错误必须是**本端 400**（LocalError），不能是裸 error。
+// 裸 error 会被 relay_task 包成 500，而 500 会归咎渠道 → 重试 + AutoBan，
+// 也就是「用户少传一个 ratio 就能把整条渠道打掉」。
+func TestConvertToV2PayloadErrorsAreLocalBadRequest(t *testing.T) {
+	a := &TaskAdaptor{}
+	cases := []struct {
+		name string
+		req  relaycommon.TaskSubmitReq
+	}{
+		{"纯文生缺 ratio", relaycommon.TaskSubmitReq{Prompt: "a cat"}},
+		{"缺 prompt", relaycommon.TaskSubmitReq{Metadata: map[string]interface{}{"ratio": "16:9"}}},
+		{"分辨率越界", relaycommon.TaskSubmitReq{Prompt: "a", Resolution: "4K", Metadata: map[string]interface{}{"ratio": "16:9"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := a.convertToV2Payload(&tc.req, relayInfoWithModel(ModelH3))
+			require.Error(t, err)
+			// relay_task 用 errors.As 识别 UserError 并转 400 LocalError；
+			// 认不出来就会退回 500 → 归咎渠道 → AutoBan。
+			var userErr *taskcommon.UserError
+			require.ErrorAs(t, err, &userErr, "必须是 *taskcommon.UserError 才能被 relay_task 降级成 400")
+			assert.Equal(t, "invalid_request", userErr.Code)
+			assert.NotEmpty(t, userErr.Message)
+		})
+	}
 }

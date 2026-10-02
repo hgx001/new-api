@@ -208,12 +208,22 @@ func lookupV2Spec(model string) (V2ModelSpec, bool) {
 // ---------------------------------------------------------------------------
 
 func validateV2Request(req *relaycommon.TaskSubmitReq, spec V2ModelSpec) *dto.TaskError {
-	if strings.TrimSpace(req.Prompt) == "" && !spec.ContextIR {
+	// prompt 对所有 v2 模型都是必填（包括 Context-IR：上游要求 content 里必须
+	// 有一个非空 text 项）。不校验的话错误会漏到 BuildRequestPayload 才暴露，
+	// 变成 500 build_request_failed —— 用户能自己修的错误必须是 400。
+	if strings.TrimSpace(req.Prompt) == "" {
 		return taskErrBadRequest("prompt is required")
 	}
+	// 纯文生视频（content 只有 text）时上游不接受 adaptive：必须在本地拦。
 	if spec.RequireRatio {
-		if _, err := resolveV2Ratio(req); err != nil {
+		ratio, err := resolveV2Ratio(req)
+		if err != nil {
 			return taskErrBadRequest(err.Error())
+		}
+		if ratio == "adaptive" && len(collectV2Media(req)) == 0 {
+			return taskErrBadRequest(fmt.Sprintf(
+				"ratio is required for text-to-video %s: pass metadata.ratio (one of %s) or size",
+				spec.Name, strings.Join(nonAdaptiveV2Ratios(), "/")))
 		}
 	}
 	if req.Duration != 0 && (req.Duration < spec.MinDuration || req.Duration > spec.MaxDuration) {
@@ -221,10 +231,7 @@ func validateV2Request(req *relaycommon.TaskSubmitReq, spec V2ModelSpec) *dto.Ta
 			"duration must be between %d and %d for %s, got %d",
 			spec.MinDuration, spec.MaxDuration, spec.Name, req.Duration))
 	}
-	if res, err := resolveV2Resolution(req, spec); err != nil {
-		return taskErrBadRequest(err.Error())
-	} else if _, err := resolveV2Ratio(req); err != nil {
-		_ = res
+	if _, err := resolveV2Resolution(req, spec); err != nil {
 		return taskErrBadRequest(err.Error())
 	}
 	if err := validateV2Media(req); err != nil {
@@ -287,9 +294,17 @@ func validateV2MediaURL(it V2MediaItem) error {
 	lower := strings.ToLower(raw)
 	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
 		// data: URI 对远端上游不可达（它要自己去取），提前拦掉。
-		return fmt.Errorf("%s must be a public http(s) URL: %s", it.role, it.kind)
+		return fmt.Errorf("%s must be a public http(s) URL, got scheme %q",
+			it.role, mediaScheme(raw))
 	}
 	return nil
+}
+
+func mediaScheme(u string) string {
+	if idx := strings.Index(u, ":"); idx > 0 {
+		return u[:idx]
+	}
+	return "(none)"
 }
 
 // ---------------------------------------------------------------------------

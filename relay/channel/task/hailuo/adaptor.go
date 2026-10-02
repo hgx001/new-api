@@ -112,18 +112,22 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 // convertToV2Payload 组装 v2 建单载荷。注意 model 字段用 **UpstreamName**：
 // 对外模型名是 MiniMax-H3-Context-IR，但 Context-IR 端点只接受 MiniMax-H3。
+//
+// 错误一律返回**本端** 400（TaskErrorWrapperLocal），不返回裸 error：
+// 裸 error 会被 relay_task 包成 500 build_request_failed，而 500 会归咎渠道
+// （重试 + AutoBan）——用户传错一个参数就把渠道打掉，是不可接受的。
 func (a *TaskAdaptor) convertToV2Payload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*V2VideoRequest, error) {
 	spec, ok := lookupV2Spec(info.UpstreamModelName)
 	if !ok {
-		return nil, fmt.Errorf("unsupported v2 model: %s", info.UpstreamModelName)
+		return nil, v2LocalError("unsupported v2 model: %s", info.UpstreamModelName)
 	}
 	resolution, err := resolveV2Resolution(req, spec)
 	if err != nil {
-		return nil, err
+		return nil, v2LocalError("%s", err.Error())
 	}
 	ratio, err := resolveV2Ratio(req)
 	if err != nil {
-		return nil, err
+		return nil, v2LocalError("%s", err.Error())
 	}
 	duration := spec.DefaultDur
 	if req.Duration > 0 {
@@ -131,11 +135,11 @@ func (a *TaskAdaptor) convertToV2Payload(req *relaycommon.TaskSubmitReq, info *r
 	}
 	content := buildV2Content(req)
 	if len(content) == 0 {
-		return nil, fmt.Errorf("prompt is required")
+		return nil, v2LocalError("prompt is required")
 	}
 	// 纯文生视频（只有 text 项）时上游不接受 adaptive。
 	if spec.RequireRatio && len(content) == 1 && ratio == "adaptive" {
-		return nil, fmt.Errorf(
+		return nil, v2LocalError(
 			"ratio is required for text-to-video %s: pass metadata.ratio (one of %s) or size",
 			spec.Name, strings.Join(nonAdaptiveV2Ratios(), "/"))
 	}
@@ -146,6 +150,13 @@ func (a *TaskAdaptor) convertToV2Payload(req *relaycommon.TaskSubmitReq, info *r
 		Resolution: resolution,
 		Ratio:      ratio,
 	}, nil
+}
+
+// v2LocalError 造一个「请求不合法」错误，交给 relay_task 转成 400 LocalError
+// （→ 不重试、不禁用渠道）。用 taskcommon.UserError 而非 dto.TaskError：后者有
+// 一个名为 Error 的**字段**，*dto.TaskError 并不实现 error 接口。
+func v2LocalError(format string, args ...any) error {
+	return taskcommon.NewUserError(fmt.Errorf(format, args...), "invalid_request")
 }
 
 func nonAdaptiveV2Ratios() []string {
