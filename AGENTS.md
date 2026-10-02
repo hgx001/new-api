@@ -165,6 +165,26 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - 测试：`go test ./relay/channel/task/manwu/`。改上限必须同步维护边界用例（dola 10 张放行见 `TestValidateAcceptsTenReferenceImages`，11 张拒绝见 `TestValidateRejectsIllegalRequests` 的 `too many images`；图片张数上界、反解单视频约束各有独立用例），禁止只改常量不改测试。
 - 双仓库同口径：ArcReel 侧 `lib/video_backends/openai.py` 的 manwu 分支（`_MANWU_MODEL_PATTERN` / `_MANWU_MAX_REFERENCE_IMAGES` / `_manwu_ratio`，ratio 形态 + 参考图公网 URL 透传）必须与本通道同口径。任一侧改上限、比例档或字段语义，必须双侧同步改、同步发版，否则一侧放行另一侧 400。注意 ArcReel 的部署脚本只更新 ArcReel 两台服务器，不会更新本中转；本中转发版走上面的 Deployment Rules 远程构建流程。
 
+### MiniMax / hailuo 通道维护约束
+
+- 端点按模型分两代，**字段形状完全不同**，不要试图用同一套 payload：
+  - v1（Hailuo-2.3 / -02 / T2V-01 / S2V-01…）：`POST /v1/video_generation` 扁平字段（`prompt` / `first_frame_image` / `subject_reference`），轮询 `?task_id=`，成功后再 `/v1/files/retrieve?file_id=` 换直链。渠道 `type=35`（`constant.ChannelTypeMiniMax`）→ `relay/channel/task/hailuo`。
+  - v2（`MiniMax-H3` / `MiniMax-H3-Max` / `MiniMax-H3-Context-IR`）：`POST /v2/video_generation` + `content[]` 多模态数组（`type=text|image_url|video_url|audio_url` + `role`），轮询 `/v2/query/video_generation/{task_id}`（**路径参数**），成功即 `task.content.url` 单步取流。实现见 `hailuo/v2.go` + `hailuo/v2_response.go`。
+- v2 失败形状是 `{"type":"error","error":{type,message,http_code}}`，**没有 v1 的 `base_resp`**。`ParseTaskResult` 靠报文特征（`looksLikeV2Query`）分流，不能靠 model 名——轮询阶段拿不到 `RelayInfo`。
+- `insufficient_balance_error`（`http_code=402`）必须**原样**透传成本端看到的「上游错误」，不能降级成本端错误：它真是上游账户没钱，应当触发换渠道与 AutoBan。
+- 能力门控一律 fail-loud（400，不静默改档）：H3 = 768P/2K + 4–15s；H3-Max = 480P/768P + 5–15s（不支持 2K）；首帧≤1、尾帧≤1、参考图≤9、参考视频≤3、参考音频≤3；**首尾帧与参考素材互斥**（上游直接拒绝混用）；纯文生视频必须显式 `ratio`（上游不接受 `adaptive`）。
+- 素材只收公网 `http(s)` URL：`data:` URI 对远端上游不可达（它要自己去取），提前 400。
+- `MiniMax-H3-Context-IR` 端点是 `/v2/h3_context_ir`，但载荷里的 `model` 必须是 `MiniMax-H3`（端点名 ≠ 模型名），产物是 `content.prompt` → 走 `TaskInfo.ResultText` 链路，`metadata.media_type=text` 且**不返回 url**（要 `delete(metadata,"url")`，`ToOpenAIVideo()` 会预置空串 url，留着会让客户端当有产物去拉不存在的文件）。
+- 计费：v2 按时长计价，`EstimateBilling` 返回 `{"seconds": D, "size": 分辨率倍率}`（与 wan3 同范式）；基础价定义在**最低分辨率档**（H3=768P、H3-Max=480P），倍率表在 `V2ModelSpec.ResolutionRatios`。`Context-IR` 不按时长计费（回落按次）。单价放 `defaultModelPrice`（本部署所有视频模型的约定，见「Model Pricing and Catalog Rules」）。
+- ⚠️ v2 校验**必须**调 `relaycommon.StoreTaskRequest` 把请求写回 context：`BuildRequestBody` 与 `EstimateBilling` 都从该 key 读取。漏掉的第二个症状是**静默**的——计费拿不到 duration 就按 1 秒收。
+
+### 生产运维硬约束（血泪教训）
+
+- **恢复被 AutoBan 的渠道必须同时改 `channels.status` 与 `abilities.enabled`**。2026-10-02 的真实事故：AutoBan 禁用渠道时连带把能力表置 `enabled=false`，事后只把 `status` 改回 1，导致渠道「看起来正常」但该渠道**所有模型 503 `model_not_found`**，持续数小时无人察觉。恢复用 `scripts/restore-channel.sh <id>`，它两边一起改并打印复核。
+- **裸 SQL 建/改渠道后必须重启 new-api**：能力走内存缓存（`CacheGetRandomSatisfiedChannel`），SQL 改 `abilities` 对**新建**渠道不生效（对已缓存的旧渠道反而会立刻生效，所以容易误判成「缓存已刷新」）。走管理 API 建渠道不会有这个问题。
+- **验证脚本不得用能通过校验的入参**。`dola-seedance-2.5` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。规则：① 只用必然被本地校验拦下的输入；② 每次跑完断言 `used_quota` 差值为 0、`tasks` 无非终态任务；③ 一旦误建，必须**同时**在 new-api（取消 + 退款 + 标记日志）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销——只撤一侧的话 Worker 上线后仍会去跑那个排队任务。
+- 部署走 `scripts/deploy-new-api.sh <sha>`：它带 **SHA 前缀断言**（曾出现「构建了旧 commit 却以为成功」）、fetch 失败时校验本地是否已有该 commit、旧容器只保留最近 3 个。生产容器不是 compose 管理，必须按旧容器原参数 `docker run` 重建。
+
 ### Project Governance
 
 **Required attribution:** The footer must always include a line crediting the original project:
