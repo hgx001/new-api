@@ -1,6 +1,8 @@
 package hailuo
 
 import (
+	"bytes"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -12,10 +14,13 @@ import (
 )
 
 // UpstreamModelName 挂在 RelayInfo.ChannelMeta 上，不是顶层字段。
+// TaskRelayInfo 是**内嵌指针**，生产路径由 relay_task.go 初始化；测试夹具必须
+// 手动补上，否则 info.Action=... 会穿透 nil 指针 panic。
 func relayInfoWithModel(m string) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
 		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: m},
 		OriginModelName: m,
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
 	}
 }
 
@@ -342,4 +347,49 @@ func TestEstimateBillingV2PerSecondAndResolution(t *testing.T) {
 	t.Run("info 为 nil 不 panic", func(t *testing.T) {
 		assert.Nil(t, (&TaskAdaptor{}).EstimateBilling(billingCtx(relaycommon.TaskSubmitReq{}), nil))
 	})
+}
+
+// 回归：v2 校验必须把请求写回 context。
+// 漏掉的症状有两个，而且第二个是静默的：
+//  1. BuildRequestBody 报 "request not found in context"（500）；
+//  2. EstimateBilling 拿不到 duration → 返回 nil → 10 秒的片子按 1 秒计费。
+func TestValidateV2StoresTaskRequestInContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := `{"prompt":"a cat","duration":10,"resolution":"2K","metadata":{"ratio":"16:9"}}`
+
+	newCtx := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+		return c
+	}
+
+	c := newCtx()
+	info := relayInfoWithModel(ModelH3)
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info))
+
+	stored, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err, "校验后必须能从 context 取回请求")
+	assert.Equal(t, 10, stored.Duration)
+	assert.Equal(t, "2K", stored.Resolution)
+
+	// 计费能拿到 duration → 按秒倍率生效
+	billing := (&TaskAdaptor{}).EstimateBilling(c, info)
+	require.NotNil(t, billing)
+	assert.Equal(t, 10.0, billing["seconds"])
+	assert.Equal(t, 1.625, billing["size"])
+}
+
+// 单图写法（image 而非 images）要与共享路径一致地归一。
+func TestValidateV2NormalizesSingleImageField(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := `{"prompt":"a cat","image":"https://x.example/a.jpg","metadata":{"ratio":"16:9"}}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewBufferString(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	require.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(c, relayInfoWithModel(ModelH3)))
+	stored, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"https://x.example/a.jpg"}, stored.Images)
 }

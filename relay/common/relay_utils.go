@@ -55,7 +55,7 @@ func createTaskError(err error, code string, statusCode int, localError bool) *d
 	}
 }
 
-func storeTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
+func StoreTaskRequest(c *gin.Context, info *RelayInfo, action string, requestObj TaskSubmitReq) {
 	info.Action = action
 	c.Set("task_request", requestObj)
 }
@@ -200,7 +200,7 @@ func validateMultipartDirect(c *gin.Context, info *RelayInfo, requirePrompt bool
 		// OtherRatios 已移到 Sora adaptor 的 EstimateBilling 中设置
 	}
 
-	storeTaskRequest(c, info, action, req)
+	StoreTaskRequest(c, info, action, req)
 
 	return nil
 }
@@ -254,6 +254,6 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		req.Images = []string{req.Image}
 	}
 
-	storeTaskRequest(c, info, action, req)
+	StoreTaskRequest(c, info, action, req)
 	return nil
 }

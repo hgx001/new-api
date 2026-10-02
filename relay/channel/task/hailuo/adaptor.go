@@ -46,8 +46,20 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 				fmt.Errorf("invalid request body: %s", err.Error()),
 				"invalid_request", http.StatusBadRequest)
 		}
+		// 与 ValidateBasicTaskRequest 对齐的单图写法。
+		if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {
+			req.Images = []string{req.Image}
+		}
 		spec, _ := lookupV2Spec(info.UpstreamModelName)
-		return validateV2Request(&req, spec)
+		if taskErr := validateV2Request(&req, spec); taskErr != nil {
+			return taskErr
+		}
+		// ⚠️ 必须写回 context：BuildRequestBody 读的是 "task_request"，而
+		// EstimateBilling 也从同一个 key 取 duration。漏了这一步的表现是
+		// BuildRequestBody 报 "request not found in context"（500），并且
+		// **计费静默退化成按 1 秒收**（EstimateBilling 拿不到请求就返回 nil）。
+		relaycommon.StoreTaskRequest(c, info, constant.TaskActionGenerate, req)
+		return nil
 	}
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
 }
