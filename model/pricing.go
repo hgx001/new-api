@@ -406,6 +406,10 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "hailuo-h3") {
 		return true
 	}
+	// MiniMax 官方 v2 视频（H3 / H3 Max）：按秒 + 分辨率倍率计价，上广场。
+	if name == "MiniMax-H3" || name == "MiniMax-H3-Max" {
+		return true
+	}
 	if name == "seedance2.0特惠版" {
 		return true
 	}
@@ -452,6 +456,7 @@ func isAllowedPricingModel(name string) bool {
 	// ⚠️ jimeng-video-reverse 故意**不**上广场：反解定价（¥1.0/次）是占位值，
 	// 尚未商务核定。在价格确认前只保证可调用（白名单只管广场展示，不影响调用），
 	// 确认后再加这一行并同步 downstream_api_guide.md。
+	// MiniMax-H3-Context-IR 同理（占位价 ¥1.0/次，官方未公布 Context-IR 价目）。
 	return false
 }
 

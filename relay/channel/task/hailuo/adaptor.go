@@ -37,10 +37,28 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
+	// v2（H3 家族）走自己的能力矩阵：时长/分辨率/比例/素材都有硬边界，
+	// 越界必须在本地 400，不能指望上游报错。
+	if _, ok := lookupV2Spec(info.UpstreamModelName); ok {
+		var req relaycommon.TaskSubmitReq
+		if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("invalid request body: %s", err.Error()),
+				"invalid_request", http.StatusBadRequest)
+		}
+		spec, _ := lookupV2Spec(info.UpstreamModelName)
+		return validateV2Request(&req, spec)
+	}
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if spec, ok := lookupV2Spec(info.UpstreamModelName); ok {
+		if spec.ContextIR {
+			return fmt.Sprintf("%s%s", a.baseURL, V2ContextIREndpoint), nil
+		}
+		return fmt.Sprintf("%s%s", a.baseURL, V2VideoEndpoint), nil
+	}
 	return fmt.Sprintf("%s%s", a.baseURL, TextToVideoEndpoint), nil
 }
 
@@ -61,17 +79,71 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, fmt.Errorf("invalid request type in context")
 	}
 
-	body, err := a.convertToRequestPayload(&req, info)
+	var payload any
+	var err error
+	if _, ok := lookupV2Spec(info.UpstreamModelName); ok {
+		payload, err = a.convertToV2Payload(&req, info)
+	} else {
+		payload, err = a.convertToRequestPayload(&req, info)
+	}
 	if err != nil {
 		return nil, errors.Wrap(err, "convert request payload failed")
 	}
 
-	data, err := common.Marshal(body)
+	data, err := common.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 
 	return bytes.NewReader(data), nil
+}
+
+// convertToV2Payload 组装 v2 建单载荷。注意 model 字段用 **UpstreamName**：
+// 对外模型名是 MiniMax-H3-Context-IR，但 Context-IR 端点只接受 MiniMax-H3。
+func (a *TaskAdaptor) convertToV2Payload(req *relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*V2VideoRequest, error) {
+	spec, ok := lookupV2Spec(info.UpstreamModelName)
+	if !ok {
+		return nil, fmt.Errorf("unsupported v2 model: %s", info.UpstreamModelName)
+	}
+	resolution, err := resolveV2Resolution(req, spec)
+	if err != nil {
+		return nil, err
+	}
+	ratio, err := resolveV2Ratio(req)
+	if err != nil {
+		return nil, err
+	}
+	duration := spec.DefaultDur
+	if req.Duration > 0 {
+		duration = req.Duration
+	}
+	content := buildV2Content(req)
+	if len(content) == 0 {
+		return nil, fmt.Errorf("prompt is required")
+	}
+	// 纯文生视频（只有 text 项）时上游不接受 adaptive。
+	if spec.RequireRatio && len(content) == 1 && ratio == "adaptive" {
+		return nil, fmt.Errorf(
+			"ratio is required for text-to-video %s: pass metadata.ratio (one of %s) or size",
+			spec.Name, strings.Join(nonAdaptiveV2Ratios(), "/"))
+	}
+	return &V2VideoRequest{
+		Model:      spec.UpstreamName,
+		Content:    content,
+		Duration:   duration,
+		Resolution: resolution,
+		Ratio:      ratio,
+	}, nil
+}
+
+func nonAdaptiveV2Ratios() []string {
+	out := make([]string, 0, len(v2Ratios))
+	for _, r := range v2Ratios {
+		if r != "adaptive" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -85,6 +157,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 	_ = resp.Body.Close()
+
+	// v2 的失败形状与 v1 完全不同（没有 base_resp），先单独处理。
+	if _, isV2 := lookupV2Spec(info.UpstreamModelName); isV2 {
+		return a.doResponseV2(c, responseBody, info)
+	}
 
 	var hResp VideoResponse
 	if err := common.Unmarshal(responseBody, &hResp); err != nil {
@@ -117,8 +194,17 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	uri := fmt.Sprintf("%s%s?task_id=%s", baseUrl, QueryTaskEndpoint, taskID)
+	// v2 轮询是**路径参数**（/v2/query/video_generation/{task_id}），不是 query。
+	if isV2UpstreamModel(body) {
+		uri := fmt.Sprintf("%s%s", baseUrl, fmt.Sprintf(V2QueryTaskEndpointFmt, taskID))
+		return a.doTaskQuery(uri, key, proxy)
+	}
 
+	uri := fmt.Sprintf("%s%s?task_id=%s", baseUrl, QueryTaskEndpoint, taskID)
+	return a.doTaskQuery(uri, key, proxy)
+}
+
+func (a *TaskAdaptor) doTaskQuery(uri, key, proxy string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
 		return nil, err
@@ -134,8 +220,65 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	return client.Do(req)
 }
 
+// isV2UpstreamModel 从落库的任务载荷反推是否 v2。轮询阶段拿不到 RelayInfo，
+// 只能靠 CreateResponse 落库的 task_id 旁边那个 model 标记。
+func isV2UpstreamModel(body map[string]any) bool {
+	m, _ := body["model"].(string)
+	if isV2Model(m) {
+		return true
+	}
+	// 老数据可能没存 model，但存了 v2 端点标记。
+	if ep, _ := body["_minimax_endpoint"].(string); ep != "" {
+		return true
+	}
+	return false
+}
+
+// EstimateBilling 让 v2（H3 家族）按「秒数 × 分辨率档位」计费。
+//
+// v2 上游是按秒计价（$0.05–0.13/秒随模型与分辨率变化），而 BaseBilling 返回 nil
+// 意味着只按模型基础价收一次——对 4s 和 15s 收一样的钱，长片就亏本。
+// 做法与 wan3 一致：基础价定义在**最低分辨率档**（H3=768P、H3-Max=480P），
+// 其余档位用 size 倍率上浮；这样 ModelRatio 里的数字直接读作「每秒单价」。
+//
+// Context-IR 不产视频、按时长计费无意义，回落到 BaseBilling（按次）。
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	if info == nil || info.ChannelMeta == nil {
+		return nil
+	}
+	spec, ok := lookupV2Spec(info.UpstreamModelName)
+	if !ok || spec.ContextIR {
+		return nil
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	duration := spec.DefaultDur
+	if req.Duration > 0 {
+		duration = req.Duration
+	}
+	resolution, err := resolveV2Resolution(&req, spec)
+	if err != nil {
+		resolution = spec.DefaultRes
+	}
+	return map[string]float64{
+		"seconds": float64(duration),
+		"size":    v2ResolutionRatio(spec, resolution),
+	}
+}
+
+// v2ResolutionRatio 把分辨率档位折成相对基础档的倍率。缺配置回 1.0（按基础档收），
+// 不猜倍数——猜错就是系统性错价。
+func v2ResolutionRatio(spec V2ModelSpec, resolution string) float64 {
+	if ratio, ok := spec.ResolutionRatios[strings.ToUpper(strings.TrimSpace(resolution))]; ok {
+		return ratio
+	}
+	return 1.0
+}
+
 func (a *TaskAdaptor) GetModelList() []string {
-	return ModelList
+	return append(append([]string{}, ModelList...), ModelH3, ModelH3Max, ModelH3ContextIR)
 }
 
 func (a *TaskAdaptor) GetChannelName() string {
@@ -182,6 +325,11 @@ func (a *TaskAdaptor) parseResolutionFromSize(size string, modelConfig ModelConf
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	// v2 形状不同，先分流。
+	if looksLikeV2Query(respBody) {
+		return parseV2TaskResult(respBody)
+	}
+
 	resTask := QueryTaskResponse{}
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
@@ -224,6 +372,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
+	// v2：产物可能是视频 URL，也可能是 Context-IR 的提示词文本。
+	if looksLikeV2Query(originTask.Data) {
+		return convertV2ToOpenAIVideo(originTask)
+	}
+
 	var hailuoResp QueryTaskResponse
 	if err := common.Unmarshal(originTask.Data, &hailuoResp); err != nil {
 		return nil, errors.Wrap(err, "unmarshal hailuo task data failed")
