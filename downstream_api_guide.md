@@ -47,7 +47,6 @@
 | `gpt-5.6-luna` | 等价 `gpt-6-luna`，同价（老 Key 无需改代码） |
 | `gpt-5.6-sol` | 等价 `gpt-6-sol`，同价 |
 | `MiniMax-M2.7` | 与 `MiniMax-M3` 同价 |
-| `MiniMax-M3.1` | 与 `MiniMax-M3` 同价 |
 
 ---
 

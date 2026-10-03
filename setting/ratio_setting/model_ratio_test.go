@@ -38,6 +38,15 @@ func TestDefaultModelRatioGpt6Family(t *testing.T) {
 	}
 }
 
+func TestDefaultModelRatioMiniMaxM31MatchesM3Price(t *testing.T) {
+	InitRatioSettings()
+
+	ratio, ok, _ := GetModelRatio("MiniMax-M3.1")
+	require.True(t, ok, "MiniMax-M3.1 must have an explicit input price")
+	require.Equal(t, 0.015103, ratio)
+	require.Equal(t, 0.410959, GetCompletionRatio("MiniMax-M3.1"))
+}
+
 // wan3.0-video 按秒计费：480P 基准 ¥0.27/秒，USD 计价（USD2RMB=7.3）。
 // 0.27/7.3 = 0.0369863；任务链路按 ModelPrice * seconds * size(1/2/4) 扣费。
 func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
