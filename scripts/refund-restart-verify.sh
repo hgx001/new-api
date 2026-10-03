@@ -38,7 +38,7 @@ probe() {
 
 echo "--- 漫屋四模型（用会失败的输入，验证路由通；dola 用非法 seconds）---"
 probe "dola 非法 seconds=7"      dola-seedance-2.5     '{"model":"dola-seedance-2.5","prompt":"x","seconds":7}'
-probe "manwu-image n 越界"        manwu-image           '{"model":"manwu-image","prompt":"x","n":99}'
+probe "Nano Banana Pro n 越界"    "Nano Banana Pro"     '{"model":"Nano Banana Pro","prompt":"x","n":99}'
 probe "gemini-web-video 非法"     gemini-web-video      '{"model":"gemini-web-video","prompt":"x","seconds":7}'
 probe "jimeng-video-reverse 缺参" jimeng-video-reverse  '{"model":"jimeng-video-reverse"}'
 

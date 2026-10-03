@@ -375,10 +375,10 @@ func TestFetchTask(t *testing.T) {
 func TestModelListAndChannelName(t *testing.T) {
 	a := &TaskAdaptor{}
 	assert.Equal(t, []string{
+		"Nano Banana Pro",
 		"dola-seedance-2.5",
 		"gemini-web-video",
 		"jimeng-video-reverse",
-		"manwu-image",
 	}, a.GetModelList())
 	assert.Equal(t, ChannelName, a.GetChannelName())
 }
@@ -417,10 +417,10 @@ func TestSpecForRoutesEveryModel(t *testing.T) {
 	assert.False(t, ok)
 }
 
-// ── manwu-image ──
+// ── Nano Banana Pro ──
 
 func TestValidateImageAcceptsMinimal(t *testing.T) {
-	c, info, a := postVideoCtx(t, `{"model":"manwu-image","prompt":"一只柴犬"}`)
+	c, info, a := postVideoCtx(t, `{"model":"Nano Banana Pro","prompt":"一只柴犬"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 
 	req, err := getNormalizedRequest(c)
@@ -445,11 +445,11 @@ func TestValidateImageAcceptsMinimal(t *testing.T) {
 
 // 图片按张计费：n/count 都认，张数作为 n 倍率乘到 ¥0.3/张。
 func TestImageCountDrivesBillingMultiplier(t *testing.T) {
-	c, info, a := postVideoCtx(t, `{"model":"manwu-image","prompt":"猫","n":3}`)
+	c, info, a := postVideoCtx(t, `{"model":"Nano Banana Pro","prompt":"猫","n":3}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	assert.Equal(t, map[string]float64{"n": 3}, a.EstimateBilling(c, info))
 
-	c2, info2, a2 := postVideoCtx(t, `{"model":"manwu-image","prompt":"猫","count":"4","size":"9:16"}`)
+	c2, info2, a2 := postVideoCtx(t, `{"model":"Nano Banana Pro","prompt":"猫","count":"4","size":"9:16"}`)
 	require.Nil(t, a2.ValidateRequestAndSetAction(c2, info2))
 	assert.Equal(t, map[string]float64{"n": 4}, a2.EstimateBilling(c2, info2))
 
@@ -459,7 +459,7 @@ func TestImageCountDrivesBillingMultiplier(t *testing.T) {
 	assert.Equal(t, "9:16", req.Ratio)
 
 	// 张数为 1 时不注入倍率（避免无意义的 quota 乘 1 误差）。
-	c3, info3, a3 := postVideoCtx(t, `{"model":"manwu-image","prompt":"猫","n":1}`)
+	c3, info3, a3 := postVideoCtx(t, `{"model":"Nano Banana Pro","prompt":"猫","n":1}`)
 	require.Nil(t, a3.ValidateRequestAndSetAction(c3, info3))
 	assert.Nil(t, a3.EstimateBilling(c3, info3))
 }
@@ -471,14 +471,14 @@ func TestImageRejectsIllegalRequests(t *testing.T) {
 		body string
 		code string
 	}{
-		{"missing prompt", `{"model":"manwu-image"}`, "invalid_request"},
-		{"count above cap", `{"model":"manwu-image","prompt":"x","n":11}`, "invalid_count"},
-		{"count below one", `{"model":"manwu-image","prompt":"x","n":0}`, "invalid_count"},
-		{"non integer count", `{"model":"manwu-image","prompt":"x","n":"many"}`, "invalid_count"},
-		{"bad ratio", `{"model":"manwu-image","prompt":"x","ratio":"21:10"}`, "invalid_ratio"},
-		{"data uri reference", `{"model":"manwu-image","prompt":"x","input_reference":"data:image/png;base64,AAAA"}`, "invalid_input_reference"},
-		{"video seconds on image", `{"model":"manwu-image","prompt":"x","seconds":5}`, "invalid_request"},
-		{"resolution on image", `{"model":"manwu-image","prompt":"x","resolution":"2k"}`, "invalid_request"},
+		{"missing prompt", `{"model":"Nano Banana Pro"}`, "invalid_request"},
+		{"count above cap", `{"model":"Nano Banana Pro","prompt":"x","n":11}`, "invalid_count"},
+		{"count below one", `{"model":"Nano Banana Pro","prompt":"x","n":0}`, "invalid_count"},
+		{"non integer count", `{"model":"Nano Banana Pro","prompt":"x","n":"many"}`, "invalid_count"},
+		{"bad ratio", `{"model":"Nano Banana Pro","prompt":"x","ratio":"21:10"}`, "invalid_ratio"},
+		{"data uri reference", `{"model":"Nano Banana Pro","prompt":"x","input_reference":"data:image/png;base64,AAAA"}`, "invalid_input_reference"},
+		{"video seconds on image", `{"model":"Nano Banana Pro","prompt":"x","seconds":5}`, "invalid_request"},
+		{"resolution on image", `{"model":"Nano Banana Pro","prompt":"x","resolution":"2k"}`, "invalid_request"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -490,12 +490,12 @@ func TestImageRejectsIllegalRequests(t *testing.T) {
 	}
 
 	// 10 张放行 / 11 张拒绝。
-	okCtx, okInfo, okAdaptor := postVideoCtx(t, `{"model":"manwu-image","prompt":"x","input_reference":[
+	okCtx, okInfo, okAdaptor := postVideoCtx(t, `{"model":"Nano Banana Pro","prompt":"x","input_reference":[
 		"https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png",
 		"https://a.example/6.png","https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png"]}`)
 	require.Nil(t, okAdaptor.ValidateRequestAndSetAction(okCtx, okInfo))
 
-	overCtx, overInfo, overAdaptor := postVideoCtx(t, `{"model":"manwu-image","prompt":"x","images":[
+	overCtx, overInfo, overAdaptor := postVideoCtx(t, `{"model":"Nano Banana Pro","prompt":"x","images":[
 		"https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png","https://a.example/6.png",
 		"https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png","https://a.example/11.png"]}`)
 	taskErr := overAdaptor.ValidateRequestAndSetAction(overCtx, overInfo)
@@ -718,7 +718,7 @@ func TestRejectionMessagesNameTheModel(t *testing.T) {
 		wantSubstr string
 	}{
 		{`{"model":"gemini-web-video","prompt":"x","seconds":8}`, "gemini-web-video"},
-		{`{"model":"manwu-image","prompt":"x","resolution":"2k"}`, "manwu-image"},
+		{`{"model":"Nano Banana Pro","prompt":"x","resolution":"2k"}`, "Nano Banana Pro"},
 		{`{"model":"jimeng-video-reverse","video":"https://a.example/1.mp4","ratio":"16:9"}`, "jimeng-video-reverse"},
 	}
 	for _, tc := range cases {

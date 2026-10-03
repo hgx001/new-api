@@ -37,7 +37,7 @@
 | `autodl:minimax-h3-u24` | 视频 | `/v1/videos` | 按秒 | 480p ¥0.10/s、768p ¥0.12/s |
 | `dola-seedance-2.5` | 视频 | `/v1/videos` | **按次** | ¥2.50 / 次 |
 | `gemini-web-video` | 视频 | `/v1/videos` | **按次** | ¥2.50 / 次 |
-| `manwu-image` | 图片 | `/v1/videos` | 按张 | ¥0.30 / 张 |
+| `Nano Banana Pro` | 图片 | `/v1/videos` | 按张 | ¥0.30 / 张 |
 | `jimeng-video-reverse` | 文本（提示词） | `/v1/videos` | **按次** | ¥1.00 / 次 |
 
 **兼容/隐藏模型**（可调用，但不在模型广场展示）：
@@ -272,7 +272,7 @@ curl https://api.heibaidao.cn/v1/videos \
 
 > 不叫 `veo-*`：官方 Gemini 渠道已占用那些模型名，重名会被路由到错渠道。
 
-#### `manwu-image`（漫屋远端图片）
+#### `Nano Banana Pro`（漫屋远端图片）
 
 | 参数 | 取值 |
 |---|---|

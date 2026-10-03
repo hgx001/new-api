@@ -46,8 +46,9 @@ const (
 	PlatformIDGemini = "gemini"
 	PlatformIDJimeng = "jimeng"
 	// PlatformIDImage 是 ArcReel 的抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）：
-	// 服务端按 MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini 还是 jimeng。
-	PlatformIDImage = ModelImage
+	// 它是内部建单协议值，与对外模型名 ModelImage 分离；服务端按
+	// MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini 还是 jimeng。
+	PlatformIDImage = "manwu-image"
 
 	// baseURLDefault 为渠道未配置 BaseURL 时的兜底（ArcReel 生产地址）
 	baseURLDefault = "https://arcreel.heibaidao.cn"
@@ -87,7 +88,7 @@ const (
 //
 // 模型名口径：
 //   - dola-seedance-2.5：dola 官网 Seedance 2.5（远端视频，按次计费）
-//   - manwu-image：ArcReel 抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）。服务端
+//   - Nano Banana Pro：ArcReel 抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）。服务端
 //     MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini(nano_banana_2) 还是
 //     jimeng(dreamina_image_5_0_lite)，客户端不感知，也不该猜
 //   - gemini-web-video：Gemini 官网 Veo（远端视频，按次计费）。**故意不叫 veo-***：
@@ -95,7 +96,7 @@ const (
 //   - jimeng-video-reverse：即梦「视频反解」技能，单视频入参、提示词文本出参
 const (
 	ModelDola    = "dola-seedance-2.5"
-	ModelImage   = "manwu-image"
+	ModelImage   = "Nano Banana Pro"
 	ModelVideo   = "gemini-web-video"
 	ModelReverse = "jimeng-video-reverse"
 )

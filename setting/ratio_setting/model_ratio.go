@@ -311,7 +311,7 @@ var defaultModelPrice = map[string]float64{
 	"sd-2.5":                            0.821918,        // 按次对外 ¥6/次（上游 ¥2/次 3 倍定价）；内部按 USD 等值存储（6/7.3）
 	"dola-seedance-2.5":                 2.5 / USD2RMB,   // 漫屋 ArcReel 视频，按次计费 ¥2.5/次（EstimateBilling 返回 nil，不乘时长）
 	"gemini-web-video":                  2.5 / USD2RMB,   // 漫屋 ArcReel Gemini 官网 Veo，按次计费 ¥2.5/次（与 dola 同价，站点侧不乘时长）
-	"manwu-image":                       0.3 / USD2RMB,   // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
+	"Nano Banana Pro":                   0.3 / USD2RMB,   // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
 	"jimeng-video-reverse":              1.0 / USD2RMB,   // 漫屋 ArcReel 即梦视频反解，按次 ¥1.0/次（占位价，待商务核定）
 	"MiniMax-H3":                        0.5 / USD2RMB,   // MiniMax 官方 v2 视频，**按秒**（基础档 768P ¥0.5/秒；2K 走 size 倍率 1.625）
 	"MiniMax-H3-Max":                    0.365 / USD2RMB, // MiniMax 官方 v2 高速档，**按秒**（基础档 480P ¥0.365/秒；768P 倍率 1.6）

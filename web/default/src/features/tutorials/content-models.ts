@@ -35,7 +35,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s',
   'dola-seedance-2.5｜视频（按次）｜¥2.50 / 次',
   'gemini-web-video｜视频（按次）｜¥2.50 / 次',
-  'manwu-image｜图片（按张）｜¥0.30 / 张',
+  'Nano Banana Pro｜图片（按张）｜¥0.30 / 张',
   'jimeng-video-reverse｜提示词（按次）｜¥1.00 / 次',
 ]
 
@@ -445,8 +445,8 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'heading',
           level: 3,
-          id: 'model-manwu-image',
-          children: [{ type: 'strong', value: 'manwu-image（漫屋远端图片）' }],
+          id: 'model-nano-banana-pro',
+          children: [{ type: 'strong', value: 'Nano Banana Pro（漫屋远端图片）' }],
         },
         { type: 'list', ordered: false, items: [
           ['prompt：必填'],

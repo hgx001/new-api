@@ -35,7 +35,7 @@ if [ -z "${TK_OK}" ]; then
   echo "（没有找到有余额的令牌，跳过）"
 else
   curl -s -X POST https://api.heibaidao.cn/v1/videos -H "Authorization: Bearer ${TK_OK}" \
-    -H "Content-Type: application/json" -d '{"model":"manwu-image","prompt":"x","n":11}' | head -c 160
+    -H "Content-Type: application/json" -d '{"model":"Nano Banana Pro","prompt":"x","n":11}' | head -c 160
   echo
 fi
 
@@ -44,4 +44,4 @@ grep -c "POST /api/v1/remote-generation/jobs" /home/ubuntu/arcreel/logs/arcreel.
 
 echo "--- 渠道价格与模型清单复核 ---"
 q "SELECT models FROM channels WHERE id=20"
-q "SELECT e.key || ' = CNY ' || round((e.value::numeric)*7.3, 4) FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e WHERE o.key='ModelPrice' AND e.key IN ('gemini-web-video','manwu-image','jimeng-video-reverse') ORDER BY e.key"
+q "SELECT e.key || ' = CNY ' || round((e.value::numeric)*7.3, 4) FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e WHERE o.key='ModelPrice' AND e.key IN ('gemini-web-video','Nano Banana Pro','jimeng-video-reverse') ORDER BY e.key"

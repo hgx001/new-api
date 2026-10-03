@@ -12,7 +12,7 @@ q "SELECT column_name, data_type, is_nullable, column_default FROM information_s
 
 echo
 echo "=== 现有 manwu 模型行（插入模板）==="
-q "SELECT model_name, quota_type, model_ratio, model_price, enable_groups, status, source FROM models WHERE model_name IN ('manwu-image','gemini-web-video','dola-seedance-2.5','jimeng-video-reverse')"
+q "SELECT model_name, quota_type, model_ratio, model_price, enable_groups, status, source FROM models WHERE model_name IN ('Nano Banana Pro','gemini-web-video','dola-seedance-2.5','jimeng-video-reverse')"
 
 echo
 echo "=== 现有 manwu abilities 行 ==="

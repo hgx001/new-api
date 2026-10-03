@@ -53,7 +53,7 @@ func TestIsAllowedPricingModelDolaSeedance(t *testing.T) {
 
 // 漫屋新增两个模型上广场；视频反解在价格核定前**不**上（占位价不得对外发布）。
 func TestIsAllowedPricingModelManwuRemote(t *testing.T) {
-	for _, name := range []string{"gemini-web-video", "manwu-image"} {
+	for _, name := range []string{"gemini-web-video", "Nano Banana Pro"} {
 		require.True(t, isAllowedPricingModel(name), "%s must show in pricing square", name)
 	}
 	assert.False(t, isAllowedPricingModel("jimeng-video-reverse"),
