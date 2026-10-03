@@ -362,11 +362,11 @@ func updatePricing() {
 }
 
 func isAllowedPricingModel(name string) bool {
-	// 文本模型：只保留 gpt-6 系列 + MiniMax-M3
+	// 文本模型：只保留 gpt-6 系列 + MiniMax M3 家族
 	if strings.HasPrefix(name, "gpt-6") {
 		return true
 	}
-	if strings.EqualFold(name, "MiniMax-M3") {
+	if strings.EqualFold(name, "MiniMax-M3") || strings.EqualFold(name, "MiniMax-M3.1") {
 		return true
 	}
 	// Youkou 直连文本模型

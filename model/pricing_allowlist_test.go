@@ -23,6 +23,12 @@ func TestIsAllowedPricingModelWanVideo(t *testing.T) {
 	// 但它已无任何 ability 指向，不会出现在广场上，故不在此断言。
 }
 
+func TestIsAllowedPricingModelMiniMaxM3Family(t *testing.T) {
+	for _, name := range []string{"MiniMax-M3", "MiniMax-M3.1"} {
+		require.True(t, isAllowedPricingModel(name), "model %q must show in pricing square", name)
+	}
+}
+
 // GPT 文本模型只放行 gpt-6 系列；5.6 全家族下线后必须从广场隐藏。
 func TestIsAllowedPricingModelGpt6(t *testing.T) {
 	for _, name := range []string{"gpt-6-luna", "gpt-6-sol"} {

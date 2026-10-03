@@ -4,6 +4,7 @@ package minimax
 
 var ModelList = []string{
 	"MiniMax-M3",
+	"MiniMax-M3.1",
 }
 
 var ChannelName = "minimax"

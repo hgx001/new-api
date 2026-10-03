@@ -26,6 +26,7 @@
 | 模型 | 类型 | 端点 | 计费方式 | 价格 |
 |---|---|---|---|---|
 | `MiniMax-M3` | 文本 | `/v1/chat/completions` | 按 token | 输入 ¥0.22 / 1M，输出 ¥0.09 / 1M |
+| `MiniMax-M3.1` | 文本 | `/v1/chat/completions` | 按 token | 同 `MiniMax-M3` |
 | `gpt-6-luna` | 文本 | `/v1/chat/completions` | 按 token | 输入 ¥0.94 / 1M，输出 ¥7.50 / 1M |
 | `gpt-6-sol` | 文本 | `/v1/chat/completions` | 按 token | 输入 ¥18.75 / 1M，输出 ¥150.00 / 1M |
 | `gpt-image-2.5-官方` | 图片 | `/v1/images/generations` | 按张 | ¥0.15 / 张 |
@@ -46,6 +47,7 @@
 | `gpt-5.6-luna` | 等价 `gpt-6-luna`，同价（老 Key 无需改代码） |
 | `gpt-5.6-sol` | 等价 `gpt-6-sol`，同价 |
 | `MiniMax-M2.7` | 与 `MiniMax-M3` 同价 |
+| `MiniMax-M3.1` | 与 `MiniMax-M3` 同价 |
 
 ---
 
