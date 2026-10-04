@@ -102,6 +102,22 @@ func TestDefaultModelPriceSD25PerUse(t *testing.T) {
 	require.InDelta(t, 0.821918, price, 1e-6, "sd-2.5 must be ¥6/call in USD")
 }
 
+func TestDefaultModelPriceSeedance20PerUse(t *testing.T) {
+	InitRatioSettings()
+
+	price, ok := GetModelPrice("seedance-2.0", false)
+	require.True(t, ok, "seedance-2.0 must have an explicit per-use price")
+	require.InDelta(t, 1.5/USD2RMB, price, 1e-12, "seedance-2.0 must be ¥1.5/call in USD")
+}
+
+func TestDefaultModelPriceSeedance25PerUse(t *testing.T) {
+	InitRatioSettings()
+
+	price, ok := GetModelPrice("seedance-2.5", false)
+	require.True(t, ok, "seedance-2.5 must have an explicit per-use price")
+	require.InDelta(t, 1.0/USD2RMB, price, 1e-12, "seedance-2.5 must be ¥1/call in USD")
+}
+
 func TestDefaultModelPriceGeminiWebVideoPerUse(t *testing.T) {
 	InitRatioSettings()
 

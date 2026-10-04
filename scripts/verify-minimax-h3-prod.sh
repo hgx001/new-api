@@ -24,7 +24,8 @@ probe() { # $1=标签 $2=模型 $3=请求体
 echo "=== A. 漫屋四个模型（验证 abilities 修复后恢复路由）==="
 # ⚠️ 本脚本**不得**使用能通过校验的 dola 入参：dola 的 n 字段不参与校验，
 # 误用会真建单并扣费（已因此误建 2 次，均已取消+退款）。只用必然被本地拦下的输入。
-probe "dola 非法 seconds=7"      dola-seedance-2.5      '{"model":"dola-seedance-2.5","prompt":"x","seconds":7}'
+probe "seedance-2.0 非法 seconds=20" seedance-2.0       '{"model":"seedance-2.0","prompt":"x","seconds":20}'
+probe "seedance-2.5 非法 seconds=15" seedance-2.5       '{"model":"seedance-2.5","prompt":"x","seconds":15}'
 probe "Nano Banana Pro n 越界"        "Nano Banana Pro"        '{"model":"Nano Banana Pro","prompt":"x","n":99}'
 probe "gemini-web-video 非法 seconds" gemini-web-video       '{"model":"gemini-web-video","prompt":"x","seconds":7}'
 probe "jimeng-video-reverse 缺视频"   jimeng-video-reverse   '{"model":"jimeng-video-reverse"}'

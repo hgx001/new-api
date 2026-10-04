@@ -146,9 +146,10 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 ### Manwu（漫屋）通道维护约束
 
-- 通道定位：`relay/channel/task/manwu/` 经 OpenAI 兼容 `POST /v1/videos` 承接四个远端模型，再转 ArcReel 远端建单（默认基址 `https://arcreel.heibaidao.cn`，提交路径 `/api/v1/remote-generation/jobs`）。完整链路：ArcReel 本地任务 → 本中转（heibaidao）→ ArcReel 远端建单 → worker（燃境 App）→ 目标官网。排查必须按此链路逐段确认，不要跳段。
-- 模型路由表（`adaptor.go::modelSpecs`，四个模型共用一条建单链路，差异只在 platformId/outputMode/白名单；新增模型先加表项，禁止新开 adaptor）：
-  - `dola-seedance-2.5` → `platformId: dola` + `outputMode: video`（历史模型，行为不得改）
+- 通道定位：`relay/channel/task/manwu/` 经 OpenAI 兼容 `POST /v1/videos` 承接五个远端模型，再转 ArcReel 远端建单（默认基址 `https://arcreel.heibaidao.cn`，提交路径 `/api/v1/remote-generation/jobs`）。完整链路：ArcReel 本地任务 → 本中转（heibaidao）→ ArcReel 远端建单 → worker（燃境 App）→ 目标官网。排查必须按此链路逐段确认，不要跳段。
+- 模型路由表（`adaptor.go::modelSpecs`，五个模型共用一条建单链路，差异只在 platformId/outputMode/白名单；新增模型先加表项，禁止新开 adaptor）：
+  - `seedance-2.0` → `platformId: dola` + `outputMode: video`（按次 ¥1.5，支持 5/10/15 秒且同价）
+  - `seedance-2.5` → `platformId: dola` + `outputMode: video`（按次 ¥1.0，固定 30 秒、720p）
   - `gemini-web-video` → `platformId: gemini` + `outputMode: video`。**故意不叫 `veo-*`**：官方 Gemini 渠道已占那些名字，重名会被路由到错渠道
   - `Nano Banana Pro` → `platformId: manwu-image`（对外模型名已改为 Nano Banana Pro；ArcReel 内部仍用抽象 platformId，服务端固定走 Gemini Pro 上游）+ `outputMode: image`
   - `jimeng-video-reverse` → `platformId: jimeng` + `outputMode: prompt`，**文本出参**（`prompt` 可选；视频入参恰好 1 个 http(s) URL）
@@ -157,10 +158,10 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - ArcReel 托管产物（Gemini 图片 blob、Veo 的 data: mp4）的 `sourceUrl` 是**相对路径**且需渠道密钥 → adaptor **不吐** URL，让 new-api 落成 `/v1/videos/{task_id}/content` 代理，由 `controller/video_proxy.go` 的 `ChannelTypeManwu` 分支回查 job 取 sourceUrl 再带密钥下载。
   - dola/tiktok 这类公网 CDN 直链照旧透传，**绝不带渠道密钥**（否则凭证泄露给第三方 CDN）。禁止去掉这个区分。
 - 文本结果链路：`relaycommon.TaskInfo.ResultText` → `model.TaskPrivateData.ResultText`（JSON 列，免迁移）→ `dto.TaskDto.ResultText`；OpenAI video 响应里落在 `metadata.prompt`（`metadata.media_type = "text"`）。新增文本型任务沿用这条链路。
-- 计费：`setting/ratio_setting/model_ratio.go` 定义单价；`gemini-web-video` / `jimeng-video-reverse` 按次（`EstimateBilling` 返回 nil）；`Nano Banana Pro` 按张，张数走 `EstimateBilling` 的 `{"n": N}` 倍率。
-  - ⚠️ **`Nano Banana Pro` 绝不能进 `TASK_PRICE_PATCH` 环境变量**：进了会被 `relay_task.go` 当按次计费跳过倍率相乘，n 张只扣 1 张的钱（静默少收费）。`dola-seedance-2.5` 在该变量里，属正常。
+- 计费：`setting/ratio_setting/model_ratio.go` 定义单价；`seedance-2.0` / `seedance-2.5` / `gemini-web-video` / `jimeng-video-reverse` 按次（`EstimateBilling` 返回 nil）；`Nano Banana Pro` 按张，张数走 `EstimateBilling` 的 `{"n": N}` 倍率。
+  - ⚠️ **`Nano Banana Pro` 绝不能进 `TASK_PRICE_PATCH` 环境变量**：进了会被 `relay_task.go` 当按次计费跳过倍率相乘，n 张只扣 1 张的钱（静默少收费）。`seedance-2.0`、`seedance-2.5` 在该变量里，属正常。
 - 提交耗时：反解的参考视频由 ArcReel 代下载（≤100MB，上限对齐 Worker 硬限制），`POST /v1/videos` 可能阻塞 1–2 分钟。本中转 `RELAY_TIMEOUT` 默认为 0（不超时），不要为了「快」把它调到 60s 以下，否则大视频会出现「网关报错但上游已建单」。
-- 模型广场可见性：`gemini-web-video` / `Nano Banana Pro` 已在 `model/pricing.go isAllowedPricingModel` 放行；`jimeng-video-reverse` **故意未放行**——¥1.0/次是占位价，商务核定前不得对外展示价格（白名单只管广场，不影响调用）。
+- 模型广场可见性：`seedance-2.0` / `seedance-2.5` / `gemini-web-video` / `Nano Banana Pro` 已在 `model/pricing.go isAllowedPricingModel` 放行；`jimeng-video-reverse` **故意未放行**——¥1.0/次是占位价，商务核定前不得对外展示价格（白名单只管广场，不影响调用）。
 - 本地错误码均为 400：`invalid_model` / `invalid_request` / `invalid_duration` / `invalid_ratio` / `invalid_count` / `invalid_input_reference`，改动错误语义时同步更新 `adaptor_test.go` 的拒绝用例表。
 - 测试：`go test ./relay/channel/task/manwu/`。改上限必须同步维护边界用例（dola 10 张放行见 `TestValidateAcceptsTenReferenceImages`，11 张拒绝见 `TestValidateRejectsIllegalRequests` 的 `too many images`；图片张数上界、反解单视频约束各有独立用例），禁止只改常量不改测试。
 - 双仓库同口径：ArcReel 侧 `lib/video_backends/openai.py` 的 manwu 分支（`_MANWU_MODEL_PATTERN` / `_MANWU_MAX_REFERENCE_IMAGES` / `_manwu_ratio`，ratio 形态 + 参考图公网 URL 透传）必须与本通道同口径。任一侧改上限、比例档或字段语义，必须双侧同步改、同步发版，否则一侧放行另一侧 400。注意 ArcReel 的部署脚本只更新 ArcReel 两台服务器，不会更新本中转；本中转发版走上面的 Deployment Rules 远程构建流程。
@@ -182,7 +183,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 - **恢复被 AutoBan 的渠道必须同时改 `channels.status` 与 `abilities.enabled`**。2026-10-02 的真实事故：AutoBan 禁用渠道时连带把能力表置 `enabled=false`，事后只把 `status` 改回 1，导致渠道「看起来正常」但该渠道**所有模型 503 `model_not_found`**，持续数小时无人察觉。恢复用 `scripts/restore-channel.sh <id>`，它两边一起改并打印复核。
 - **裸 SQL 建/改渠道后必须重启 new-api**：能力走内存缓存（`CacheGetRandomSatisfiedChannel`），SQL 改 `abilities` 对**新建**渠道不生效（对已缓存的旧渠道反而会立刻生效，所以容易误判成「缓存已刷新」）。走管理 API 建渠道不会有这个问题。
-- **验证脚本不得用能通过校验的入参**。`dola-seedance-2.5` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。规则：① 只用必然被本地校验拦下的输入；② 每次跑完断言 `used_quota` 差值为 0、`tasks` 无非终态任务；③ 一旦误建，必须**同时**在 new-api（取消 + 退款 + 标记日志）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销——只撤一侧的话 Worker 上线后仍会去跑那个排队任务。
+- **验证脚本不得用能通过校验的入参**。`seedance-2.0` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。规则：① 只用必然被本地校验拦下的输入；② 每次跑完断言 `used_quota` 差值为 0、`tasks` 无非终态任务；③ 一旦误建，必须**同时**在 new-api（取消 + 退款 + 标记日志）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销——只撤一侧的话 Worker 上线后仍会去跑那个排队任务。
 - 部署走 `scripts/deploy-new-api.sh <sha>`：它带 **SHA 前缀断言**（曾出现「构建了旧 commit 却以为成功」）、fetch 失败时校验本地是否已有该 commit、旧容器只保留最近 3 个。生产容器不是 compose 管理，必须按旧容器原参数 `docker run` 重建。
 
 ### Project Governance

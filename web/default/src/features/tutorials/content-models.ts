@@ -33,7 +33,8 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan3.0-video-prime-1080p｜视频（按次）｜¥8.00 / 次，固定 1080P、30 秒',
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s',
-  'dola-seedance-2.5｜视频（按次）｜¥2.50 / 次',
+  'seedance-2.0｜视频（按次）｜¥1.50 / 次，支持 5/10/15 秒',
+  'seedance-2.5｜视频（按次）｜¥1.00 / 次，固定 30 秒、720P',
   'gemini-web-video｜视频（按次）｜¥1.00 / 次',
   'Nano Banana Pro｜图片（按张）｜¥0.30 / 张',
   'jimeng-video-reverse｜提示词（按次）｜¥1.00 / 次',
@@ -81,7 +82,7 @@ const BILLING_ITEMS = [
   '文本：输入、输出 token 分别计价',
   '图片：按张计费，¥0.15 / 张（n=2 扣两次）',
   '视频（按秒）：单价 × 秒数 × 分辨率档位倍率',
-  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，dola-seedance-2.5 ¥2.50 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
+  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，seedance-2.0 ¥1.50 / 次，seedance-2.5 ¥1.00 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
   '任务失败：自动全额退还，无需申请',
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
@@ -98,7 +99,7 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，dola-seedance-2.5 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
@@ -420,14 +421,27 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'heading',
           level: 3,
-          id: 'model-dola-seedance',
-          children: [{ type: 'strong', value: 'dola-seedance-2.5（漫屋）' }],
+          id: 'model-seedance-2',
+          children: [{ type: 'strong', value: 'seedance-2.0（漫屋）' }],
         },
         { type: 'list', ordered: false, items: [
-          ['seconds：5 / 10 / 15 / 30，默认 30'],
+          ['seconds：5 / 10 / 15，默认 15'],
           ['ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9，也可用 size 传比例字符串'],
           ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
-          ['计费：按次 ¥2.50，与时长无关（30 秒也是 ¥2.50）'],
+          ['计费：按次 ¥1.50，与时长无关'],
+        ] },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-seedance-25',
+          children: [{ type: 'strong', value: 'seedance-2.5（漫屋）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['seconds / duration：固定 30，默认 30；传其它时长直接 400'],
+          ['resolution：固定 720p；传其它分辨率直接 400'],
+          ['ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
+          ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
+          ['计费：按次 ¥1.00，与时长无关'],
         ] },
         {
           type: 'heading',
@@ -540,7 +554,8 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: 'wan3.0-video-prime-1080p', href: '#model-wan30-prime' },
     { title: 'wan2.7-r2v', href: '#model-wan27-r2v' },
     { title: 'autodl:minimax-h3-u24', href: '#model-autodl-h3-u24' },
-    { title: 'dola-seedance-2.5', href: '#model-dola-seedance' },
+    { title: 'seedance-2.0', href: '#model-seedance-2' },
+    { title: 'seedance-2.5', href: '#model-seedance-25' },
     { title: '参考素材要求', href: '#video-media-rules' },
     { title: '计费与退款', href: '#billing-refund' },
     { title: '错误码', href: '#api-errors' },

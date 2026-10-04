@@ -46,9 +46,11 @@ func TestIsAllowedPricingModelGptImageOfficial(t *testing.T) {
 	}
 }
 
-// 漫屋 ArcReel dola 视频模型必须在广场展示。
+// 漫屋 ArcReel Seedance 2.0/2.5 视频模型必须在广场展示。
 func TestIsAllowedPricingModelDolaSeedance(t *testing.T) {
-	require.True(t, isAllowedPricingModel("dola-seedance-2.5"), "dola-seedance-2.5 must show in pricing square")
+	for _, name := range []string{"seedance-2.0", "seedance-2.5"} {
+		require.True(t, isAllowedPricingModel(name), "%s must show in pricing square", name)
+	}
 }
 
 // 漫屋新增两个模型上广场；视频反解在价格核定前**不**上（占位价不得对外发布）。

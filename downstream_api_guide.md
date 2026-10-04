@@ -35,7 +35,8 @@
 | `wan3.0-video-prime-1080p` | 视频 | `/v1/videos` | **按次** | ¥8.00 / 次（固定 1080P、30 秒） |
 | `wan2.7-r2v` | 视频 | `/v1/videos` | 按秒 | ¥0.10/s（720p / 1080p 同价） |
 | `autodl:minimax-h3-u24` | 视频 | `/v1/videos` | 按秒 | 480p ¥0.10/s、768p ¥0.12/s |
-| `dola-seedance-2.5` | 视频 | `/v1/videos` | **按次** | ¥2.50 / 次 |
+| `seedance-2.0` | 视频 | `/v1/videos` | **按次** | ¥1.50 / 次（5/10/15 秒） |
+| `seedance-2.5` | 视频 | `/v1/videos` | **按次** | ¥1.00 / 次（固定 30 秒、720P） |
 | `gemini-web-video` | 视频 | `/v1/videos` | **按次** | ¥1.00 / 次 |
 | `Nano Banana Pro` | 图片 | `/v1/videos` | 按张 | ¥0.30 / 张 |
 | `jimeng-video-reverse` | 文本（提示词） | `/v1/videos` | **按次** | ¥1.00 / 次 |
@@ -249,18 +250,28 @@ curl https://api.heibaidao.cn/v1/videos \
 
 - 本模型的 `768p` 即上游 720P 档；`竖/横/(1:1)` 决定画幅方向。
 
-#### `dola-seedance-2.5`（漫屋）
+#### `seedance-2.0`（漫屋）
 
 | 参数 | 取值 |
 |---|---|
-| `seconds` | `5` / `10` / `15` / `30`（默认 30） |
+| `seconds` | `5` / `10` / `15`（默认 15） |
 | `ratio` | `16:9`（默认）/ `9:16` / `1:1` / `4:3` / `3:4` / `21:9`（也可用 `size` 传比例字符串） |
 | `input_reference` / `images` | 可选，≤10 张，必须是 http/https URL |
-| 计费 | **按次 ¥2.50**，与时长无关（30 秒也是 ¥2.50） |
+| 计费 | **按次 ¥1.50**，与时长无关 |
+
+#### `seedance-2.5`（漫屋）
+
+| 参数 | 取值 |
+|---|---|
+| `seconds` / `duration` | 固定 `30`；不传时自动使用 30，传其它值直接 400 |
+| `resolution` | 固定 `720p`；不传时自动使用 720p，传其它值直接 400 |
+| `ratio` | `16:9`（默认）/ `9:16` / `1:1` / `4:3` / `3:4` / `21:9` |
+| `input_reference` / `images` | 可选，≤10 张，必须是 http/https URL |
+| 计费 | **按次 ¥1.00**，固定 30 秒、720P |
 
 #### `gemini-web-video`（漫屋 Gemini 官网 Veo）
 
-与 `dola-seedance-2.5` 同渠道（漫屋 → ArcReel → 浏览器 Worker → Gemini 官网），差异：
+与 `seedance-2.0` 同渠道（漫屋 → ArcReel → 浏览器 Worker → Gemini 官网），差异：
 
 | 参数 | 取值 |
 |---|---|
@@ -324,7 +335,7 @@ OpenAI video 对象（`object: "video"`），取图请读 `metadata.url`。
 | 文本 | 输入/输出 token 分别计价（见模型表） |
 | 图片 | 按张，¥0.15/张 |
 | 视频（按秒） | 单价 × 秒数 × 分辨率档位倍率 |
-| 视频（按次） | 固定价：`wan3.0-video-prime-1080p` ¥8/次、`dola-seedance-2.5` ¥2.50/次、`gemini-web-video` ¥1.00/次、`jimeng-video-reverse` ¥1.00/次 |
+| 视频（按次） | 固定价：`wan3.0-video-prime-1080p` ¥8/次、`seedance-2.0` ¥1.50/次、`seedance-2.5` ¥1.00/次、`gemini-web-video` ¥1.00/次、`jimeng-video-reverse` ¥1.00/次 |
 | 任务失败 | 自动全额退还，无需申请 |
 | 内容审核 | 提示词或素材触发上游审核 → 任务失败并退款，失败原因为 `内容审核不通过` |
 
@@ -371,7 +382,8 @@ OpenAI video 对象（`object: "video"`），取图请读 `metadata.url`。
 | `wan3.0-video-官网` | 约 6 分钟 |
 | `wan3.0-video-prime-1080p` | 尚无实测样本，预计 5–10 分钟 |
 | `autodl:minimax-h3-u24` | 约 5–20 分钟 |
-| `dola-seedance-2.5` | 约 4–40 分钟（波动大） |
+| `seedance-2.0` | 约 4–40 分钟（波动大） |
+| `seedance-2.5` | 约 4–40 分钟（波动大） |
 2. **成片转存**：`metadata.url` 与 `/content` 都可能有时效，成功后请立即下载转存到自己的存储。
 3. **不要重复提交**：提交报超时/网络错误时先查任务状态，重复提交会产生两次费用。
 4. **提示词审核**：含敏感内容会被上游审核拦截，失败会退款，改写提示词即可。

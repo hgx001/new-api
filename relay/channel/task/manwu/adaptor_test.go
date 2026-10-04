@@ -67,25 +67,54 @@ func TestInitFillsChannelMeta(t *testing.T) {
 	assert.Empty(t, noInit.baseURL)
 }
 
-// 最小合法请求：仅 model + prompt，其余走缺省（时长 30、比例 16:9、自动幂等键）。
+// 最小合法请求：仅 model + prompt，其余走缺省（时长 15、比例 16:9、自动幂等键）。
 func TestValidateAcceptsMinimalRequest(t *testing.T) {
-	c, info, a := postVideoCtx(t, `{"model":"dola-seedance-2.5","prompt":"一只猫在屋顶奔跑"}`)
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"一只猫在屋顶奔跑"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	assert.Equal(t, constant.TaskActionGenerate, info.Action)
 
 	req, err := getNormalizedRequest(c)
 	require.NoError(t, err)
 	assert.Equal(t, "一只猫在屋顶奔跑", req.Prompt)
-	assert.Equal(t, 30, req.Duration)
+	assert.Equal(t, 15, req.Duration)
 	assert.Equal(t, "16:9", req.Ratio)
 	assert.Empty(t, req.Images)
 	assert.True(t, strings.HasPrefix(req.IdempotencyKey, "manwu-"))
 }
 
+// Seedance 2.5 是独立公开模型：缺省时长固定为 30 秒，分辨率固定为 720p。
+func TestValidateAcceptsSeedance25FixedSpec(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2.5","prompt":"hi","resolution":"720P"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "seedance-2.5", req.Model)
+	assert.Equal(t, 30, req.Duration)
+	assert.Equal(t, "16:9", req.Ratio)
+}
+
+func TestValidateRejectsSeedance25VariableSpec(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		code string
+	}{
+		"duration is not fixed":   {`{"model":"seedance-2.5","prompt":"hi","duration":15}`, "invalid_duration"},
+		"seconds is not fixed":    {`{"model":"seedance-2.5","prompt":"hi","seconds":"10"}`, "invalid_duration"},
+		"resolution is not fixed": {`{"model":"seedance-2.5","prompt":"hi","resolution":"1080p"}`, "invalid_request"},
+	}
+	for name, tc := range cases {
+		c, info, a := postVideoCtx(t, tc.body)
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, name)
+		assert.Equal(t, tc.code, taskErr.Code, name)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode, name)
+	}
+}
+
 // 字段别名与宽容解析：seconds 字符串形态、size 首选、images 兜底、自带幂等键保留。
 func TestValidateResolvesAliases(t *testing.T) {
 	c, info, a := postVideoCtx(t, `{
-		"model":"dola-seedance-2.5","prompt":"hi",
+		"model":"seedance-2.0","prompt":"hi",
 		"seconds":"15","aspect_ratio":"9:16",
 		"images":["https://a.example/1.png"],
 		"idempotency_key":"my-key"}`)
@@ -99,7 +128,7 @@ func TestValidateResolvesAliases(t *testing.T) {
 
 	// size 优先于 ratio；input_reference 优先于 images；duration 数字形态。
 	c2, info2, a2 := postVideoCtx(t, `{
-		"model":"dola-seedance-2.5","prompt":"hi",
+		"model":"seedance-2.0","prompt":"hi",
 		"duration":10,"size":"1:1","ratio":"9:16",
 		"input_reference":["https://a.example/1.png"],"images":["https://b.example/2.png"]}`)
 	require.Nil(t, a2.ValidateRequestAndSetAction(c2, info2))
@@ -113,14 +142,14 @@ func TestValidateResolvesAliases(t *testing.T) {
 // dola 官网真机验证支持 10 张参考图，中转层按官网口径放行（11 张起拒绝）。
 func TestValidateAcceptsTenReferenceImages(t *testing.T) {
 	imgs := `["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png","https://a.example/6.png","https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png"]`
-	c, info, a := postVideoCtx(t, `{"model":"dola-seedance-2.5","prompt":"hi","input_reference":`+imgs+`}`)
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi","input_reference":`+imgs+`}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	req, err := getNormalizedRequest(c)
 	require.NoError(t, err)
 	require.Len(t, req.Images, 10)
 }
 
-// 非法组合必须在本地拦截，错误码指明原因（上游 ArcReel 对非法时长会静默回落 30，
+// 非法组合必须在本地拦截，错误码指明原因（上游 ArcReel 对非法时长会静默回落 15，
 // 厂商侧必须显式拒绝，避免计费与实际生成时长脱节）。
 func TestValidateRejectsIllegalRequests(t *testing.T) {
 	elevenImgs := `["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png","https://a.example/6.png","https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png","https://a.example/11.png"]`
@@ -130,16 +159,16 @@ func TestValidateRejectsIllegalRequests(t *testing.T) {
 	}{
 		"wrong model":        {`{"model":"kling-v1","prompt":"hi"}`, "invalid_model"},
 		"empty model":        {`{"prompt":"hi"}`, "invalid_model"},
-		"empty prompt":       {`{"model":"dola-seedance-2.5","prompt":"   "}`, "invalid_request"},
+		"empty prompt":       {`{"model":"seedance-2.0","prompt":"   "}`, "invalid_request"},
 		"bad json":           {`{`, "invalid_request"},
-		"seconds over list":  {`{"model":"dola-seedance-2.5","prompt":"hi","seconds":20}`, "invalid_duration"},
-		"duration over list": {`{"model":"dola-seedance-2.5","prompt":"hi","duration":7}`, "invalid_duration"},
-		"seconds malformed":  {`{"model":"dola-seedance-2.5","prompt":"hi","seconds":"abc"}`, "invalid_duration"},
-		"seconds float":      {`{"model":"dola-seedance-2.5","prompt":"hi","seconds":10.5}`, "invalid_duration"},
-		"ratio not allowed":  {`{"model":"dola-seedance-2.5","prompt":"hi","ratio":"16:10"}`, "invalid_ratio"},
-		"too many images":    {`{"model":"dola-seedance-2.5","prompt":"hi","input_reference":` + elevenImgs + `}`, "invalid_input_reference"},
-		"non http url":       {`{"model":"dola-seedance-2.5","prompt":"hi","input_reference":["ftp://a.example/x.png"]}`, "invalid_input_reference"},
-		"url without host":   {`{"model":"dola-seedance-2.5","prompt":"hi","input_reference":["not-a-url"]}`, "invalid_input_reference"},
+		"seconds over list":  {`{"model":"seedance-2.0","prompt":"hi","seconds":20}`, "invalid_duration"},
+		"duration over list": {`{"model":"seedance-2.0","prompt":"hi","duration":7}`, "invalid_duration"},
+		"seconds malformed":  {`{"model":"seedance-2.0","prompt":"hi","seconds":"abc"}`, "invalid_duration"},
+		"seconds float":      {`{"model":"seedance-2.0","prompt":"hi","seconds":10.5}`, "invalid_duration"},
+		"ratio not allowed":  {`{"model":"seedance-2.0","prompt":"hi","ratio":"16:10"}`, "invalid_ratio"},
+		"too many images":    {`{"model":"seedance-2.0","prompt":"hi","input_reference":` + elevenImgs + `}`, "invalid_input_reference"},
+		"non http url":       {`{"model":"seedance-2.0","prompt":"hi","input_reference":["ftp://a.example/x.png"]}`, "invalid_input_reference"},
+		"url without host":   {`{"model":"seedance-2.0","prompt":"hi","input_reference":["not-a-url"]}`, "invalid_input_reference"},
 	}
 	for name, tc := range cases {
 		c, info, a := postVideoCtx(t, tc.body)
@@ -153,7 +182,7 @@ func TestValidateRejectsIllegalRequests(t *testing.T) {
 // BuildRequestBody 必须映射成 ArcReel 建单载荷：platformId/outputMode/videoParams/inputs/idempotencyKey。
 func TestBuildRequestBodyMapsArcReelPayload(t *testing.T) {
 	c, info, a := postVideoCtx(t, `{
-		"model":"dola-seedance-2.5","prompt":"hi","seconds":10,"size":"1:1",
+		"model":"seedance-2.0","prompt":"hi","seconds":10,"size":"1:1",
 		"input_reference":["https://a.example/1.png","https://a.example/2.png"],
 		"idempotency_key":"key-1"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
@@ -167,6 +196,9 @@ func TestBuildRequestBodyMapsArcReelPayload(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &payload))
 	assert.Equal(t, PlatformID, payload["platformId"])
 	assert.Equal(t, OutputModeVideo, payload["outputMode"])
+	videoPayload, ok := payload["videoParams"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "seedance-2.0", videoPayload["model"])
 	assert.Equal(t, "hi", payload["prompt"])
 	assert.Equal(t, "key-1", payload["idempotencyKey"])
 
@@ -184,9 +216,27 @@ func TestBuildRequestBodyMapsArcReelPayload(t *testing.T) {
 	assert.Equal(t, "https://a.example/1.png", first["url"])
 }
 
-// 无参考图时 inputs 必须整体省略（omitempty），时长缺省时显式下发 30（与上游兜底口径一致）。
+func TestBuildRequestBodyMapsSeedance25FixedPayload(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2.5","prompt":"hi","duration":30}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	videoPayload, ok := payload["videoParams"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "seedance-2.5", videoPayload["model"])
+	assert.Equal(t, float64(30), videoPayload["duration"])
+	assert.Equal(t, "720p", videoPayload["resolution"])
+}
+
+// 无参考图时 inputs 必须整体省略（omitempty），时长缺省时显式下发 15（与上游兜底口径一致）。
 func TestBuildRequestBodyOmitsEmptyInputs(t *testing.T) {
-	c, info, a := postVideoCtx(t, `{"model":"dola-seedance-2.5","prompt":"hi"}`)
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 
 	reader, err := a.BuildRequestBody(c, info)
@@ -205,10 +255,10 @@ func TestBuildRequestBodyOmitsEmptyInputs(t *testing.T) {
 	assert.Equal(t, defaultRatio, vp["ratio"])
 }
 
-// EstimateBilling 必须返回 nil：dola-seedance-2.5 按次计费（¥2.5/次），
-// 带 seconds 倍率会把 30 秒任务扣到 ¥75。
+// EstimateBilling 必须返回 nil：seedance-2.0 按次计费（¥1.5/次），
+// 带 seconds 倍率也不改变固定价格。
 func TestEstimateBillingIsPerCall(t *testing.T) {
-	c, info, a := postVideoCtx(t, `{"model":"dola-seedance-2.5","prompt":"hi","seconds":15}`)
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi","seconds":15}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	assert.Nil(t, a.EstimateBilling(c, info))
 	assert.Nil(t, a.EstimateBilling(nil, nil))
@@ -376,9 +426,10 @@ func TestModelListAndChannelName(t *testing.T) {
 	a := &TaskAdaptor{}
 	assert.Equal(t, []string{
 		"Nano Banana Pro",
-		"dola-seedance-2.5",
 		"gemini-web-video",
 		"jimeng-video-reverse",
+		"seedance-2.0",
+		"seedance-2.5",
 	}, a.GetModelList())
 	assert.Equal(t, ChannelName, a.GetChannelName())
 }
@@ -391,6 +442,12 @@ func TestSpecForRoutesEveryModel(t *testing.T) {
 	assert.Equal(t, PlatformID, dola.PlatformID)
 	assert.Equal(t, OutputModeVideo, dola.OutputMode)
 	assert.Equal(t, kindDolaVideo, dola.Kind)
+
+	dola25, ok := SpecFor(ModelDola25)
+	require.True(t, ok)
+	assert.Equal(t, PlatformID, dola25.PlatformID)
+	assert.Equal(t, OutputModeVideo, dola25.OutputMode)
+	assert.Equal(t, kindDola25Video, dola25.Kind)
 
 	veo, ok := SpecFor(ModelVideo)
 	require.True(t, ok)

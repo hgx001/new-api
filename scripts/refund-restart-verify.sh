@@ -36,8 +36,9 @@ probe() {
   printf '%-30s HTTP=%s %s\n' "$1" "$R" "$(head -c 175 /tmp/v.json | tr -d '\n')"
 }
 
-echo "--- 漫屋四模型（用会失败的输入，验证路由通；dola 用非法 seconds）---"
-probe "dola 非法 seconds=7"      dola-seedance-2.5     '{"model":"dola-seedance-2.5","prompt":"x","seconds":7}'
+echo "--- 漫屋四模型（用会失败的输入，验证路由通；seedance-2.0 用非法 seconds）---"
+probe "seedance-2.0 非法 seconds=20" seedance-2.0      '{"model":"seedance-2.0","prompt":"x","seconds":20}'
+probe "seedance-2.5 非法 seconds=15" seedance-2.5      '{"model":"seedance-2.5","prompt":"x","seconds":15}'
 probe "Nano Banana Pro n 越界"    "Nano Banana Pro"     '{"model":"Nano Banana Pro","prompt":"x","n":99}'
 probe "gemini-web-video 非法"     gemini-web-video      '{"model":"gemini-web-video","prompt":"x","seconds":7}'
 probe "jimeng-video-reverse 缺参" jimeng-video-reverse  '{"model":"jimeng-video-reverse"}'

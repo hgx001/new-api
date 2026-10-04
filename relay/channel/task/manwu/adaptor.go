@@ -56,9 +56,9 @@ const (
 	submitPath = "/api/v1/remote-generation/jobs"
 
 	defaultRatio = "16:9"
-	// defaultDuration 与上游兜底口径对齐：ArcReel 对未指定/非法时长会回落 30 秒，
-	// 这里缺省显式传 30，保证预扣与实际生成时长一致。
-	defaultDuration = 30
+	// defaultDuration 与上游兜底口径对齐：ArcReel 对未指定/非法时长会回落 15 秒，
+	// 这里缺省显式传 15，保证预扣与实际生成时长一致。
+	defaultDuration = 15
 
 	// 参考图上限按 dola 官网真机口径取 10（与 ArcReel openai 后端 manwu 分支同口径）。
 	maxReferenceImages = 10
@@ -83,11 +83,12 @@ const (
 	reasonDirectUploadUnsupported = "暂不支持文件直传：本渠道全部模型都需要公网可访问的 http(s) 素材 URL（视频反解请传视频 URL）"
 )
 
-// 四个模型共用同一条 ArcReel 建单链路（POST /api/v1/remote-generation/jobs），
-// 差异只在 platformId + outputMode + 参数白名单，故用一张路由表而不是四个 adaptor。
+// 五个公开模型共用同一条 ArcReel 建单链路（POST /api/v1/remote-generation/jobs），
+// 差异只在 platformId + outputMode + 参数白名单，故用一张路由表而不是多个 adaptor。
 //
 // 模型名口径：
-//   - dola-seedance-2.5：dola 官网 Seedance 2.5（远端视频，按次计费）
+//   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，5/10/15 秒，按次计费）
+//   - seedance-2.5：dola 官网 Seedance 2.5（远端视频，固定 30 秒 / 720p，按次计费）
 //   - Nano Banana Pro：ArcReel 抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）。服务端
 //     MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini(nano_banana_2) 还是
 //     jimeng(dreamina_image_5_0_lite)，客户端不感知，也不该猜
@@ -95,7 +96,8 @@ const (
 //     官方 Gemini 渠道已占 veo-3.1-generate-preview 等模型名，重名会被路由到错渠道
 //   - jimeng-video-reverse：即梦「视频反解」技能，单视频入参、提示词文本出参
 const (
-	ModelDola    = "dola-seedance-2.5"
+	ModelDola    = "seedance-2.0"
+	ModelDola25  = "seedance-2.5"
 	ModelImage   = "Nano Banana Pro"
 	ModelVideo   = "gemini-web-video"
 	ModelReverse = "jimeng-video-reverse"
@@ -103,10 +105,11 @@ const (
 
 // 任务形态：决定校验分支与建单载荷。
 const (
-	kindDolaVideo = "dola_video" // 时长/比例/参考图白名单最严
-	kindVeoVideo  = "veo_video"  // 只有宽高比：官网无模型/时长/分辨率控件
-	kindImage     = "image"      // 张数 + 宽高比 + 参考图
-	kindReverse   = "reverse"    // 单视频入参，文本出参
+	kindDolaVideo   = "dola_video"   // Seedance 2.0：5/10/15 秒/比例/参考图白名单
+	kindDola25Video = "dola25_video" // Seedance 2.5：固定 30 秒/720p/比例/参考图白名单
+	kindVeoVideo    = "veo_video"    // 只有宽高比：官网无模型/时长/分辨率控件
+	kindImage       = "image"        // 张数 + 宽高比 + 参考图
+	kindReverse     = "reverse"      // 单视频入参，文本出参
 )
 
 type modelSpec struct {
@@ -117,6 +120,7 @@ type modelSpec struct {
 
 var modelSpecs = map[string]modelSpec{
 	ModelDola:    {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDolaVideo},
+	ModelDola25:  {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDola25Video},
 	ModelVideo:   {PlatformID: PlatformIDGemini, OutputMode: OutputModeVideo, Kind: kindVeoVideo},
 	ModelImage:   {PlatformID: PlatformIDImage, OutputMode: OutputModeImage, Kind: kindImage},
 	ModelReverse: {PlatformID: PlatformIDJimeng, OutputMode: OutputModeText, Kind: kindReverse},
@@ -143,7 +147,6 @@ var allowedDurations = map[int]bool{
 	5:  true,
 	10: true,
 	15: true,
-	30: true,
 }
 
 var allowedRatios = map[string]bool{
@@ -206,8 +209,10 @@ type submitRequest struct {
 }
 
 type videoParams struct {
-	Ratio    string `json:"ratio"`
-	Duration *int   `json:"duration,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Ratio      string `json:"ratio"`
+	Duration   *int   `json:"duration,omitempty"`
+	Resolution string `json:"resolution,omitempty"`
 }
 
 type imageParams struct {
@@ -349,6 +354,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
 		norm.Duration = duration
+	case kindDola25Video:
+		duration, err := resolveFixedDuration(req, norm.Model, 30)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		norm.Duration = duration
 	case kindVeoVideo:
 		// Veo 官网只有宽高比控件（2026-09-22 真机验证）：模型/时长/分辨率没有可实现
 		// 的控件，Worker 侧会 fail-fast 拒单。这里提前 400，别让用户白付一次预扣。
@@ -431,9 +445,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// 让人误以为我们执行了用户请求的时长。
 		body.VideoParams = &videoParams{Ratio: req.Ratio}
 		body.Inputs = toInputs(InputTypeImage, req.Images)
-	default:
-		body.VideoParams = &videoParams{Ratio: req.Ratio, Duration: &req.Duration}
+	case kindDolaVideo, kindDola25Video:
+		body.VideoParams = &videoParams{Model: req.Model, Ratio: req.Ratio, Duration: &req.Duration}
+		if spec.Kind == kindDola25Video {
+			body.VideoParams.Resolution = "720p"
+		}
 		body.Inputs = toInputs(InputTypeImage, req.Images)
+	default:
+		return nil, fmt.Errorf("unsupported manwu request kind: %s", spec.Kind)
 	}
 
 	data, err := common.Marshal(body)
@@ -658,6 +677,11 @@ func getNormalizedRequest(c *gin.Context) (*normalizedRequest, error) {
 // 参数付费。
 func rejectFields(req clientRequest, kind, modelName string) error {
 	switch kind {
+	case kindDola25Video:
+		resolution := strings.TrimSpace(req.Resolution)
+		if resolution != "" && !strings.EqualFold(resolution, "720p") {
+			return fmt.Errorf("%s is fixed at 720p", modelName)
+		}
 	case kindVeoVideo:
 		if hasValue(req.Seconds) {
 			return fmt.Errorf("%s is fixed-duration web Veo: seconds/duration is not supported", modelName)
@@ -693,9 +717,9 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 	return nil
 }
 
-// resolveDuration 解析时长：seconds（首选，数字或数字字符串）→ duration → 缺省 30。
-// 白名单 5/10/15/30，缺省或 null 视为未指定；字段存在但非法（格式错误或不在白名单）
-// 直接报错——上游 ArcReel 对非法值会静默回落 30，厂商侧必须显式拒绝，
+// resolveDuration 解析 Seedance 2.0 时长：seconds（首选，数字或数字字符串）→ duration → 缺省 15。
+// 白名单 5/10/15，缺省或 null 视为未指定；字段存在但非法（格式错误或不在白名单）
+// 直接报错——上游 ArcReel 对非法值会静默回落 15，厂商侧必须显式拒绝，
 // 避免计费时长与实际生成时长脱节。
 func resolveDuration(req clientRequest) (int, error) {
 	seconds, found, err := parseFlexibleInt(req.Seconds)
@@ -704,7 +728,7 @@ func resolveDuration(req clientRequest) (int, error) {
 	}
 	if found {
 		if !allowedDurations[seconds] {
-			return 0, fmt.Errorf("seconds must be one of 5/10/15/30, got %d", seconds)
+			return 0, fmt.Errorf("seconds must be one of 5/10/15, got %d", seconds)
 		}
 		return seconds, nil
 	}
@@ -715,12 +739,31 @@ func resolveDuration(req clientRequest) (int, error) {
 	}
 	if found {
 		if !allowedDurations[duration] {
-			return 0, fmt.Errorf("duration must be one of 5/10/15/30, got %d", duration)
+			return 0, fmt.Errorf("duration must be one of 5/10/15, got %d", duration)
 		}
 		return duration, nil
 	}
 
 	return defaultDuration, nil
+}
+
+// resolveFixedDuration 解析固定时长模型：未指定时使用固定值，显式传入其它值直接拒绝。
+func resolveFixedDuration(req clientRequest, modelName string, expected int) (int, error) {
+	seconds, secondsFound, err := parseFlexibleInt(req.Seconds)
+	if err != nil {
+		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
+	}
+	duration, durationFound, err := parseFlexibleInt(req.Duration)
+	if err != nil {
+		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
+	}
+	if secondsFound && seconds != expected {
+		return 0, fmt.Errorf("%s duration is fixed at %d seconds, got %d", modelName, expected, seconds)
+	}
+	if durationFound && duration != expected {
+		return 0, fmt.Errorf("%s duration is fixed at %d seconds, got %d", modelName, expected, duration)
+	}
+	return expected, nil
 }
 
 // resolveRatio 解析画面比例：size（首选）→ ratio → aspect_ratio → 缺省 16:9。

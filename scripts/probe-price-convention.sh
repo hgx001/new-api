@@ -15,9 +15,11 @@ q "SELECT e.key || ' = ' || e.value FROM options o, LATERAL jsonb_each_text(o.va
    ORDER BY e.key"
 
 echo
-echo "=== dola-seedance-2.5 在哪个表（漫屋按次模型，作为对照）==="
-q "SELECT 'ModelRatio: ' || COALESCE((SELECT e.value FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e WHERE o.key='ModelRatio' AND e.key='dola-seedance-2.5'), '（无）')"
-q "SELECT 'ModelPrice: ' || COALESCE((SELECT e.value FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e WHERE o.key='ModelPrice' AND e.key='dola-seedance-2.5'), '（无）')"
+echo "=== seedance-2.0 在哪个表（漫屋按次模型，作为对照）==="
+q "SELECT 'ModelRatio: ' || COALESCE((SELECT e.value FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e WHERE o.key='ModelRatio' AND e.key='seedance-2.0'), '（无）')"
+q "SELECT 'ModelPrice: ' || COALESCE((SELECT e.value FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e WHERE o.key='ModelPrice' AND e.key='seedance-2.0'), '（无）')"
+q "SELECT 'ModelRatio(seedance-2.5): ' || COALESCE((SELECT e.value FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e WHERE o.key='ModelRatio' AND e.key='seedance-2.5'), '（无）')"
+q "SELECT 'ModelPrice(seedance-2.5): ' || COALESCE((SELECT e.value FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e WHERE o.key='ModelPrice' AND e.key='seedance-2.5'), '（无）')"
 
 echo
 echo "=== code 侧 wan3 的 ModelRatio 默认值（对照官方价）==="

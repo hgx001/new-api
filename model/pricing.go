@@ -444,8 +444,8 @@ func isAllowedPricingModel(name string) bool {
 	if name == "hmseedance_v2.0不支持真人" {
 		return true
 	}
-	// 漫屋 ArcReel dola 视频生成
-	if name == "dola-seedance-2.5" {
+	// 漫屋 ArcReel Seedance 2.0/2.5 视频生成
+	if name == "seedance-2.0" || name == "seedance-2.5" {
 		return true
 	}
 	// 漫屋 ArcReel Gemini 官网视频 / Nano Banana Pro 远端图片：价格与 ArcReel 站点口径一致
