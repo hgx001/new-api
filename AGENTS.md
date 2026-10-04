@@ -164,7 +164,8 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - 模型广场可见性：`seedance-2.0` / `seedance-2.5` / `gemini-web-video` / `Nano Banana Pro` 已在 `model/pricing.go isAllowedPricingModel` 放行；`jimeng-video-reverse` **故意未放行**——¥1.0/次是占位价，商务核定前不得对外展示价格（白名单只管广场，不影响调用）。
 - 本地错误码均为 400：`invalid_model` / `invalid_request` / `invalid_duration` / `invalid_ratio` / `invalid_count` / `invalid_input_reference`，改动错误语义时同步更新 `adaptor_test.go` 的拒绝用例表。
 - 测试：`go test ./relay/channel/task/manwu/`。改上限必须同步维护边界用例（dola 10 张放行见 `TestValidateAcceptsTenReferenceImages`，11 张拒绝见 `TestValidateRejectsIllegalRequests` 的 `too many images`；图片张数上界、反解单视频约束各有独立用例），禁止只改常量不改测试。
-- 双仓库同口径：ArcReel 侧 `lib/video_backends/openai.py` 的 manwu 分支（`_MANWU_MODEL_PATTERN` / `_MANWU_MAX_REFERENCE_IMAGES` / `_manwu_ratio`，ratio 形态 + 参考图公网 URL 透传）必须与本通道同口径。任一侧改上限、比例档或字段语义，必须双侧同步改、同步发版，否则一侧放行另一侧 400。注意 ArcReel 的部署脚本只更新 ArcReel 两台服务器，不会更新本中转；本中转发版走上面的 Deployment Rules 远程构建流程。
+- 双仓库同口径：ArcReel 侧 `lib/video_backends/openai.py` 的 manwu 分支（`_MANWU_MODEL_PATTERN` / `_MANWU_MAX_REFERENCE_IMAGES` / `_manwu_ratio`）必须与本通道同口径。**改对外模型名必须同步改正则**（2026-10-04：`dola-*` 改 `seedance-2.0/2.5` 后，ArcReel 侧正则不改就会退回 Sora 单参考图 + WxH size）。正则在 `seedance-2.0` 前禁止 `._:-`，否则会误吃 `doubao-seedance-2-0-260128`、`huixin:seedance-2.5-burst-15s`。任一侧改上限、比例档或字段语义，必须双侧同步改、同步发版。注意 ArcReel 的部署脚本只更新 ArcReel 两台服务器，不会更新本中转；本中转发版走上面的 Deployment Rules 远程构建流程。
+- 第四仓 Worker（`C:\work\即梦网站\cron_video_brach`，dola 官网浏览器执行体）**无需改**：它按 `duration` 收敛官网模型（5/10/15 → `dola-seedance-2-0-fast`，30 → `dola-seedance-2-5`），两个公开模型靠 ArcReel 归一后的时长自动落到正确官网档位。但本地 master 与 origin/master **已分叉**，改动前先核对。
 
 ### MiniMax / hailuo 通道维护约束
 
@@ -183,7 +184,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 - **恢复被 AutoBan 的渠道必须同时改 `channels.status` 与 `abilities.enabled`**。2026-10-02 的真实事故：AutoBan 禁用渠道时连带把能力表置 `enabled=false`，事后只把 `status` 改回 1，导致渠道「看起来正常」但该渠道**所有模型 503 `model_not_found`**，持续数小时无人察觉。恢复用 `scripts/restore-channel.sh <id>`，它两边一起改并打印复核。
 - **裸 SQL 建/改渠道后必须重启 new-api**：能力走内存缓存（`CacheGetRandomSatisfiedChannel`），SQL 改 `abilities` 对**新建**渠道不生效（对已缓存的旧渠道反而会立刻生效，所以容易误判成「缓存已刷新」）。走管理 API 建渠道不会有这个问题。
-- **验证脚本不得用能通过校验的入参**。`seedance-2.0` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。规则：① 只用必然被本地校验拦下的输入；② 每次跑完断言 `used_quota` 差值为 0、`tasks` 无非终态任务；③ 一旦误建，必须**同时**在 new-api（取消 + 退款 + 标记日志）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销——只撤一侧的话 Worker 上线后仍会去跑那个排队任务。
+- **验证脚本不得用能通过校验的入参**。`seedance-2.0` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。**更硬的坑：`seedance-2.0` 的最小入参 `{"model":"seedance-2.0","prompt":"x"}` 是合法且会真建单**（2026-10-04 又误建 1 次）。规则：① 只用必然被本地校验拦下的输入（越界 seconds / 越界 ratio / 非 http 参考图 / 越界 n）；② 每次跑完断言 `sum(tokens.used_quota)` 差值为 0、`tasks` 无非终态任务、ArcReel `arcreel.log` 里 `remote-generation/jobs` 计数差值为 0；③ 一旦误建，必须**同时**在 new-api（退款 + 任务置 FAILURE + 标记日志；new-api **没有** `/v1/videos/{id}/cancel` 端点）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销。照抄 `scripts/probe-manwu-dola-dual.sh`，它已同时做三项断言。
 - 部署走 `scripts/deploy-new-api.sh <sha>`：它带 **SHA 前缀断言**（曾出现「构建了旧 commit 却以为成功」）、fetch 失败时校验本地是否已有该 commit、旧容器只保留最近 3 个。生产容器不是 compose 管理，必须按旧容器原参数 `docker run` 重建。
 
 ### Project Governance
