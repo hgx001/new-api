@@ -449,7 +449,7 @@ func isAllowedPricingModel(name string) bool {
 		return true
 	}
 	// 漫屋 ArcReel Gemini 官网视频 / Nano Banana Pro 远端图片：价格与 ArcReel 站点口径一致
-	//（¥2.5/次、¥0.3/张），上广场。
+	//（¥1.0/次、¥0.3/张），上广场。
 	if name == "gemini-web-video" || name == "Nano Banana Pro" {
 		return true
 	}

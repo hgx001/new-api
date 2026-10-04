@@ -34,7 +34,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s',
   'dola-seedance-2.5｜视频（按次）｜¥2.50 / 次',
-  'gemini-web-video｜视频（按次）｜¥2.50 / 次',
+  'gemini-web-video｜视频（按次）｜¥1.00 / 次',
   'Nano Banana Pro｜图片（按张）｜¥0.30 / 张',
   'jimeng-video-reverse｜提示词（按次）｜¥1.00 / 次',
 ]
@@ -81,7 +81,7 @@ const BILLING_ITEMS = [
   '文本：输入、输出 token 分别计价',
   '图片：按张计费，¥0.15 / 张（n=2 扣两次）',
   '视频（按秒）：单价 × 秒数 × 分辨率档位倍率',
-  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，dola-seedance-2.5 与 gemini-web-video 固定 ¥2.50 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
+  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，dola-seedance-2.5 ¥2.50 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
   '任务失败：自动全额退还，无需申请',
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
@@ -440,7 +440,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['ratio：同 dola 六档，默认 16:9'],
           ['input_reference / images：可选，≤10 张 http/https URL'],
           ['seconds / duration / resolution：不支持，传入直接 400'],
-          ['计费：按次 ¥2.50（官网固定时长，不随时长变化）'],
+          ['计费：按次 ¥1.00（官网固定时长，不随时长变化）'],
         ] },
         {
           type: 'heading',

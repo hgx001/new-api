@@ -36,7 +36,7 @@
 | `wan2.7-r2v` | 视频 | `/v1/videos` | 按秒 | ¥0.10/s（720p / 1080p 同价） |
 | `autodl:minimax-h3-u24` | 视频 | `/v1/videos` | 按秒 | 480p ¥0.10/s、768p ¥0.12/s |
 | `dola-seedance-2.5` | 视频 | `/v1/videos` | **按次** | ¥2.50 / 次 |
-| `gemini-web-video` | 视频 | `/v1/videos` | **按次** | ¥2.50 / 次 |
+| `gemini-web-video` | 视频 | `/v1/videos` | **按次** | ¥1.00 / 次 |
 | `Nano Banana Pro` | 图片 | `/v1/videos` | 按张 | ¥0.30 / 张 |
 | `jimeng-video-reverse` | 文本（提示词） | `/v1/videos` | **按次** | ¥1.00 / 次 |
 
@@ -268,7 +268,7 @@ curl https://api.heibaidao.cn/v1/videos \
 | `ratio` | 同 dola 六档（默认 `16:9`） |
 | `input_reference` / `images` | 可选，≤10 张 http/https URL |
 | `seconds` / `duration` / `resolution` | **不支持**，传入直接 400 |
-| 计费 | **按次 ¥2.50**（官网固定时长，不随时长变化） |
+| 计费 | **按次 ¥1.00**（官网固定时长，不随时长变化） |
 
 > 不叫 `veo-*`：官方 Gemini 渠道已占用那些模型名，重名会被路由到错渠道。
 
@@ -324,7 +324,7 @@ OpenAI video 对象（`object: "video"`），取图请读 `metadata.url`。
 | 文本 | 输入/输出 token 分别计价（见模型表） |
 | 图片 | 按张，¥0.15/张 |
 | 视频（按秒） | 单价 × 秒数 × 分辨率档位倍率 |
-| 视频（按次） | 固定价：`wan3.0-video-prime-1080p` ¥8/次、`dola-seedance-2.5` ¥2.50/次、`gemini-web-video` ¥2.50/次、`jimeng-video-reverse` ¥1.00/次 |
+| 视频（按次） | 固定价：`wan3.0-video-prime-1080p` ¥8/次、`dola-seedance-2.5` ¥2.50/次、`gemini-web-video` ¥1.00/次、`jimeng-video-reverse` ¥1.00/次 |
 | 任务失败 | 自动全额退还，无需申请 |
 | 内容审核 | 提示词或素材触发上游审核 → 任务失败并退款，失败原因为 `内容审核不通过` |
 

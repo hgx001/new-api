@@ -102,6 +102,14 @@ func TestDefaultModelPriceSD25PerUse(t *testing.T) {
 	require.InDelta(t, 0.821918, price, 1e-6, "sd-2.5 must be ¥6/call in USD")
 }
 
+func TestDefaultModelPriceGeminiWebVideoPerUse(t *testing.T) {
+	InitRatioSettings()
+
+	price, ok := GetModelPrice("gemini-web-video", false)
+	require.True(t, ok, "gemini-web-video must have an explicit per-use price")
+	require.InDelta(t, 1.0/USD2RMB, price, 1e-12, "gemini-web-video must be ¥1/call in USD")
+}
+
 func TestDefaultModelPriceAutoDLPerSecond(t *testing.T) {
 	InitRatioSettings()
 
