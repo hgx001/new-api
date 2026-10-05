@@ -148,6 +148,47 @@ func TestParseTaskResultUnifiesUnexplainedFailureAsModeration(t *testing.T) {
 	require.Equal(t, "balance insufficient", result.Reason)
 }
 
+// 有赞的 error 字段有两种形态，且 status 还有 refunded 这个终态。两者任一处理不对，
+// 任务就会永远停在 NOT_START / 0%：2026-10-05 生产事故 task 249（wan2.7-r2v）就是
+// 上游回了 {code,message} 对象，退款已在有赞侧发生（refundedPoints），new-api 却因
+// 反序列化失败拿不到失败原因，用户的钱一直卡在预扣里。
+func TestParseTaskResultHandlesUpstreamErrorShapesAndRefundedStatus(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	// 生产真实报文（task_1791125558575_71psn3）：对象形态 error + refunded 终态。
+	result, err := adaptor.ParseTaskResult([]byte(`{
+		"taskId":"task_1791125558575_71psn3","type":"video","model":"wan2.7-r2v",
+		"status":"refunded","result":null,
+		"error":{"code":"UPSTREAM_TASK_FAILED","message":"参考素材已失效或无法访问，请重新上传素材后再试"},
+		"chargedPoints":0,"refundedPoints":10
+	}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, result.Status, "refunded 必须收敛为失败，否则用户永远拿不到退款")
+	require.Equal(t, "100%", result.Progress)
+	require.Equal(t, "UPSTREAM_TASK_FAILED: 参考素材已失效或无法访问，请重新上传素材后再试", result.Reason)
+
+	// error 为裸字符串：保持原有 "code: message" 风格不变。
+	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","error":"WAN3_QUOTA_CAPACITY_INSUFFICIENT: max duration is 4 seconds"}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, result.Status)
+	require.Equal(t, "WAN3_QUOTA_CAPACITY_INSUFFICIENT: max duration is 4 seconds", result.Reason)
+
+	// 对象只带 message / 只带 code：都不能丢信息，也不能报错。
+	result, err = adaptor.ParseTaskResult([]byte(`{"status":"error","error":{"message":"素材不可访问"}}`))
+	require.NoError(t, err)
+	require.Equal(t, "素材不可访问", result.Reason)
+
+	result, err = adaptor.ParseTaskResult([]byte(`{"status":"error","error":{"code":"ASSET_EXPIRED"}}`))
+	require.NoError(t, err)
+	require.Equal(t, "ASSET_EXPIRED", result.Reason)
+
+	// error 为 null 且无任何原因：回落内容审核不通过，不得反序列化失败。
+	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","error":null,"result":null}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, result.Status)
+	require.Equal(t, "内容审核不通过", result.Reason)
+}
+
 func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	task := &model.Task{

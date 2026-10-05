@@ -51,13 +51,53 @@ type generateResponse struct {
 	} `json:"data"`
 }
 
+// upstreamError 兼容有赞两种 error 形态：裸字符串，或 {code, message} 对象。
+//
+// 2026-10-05 事故：对象形态让 `Error string` 整体反序列化失败，ParseTaskResult
+// 每轮轮询都抛 "cannot unmarshal object into ... error of type string"，任务因此
+// 永远停在 NOT_START / 0%——用户既看不到失败原因，也永远拿不到退款（上游早已
+// refundedPoints）。对象形态统一拍平成 "code: message"，与上游字符串形态里已有的
+// "WAN3_QUOTA_CAPACITY_INSUFFICIENT: ..." 风格一致。
+type upstreamError string
+
+func (e *upstreamError) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		return nil
+	}
+	if strings.HasPrefix(trimmed, `"`) {
+		var text string
+		if err := common.Unmarshal(data, &text); err != nil {
+			return err
+		}
+		*e = upstreamError(text)
+		return nil
+	}
+	var object struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := common.Unmarshal(data, &object); err != nil {
+		return err
+	}
+	switch {
+	case object.Code != "" && object.Message != "":
+		*e = upstreamError(object.Code + ": " + object.Message)
+	case object.Message != "":
+		*e = upstreamError(object.Message)
+	default:
+		*e = upstreamError(object.Code)
+	}
+	return nil
+}
+
 type taskResponse struct {
 	Status string `json:"status"`
 	Result struct {
 		URL string `json:"url"`
 	} `json:"result"`
-	Error   string `json:"error"`
-	Message string `json:"message"`
+	Error   upstreamError `json:"error"`
+	Message string        `json:"message"`
 }
 
 type conversationResponse struct {
@@ -882,10 +922,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			result.Progress = taskcommon.ProgressComplete
 			result.Url = resultURL
 		}
-	case "failed", "failure", "canceled", "cancelled", "error":
+	case "failed", "failure", "canceled", "cancelled", "error", "refunded":
+		// refunded 是有赞的终态：上游已把点数退回（refundedPoints > 0）且 result 为空。
+		// 不映射成失败的话会落进 default 继续报 IN_PROGRESS，用户的钱就卡在预扣里。
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = firstNonEmpty(response.Error, response.Message, reasonContentModeration)
+		result.Reason = firstNonEmpty(string(response.Error), response.Message, reasonContentModeration)
 	default:
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress
