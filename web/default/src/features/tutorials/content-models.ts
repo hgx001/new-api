@@ -80,7 +80,7 @@ const MEDIA_RULE_ITEMS = [
 
 const BILLING_ITEMS = [
   '文本：输入、输出 token 分别计价',
-  '图片：按张计费，¥0.15 / 张（n=2 扣两次）',
+  '图片：按张计费，gpt-image-2.5-官方 ¥0.15 / 张（n=2 扣两次）；Nano Banana Pro ¥0.30 / 张，走 /v1/videos 异步任务，成图读 metadata.url',
   '视频（按秒）：单价 × 秒数 × 分辨率档位倍率',
   '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，seedance-2.0 ¥1.50 / 次，seedance-2.5 ¥1.00 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
   '任务失败：自动全额退还，无需申请',
@@ -99,12 +99,12 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟，gemini-web-video 约 2.5 分钟，jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
   '参数容错：分辨率大小写均可；时长超范围会被就近取档或截断（固定档位模型除外）',
-  '模型清单以 GET /v1/models 为准，请勿在代码里写死；模型上下架会通过该接口体现',
+  '模型清单以 GET /v1/models 为准，请勿在代码里写死；模型上下架会通过该接口体现。但该接口会带出没有可用渠道的模型：2026-10-04 实测列表 28 个中有 10 个（gpt-5、gpt-5.1、gpt-5.4、gpt-5.5、gpt-5-mini、gpt-5-nano、gpt-5.4-mini、gpt-5-chat-latest、gpt-5.6、gpt-5.6-terra）实调全部返回 503 model_not_found，首次接入请对每个模型发一次最小请求探活',
 ]
 
 export function getModelGuideSections(platformUrl: string): TutorialSection[] {
@@ -456,6 +456,12 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['seconds / duration / resolution：不支持，传入直接 400'],
           ['计费：按次 ¥1.00（官网固定时长，不随时长变化）'],
         ] },
+        {
+          type: 'hint',
+          children: [
+            '可用性提示：本模型走 Google 官网的浏览器自动化，官网会间歇性拒单（2026-10-04 三次真机验证 1 成 2 败）。两种失败形态——轮询 10 分钟仍未出片（失败原因「生成轮询超过 10 分钟，官网始终未给出结果」），或建单后数秒被拒（失败原因「Gemini官网任务失败: something went wrong」）——都是任务失败并全额退款，不是网关报错。遇到 failed 请提示「上游繁忙，请稍后重试」并允许重投，不要当参数错误去改请求体。',
+          ],
+        },
         {
           type: 'heading',
           level: 3,
