@@ -194,12 +194,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 6. 将 OtherRatios 应用到基础额度
+	//
+	// 必须先把所有倍率乘完再取整，不能边遍历边 int()：OtherRatios 是 map，
+	// Go 的 map 迭代顺序是随机的，逐项截断会让**同一个请求两次扣费得到不同结果**。
+	// 2026-10-05 生产实测（wan3.0-smart 1080p/5 秒，seconds=5 与 size=0.30/0.28 都不是 1）：
+	//   base=int(0.038356164383561646*500000)=19178
+	//   size 先  → int(19178*0.30/0.28)=20547 → *5 = 102735
+	//   seconds 先 → int(19178*5)=95990 → *0.30/0.28 = 102739
+	// 同一请求 3 次里出现了 102739、102739、102735 两个值，且每级截断误差会累积。
+	// service/task_billing.go 与 service/text_quota.go 都是单次累乘后取整，与此保持一致。
 	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		for _, ra := range info.PriceData.OtherRatios {
-			if ra != 1.0 {
-				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
-			}
-		}
+		info.PriceData.Quota = applyTaskOtherRatios(info.PriceData.Quota, info.PriceData.OtherRatios)
 	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
@@ -578,4 +583,19 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
+}
+
+// applyTaskOtherRatios 把时长/分辨率等附加倍率乘到任务预扣额度上。
+//
+// 不变量：**结果与 map 遍历顺序无关**。倍率全部乘完再取整，而不是边遍历边 int()，
+// 否则 Go map 的随机迭代序会让同一个请求两次扣费不同（详见调用处注释）。
+func applyTaskOtherRatios(quota int, ratios map[string]float64) int {
+	multiplier := 1.0
+	for _, ratio := range ratios {
+		multiplier *= ratio
+	}
+	if multiplier == 1.0 {
+		return quota
+	}
+	return int(float64(quota) * multiplier)
 }
