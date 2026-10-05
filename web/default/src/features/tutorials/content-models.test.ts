@@ -73,8 +73,8 @@ describe('tutorials model guide content', () => {
       '¥0.28/s',
       '¥0.85/s',
       '¥0.10/s',
-      '¥1.50 / 次',
       '¥1.00 / 次',
+      '¥0.80 / 次',
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
     }
@@ -132,8 +132,8 @@ describe('tutorials model guide content', () => {
   // seedance-2.0 / seedance-2.5 与 gemini-web-video 均按次计费，文档不能再出现按秒写法。
   test('documents remote video models as per-request billing', () => {
     assert.equal(sectionsJson.includes('¥2.50/s'), false)
-    assert.equal(sectionsJson.includes('¥1.50 / 次'), true)
     assert.equal(sectionsJson.includes('¥1.00 / 次'), true)
+    assert.equal(sectionsJson.includes('¥0.80 / 次'), true)
     assert.equal(sectionsJson.includes('固定 30 秒、720P'), true)
   })
 

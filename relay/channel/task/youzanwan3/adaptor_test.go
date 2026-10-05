@@ -218,10 +218,10 @@ func TestEstimateBillingChargesSmartResolutionTiers(t *testing.T) {
 		resolution string
 		wantSize   float64
 	}{
-		// 智能调度版档位：480P=¥0.28/秒、720P=¥0.32/秒、1080P=¥0.40/秒。
+		// 智能调度版档位（2026-10-05 调价后）：480P=¥0.28/秒、720P=¥0.28/秒、1080P=¥0.30/秒。
 		{"wan3.0-smart", "480P", 1.0},
-		{"wan3.0-smart", "720P", 0.32 / 0.28},
-		{"wan3.0-smart", "1080P", 0.40 / 0.28},
+		{"wan3.0-smart", "720P", 1.0},
+		{"wan3.0-smart", "1080P", 0.30 / 0.28},
 		// R2V 对外全分辨率统一价（¥0.10/秒），各档倍率均为 1（上游只认小写分辨率）。
 		{"wan2.7-r2v", "720p", 1.0},
 		{"wan2.7-r2v", "1080p", 1.0},

@@ -148,8 +148,8 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 - 通道定位：`relay/channel/task/manwu/` 经 OpenAI 兼容 `POST /v1/videos` 承接五个远端模型，再转 ArcReel 远端建单（默认基址 `https://arcreel.heibaidao.cn`，提交路径 `/api/v1/remote-generation/jobs`）。完整链路：ArcReel 本地任务 → 本中转（heibaidao）→ ArcReel 远端建单 → worker（燃境 App）→ 目标官网。排查必须按此链路逐段确认，不要跳段。
 - 模型路由表（`adaptor.go::modelSpecs`，五个模型共用一条建单链路，差异只在 platformId/outputMode/白名单；新增模型先加表项，禁止新开 adaptor）：
-  - `seedance-2.0` → `platformId: dola` + `outputMode: video`（按次 ¥1.5，支持 5/10/15 秒且同价）
-  - `seedance-2.5` → `platformId: dola` + `outputMode: video`（按次 ¥1.0，固定 30 秒、720p）
+  - `seedance-2.0` → `platformId: dola` + `outputMode: video`（按次 ¥1.0，支持 5/10/15 秒且同价）
+  - `seedance-2.5` → `platformId: dola` + `outputMode: video`（按次 ¥0.8，固定 30 秒、720p）
   - `gemini-web-video` → `platformId: gemini` + `outputMode: video`。**故意不叫 `veo-*`**：官方 Gemini 渠道已占那些名字，重名会被路由到错渠道
   - `Nano Banana Pro` → `platformId: manwu-image`（对外模型名已改为 Nano Banana Pro；ArcReel 内部仍用抽象 platformId，服务端固定走 Gemini Pro 上游）+ `outputMode: image`
   - `jimeng-video-reverse` → `platformId: jimeng` + `outputMode: prompt`，**文本出参**（`prompt` 可选；视频入参恰好 1 个 http(s) URL）
@@ -158,7 +158,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - ArcReel 托管产物（Gemini 图片 blob、Veo 的 data: mp4）的 `sourceUrl` 是**相对路径**且需渠道密钥 → adaptor **不吐** URL，让 new-api 落成 `/v1/videos/{task_id}/content` 代理，由 `controller/video_proxy.go` 的 `ChannelTypeManwu` 分支回查 job 取 sourceUrl 再带密钥下载。
   - dola/tiktok 这类公网 CDN 直链照旧透传，**绝不带渠道密钥**（否则凭证泄露给第三方 CDN）。禁止去掉这个区分。
 - 文本结果链路：`relaycommon.TaskInfo.ResultText` → `model.TaskPrivateData.ResultText`（JSON 列，免迁移）→ `dto.TaskDto.ResultText`；OpenAI video 响应里落在 `metadata.prompt`（`metadata.media_type = "text"`）。新增文本型任务沿用这条链路。
-- 计费：`setting/ratio_setting/model_ratio.go` 定义单价；`seedance-2.0` / `seedance-2.5` / `gemini-web-video` / `jimeng-video-reverse` 按次（`EstimateBilling` 返回 nil）；`Nano Banana Pro` 按张，张数走 `EstimateBilling` 的 `{"n": N}` 倍率。
+- 计费：`setting/ratio_setting/model_ratio.go` 定义单价；`seedance-2.0`（¥1.0/次）/ `seedance-2.5`（¥0.8/次）/ `gemini-web-video`（¥1.0/次）/ `jimeng-video-reverse` 按次（`EstimateBilling` 返回 nil）；`Nano Banana Pro` 按张，张数走 `EstimateBilling` 的 `{"n": N}` 倍率。**注意生产 `ModelPrice` option 会覆盖代码默认值**——只改 `model_ratio.go` 线上不会变，改价必须同时改 option（见 2026-10-05 调价 commit）。
   - ⚠️ **`Nano Banana Pro` 绝不能进 `TASK_PRICE_PATCH` 环境变量**：进了会被 `relay_task.go` 当按次计费跳过倍率相乘，n 张只扣 1 张的钱（静默少收费）。`seedance-2.0`、`seedance-2.5` 在该变量里，属正常。
 - 提交耗时：反解的参考视频由 ArcReel 代下载（≤100MB，上限对齐 Worker 硬限制），`POST /v1/videos` 可能阻塞 1–2 分钟。本中转 `RELAY_TIMEOUT` 默认为 0（不超时），不要为了「快」把它调到 60s 以下，否则大视频会出现「网关报错但上游已建单」。
 - ⚠️ **`gemini-web-video` 链路本身已验证可用，但上游 Google 官网会间歇性拒单（2026-10-04 三次真机验证）**。task 246 轮询 20 分钟无果（Worker 重试两次 ×10 分钟上限）；task 247 `provider_running` 后 **5 秒**被官网拒，报 `Gemini官网任务失败: something went wrong`；task 262 一次成功（2.5 分钟出片，1280x720 / 10s / 24fps / h264+aac / 4.5MB）。同期 ArcReel 历史 15 ready / 7 failed（约 68%）。脆弱点在 Worker `mac-mini-001` 只有 1 个可提交 gemini 账号（`1789263965686-jkhdkq`，`max_concurrent=1`），另一个 `1789010295191-v4p8en` 自 2026-09-12 起 `needs_relogin`。
