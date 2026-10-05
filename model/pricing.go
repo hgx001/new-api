@@ -455,7 +455,8 @@ func isAllowedPricingModel(name string) bool {
 	}
 	// ⚠️ jimeng-video-reverse 故意**不**上广场：反解定价（¥1.0/次）是占位值，
 	// 尚未商务核定。在价格确认前只保证可调用（白名单只管广场展示，不影响调用），
-	// 确认后再加这一行并同步 downstream_api_guide.md。
+	// 确认后再加这一行，并同步接入教程的模型总览
+	//（web/default/src/features/tutorials/content-models.ts 的 MODEL_OVERVIEW_ITEMS）。
 	// MiniMax-H3-Context-IR 同理（占位价 ¥1.0/次，官方未公布 Context-IR 价目）。
 	return false
 }
