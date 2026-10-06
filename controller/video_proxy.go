@@ -113,6 +113,14 @@ func VideoProxy(c *gin.Context) {
 		// wan3 的成片是 OSS 直链：轮询时已写入 PrivateData.ResultURL（自带签名，无需
 		// 再转发上游 /result 端点——dashscope 官方没有该端点，转发必 404/502）。
 		videoURL = task.GetResultURL()
+	case constant.ChannelTypeErchun:
+		// 二春：成片在 /v1/tasks/{task_id}/content，必须带渠道密钥才能取。
+		// adaptor 因此不吐上游地址（ParseTaskResult 留空 Url，由轮询落成站内代理路径）。
+		// delivery=cdn 时上游可能 302 到签名 CDN 地址：这里的 client 是默认策略，
+		// Go 的 net/http 在**跨 host** 重定向时会自动剥掉 Authorization / Cookie，
+		// 所以 Bearer 不会跟着跳到第三方 CDN，无需额外处理。
+		videoURL = fmt.Sprintf("%s/v1/tasks/%s/content", baseURL, task.GetUpstreamTaskID())
+		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	case constant.ChannelTypeManwu:
 		// 漫屋（ArcReel）：Worker 上传到本站托管目录的产物（Gemini 图片 blob、Veo 的
 		// data: mp4）在 ArcReel 侧存的是**相对路径**且需要渠道密钥，不是公网地址，

@@ -369,6 +369,10 @@ func isAllowedPricingModel(name string) bool {
 	if strings.EqualFold(name, "MiniMax-M3") || strings.EqualFold(name, "MiniMax-M3.1") {
 		return true
 	}
+	// 二春(erchun) wan3.0 仅开放 480P 的对外模型名
+	if name == "wan3.0-480p" {
+		return true
+	}
 	// Youkou 直连文本模型
 	if name == "deepseek-v4-flash" {
 		return true

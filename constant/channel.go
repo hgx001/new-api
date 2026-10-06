@@ -61,8 +61,10 @@ const (
 	ChannelTypeDashScope      = 62
 	ChannelTypeYouzanWan3     = 63
 	ChannelTypeMegaAI         = 64
-	ChannelTypeManwu          = 66
-	ChannelTypeDummy          = 67 // this one is only for count, do not add any channel after this
+	// ChannelTypeErchun 二春（Erchun）v1 开放 API：异步视频，素材需先上传换 media_id。
+	ChannelTypeErchun = 65
+	ChannelTypeManwu  = 66
+	ChannelTypeDummy  = 67 // this one is only for count, do not add any channel after this
 
 )
 
