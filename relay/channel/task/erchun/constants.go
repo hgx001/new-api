@@ -30,8 +30,9 @@ const (
 
 // 时长：catalog 的 durations 是 enum，min=2 max=30 default=5。
 const (
-	minDurationSeconds = 2
-	maxDurationSeconds = 30
+	minDurationSeconds     = 2
+	maxDurationSeconds     = 30
+	defaultDurationSeconds = 5
 	// defaultResolution 是本渠道唯一允许的档位。上游默认是 1080P，我们必须显式
 	// 下发 480P，否则会按上游默认值建出 1080P 的单而按 480P 收费。
 	onlyResolution = "480P"

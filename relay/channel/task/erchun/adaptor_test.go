@@ -66,6 +66,16 @@ func TestResolveDurationClampsToCatalogRange(t *testing.T) {
 	require.Equal(t, 2, resolveDuration(relaycommon.TaskSubmitReq{Duration: 1}), "低于下界抬到 2")
 	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Duration: 30}))
 	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Duration: 99}), "高于上界压到 30")
+
+	// 下游按 OpenAI video 形状传的是 {"seconds":"2"} —— 字符串，落进 Seconds 而非 Duration。
+	// 漏读 Seconds 会静默按默认 5 秒计费（2026-10-06 首次真机验证就是这样多收了 2.5 倍）。
+	require.Equal(t, 2, resolveDuration(relaycommon.TaskSubmitReq{Seconds: "2"}))
+	require.Equal(t, 7, resolveDuration(relaycommon.TaskSubmitReq{Seconds: "7"}))
+	// Duration 优先于 Seconds
+	require.Equal(t, 3, resolveDuration(relaycommon.TaskSubmitReq{Duration: 3, Seconds: "9"}))
+	// 非法/空 Seconds 回落默认值，不报错
+	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Seconds: "abc"}))
+	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Seconds: "  "}))
 }
 
 func TestResolveAspectRatio(t *testing.T) {
@@ -141,6 +151,12 @@ func TestEstimateBillingOnlyMultipliesSeconds(t *testing.T) {
 		require.Equal(t, tt.want, billing["seconds"], "duration=%d", tt.duration)
 		require.NotContains(t, billing, "size", "只允许 480P，不应下发 size 倍率")
 	}
+
+	// {"seconds":"2"} 这条真实入参形状：预扣必须是 2 秒而不是默认的 5 秒。
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{Seconds: "2", Resolution: "480P"})
+	billing := (&TaskAdaptor{}).EstimateBilling(ctx, &relaycommon.RelayInfo{OriginModelName: PublicModel})
+	require.Equal(t, float64(2), billing["seconds"], "seconds 字符串形状必须被采纳")
 }
 
 // 素材数量上限取自 catalog capabilities（不是文档里的全局 upload 限制）。

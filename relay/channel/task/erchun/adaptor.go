@@ -96,17 +96,25 @@ func resolveResolution(req relaycommon.TaskSubmitReq) (string, error) {
 	}
 }
 
+// resolveDuration 读时长。**req.Seconds 是必须的回退路径**：下游按 OpenAI video 形状
+// 传的是 {"seconds":"2"}（字符串），它落到 TaskSubmitReq.Seconds 而不是 Duration。
+// 只读 Duration 会静默退回默认 5 秒 —— 2026-10-06 首次真机验证就是这么多收了
+// 2.5 倍（请求 2 秒、按 5 秒计费）。与 wan3/dashscope 的同一处理保持一致。
 func resolveDuration(req relaycommon.TaskSubmitReq) int {
-	if req.Duration > 0 {
-		if req.Duration < minDurationSeconds {
-			return minDurationSeconds
-		}
-		if req.Duration > maxDurationSeconds {
-			return maxDurationSeconds
-		}
-		return req.Duration
+	duration := req.Duration
+	if duration <= 0 {
+		duration, _ = strconv.Atoi(strings.TrimSpace(req.Seconds))
 	}
-	return 5
+	if duration <= 0 {
+		return defaultDurationSeconds
+	}
+	if duration < minDurationSeconds {
+		return minDurationSeconds
+	}
+	if duration > maxDurationSeconds {
+		return maxDurationSeconds
+	}
+	return duration
 }
 
 // resolveAspectRatio 读比例：优先 metadata.ratio / metadata.aspect_ratio，其次从 size
