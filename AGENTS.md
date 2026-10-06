@@ -199,6 +199,23 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - **每个付费探针跑完必须写 `OPERATOR-COST-ACCOUNTING` 台账**，把上游实扣与客户侧退款并列留痕，否则这笔成本会在对账时凭空消失。
 - 部署走 `scripts/deploy-new-api.sh <sha>`：它带 **SHA 前缀断言**（曾出现「构建了旧 commit 却以为成功」）、fetch 失败时校验本地是否已有该 commit、旧容器只保留最近 3 个。生产容器不是 compose 管理，必须按旧容器原参数 `docker run` 重建。
 
+- **🔧 GPT 通道（sub2api）掉线排查：先跑自动恢复脚本，别手工瞎试**。sub2api 上游（`119.29.253.97:8080`，账号 id=4，Codex OAuth）是渠道 13 GPT-Pool 的唯一来源，它一掉线**文本和生图一起挂**，但 new-api 侧看不出任何异常迹象。
+  - **脚本**：`deploy-vpn/sub2api_autocheck_task.py`（不在 git 里，`deploy-vpn/` 已列入 `.git/info/exclude`）。**Windows 计划任务「sub2api GPT OAuth 自动恢复」每小时 :05 自动跑它**；手工跑：`<托管python> deploy-vpn/sub2api_autocheck_task.py`。
+  - **脚本行为**：先 GET 查账号状态，异常才重导；healthy 时按 6 小时间隔做一次**真实探活**（`gpt-5.6-sol` `max_tokens=1`，纯文本不花钱）。退出码 `0`=健康/恢复成功、`1`=需人工、`2`=环境错误（如登录不上）。
+  - **看结果的两个地方**：`deploy-vpn/logs/sub2api_autocheck.log`（每行结论，脚本自己写盘）+ `.workbuddy/memory/YYYY-MM-DD.md`（每日一行摘要）。探活时间戳在 `logs/sub2api_probe_state.json`。
+  - **恢复动作**（脚本自动完成，勿手工替）：读本机 `C:\Users\hgx\.codex\auth.json` → `POST /api/v1/admin/accounts/4/apply-oauth-credentials` + `POST .../4/schedulable`，且**必须用本机 JWT `exp` 覆盖 `expires_at`**（沿用旧值会导致「刚恢复又掉」）。
+  - **⚠️ 头号判因陷阱：账号 `status=active` ≠ 能用**。2026-10-06 实测踩坑：脚本连续报 healthy，实际账号早已 `Token revoked` 掉线，GPT 文本主通道全挂，是靠一次真实调用才暴露的。所以**只查状态字段的监控一律不可信，必须以真实调用/探活为准**。
+  - **症状 → 判因对照表**（真实原因在 `docker logs sub2api`，客户端文案常指向错误的模型名）：
+    | 现象 | 真因 | 处置 |
+    |---|---|---|
+    | 503 `No available compatible accounts` | 调度层无账号，往上找 reason | 看日志 `account_disabled_auth_error` |
+    | `Token revoked (401)` / `invalidated oauth token` | 令牌被轮换作废 | 跑恢复脚本重导 |
+    | `codex_plan_gated_model` | 计划封锁 | 重导无用，需换账号/套餐 |
+    | `model_rate_limited` | 30 分钟冷却 | 等冷却，别重导 |
+    | `filtered: not_schedulable` | 已被前一次 401 打挂 | 跑恢复脚本 |
+  - **严禁**用 `/test`、`/v1/models`（返 200 假象）或图片/视频请求做健康验证——`/test` 与真实调用会触发 refresh 把账号打回 error；验证只能用**恢复后**的一次最小文本探活。
+  - **监控配置注意**：该计划任务 `LogonType` 若为 `Interactive`，**用户未登录 Windows 时根本不跑**（改 S4U 需管理员权限）；任务 XML 备份见 `deploy-vpn/scheduled_task_backup_20261006.xml`。
+
 ### Project Governance
 
 **Required attribution:** The footer must always include a line crediting the original project:
