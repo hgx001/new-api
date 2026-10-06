@@ -1,47 +1,21 @@
 #!/usr/bin/env bash
-# wan2.7-r2v 是否支持「视频参考」——零成本验证。
-# 该校验在 ValidateRequestAndSetAction 里（计费预扣之前），所以带视频参考的请求
-# 必然被本地 400 拦下，不会真的建单、不消耗上游点数。
-# 参考素材取历史 SUCCESS 任务的产物 URL，不新建单。
+# 【已废弃 —— 不要再跑这个脚本】
+#
+# 2026-10-06 事故记录：这个脚本里的「对照组」用了一个**能通过校验**的入参
+# （wan3.0-smart + 视频参考），于是**真建单并扣费**。我因此连续误建 2 单
+# （task 324、325），上游各扣 90 有赞积分，退不回来。
+# 这正是 AGENTS.md「生产运维硬约束 → 验证脚本不得用能通过校验的入参」禁止的事，
+# 我在写下那条规矩的同一天又犯了两次。
+#
+# 另一个错误：用 `{"reference_video": "..."}` 探视频参考，但 TaskSubmitReq
+# **没有这个字段**（只有 media[] / metadata.media），它被静默忽略，导致：
+#   - r2v 报「缺参考图」而不是「不支持视频参考」，把我引向错误的代码修复
+#   - 对照组的 wan3.0-smart 根本没拿到视频，生成的片子只用了 prompt，
+#     我却据此宣称「wan3.0-smart 视频参考已验证端到端」—— 结论是错的
+#
+# 正确做法：用 probe-r2v-vidref-correct-shape.sh（零成本，正确 media 形状），
+# 付费对照组必须显式 ALLOW_PAID=1 且单独提出，不要藏在默认路径里。
 set -uo pipefail
-Q() { printf '%s' "$1" | docker exec -i postgres psql -U root -d new-api -t -A -F' | ' | tr -d '\r'; }
-HOST=https://api.heibaidao.cn
-TK=$(Q "SELECT t.key FROM tokens t JOIN users u ON u.id=t.user_id WHERE t.status=1 AND u.quota>100000 ORDER BY t.id LIMIT 1;" | tr -d '\r\n ')
-
-BEFORE_TASKS=$(Q "SELECT count(*) FROM tasks;")
-BEFORE_QUOTA=$(Q "SELECT quota FROM users WHERE id=2;")
-echo "基线：tasks=$BEFORE_TASKS  user2_quota=$BEFORE_QUOTA"
-
-# 历史 SUCCESS 任务的公网 mp4（有赞 CDN 直链，不带渠道密钥）
-VID=$(Q "SELECT private_data->>'result_url' FROM tasks
-        WHERE status='SUCCESS' AND private_data->>'result_url' LIKE '%.mp4%'
-          AND private_data->>'result_url' NOT LIKE '%heibaidao%'
-        ORDER BY id DESC LIMIT 1;" | tr -d '\r\n ')
-echo "参考视频: ${VID:0:110}..."
-echo
-
-# ① r2v + 视频参考 → 期望 400 本地拒绝
-echo "=== ① wan2.7-r2v + reference_video（5 秒）==="
-curl -s -o /tmp/r1.json -w 'HTTP %{http_code}\n' -X POST "$HOST/v1/videos" \
-  -H "Authorization: Bearer $TK" -H 'Content-Type: application/json' \
-  -d "$(python3 -c "
-import json,sys
-print(json.dumps({'model':'wan2.7-r2v','prompt':'a person walking','seconds':'5',
- 'reference_video':'$VID'}))")" 2>/dev/null || \
-curl -s -o /tmp/r1.json -w 'HTTP %{http_code}\n' -X POST "$HOST/v1/videos" \
-  -H "Authorization: Bearer $TK" -H 'Content-Type: application/json' \
-  -d "{\"model\":\"wan2.7-r2v\",\"prompt\":\"a person walking\",\"seconds\":\"5\",\"reference_video\":\"$VID\"}"
-head -c 300 /tmp/r1.json; echo; echo
-
-# ② 对照：wan3.0-smart + 同一个视频参考 → 期望通过校验（不建单，只看是否被本地拒）
-echo "=== ② 对照 wan3.0-smart + 同一个 reference_video（5 秒）==="
-curl -s -o /tmp/r2.json -w 'HTTP %{http_code}\n' -X POST "$HOST/v1/videos" \
-  -H "Authorization: Bearer $TK" -H 'Content-Type: application/json' \
-  -d "{\"model\":\"wan3.0-smart\",\"prompt\":\"a person walking\",\"seconds\":\"5\",\"reference_video\":\"$VID\"}"
-head -c 300 /tmp/r2.json; echo; echo
-
-echo "=== 断言：①必须 400 且零扣费；②若返回 200/task_id 说明它会真建单，需立刻撤销 ==="
-AFTER_TASKS=$(Q "SELECT count(*) FROM tasks;")
-AFTER_QUOTA=$(Q "SELECT quota FROM users WHERE id=2;")
-echo "tasks: $BEFORE_TASKS -> $AFTER_TASKS"
-echo "user2_quota: $BEFORE_QUOTA -> $AFTER_QUOTA"
+echo "这个脚本已在 2026-10-06 作废，理由见上方注释。"
+echo "请改用: /home/ubuntu/probe-r2v-vidref-correct-shape.sh"
+exit 1
