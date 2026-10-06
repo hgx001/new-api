@@ -33,11 +33,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { formatNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import {
-  formatCurrency,
+  formatLocalMoney,
   getDiscountLabel,
   getPaymentIcon,
   getMinTopupAmount,
@@ -112,17 +111,33 @@ export function RechargeFormCard({
   enableWaffoPancakeTopup,
 }: RechargeFormCardProps) {
   const { t } = useTranslation()
-  const [localAmount, setLocalAmount] = useState(topupAmount.toString())
+  // The whole topup surface is presented in renminbi so users never see a raw
+  // USD figure. The API still takes whole USD units, so the value is snapped to
+  // the nearest multiple of the exchange rate when the user finishes typing.
+  // What they see is exactly what they pay and exactly what lands in the wallet
+  // (1:1, no rounding surprise), and the snapped figure stays visible.
+  const [localAmount, setLocalAmount] = useState('')
 
-  useEffect(() => {
-    setLocalAmount(topupAmount.toString())
-  }, [topupAmount])
+  const cnyToUsd = (cny: number) =>
+    usdExchangeRate > 0 ? Math.max(1, Math.round(cny / usdExchangeRate)) : 0
+
+  const usdToCny = (usd: number) =>
+    Number((usd * usdExchangeRate).toFixed(2))
 
   const handleAmountChange = (value: string) => {
     setLocalAmount(value)
-    const numValue = parseInt(value) || 0
-    if (numValue >= 0) {
-      onTopupAmountChange(numValue)
+    const cnyValue = parseFloat(value)
+    if (Number.isFinite(cnyValue) && cnyValue > 0) {
+      onTopupAmountChange(cnyToUsd(cnyValue))
+    }
+  }
+
+  // Snap the displayed amount to the payable multiple once the user stops
+  // typing, so the field never displays a figure the backend cannot honour.
+  const handleAmountBlur = () => {
+    const cnyValue = parseFloat(localAmount)
+    if (Number.isFinite(cnyValue) && cnyValue > 0) {
+      setLocalAmount(String(usdToCny(cnyToUsd(cnyValue))))
     }
   }
 
@@ -137,7 +152,23 @@ export function RechargeFormCard({
   const hasWaffoPaymentMethods =
     Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
   const minTopup = getMinTopupAmount(topupInfo)
+  const minTopupCny = minTopup * usdExchangeRate
   const redemptionEnabled = topupInfo?.enable_redemption !== false
+
+  // Keep the field in sync when a preset is picked (the parent owns topupAmount).
+  // Only real preset/reset changes propagate here; while the user is typing the
+  // field is authoritative, so the snapped value we already sent matches.
+  useEffect(() => {
+    if (topupAmount > 0) {
+      setLocalAmount((prev) => {
+        const asCny = parseFloat(prev)
+        if (Number.isFinite(asCny) && usdToCny(cnyToUsd(asCny)) === asCny) {
+          return prev
+        }
+        return String(usdToCny(topupAmount))
+      })
+    }
+  }, [topupAmount, usdExchangeRate])
 
   if (loading) {
     return (
@@ -250,7 +281,7 @@ export function RechargeFormCard({
                         >
                           <div className='flex w-full items-center justify-between'>
                             <div className='text-base font-semibold sm:text-lg'>
-                              {formatNumber(displayValue)}
+                              {formatLocalMoney(displayValue)}
                             </div>
                             {hasDiscount && (
                               <div className='text-xs font-medium text-green-600'>
@@ -259,12 +290,24 @@ export function RechargeFormCard({
                             )}
                           </div>
                           <div className='text-muted-foreground mt-1.5 w-full text-xs sm:mt-2'>
-                            Pay {formatCurrency(actualPrice)}
-                            {hasDiscount && savedAmount > 0 && (
-                              <span className='text-green-600'>
-                                {' '}
-                                • Save {formatCurrency(savedAmount)}
-                              </span>
+                            {hasDiscount ? (
+                              <>
+                                {t('Actual Amount')}{' '}
+                                <span className='text-green-600'>
+                                  {formatLocalMoney(actualPrice)}
+                                </span>
+                                {savedAmount > 0 && (
+                                  <span className='text-green-600'>
+                                    {' '}
+                                    • {t('You save')}{' '}
+                                    {formatLocalMoney(savedAmount)}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              t('Credited as {{amount}}', {
+                                amount: formatLocalMoney(displayValue),
+                              })
                             )}
                           </div>
                         </Button>
@@ -282,28 +325,41 @@ export function RechargeFormCard({
                   {t('Custom Amount')}
                 </Label>
                 <div className='grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
-                  <Input
-                    id='topup-amount'
-                    type='number'
-                    value={localAmount}
-                    onChange={(e) => handleAmountChange(e.target.value)}
-                    min={minTopup}
-                    placeholder={`Minimum ${minTopup}`}
-                    className='h-9 text-base sm:h-10 sm:text-lg'
-                  />
+                  <div className='relative'>
+                    <span className='text-muted-foreground pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-sm font-semibold'>
+                      ¥
+                    </span>
+                    <Input
+                      id='topup-amount'
+                      type='number'
+                      inputMode='decimal'
+                      value={localAmount}
+                      onChange={(e) => handleAmountChange(e.target.value)}
+                      onBlur={handleAmountBlur}
+                      min={minTopupCny}
+                      step='any'
+                      placeholder={`${formatLocalMoney(minTopupCny)} 起`}
+                      className='h-9 pl-7 text-base sm:h-10 sm:text-lg'
+                    />
+                  </div>
                   <div className='bg-muted/30 flex min-h-9 items-center justify-between gap-2 rounded-md border px-3 lg:min-w-52'>
                     <span className='text-muted-foreground truncate text-xs'>
-                      {t('Amount to pay:')}
+                      {t('Actual Amount')}
                     </span>
                     {calculating ? (
                       <Skeleton className='h-5 w-16' />
                     ) : (
                       <span className='text-sm font-semibold'>
-                        {formatCurrency(paymentAmount)}
+                        {formatLocalMoney(paymentAmount)}
                       </span>
                     )}
                   </div>
                 </div>
+                <p className='text-muted-foreground text-xs'>
+                  {t(
+                    'Enter the renminbi amount you want to recharge. The credited amount equals the amount paid, with no conversion or extra charge.'
+                  )}
+                </p>
               </div>
 
               <div className='space-y-2.5 sm:space-y-3'>

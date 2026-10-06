@@ -62,6 +62,29 @@ export function formatCurrency(amount: number | string): string {
 }
 
 /**
+ * Format an amount that is already in local currency, prefixed with the
+ * local currency symbol.
+ *
+ * Wallet surfaces are CNY-only by design: the preset cards, the custom amount
+ * field and the payment dialog must all read as plain renminbi amounts. Showing
+ * a bare number in one place and a symbol-prefixed number in another makes users
+ * think there is a USD settlement step, which there isn't.
+ */
+export function formatLocalMoney(amount: number | string): string {
+  const numeric =
+    typeof amount === 'number' ? amount : Number.parseFloat(String(amount))
+  if (!Number.isFinite(numeric)) return '-'
+
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'CNY',
+    currencyDisplay: 'narrowSymbol',
+    minimumFractionDigits: Number.isInteger(numeric) ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(numeric)
+}
+
+/**
  * Get discount label for display (e.g., "20% OFF")
  */
 export function getDiscountLabel(discount: number): string {

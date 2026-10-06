@@ -30,10 +30,9 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatLocalCurrencyAmount } from '@/lib/currency'
 
 import { DEFAULT_DISCOUNT_RATE } from '../../constants'
-import { formatCurrency, getPaymentIcon } from '../../lib'
+import { formatLocalMoney, getPaymentIcon } from '../../lib'
 import type { PaymentMethod } from '../../types'
 
 interface PaymentConfirmDialogProps {
@@ -81,14 +80,10 @@ export function PaymentConfirmDialog({
         <div className='space-y-3 py-3 sm:space-y-4 sm:py-4'>
           <div className='flex items-center justify-between'>
             <span className='text-muted-foreground text-sm'>
-              {t('Topup Amount')}
+              {t('Recharge Amount')}
             </span>
             <span className='text-lg font-semibold'>
-              {formatLocalCurrencyAmount(topupAmount * usdExchangeRate, {
-                digitsLarge: 2,
-                digitsSmall: 2,
-                abbreviate: false,
-              })}
+              {formatLocalMoney(topupAmount * usdExchangeRate)}
             </span>
           </div>
 
@@ -101,11 +96,11 @@ export function PaymentConfirmDialog({
             ) : (
               <div className='flex items-baseline gap-2'>
                 <span className='text-2xl font-semibold'>
-                  {formatCurrency(paymentAmount)}
+                  {formatLocalMoney(paymentAmount)}
                 </span>
                 {hasDiscount && (
                   <span className='text-muted-foreground text-sm line-through'>
-                    {formatCurrency(originalAmount)}
+                    {formatLocalMoney(originalAmount)}
                   </span>
                 )}
               </div>
@@ -117,7 +112,7 @@ export function PaymentConfirmDialog({
               <div className='flex items-center justify-between text-sm'>
                 <span className='text-muted-foreground'>{t('You save')}</span>
                 <span className='font-semibold text-green-600'>
-                  {formatCurrency(discountAmount)}
+                  {formatLocalMoney(discountAmount)}
                 </span>
               </div>
             </div>
