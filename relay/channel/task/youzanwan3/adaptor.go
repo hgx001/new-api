@@ -375,6 +375,13 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 		counts["reference_image"]+counts["reference_video"]+counts["reference_audio"] > 0 {
 		return errors.New("youzan wan3 does not accept first_frame/last_frame mixed with reference media")
 	}
+	// 拒绝分支的顺序 = 诊断价值排序：先报「哪种素材根本不支持」，再报「必需素材缺失」。
+	// 否则只传一个参考视频的客户端会拿到 “requires at least one reference image”，
+	// 而真正的原因是它压根不支持视频参考 —— 客户端会误以为补张图就行，白试一轮。
+	if isR2VModel(model) && counts["reference_video"]+counts["reference_audio"] > 0 {
+		// r2v 只发参考图，参考视频/音频会被静默丢弃，这里直接拒绝。
+		return errors.New("youzan wan2.7-r2v does not accept reference video or audio")
+	}
 	if isR2VModel(model) && counts["first_frame"]+counts["last_frame"] > 0 {
 		// wan2.7-r2v 上游只支持参考图，首尾帧会被静默丢弃，这里直接拒绝。
 		return errors.New("youzan wan2.7-r2v does not accept first_frame/last_frame")
@@ -382,10 +389,6 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	if isR2VModel(model) && counts["reference_image"] == 0 {
 		// 上游要求至少 1 张参考图，本地先拦住，不消耗上游调用。
 		return errors.New("wan2.7-r2v requires at least one reference image")
-	}
-	if isR2VModel(model) && counts["reference_video"]+counts["reference_audio"] > 0 {
-		// r2v 只发参考图，参考视频/音频会被静默丢弃，这里直接拒绝。
-		return errors.New("youzan wan2.7-r2v does not accept reference video or audio")
 	}
 	imageLimit := maxReferenceImages
 	switch {

@@ -284,6 +284,45 @@ func TestValidateMediaRejectsFrameReferenceMixing(t *testing.T) {
 	}, r2vModel))
 }
 
+// 只传参考视频（没传图）时，报错必须直指「不支持视频参考」。
+// 生产实测 2026-10-06：修正前这里返回的是 “requires at least one reference image”，
+// 客户端会误以为补一张图就能跑通，而真正的原因是 r2v 根本不吃视频参考。
+func TestR2VVideoOnlyRejectionNamesTheRealCause(t *testing.T) {
+	tests := []struct {
+		name  string
+		media []relaycommon.TaskMedia
+		want  string
+	}{
+		{
+			name:  "只传视频",
+			media: []relaycommon.TaskMedia{{Type: "reference_video", URL: "https://cdn.example/v.mp4"}},
+			want:  "youzan wan2.7-r2v does not accept reference video or audio",
+		},
+		{
+			name:  "只传音频",
+			media: []relaycommon.TaskMedia{{Type: "reference_audio", URL: "https://cdn.example/a.mp3"}},
+			want:  "youzan wan2.7-r2v does not accept reference video or audio",
+		},
+		{
+			name:  "只传首帧",
+			media: []relaycommon.TaskMedia{{Type: "first_frame", URL: "https://cdn.example/first.png"}},
+			want:  "youzan wan2.7-r2v does not accept first_frame/last_frame",
+		},
+		{
+			// 既没有视频也没有首尾帧，才轮到这个分支。
+			name:  "空素材",
+			media: nil,
+			want:  "wan2.7-r2v requires at least one reference image",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMedia(tt.media, r2vModel)
+			require.EqualError(t, err, tt.want)
+		})
+	}
+}
+
 func TestPrimeBodyShapeAndReferenceLimit(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{

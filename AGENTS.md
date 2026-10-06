@@ -189,6 +189,13 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **恢复被 AutoBan 的渠道必须同时改 `channels.status` 与 `abilities.enabled`**。2026-10-02 的真实事故：AutoBan 禁用渠道时连带把能力表置 `enabled=false`，事后只把 `status` 改回 1，导致渠道「看起来正常」但该渠道**所有模型 503 `model_not_found`**，持续数小时无人察觉。恢复用 `scripts/restore-channel.sh <id>`，它两边一起改并打印复核。
 - **裸 SQL 建/改渠道后必须重启 new-api**：能力走内存缓存（`CacheGetRandomSatisfiedChannel`），SQL 改 `abilities` 对**新建**渠道不生效（对已缓存的旧渠道反而会立刻生效，所以容易误判成「缓存已刷新」）。走管理 API 建渠道不会有这个问题。
 - **验证脚本不得用能通过校验的入参**。`seedance-2.0` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。**更硬的坑：`seedance-2.0` 的最小入参 `{"model":"seedance-2.0","prompt":"x"}` 是合法且会真建单**（2026-10-04 又误建 1 次）。规则：① 只用必然被本地校验拦下的输入（越界 seconds / 越界 ratio / 非 http 参考图 / 越界 n）；② 每次跑完断言 `sum(tokens.used_quota)` 差值为 0、`tasks` 无非终态任务、ArcReel `arcreel.log` 里 `remote-generation/jobs` 计数差值为 0；③ 一旦误建，必须**同时**在 new-api（退款 + 任务置 FAILURE + 标记日志；new-api **没有** `/v1/videos/{id}/cancel` 端点）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销。照抄 `scripts/probe-manwu-dola-dual.sh`，它已同时做三项断言。
+- **验证「计费 bug」不得用付费真实任务（2026-10-06 立规，代价 810 上游积分）**。上一条讲的是「别误建单」，这一条更进一步：**有些单就是必须建的，也不该多建**。
+  - **实例**：修 `relay_task.go` 的 `OtherRatios` 逐项 `int()` 截断（同一请求扣费在 102739/102735 间随机）时，为了「多跑几次看抖动」跑了 **9 个付费任务**，上游有赞共扣 **810 积分**（9 × 90 分）。客户侧 952039 quota 全额退了，**上游那 810 分撤不回来**，净损由运营方承担（台账见 `logs.content LIKE '%OPERATOR-COST-ACCOUNTING%'`，脚本 `scripts/prod-log-probe-upstream-cost-20261005.sql`）。
+  - **方法错误不在疏忽，在选错验证手段**：同一提交里已写了 `relay/relay_task_billing_test.go`，它用三个硬编码数值（单次累乘 102739；两种遍历顺序 102739 / 102735；并断言两者不同）就把顺序依赖**确定性复现**了。观察随机性根本不需要真金白银去撞。
+  - **三条硬规矩**：① **确定性 bug 一律先上单元测试**，能用 `go test` 复现的不许用真实任务复现（map 顺序、浮点截断、时序、并发类问题尤其如此 —— 它们在测试里是确定的，在生产里是概率的）；② **观察随机性用 `go test -count=50`，不用重复建单**（一次真实任务只采样一次，`-count=50` 采样五十次且不花钱）；③ **真实任务上限 1 个**，只用于确认「端到端通、单价对得上」。
+  - **什么值得跑真实任务**：验证**调价后单价** → 1 个（真实账目是唯一事实源，见「Model Pricing and Catalog Rules」）；验证**交付链路** → 0 个（拿历史 ready 任务的产物验）；验证**上游拒单/审核** → 1 个（只能真打，但一次足以定性）。
+  - **先查上游计费维度再选档**：有赞 `wan3.0-smart` **不按分辨率区分扣点**（720p 与 1080p 同为 90 分/任务）。我默认跑 1080p 属于**运气**（恰好没多花），不是判断。
+  - **每个付费探针跑完必须写 `OPERATOR-COST-ACCOUNTING` 台账**，把上游实扣与客户侧退款并列留痕，否则这笔成本会在对账时凭空消失。
 - 部署走 `scripts/deploy-new-api.sh <sha>`：它带 **SHA 前缀断言**（曾出现「构建了旧 commit 却以为成功」）、fetch 失败时校验本地是否已有该 commit、旧容器只保留最近 3 个。生产容器不是 compose 管理，必须按旧容器原参数 `docker run` 重建。
 
 ### Project Governance
