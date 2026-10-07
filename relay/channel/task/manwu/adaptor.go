@@ -916,6 +916,25 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+// ownedAssetPathPrefix 是 ArcReel 自有托管产物的稳定路径契约：Worker 上传到
+// ArcReel 本站托管目录的产物（Gemini 图片 blob、Veo 的 data: mp4 转存）都挂在
+// 这个前缀下。它不是公网地址，**必须带渠道密钥（service token）才能下载**。
+//
+// ⚠️ 不能只认相对路径：实测(2026-10-08, langdu 生产) ArcReel/Worker 某些路径
+// 会上报**绝对** URL（同域拼接后的 https://arcreel.../api/v1/remote-generation/...）。
+// 只判 http 前缀会把这种"伪公网直链"直接交付/透传给客户端，结果 401 ——
+// 拿到链接的人没有渠道密钥，链接就是个打不开的摆设。
+func IsOwnedAssetPath(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Path != "" {
+		trimmed = parsed.Path // 绝对地址取路径部分, 相对路径原样
+	}
+	return strings.Contains(trimmed, "/api/v1/remote-generation/jobs/")
+}
+
 // directResultURL 只把「公网绝对地址」当作可直交付的结果。
 //
 // ArcReel 对 Worker 上传到本站托管目录的产物（Gemini 图片 blob、Veo 的 data: mp4）
@@ -923,6 +942,11 @@ func firstNonEmpty(values ...string) string {
 // 公网地址且需要渠道 token。透传给客户端等于交付一个打不开的链接，因此这里返回空串，
 // 让 new-api 落成 `/v1/videos/{task_id}/content` 代理（task_polling.go 的既有分支），
 // 由 VideoProxy 带渠道密钥回源。dola/tiktok 这类公网 CDN 地址照旧直传。
+//
+// ⚠️ 自有托管路径即使被拼成了**绝对** URL 也不能直传（见 IsOwnedAssetPath），
+// 2026-10-08 实测：langdu 生产一条 gemini-web-video 任务拿到
+// metadata.url=https://arcreel.../api/v1/remote-generation/...mp4，客户端直连 401、
+// content 代理也按"公网直链"透传 401 → 整条链路表现为 502，成片拿不到。
 func directResultURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -930,6 +954,9 @@ func directResultURL(raw string) string {
 	}
 	if !strings.HasPrefix(strings.ToLower(trimmed), "http://") &&
 		!strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+		return ""
+	}
+	if IsOwnedAssetPath(trimmed) {
 		return ""
 	}
 	return trimmed

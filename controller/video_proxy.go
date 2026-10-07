@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/manwu"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -221,7 +222,13 @@ func resolveManwuResultURL(baseURL, key, proxy string, task *model.Task) (string
 	// （域名迁移/换端口），那时按 host 判会把代理地址当成上游直链，导致本站
 	// /content 代理自我递归或返回 401。路径形状是 BuildProxyURL 的稳定契约。
 	isSelfProxy := isAbsolute && isSelfProxyPath(stored)
-	if isAbsolute && !isSelfProxy {
+	// ⚠️ ArcReel 自有托管路径即使被拼成**绝对** URL 也必须回查 job 带渠道密钥下载,
+	// 不能当成"公网直链"透传 —— 客户端没有 service token, 拿到就是 401。
+	// 2026-10-08 实测(langdu 生产 gemini-web-video 任务): ResultURL 落成了
+	// https://arcreel.../api/v1/remote-generation/jobs/...mp4, 走到这里被透传,
+	// 客户端直连 401、/content 代理同样透传后把 401 包成 502, 成片拿不到。
+	isOwnedAsset := manwu.IsOwnedAssetPath(stored)
+	if isAbsolute && !isSelfProxy && !isOwnedAsset {
 		// 公网直链（dola CDN 等）：直接透传，不泄露渠道密钥。
 		return stored, false, nil
 	}

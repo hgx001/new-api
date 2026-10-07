@@ -101,3 +101,27 @@ func TestIsSelfProxyPathIsHostIndependent(t *testing.T) {
 	assert.False(t, isSelfProxyPath("/api/v1/remote-generation/jobs/job-1/outputs/o.png"))
 	assert.False(t, isSelfProxyPath("not a url"))
 }
+
+// ⚠️ 2026-10-08 生产实测(langdu gemini-web-video 任务)回归: ArcReel/Worker 把
+// sourceUrl 拼成了**绝对** URL 落库, resolveManwuResultURL 按"公网直链"透传,
+// 客户端 401、/content 代理也 401→502, 成片完全拿不到。自有托管路径必须回查
+// job 并带渠道密钥, 与它是不是绝对地址无关。
+func TestResolveManwuResultURLResolvesAbsoluteOwnedAssetViaJob(t *testing.T) {
+	initHTTPClient(t)
+	var gotPath, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"jobId":"job-1","status":"ready","sourceUrl":"/api/v1/remote-generation/jobs/job-1/outputs/output.mp4"}`)
+	}))
+	defer srv.Close()
+
+	abs := srv.URL + "/api/v1/remote-generation/jobs/job-1/outputs/output.mp4"
+	task := newManwuTask("job-1", abs)
+	url, needsAuth, err := resolveManwuResultURL(srv.URL, "sk-secret", "", task)
+	require.NoError(t, err)
+	assert.Equal(t, "/api/v1/remote-generation/jobs/job-1", gotPath, "绝对自有 URL 也必须回查 job")
+	assert.Equal(t, "Bearer sk-secret", gotAuth)
+	assert.Equal(t, srv.URL+"/api/v1/remote-generation/jobs/job-1/outputs/output.mp4", url)
+	assert.True(t, needsAuth)
+}

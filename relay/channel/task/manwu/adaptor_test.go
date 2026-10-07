@@ -711,6 +711,26 @@ func TestParseTaskResultHidesSelfHostedRelativeURL(t *testing.T) {
 	assert.Equal(t, "https://v19-dola.dola.com/v/clip.mp4", direct.Url)
 }
 
+// ⚠️ 2026-10-08 生产回归(langdu gemini-web-video): ArcReel/Worker 把 sourceUrl
+// 拼成了**绝对** URL 上报, 旧逻辑只判 http 前缀就直传 → 客户端拿到的链接没有
+// 渠道密钥, 401 打不开, content 代理同样透传后 502。自有托管路径无论相对还是
+// 绝对都必须留给 content 代理回源。
+func TestParseTaskResultHidesSelfHostedAbsoluteURL(t *testing.T) {
+	a := &TaskAdaptor{}
+	res, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"ready","sourceUrl":"https://arcreel.heibaidao.cn/api/v1/remote-generation/jobs/gen-abc/outputs/output-3f381fa.mp4"}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, res.Status)
+	assert.Empty(t, res.Url, "绝对形式的自有托管 URL 同样不能透传给客户端")
+
+	// 判据本身: 路径形状识别, 与 host 无关
+	assert.True(t, IsOwnedAssetPath("/api/v1/remote-generation/jobs/job-1/outputs/o.png"))
+	assert.True(t, IsOwnedAssetPath("https://arcreel.heibaidao.cn/api/v1/remote-generation/jobs/gen-abc/outputs/o.mp4"))
+	assert.True(t, IsOwnedAssetPath("http://localhost:8200/api/v1/remote-generation/jobs/job-1/outputs/o.png"))
+	assert.False(t, IsOwnedAssetPath("https://v19-dola.dola.com/v/clip.mp4"))
+	assert.False(t, IsOwnedAssetPath("https://arcreel.heibaidao.cn/api/v1/other/thing.png"))
+	assert.False(t, IsOwnedAssetPath(""))
+}
+
 // ConvertToOpenAIVideo：文本结果进 metadata.prompt，图片/视频进 metadata.url + media_type。
 func TestConvertToOpenAIVideoExposesResults(t *testing.T) {
 	a := &TaskAdaptor{}
