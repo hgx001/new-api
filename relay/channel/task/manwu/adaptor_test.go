@@ -923,6 +923,17 @@ func TestDoubaoRatioNotInventedWhenUnspecified(t *testing.T) {
 	assert.Equal(t, 5, req.Duration)
 }
 
+func TestDoubao20FastRejects30s(t *testing.T) {
+	// 2.0 Fast 官网没有 30s 档（2026-10-08 用户定稿：只支持 5/10/15 秒），
+	// 30s 组合必须在入口 400，而不是等 Worker setDoubaoDuration 诚实报错。
+	for _, field := range []string{"seconds", "duration"} {
+		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":"db-seedance-2-0","prompt":"x","%s":30}`, field))
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, field)
+		assert.Equal(t, "invalid_duration", taskErr.Code)
+	}
+}
+
 func TestDoubaoAcceptsAutoRatioAndRejectsIllegal(t *testing.T) {
 	// auto 是豆包官网出厂档，必须接受。
 	c, info, a := postVideoCtx(t, `{"model":"db-seedance-2-5","prompt":"x","ratio":"auto","seconds":10}`)

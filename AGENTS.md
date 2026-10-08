@@ -31,7 +31,7 @@ DO NOT send optional commentary
 | `seedance-2.0` | dola | dola 官网 | 5/10/15s，¥1.5/次 |
 | `seedance-2.5` | dola | dola 官网 | 固定 30s/720p，¥1/次 |
 | `db-seedance-2-5`（上游真名 doubao-seedance-2-5-260628） | doubao | **豆包官网**（www.doubao.com） | 5/10/15/30s，¥2/次 |
-| `db-seedance-2-0`（上游真名 doubao-seedance-2-0-fast-260128） | doubao | **豆包官网** | 5/10/15/30s，¥1/次 |
+| `db-seedance-2-0`（上游真名 doubao-seedance-2-0-fast-260128） | doubao | **豆包官网** | 5/10/15s，¥1/次（无 30s 档） |
 | `gemini-web-video` | gemini | Gemini 官网 Veo | 固定 10s，¥1/次 |
 | `Nano Banana Pro` | manwu-image | gemini/jimeng（服务端路由） | 图片 |
 | `jimeng-video-reverse` | jimeng | 即梦 | 视频反解，文本出参 |

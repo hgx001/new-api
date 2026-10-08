@@ -189,7 +189,9 @@ var allowedRatios = map[string]bool{
 
 // 豆包官网参数白名单（2026-10-06 真机探针订正，与 Worker 侧
 // cron_video_brach src/platforms/doubao/params.ts 同口径）：
-//   - 时长四档 5/10/15/30（注意与 dola 的 5/10/15 不同，多了 30）；
+//   - 时长分模型：2.5 四档 5/10/15/30（比 dola 多 30）；2.0 Fast 官网没有 30s
+//     档，只支持 5/10/15（2026-10-08 用户定稿），非法组合直接 400——Worker 侧
+//     setDoubaoDuration 对页面无档位会诚实报错，这里提前挡避免用户下单后才失败；
 //   - 比例七档，含官网出厂默认档 `auto`（「自动 · 10s」）；
 //   - 比例「未指定不编造」：豆包未指定时保持官网当前状态（App 侧
 //     resolveDoubaoRatioLabel 空 → null 纪律），不强补 16:9。
@@ -198,6 +200,14 @@ var allowedDoubaoDurations = map[int]bool{
 	10: true,
 	15: true,
 	30: true,
+}
+
+// allowedDoubao20Durations：2.0 Fast 官网无 30s 档（2026-10-08 用户定稿），
+// 比平台级白名单少一档。resolveDoubaoDuration 按模型二选一。
+var allowedDoubao20Durations = map[int]bool{
+	5:  true,
+	10: true,
+	15: true,
 }
 
 var allowedDoubaoRatios = map[string]bool{
@@ -433,7 +443,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			}
 			norm.Ratio = rawRatio
 		}
-		duration, err := resolveDoubaoDuration(req)
+		duration, err := resolveDoubaoDuration(req, norm.Model)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
@@ -858,17 +868,24 @@ func resolveDuration(req clientRequest) (int, error) {
 const doubaoDefaultDuration = 5
 
 // resolveDoubaoDuration 解析豆包时长：seconds（首选，数字或数字字符串）→ duration
-// → 缺省 5。白名单 5/10/15/30（豆包官网四档，比 dola 多一档 30）；缺省或 null
-// 视为未指定；字段存在但非法直接报错——与 resolveDuration 同纪律，避免计费
-// 时长与实际生成时长脱节（ArcReel 侧对非法值会静默回落 5）。
-func resolveDoubaoDuration(req clientRequest) (int, error) {
+// → 缺省 5。白名单分模型：2.5 四档 5/10/15/30；2.0 Fast 官网无 30s 档只有
+// 5/10/15（2026-10-08 用户定稿）。缺省或 null 视为未指定；字段存在但非法直接
+// 报错——与 resolveDuration 同纪律，避免计费时长与实际生成时长脱节（ArcReel
+// 侧对非法值会静默回落 5）。
+func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
+	allowed := allowedDoubaoDurations
+	durationsHint := "5/10/15/30"
+	if model == ModelDoubao20Fast {
+		allowed = allowedDoubao20Durations
+		durationsHint = "5/10/15"
+	}
 	seconds, found, err := parseFlexibleInt(req.Seconds)
 	if err != nil {
 		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
 	}
 	if found {
-		if !allowedDoubaoDurations[seconds] {
-			return 0, fmt.Errorf("seconds must be one of 5/10/15/30, got %d", seconds)
+		if !allowed[seconds] {
+			return 0, fmt.Errorf("seconds must be one of %s for %s, got %d", durationsHint, model, seconds)
 		}
 		return seconds, nil
 	}
@@ -878,8 +895,8 @@ func resolveDoubaoDuration(req clientRequest) (int, error) {
 		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
 	}
 	if found {
-		if !allowedDoubaoDurations[duration] {
-			return 0, fmt.Errorf("duration must be one of 5/10/15/30, got %d", duration)
+		if !allowed[duration] {
+			return 0, fmt.Errorf("duration must be one of %s for %s, got %d", durationsHint, model, duration)
 		}
 		return duration, nil
 	}
