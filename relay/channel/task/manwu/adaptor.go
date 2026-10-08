@@ -45,6 +45,10 @@ const (
 	PlatformID       = "dola"
 	PlatformIDGemini = "gemini"
 	PlatformIDJimeng = "jimeng"
+	// PlatformIDDoubao 是豆包官网（www.doubao.com）平台。**与 dola 是两个独立的
+	// 执行站点**——虽然模型同为 Seedance 系，跑的官网、账号池、风控完全不同
+	// （2026-10-08 用户明确区分）。Worker 侧上报 `doubao.dom` 能力接单。
+	PlatformIDDoubao = "doubao"
 	// PlatformIDImage 是 ArcReel 的抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）：
 	// 它是内部建单协议值，与对外模型名 ModelImage 分离；服务端按
 	// MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini 还是 jimeng。
@@ -83,12 +87,16 @@ const (
 	reasonDirectUploadUnsupported = "暂不支持文件直传：本渠道全部模型都需要公网可访问的 http(s) 素材 URL（视频反解请传视频 URL）"
 )
 
-// 五个公开模型共用同一条 ArcReel 建单链路（POST /api/v1/remote-generation/jobs），
+// 七个公开模型共用同一条 ArcReel 建单链路（POST /api/v1/remote-generation/jobs），
 // 差异只在 platformId + outputMode + 参数白名单，故用一张路由表而不是多个 adaptor。
 //
 // 模型名口径：
 //   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，5/10/15 秒，按次计费）
 //   - seedance-2.5：dola 官网 Seedance 2.5（远端视频，固定 30 秒 / 720p，按次计费）
+//   - doubao-seedance-2-5-260628：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒
+//     四档，按次计费）。模型名与豆包官网下拉档位一一对应（与 dola 的 seedance-2.5
+//     同名不同站，**互不通用**）
+//   - doubao-seedance-2-0-fast-260128：豆包官网 Seedance 2.0 Fast（远端视频，同上）
 //   - Nano Banana Pro：ArcReel 抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）。服务端
 //     MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini(nano_banana_2) 还是
 //     jimeng(dreamina_image_5_0_lite)，客户端不感知，也不该猜
@@ -96,17 +104,20 @@ const (
 //     官方 Gemini 渠道已占 veo-3.1-generate-preview 等模型名，重名会被路由到错渠道
 //   - jimeng-video-reverse：即梦「视频反解」技能，单视频入参、提示词文本出参
 const (
-	ModelDola    = "seedance-2.0"
-	ModelDola25  = "seedance-2.5"
-	ModelImage   = "Nano Banana Pro"
-	ModelVideo   = "gemini-web-video"
-	ModelReverse = "jimeng-video-reverse"
+	ModelDola         = "seedance-2.0"
+	ModelDola25       = "seedance-2.5"
+	ModelDoubao25     = "doubao-seedance-2-5-260628"
+	ModelDoubao20Fast = "doubao-seedance-2-0-fast-260128"
+	ModelImage        = "Nano Banana Pro"
+	ModelVideo        = "gemini-web-video"
+	ModelReverse      = "jimeng-video-reverse"
 )
 
 // 任务形态：决定校验分支与建单载荷。
 const (
 	kindDolaVideo   = "dola_video"   // Seedance 2.0：5/10/15 秒/比例/参考图白名单
 	kindDola25Video = "dola25_video" // Seedance 2.5：固定 30 秒/720p/比例/参考图白名单
+	kindDoubaoVideo = "doubao_video" // 豆包官网：5/10/15/30 秒四档/比例七档（含 auto）/参考图
 	kindVeoVideo    = "veo_video"    // 只有宽高比：官网无模型/时长/分辨率控件
 	kindImage       = "image"        // 张数 + 宽高比 + 参考图
 	kindReverse     = "reverse"      // 单视频入参，文本出参
@@ -119,11 +130,13 @@ type modelSpec struct {
 }
 
 var modelSpecs = map[string]modelSpec{
-	ModelDola:    {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDolaVideo},
-	ModelDola25:  {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDola25Video},
-	ModelVideo:   {PlatformID: PlatformIDGemini, OutputMode: OutputModeVideo, Kind: kindVeoVideo},
-	ModelImage:   {PlatformID: PlatformIDImage, OutputMode: OutputModeImage, Kind: kindImage},
-	ModelReverse: {PlatformID: PlatformIDJimeng, OutputMode: OutputModeText, Kind: kindReverse},
+	ModelDola:         {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDolaVideo},
+	ModelDola25:       {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDola25Video},
+	ModelDoubao25:     {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo},
+	ModelDoubao20Fast: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo},
+	ModelVideo:        {PlatformID: PlatformIDGemini, OutputMode: OutputModeVideo, Kind: kindVeoVideo},
+	ModelImage:        {PlatformID: PlatformIDImage, OutputMode: OutputModeImage, Kind: kindImage},
+	ModelReverse:      {PlatformID: PlatformIDJimeng, OutputMode: OutputModeText, Kind: kindReverse},
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -155,6 +168,29 @@ var allowedRatios = map[string]bool{
 	"1:1":  true,
 	"4:3":  true,
 	"3:4":  true,
+	"21:9": true,
+}
+
+// 豆包官网参数白名单（2026-10-06 真机探针订正，与 Worker 侧
+// cron_video_brach src/platforms/doubao/params.ts 同口径）：
+//   - 时长四档 5/10/15/30（注意与 dola 的 5/10/15 不同，多了 30）；
+//   - 比例七档，含官网出厂默认档 `auto`（「自动 · 10s」）；
+//   - 比例「未指定不编造」：豆包未指定时保持官网当前状态（App 侧
+//     resolveDoubaoRatioLabel 空 → null 纪律），不强补 16:9。
+var allowedDoubaoDurations = map[int]bool{
+	5:  true,
+	10: true,
+	15: true,
+	30: true,
+}
+
+var allowedDoubaoRatios = map[string]bool{
+	"auto": true,
+	"3:4":  true,
+	"4:3":  true,
+	"9:16": true,
+	"16:9": true,
+	"1:1":  true,
 	"21:9": true,
 }
 
@@ -335,11 +371,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
 	}
 
-	ratio, err := resolveRatio(req)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
+	// 豆包的比例在 kindDoubaoVideo 分支自行解析：官网含 auto 档且「未指定不编造」
+	// （空 → 保持官网当前状态），与 dola「缺省补 16:9」口径不同，公共段不适用。
+	if spec.Kind != kindDoubaoVideo {
+		ratio, err := resolveRatio(req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
+		}
+		norm.Ratio = ratio
 	}
-	norm.Ratio = ratio
 
 	images, err := resolveReferenceImages(req)
 	if err != nil {
@@ -350,6 +390,34 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	switch spec.Kind {
 	case kindDolaVideo:
 		duration, err := resolveDuration(req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		norm.Duration = duration
+	case kindDoubaoVideo:
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		// 豆包比例「未指定不编造」：公共段 resolveRatio 已把空值填成 16:9（dola
+		// 口径），豆包要用原始值覆盖回去 —— 空值原样透传，让 Worker 保持官网
+		// 当前状态（出厂「自动」档），而不是静默改掉用户没选的参数。
+		rawRatio := firstNonEmpty(
+			strings.TrimSpace(req.Size),
+			strings.TrimSpace(req.Ratio),
+			strings.TrimSpace(req.AspectRatio),
+		)
+		if rawRatio == "" {
+			norm.Ratio = ""
+		} else {
+			if !allowedDoubaoRatios[rawRatio] {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("ratio must be one of auto/16:9/9:16/1:1/4:3/3:4/21:9, got %q", rawRatio),
+					"invalid_ratio", http.StatusBadRequest,
+				)
+			}
+			norm.Ratio = rawRatio
+		}
+		duration, err := resolveDoubaoDuration(req)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
@@ -450,6 +518,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if spec.Kind == kindDola25Video {
 			body.VideoParams.Resolution = "720p"
 		}
+		body.Inputs = toInputs(InputTypeImage, req.Images)
+	case kindDoubaoVideo:
+		// 豆包：model 字段传官网档位真名（ArcReel/Worker 两侧白名单再归一一次）；
+		// ratio 可为空串（未指定不编造，Worker 端 resolveDoubaoRatioLabel 空 →
+		// null → 保持官网当前状态）；豆包无分辨率控件，不传 resolution。
+		body.VideoParams = &videoParams{Model: req.Model, Ratio: req.Ratio, Duration: &req.Duration}
 		body.Inputs = toInputs(InputTypeImage, req.Images)
 	default:
 		return nil, fmt.Errorf("unsupported manwu request kind: %s", spec.Kind)
@@ -677,6 +751,11 @@ func getNormalizedRequest(c *gin.Context) (*normalizedRequest, error) {
 // 参数付费。
 func rejectFields(req clientRequest, kind, modelName string) error {
 	switch kind {
+	case kindDoubaoVideo:
+		// 豆包官网无分辨率控件（App 侧无 resolution 处理链路），显式拒绝。
+		if strings.TrimSpace(req.Resolution) != "" {
+			return fmt.Errorf("%s does not support resolution", modelName)
+		}
 	case kindDola25Video:
 		resolution := strings.TrimSpace(req.Resolution)
 		if resolution != "" && !strings.EqualFold(resolution, "720p") {
@@ -745,6 +824,39 @@ func resolveDuration(req clientRequest) (int, error) {
 	}
 
 	return defaultDuration, nil
+}
+
+// doubaoDefaultDuration 与 Worker 侧 DOUBAO_DEFAULT_DURATION（5s 档）一致。
+const doubaoDefaultDuration = 5
+
+// resolveDoubaoDuration 解析豆包时长：seconds（首选，数字或数字字符串）→ duration
+// → 缺省 5。白名单 5/10/15/30（豆包官网四档，比 dola 多一档 30）；缺省或 null
+// 视为未指定；字段存在但非法直接报错——与 resolveDuration 同纪律，避免计费
+// 时长与实际生成时长脱节（ArcReel 侧对非法值会静默回落 5）。
+func resolveDoubaoDuration(req clientRequest) (int, error) {
+	seconds, found, err := parseFlexibleInt(req.Seconds)
+	if err != nil {
+		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
+	}
+	if found {
+		if !allowedDoubaoDurations[seconds] {
+			return 0, fmt.Errorf("seconds must be one of 5/10/15/30, got %d", seconds)
+		}
+		return seconds, nil
+	}
+
+	duration, found, err := parseFlexibleInt(req.Duration)
+	if err != nil {
+		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
+	}
+	if found {
+		if !allowedDoubaoDurations[duration] {
+			return 0, fmt.Errorf("duration must be one of 5/10/15/30, got %d", duration)
+		}
+		return duration, nil
+	}
+
+	return doubaoDefaultDuration, nil
 }
 
 // resolveFixedDuration 解析固定时长模型：未指定时使用固定值，显式传入其它值直接拒绝。

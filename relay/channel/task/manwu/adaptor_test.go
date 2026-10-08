@@ -426,6 +426,8 @@ func TestModelListAndChannelName(t *testing.T) {
 	a := &TaskAdaptor{}
 	assert.Equal(t, []string{
 		"Nano Banana Pro",
+		"doubao-seedance-2-0-fast-260128",
+		"doubao-seedance-2-5-260628",
 		"gemini-web-video",
 		"jimeng-video-reverse",
 		"seedance-2.0",
@@ -448,6 +450,20 @@ func TestSpecForRoutesEveryModel(t *testing.T) {
 	assert.Equal(t, PlatformID, dola25.PlatformID)
 	assert.Equal(t, OutputModeVideo, dola25.OutputMode)
 	assert.Equal(t, kindDola25Video, dola25.Kind)
+
+	// 豆包官网两个模型：与 dola 同为 Seedance 系但**独立平台**，必须路由到
+	// doubao + doubao_video kind（2026-10-08 用户定稿：只放开 2.5 与 2.0 Fast）。
+	doubao25, ok := SpecFor(ModelDoubao25)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDDoubao, doubao25.PlatformID)
+	assert.Equal(t, OutputModeVideo, doubao25.OutputMode)
+	assert.Equal(t, kindDoubaoVideo, doubao25.Kind)
+
+	doubaoFast, ok := SpecFor(ModelDoubao20Fast)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDDoubao, doubaoFast.PlatformID)
+	assert.Equal(t, OutputModeVideo, doubaoFast.OutputMode)
+	assert.Equal(t, kindDoubaoVideo, doubaoFast.Kind)
 
 	veo, ok := SpecFor(ModelVideo)
 	require.True(t, ok)
@@ -862,4 +878,74 @@ func TestConvertToOpenAIVideoPrefersStoredResultText(t *testing.T) {
 	// 文本交付物不得给 url（否则客户端会去拉不存在的媒体文件）。
 	_, hasURL := metadata["url"]
 	assert.False(t, hasURL, "文本任务不得带 metadata.url")
+}
+
+// ── doubao（豆包官网，独立于 dola 的执行站点）──
+
+func TestDoubaoVideoRoutesToDoubaoPlatform(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"doubao-seedance-2-5-260628","prompt":"海底世界","seconds":30}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, kindDoubaoVideo, req.Kind)
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := decodePayload(t, reader)
+	assert.Equal(t, "doubao", payload["platformId"])
+	assert.Equal(t, OutputModeVideo, payload["outputMode"])
+	vp, _ := payload["videoParams"].(map[string]any)
+	require.NotNil(t, vp)
+	assert.Equal(t, "doubao-seedance-2-5-260628", vp["model"])
+	assert.Equal(t, float64(30), vp["duration"], "豆包支持 30s 档（与 dola 2.0 的三档不同）")
+}
+
+func TestDoubaoRatioNotInventedWhenUnspecified(t *testing.T) {
+	// 豆包「未指定不编造」：公共段 resolveRatio 会把空值填成 16:9（dola 口径），
+	// 豆包必须覆盖回空 —— Worker 端保持官网当前状态（出厂「自动」档）。
+	c, info, a := postVideoCtx(t, `{"model":"doubao-seedance-2-0-fast-260128","prompt":"x"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "", req.Ratio, "未指定比例时不得编造 16:9")
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := decodePayload(t, reader)
+	vp, _ := payload["videoParams"].(map[string]any)
+	assert.Equal(t, "", vp["ratio"])
+
+	// 缺省时长回落 5（与 Worker 侧 DOUBAO_DEFAULT_DURATION 一致）。
+	assert.Equal(t, 5, req.Duration)
+}
+
+func TestDoubaoAcceptsAutoRatioAndRejectsIllegal(t *testing.T) {
+	// auto 是豆包官网出厂档，必须接受。
+	c, info, a := postVideoCtx(t, `{"model":"doubao-seedance-2-5-260628","prompt":"x","ratio":"auto","seconds":10}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "auto", req.Ratio)
+
+	cases := []struct {
+		name string
+		body string
+		code string
+	}{
+		{"bad ratio", `{"model":"doubao-seedance-2-5-260628","prompt":"x","ratio":"4:2"}`, "invalid_ratio"},
+		{"bad seconds", `{"model":"doubao-seedance-2-5-260628","prompt":"x","seconds":8}`, "invalid_duration"},
+		{"bad duration", `{"model":"doubao-seedance-2-5-260628","prompt":"x","duration":20}`, "invalid_duration"},
+		{"resolution", `{"model":"doubao-seedance-2-5-260628","prompt":"x","resolution":"1080p"}`, "invalid_request"},
+		{"unknown model", `{"model":"doubao-seedance-2-0-260128","prompt":"x"}`, "invalid_model"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			badCtx, badInfo, badAdaptor := postVideoCtx(t, tc.body)
+			taskErr := badAdaptor.ValidateRequestAndSetAction(badCtx, badInfo)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, tc.code, taskErr.Code)
+		})
+	}
 }
