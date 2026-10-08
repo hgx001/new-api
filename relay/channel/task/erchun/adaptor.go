@@ -757,6 +757,45 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return result, nil
 }
 
+// ConvertToOpenAIVideo 把二春任务记录转成 OpenAI Video API 查询响应（GET /v1/videos/{id}）。
+//
+// 产物 URL 契约与 ParseTaskResult 同口径：content_url 需要渠道 Bearer 才能取，
+// **不透传上游相对路径**，metadata.url 统一落成站内 /v1/videos/{task}/content 代理地址，
+// 由 controller/video_proxy.go 的 ChannelTypeErchun 分支带渠道密钥回源下载。
+// ArcReel 的 openai SDK 下载走 client.videos.download_content(video_id)，天然命中该代理端点。
+// 缺失此方法时 relay_task.go 的 OpenAI Video 查询分支会落到 not_implemented:{platform}，
+// 下游（ArcReel）轮询永远拿不到终态 —— 2026-10-08 B 机 wan3.0-480p 线上事故的根因。
+func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
+	var res taskResponse
+	if err := common.Unmarshal(originTask.Data, &res); err != nil {
+		return nil, errors.Wrap(err, "unmarshal erchun task data failed")
+	}
+
+	openAIVideo := dto.NewOpenAIVideo()
+	openAIVideo.ID = originTask.TaskID
+	openAIVideo.Status = originTask.Status.ToVideoStatus()
+	openAIVideo.SetProgressStr(originTask.Progress)
+	openAIVideo.CreatedAt = originTask.CreatedAt
+	openAIVideo.CompletedAt = originTask.UpdatedAt
+	openAIVideo.Model = res.Model
+
+	switch strings.ToLower(strings.TrimSpace(res.Status)) {
+	case "completed", "succeeded", "success":
+		// content_url 需要渠道 Bearer，不能透传给客户端；落站内代理地址。
+		openAIVideo.SetMetadata("url", taskcommon.BuildProxyURL(originTask.TaskID))
+	case "failed", "canceled", "cancelled":
+		message := taskcommon.ReasonContentModeration
+		code := ""
+		if res.Error != nil {
+			message = firstNonEmpty(res.Error.Message, res.Error.Code, message)
+			code = res.Error.Code
+		}
+		openAIVideo.Error = &dto.OpenAIVideoError{Message: message, Code: code}
+	}
+
+	return common.Marshal(openAIVideo)
+}
+
 func convertErchunStatus(status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "completed", "succeeded", "success":
