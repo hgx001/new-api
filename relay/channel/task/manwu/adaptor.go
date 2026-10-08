@@ -97,10 +97,12 @@ const (
 // 模型名口径：
 //   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，5/10/15 秒，按次计费）
 //   - seedance-2.5：dola 官网 Seedance 2.5（远端视频，固定 30 秒 / 720p，按次计费）
-//   - doubao-seedance-2-5-260628：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒
-//     四档，按次计费）。模型名与豆包官网下拉档位一一对应（与 dola 的 seedance-2.5
-//     同名不同站，**互不通用**）
-//   - doubao-seedance-2-0-fast-260128：豆包官网 Seedance 2.0 Fast（远端视频，同上）
+//   - db-seedance-2-5：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒四档，
+//     按次计费）。公开名是短名（2026-10-08 用户定稿），转发 ArcReel 前翻译成
+//     官网档位真名 doubao-seedance-2-5-260628（见 modelSpec.UpstreamModel）；
+//     与 dola 的 seedance-2.5 同名不同站，**互不通用**
+//   - db-seedance-2-0：豆包官网 Seedance 2.0 Fast（远端视频，同上），上游真名
+//     doubao-seedance-2-0-fast-260128
 //   - Nano Banana Pro：ArcReel 抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）。服务端
 //     MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini(nano_banana_2) 还是
 //     jimeng(dreamina_image_5_0_lite)，客户端不感知，也不该猜
@@ -110,11 +112,18 @@ const (
 const (
 	ModelDola         = "seedance-2.0"
 	ModelDola25       = "seedance-2.5"
-	ModelDoubao25     = "doubao-seedance-2-5-260628"
-	ModelDoubao20Fast = "doubao-seedance-2-0-fast-260128"
+	ModelDoubao25     = "db-seedance-2-5"
+	ModelDoubao20Fast = "db-seedance-2-0"
 	ModelImage        = "Nano Banana Pro"
 	ModelVideo        = "gemini-web-video"
 	ModelReverse      = "jimeng-video-reverse"
+)
+
+// 豆包官网档位真名：Worker 侧 DOM 点击目标（src/platforms/doubao/params.ts），
+// 只出现在发往 ArcReel 的载荷里，不对客户端暴露。
+const (
+	doubaoUpstreamModel25     = "doubao-seedance-2-5-260628"
+	doubaoUpstreamModel20Fast = "doubao-seedance-2-0-fast-260128"
 )
 
 // 任务形态：决定校验分支与建单载荷。
@@ -131,13 +140,16 @@ type modelSpec struct {
 	PlatformID string
 	OutputMode string
 	Kind       string
+	// UpstreamModel：发往 ArcReel 的上游模型名；空 = 与公开名一致。豆包公开短名
+	// ≠ 官网档位真名，翻译在这一层做（ArcReel/Worker 两侧白名单仍是真名）。
+	UpstreamModel string
 }
 
 var modelSpecs = map[string]modelSpec{
 	ModelDola:         {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDolaVideo},
 	ModelDola25:       {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDola25Video},
-	ModelDoubao25:     {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo},
-	ModelDoubao20Fast: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo},
+	ModelDoubao25:     {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel25},
+	ModelDoubao20Fast: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel20Fast},
 	ModelVideo:        {PlatformID: PlatformIDGemini, OutputMode: OutputModeVideo, Kind: kindVeoVideo},
 	ModelImage:        {PlatformID: PlatformIDImage, OutputMode: OutputModeImage, Kind: kindImage},
 	ModelReverse:      {PlatformID: PlatformIDJimeng, OutputMode: OutputModeText, Kind: kindReverse},
@@ -524,10 +536,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 		body.Inputs = toInputs(InputTypeImage, req.Images)
 	case kindDoubaoVideo:
-		// 豆包：model 字段传官网档位真名（ArcReel/Worker 两侧白名单再归一一次）；
-		// ratio 可为空串（未指定不编造，Worker 端 resolveDoubaoRatioLabel 空 →
-		// null → 保持官网当前状态）；豆包无分辨率控件，不传 resolution。
-		body.VideoParams = &videoParams{Model: req.Model, Ratio: req.Ratio, Duration: &req.Duration}
+		// 豆包：model 字段传官网档位真名（公开短名在 spec.UpstreamModel 翻译，
+		// ArcReel/Worker 两侧白名单再归一一次）；ratio 可为空串（未指定不编造，
+		// Worker 端 resolveDoubaoRatioLabel 空 → null → 保持官网当前状态）；
+		// 豆包无分辨率控件，不传 resolution。
+		body.VideoParams = &videoParams{Model: firstNonEmpty(spec.UpstreamModel, req.Model), Ratio: req.Ratio, Duration: &req.Duration}
 		body.Inputs = toInputs(InputTypeImage, req.Images)
 	default:
 		return nil, fmt.Errorf("unsupported manwu request kind: %s", spec.Kind)
