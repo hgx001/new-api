@@ -306,6 +306,7 @@ func TestParseTaskResultStatusMapping(t *testing.T) {
 	unavailable, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"url_unavailable"}`))
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusFailure, unavailable.Status)
+	assert.Equal(t, reasonOutputUnavailable, unavailable.Reason)
 
 	cancelled, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"cancelled","error":"用户取消"}`))
 	require.NoError(t, err)

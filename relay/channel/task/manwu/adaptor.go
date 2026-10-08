@@ -81,6 +81,10 @@ const (
 	// reasonEmptyResult：上游报 ready 却既没有产物 URL 也没有文本结果。判失败而不是
 	// 成功——空交付必须触发退款，否则用户为「什么都没拿到」付了钱。
 	reasonEmptyResult = "任务完成但上游未返回结果"
+	// reasonOutputUnavailable：上游报 url_unavailable（产物 URL 校验未通过）。不能落
+	// 「内容审核不通过」兜底——2026-10-08 豆包首单实证：ArcReel 校验器白名单缺失误判
+	// 时，用户看到「内容审核不通过」会误以为自己提示词违规，实际是基础设施问题。
+	reasonOutputUnavailable = "产物 URL 校验失败：生成结果暂不可用或已过期"
 	// reasonDirectUploadUnsupported：全渠道都不收 multipart 文件。参考素材必须是
 	// ArcReel 能回源的公网 URL（图片 URL、dola/gemini 的参考图 URL、反解的视频 URL），
 	// 因此这条拒绝对四个模型都成立，不能写成只讲反解。
@@ -621,7 +625,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	taskResult := &relaycommon.TaskInfo{Code: 0}
-	switch strings.ToLower(strings.TrimSpace(res.Status)) {
+	status := strings.ToLower(strings.TrimSpace(res.Status))
+	switch status {
 	case "queued":
 		taskResult.Status = model.TaskStatusQueued
 		taskResult.Progress = taskcommon.ProgressQueued
@@ -652,7 +657,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "failed", "url_unavailable":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = taskcommon.ProgressComplete
-		taskResult.Reason = res.Error
+		if status == "url_unavailable" {
+			taskResult.Reason = firstNonEmpty(res.Error, reasonOutputUnavailable)
+		} else {
+			taskResult.Reason = res.Error
+		}
 	case "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = taskcommon.ProgressComplete
@@ -682,7 +691,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	// 响应的快照，经脱敏/重写后可能缺字段。反解提示词很长，更不能只靠快照。
 	text := strings.TrimSpace(task.PrivateData.ResultText)
 
-	switch strings.ToLower(strings.TrimSpace(res.Status)) {
+	status := strings.ToLower(strings.TrimSpace(res.Status))
+	switch status {
 	case "ready":
 		raw := strings.TrimSpace(res.resultURL())
 		if text == "" {
@@ -709,10 +719,15 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 			openAIResp.Error = &dto.OpenAIVideoError{Code: "empty_result", Message: reasonEmptyResult}
 		}
 	case "failed", "url_unavailable":
+		fallback := taskcommon.ReasonContentModeration
+		if status == "url_unavailable" {
+			// url_unavailable 是基础设施侧产物校验失败，不能归因为内容审核。
+			fallback = reasonOutputUnavailable
+		}
 		openAIResp.Status = dto.VideoStatusFailed
 		openAIResp.Error = &dto.OpenAIVideoError{
 			Code:    strings.ToLower(strings.TrimSpace(res.Status)),
-			Message: firstNonEmpty(res.Error, taskcommon.ReasonContentModeration),
+			Message: firstNonEmpty(res.Error, fallback),
 		}
 	case "cancelled":
 		openAIResp.Status = dto.VideoStatusFailed
