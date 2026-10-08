@@ -312,6 +312,8 @@ var defaultModelPrice = map[string]float64{
 	"sd-2.5":                            0.821918,        // 按次对外 ¥6/次（上游 ¥2/次 3 倍定价）；内部按 USD 等值存储（6/7.3）
 	"seedance-2.0":                      1.0 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
 	"seedance-2.5":                      0.8 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
+	"doubao-seedance-2-5-260628":        1.0 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.5，按次 ¥1.0/次（5/10/15/30 秒同价，与 ArcReel 上游成本价持平暂定）；2026-10-08 接入
+	"doubao-seedance-2-0-fast-260128":   1.0 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.0 Fast，按次 ¥1.0/次（同上暂定，待商务核定）；2026-10-08 接入
 	"gemini-web-video":                  1.0 / USD2RMB,   // 漫屋 ArcReel Gemini 官网 Veo，按次计费 ¥1.0/次（站点侧不乘时长）
 	"Nano Banana Pro":                   0.3 / USD2RMB,   // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
 	"jimeng-video-reverse":              1.0 / USD2RMB,   // 漫屋 ArcReel 即梦视频反解，按次 ¥1.0/次（占位价，待商务核定）
