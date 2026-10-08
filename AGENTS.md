@@ -2,6 +2,57 @@
 
 DO NOT send optional commentary
 
+## 三项目关系链路（2026-10-08）
+
+本业务由三个紧密耦合的项目组成，排查问题前先分清归属（三份 AGENTS.md 各有一份相同章节，改链路时三处同步更新）：
+
+| 项目 | 位置 | 角色 |
+|---|---|---|
+| 燃境 Ai App | `C:/work/即梦网站/cron_video_brach`（Electron） | **Worker 执行体**：DOM 自动化跑各平台官网，以 Worker 身份连 ArcReel 的 WSS 接单执行 |
+| ArcReel（漫屋） | `C:/work/即梦网站/ArcReel`（`manwu-agent` 是其 gitee 镜像） | **服务端 + 前端**：建单、`assign_job` 派单（按 `<platform>.dom` 能力匹配）、钱包计费、产物托管 |
+| new-api（本仓库） | `C:/work/new-api-src`（维护目录 `C:/work/维护newapi`） | **对外 API 网关**：漫屋渠道把任务转发给 ArcReel，对终端用户卖 OpenAI 兼容 API |
+
+### 端到端调用链
+
+```
+终端用户（new-api 令牌）→ POST /v1/video/generations
+  → 本仓库漫屋渠道（relay/channel/task/manwu/adaptor.go，参数白名单校验）
+  → ArcReel POST /api/v1/remote-generation/jobs（REMOTE_OPENAPI_SERVICE_TOKEN 鉴权）
+  → ArcReel assign_job（按 <platform>.dom 能力匹配在线 Worker）
+  → Worker App（WSS 长连接）DOM 自动化执行
+  → Worker 下载→delogo→上传产物 → ArcReel 托管（projects/remote_outputs/）
+  → 本仓库轮询 GET /api/v1/remote-generation/jobs/{id} → 代理产物字节回给用户
+```
+
+### 模型 → 平台映射（漫屋渠道，adaptor.go modelSpecs 路由表）
+
+| 对外模型名 | ArcReel platformId | 执行站点 | 备注 |
+|---|---|---|---|
+| `seedance-2.0` | dola | dola 官网 | 5/10/15s，¥1.5/次 |
+| `seedance-2.5` | dola | dola 官网 | 固定 30s/720p，¥1/次 |
+| `doubao-seedance-2-5-260628` | doubao | **豆包官网**（www.doubao.com） | 5/10/15/30s，¥1/次 |
+| `doubao-seedance-2-0-fast-260128` | doubao | **豆包官网** | 同上 |
+| `gemini-web-video` | gemini | Gemini 官网 Veo | 固定 10s，¥1/次 |
+| `Nano Banana Pro` | manwu-image | gemini/jimeng（服务端路由） | 图片 |
+| `jimeng-video-reverse` | jimeng | 即梦 | 视频反解，文本出参 |
+
+⚠️ **doubao 与 dola 是两个独立的执行站点**——模型同为 Seedance 系，但官网、账号池、风控完全不同。豆包模型名与 Worker 侧白名单（`cron_video_brach/src/platforms/doubao/params.ts`）同口径；渠道侧校验在 adaptor.go 的 `kindDoubaoVideo` 分支（时长 5/10/15/30、比例七档含 auto、未指定比例不编造、拒 resolution）。
+
+### 环境配对（一一对应，禁止交叉）
+
+| 环境 | App ↔ ArcReel | new-api ↔ ArcReel |
+|---|---|---|
+| 开发 | Worker 用 `start-dev.bat`（注入 `ws://127.0.0.1:1241` + `worker-token-dev.txt`） | 渠道 BaseURL 填 `http://127.0.0.1:1241` |
+| 生产 | 打包版默认 `wss://arcreel.heibaidao.cn` + `worker-token.txt` / UI 配置 | 渠道 BaseURL 不填（默认 `https://arcreel.heibaidao.cn`） |
+
+鉴权三层：Worker↔ArcReel 用 worker token（仅启动器注入）；new-api↔ArcReel 用 `REMOTE_OPENAPI_SERVICE_TOKEN`（ArcReel 环境变量，Bearer，只认 create/get/cancel 三端点 + 产物读取，落系统账号 `openapi-service`）；终端用户↔本仓库用 new-api 令牌。
+
+### 排查要点
+
+- **任务卡 queued** = 没有在线 Worker 上报对应能力（查 ArcReel 库 `remote_worker_nodes` 表）；Worker 离线接不到单 ≠ 生成失败。
+- 本渠道建单 400（invalid_model / invalid_duration / invalid_ratio）= adaptor 白名单拦截，对照上表；ArcReel 侧归一见其 create_job 各平台分支。
+- 漫屋前端报「没有漫屋授权桥」= 在纯浏览器里点了万相桥链路的按钮（须桌面端 App），与远端任务体系无关，两套通道别混。
+
 ## Overview
 
 This is an AI API gateway/proxy built with Go. It aggregates 40+ upstream AI providers (OpenAI, Claude, Gemini, Azure, AWS Bedrock, etc.) behind a unified API, with user management, billing, rate limiting, and an admin dashboard.
