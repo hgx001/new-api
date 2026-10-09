@@ -364,8 +364,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 // upstreamModel 优先用渠道的模型映射结果；没配映射时回落到本渠道唯一的稳定 ID。
 // 不能把 PublicModel 直接发给上游 —— 它是我们自己的对外名，上游只认 mdl_ 稳定 ID。
+//
+// 两个判空缺一不可：UpstreamModelName 挂在内嵌的 *ChannelMeta 上，只判 info != nil
+// 保护不到它，ChannelMeta 为 nil 时照样 panic。与 deepseek / moonshot 的写法保持一致。
 func (a *TaskAdaptor) upstreamModel(info *relaycommon.RelayInfo) string {
-	if info != nil {
+	if info != nil && info.ChannelMeta != nil {
 		if mapped := strings.TrimSpace(info.UpstreamModelName); strings.HasPrefix(mapped, "mdl_") {
 			return mapped
 		}
