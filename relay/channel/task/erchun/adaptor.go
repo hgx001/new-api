@@ -727,7 +727,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if res.Error != nil {
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = firstNonEmpty(res.Error.Message, res.Error.Code, taskcommon.ReasonContentModeration)
+		result.Reason = firstNonEmpty(res.Error.Message, res.Error.Code, reasonUpstreamFailed)
 		return result, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(res.Status)) {
@@ -749,10 +749,14 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		// content_url 需要 Bearer，下游拿不到。这里**故意留空 Url**：
 		// service/task_polling.go 在 Url 为空时会自动落成站内 content 代理地址，
 		// 再由 controller/video_proxy.go 的 ChannelTypeErchun 分支带渠道密钥回源。
-	case "failed", "canceled", "cancelled":
+	case "failed":
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = taskcommon.ReasonContentModeration
+		result.Reason = reasonUpstreamFailed
+	case "canceled", "cancelled":
+		result.Status = model.TaskStatusFailure
+		result.Progress = taskcommon.ProgressComplete
+		result.Reason = reasonCancelled
 	default:
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress

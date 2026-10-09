@@ -67,3 +67,14 @@ var allowedRatios = map[string]bool{
 	"3:4":      true,
 	"9:16":     true,
 }
+
+// 失败原因文案。
+//
+// 不能一律兜底成「内容审核不通过」：2026-10-08 manwu 豆包首单实证（commit 332ecfb5）
+// 正是这个坑 —— 上游报 url_unavailable（产物 URL 校验未通过），本质是基础设施问题，
+// 用户看到「内容审核不通过」会误以为自己提示词违规，白白排查半天。
+// 故按失败模式给如实文案，与 manwu / youzanwan3 的处理保持一致。
+const (
+	reasonUpstreamFailed = "上游任务失败"
+	reasonCancelled      = "任务已取消"
+)
