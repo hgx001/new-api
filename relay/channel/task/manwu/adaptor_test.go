@@ -161,8 +161,8 @@ func TestValidateRejectsIllegalRequests(t *testing.T) {
 		"empty model":        {`{"prompt":"hi"}`, "invalid_model"},
 		"empty prompt":       {`{"model":"seedance-2.0","prompt":"   "}`, "invalid_request"},
 		"bad json":           {`{`, "invalid_request"},
-		"seconds over list":  {`{"model":"seedance-2.0","prompt":"hi","seconds":20}`, "invalid_duration"},
-		"duration over list": {`{"model":"seedance-2.0","prompt":"hi","duration":7}`, "invalid_duration"},
+		"seconds over range": {`{"model":"seedance-2.0","prompt":"hi","seconds":20}`, "invalid_duration"},
+		"duration below min": {`{"model":"seedance-2.0","prompt":"hi","duration":4}`, "invalid_duration"},
 		"seconds malformed":  {`{"model":"seedance-2.0","prompt":"hi","seconds":"abc"}`, "invalid_duration"},
 		"seconds float":      {`{"model":"seedance-2.0","prompt":"hi","seconds":10.5}`, "invalid_duration"},
 		"ratio not allowed":  {`{"model":"seedance-2.0","prompt":"hi","ratio":"16:10"}`, "invalid_ratio"},
@@ -924,13 +924,55 @@ func TestDoubaoRatioNotInventedWhenUnspecified(t *testing.T) {
 }
 
 func TestDoubao20FastRejects30s(t *testing.T) {
-	// 2.0 Fast 官网没有 30s 档（2026-10-08 用户定稿：只支持 5/10/15 秒），
-	// 30s 组合必须在入口 400，而不是等 Worker setDoubaoDuration 诚实报错。
+	// 2.0 Fast 时长口径为 5–15 秒区间（2026-10-10 用户定稿，见
+	// TestSeedance20DurationAcceptsRangeAndSnaps），30s 越界必须在入口 400，
+	// 而不是等 Worker setDoubaoDuration 诚实报错。
 	for _, field := range []string{"seconds", "duration"} {
 		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":"db-seedance-2-0","prompt":"x","%s":30}`, field))
 		taskErr := a.ValidateRequestAndSetAction(c, info)
 		require.NotNil(t, taskErr, field)
 		assert.Equal(t, "invalid_duration", taskErr.Code)
+	}
+}
+
+// Seedance 2.0 系（seedance-2.0 / db-seedance-2-0）时长口径（2026-10-10 用户定稿）：
+// 对外受理 **5–15 秒区间**，区间内任意整数秒放行，并就近吸附到执行端可点档位
+// （6-7→5、8-12→10、13-14→15）——非档位值若原样下发，会被 ArcReel 静默回落到
+// 默认档（dola 15s / doubao 5s），用户会拿到与请求不符的成片。
+func TestSeedance20DurationAcceptsRangeAndSnaps(t *testing.T) {
+	cases := []struct {
+		value int
+		want  int
+	}{
+		{5, 5}, {6, 5}, {7, 5},
+		{8, 10}, {10, 10}, {12, 10},
+		{13, 15}, {14, 15}, {15, 15},
+	}
+	for _, model := range []string{ModelDola, ModelDoubao20Fast} {
+		for _, tc := range cases {
+			for _, field := range []string{"seconds", "duration"} {
+				c, info, a := postVideoCtx(t,
+					fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, model, field, tc.value))
+				require.Nil(t, a.ValidateRequestAndSetAction(c, info),
+					"%s %s=%d 应在区间内被受理", model, field, tc.value)
+
+				req, err := getNormalizedRequest(c)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, req.Duration,
+					"%s %s=%d 应吸附到 %d", model, field, tc.value, tc.want)
+			}
+		}
+	}
+
+	// 区间外一律 400：下限以下、上限以上、以及 2.0 系没有的 30s 档。
+	for _, model := range []string{ModelDola, ModelDoubao20Fast} {
+		for _, value := range []int{4, 16, 30} {
+			c, info, a := postVideoCtx(t,
+				fmt.Sprintf(`{"model":%q,"prompt":"hi","seconds":%d}`, model, value))
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr, "%s seconds=%d 应被拒", model, value)
+			assert.Equal(t, "invalid_duration", taskErr.Code, "%s seconds=%d", model, value)
+		}
 	}
 }
 

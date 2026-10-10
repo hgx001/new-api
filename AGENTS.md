@@ -28,10 +28,10 @@ DO NOT send optional commentary
 
 | 对外模型名 | ArcReel platformId | 执行站点 | 备注 |
 |---|---|---|---|
-| `seedance-2.0` | dola | dola 官网 | 5/10/15s，¥1.5/次 |
+| `seedance-2.0` | dola | dola 官网 | 5–15s 区间受理（吸附 5/10/15），¥1.5/次 |
 | `seedance-2.5` | dola | dola 官网 | 固定 30s/720p，¥1/次 |
 | `db-seedance-2-5`（上游真名 doubao-seedance-2-5-260628） | doubao | **豆包官网**（www.doubao.com） | 5/10/15/30s，¥2/次 |
-| `db-seedance-2-0`（上游真名 doubao-seedance-2-0-fast-260128） | doubao | **豆包官网** | 5/10/15s，¥1/次（无 30s 档） |
+| `db-seedance-2-0`（上游真名 doubao-seedance-2-0-fast-260128） | doubao | **豆包官网** | 5–15s 区间受理（吸附 5/10/15，无 30s），¥1/次 |
 | `gemini-web-video` | gemini | Gemini 官网 Veo | 固定 10s，¥1/次 |
 | `Nano Banana Pro` | manwu-image | gemini/jimeng（服务端路由） | 图片 |
 | `jimeng-video-reverse` | jimeng | 即梦 | 视频反解，文本出参 |
@@ -51,6 +51,7 @@ DO NOT send optional commentary
 
 - **任务卡 queued** = 没有在线 Worker 上报对应能力（查 ArcReel 库 `remote_worker_nodes` 表）；Worker 离线接不到单 ≠ 生成失败。
 - 本渠道建单 400（invalid_model / invalid_duration / invalid_ratio）= adaptor 白名单拦截，对照上表；ArcReel 侧归一见其 create_job 各平台分支。
+- **Seedance 2.0 系时长口径（2026-10-10 用户定稿）**：`seedance-2.0` 与 `db-seedance-2-0` 对外按 **5–15 秒区间**受理，区间内任意整数秒放行并**就近吸附**到执行端可点档位（6-7→5、8-12→10、13-14→15），区间外（含 30s）一律 400。吸附是必须的：ArcReel 中间层对非档位值会**静默回落默认档**（dola→15s、doubao→5s），原样下发会变成「请求 7 秒、成片 15 秒」的账实不符。`db-seedance-2-5` 仍是 5/10/15/30 四档白名单，`seedance-2.5` 固定 30s/720p。
 - 漫屋前端报「没有漫屋授权桥」= 在纯浏览器里点了万相桥链路的按钮（须桌面端 App），与远端任务体系无关，两套通道别混。
 
 ## Overview

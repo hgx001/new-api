@@ -172,10 +172,39 @@ func ModelList() []string {
 	return names
 }
 
-var allowedDurations = map[int]bool{
-	5:  true,
-	10: true,
-	15: true,
+// Seedance 2.0 系（seedance-2.0 / db-seedance-2-0）时长口径（2026-10-10 用户定稿）：
+// 对外按 **5–15 秒区间**受理，区间内任意整数秒都放行。
+//
+// 但两个执行端（Dola 官网 / 豆包官网）的时长控件只提供 5/10/15 三个可点档位，
+// 且 ArcReel 中间层对非档位值会**静默回落默认档**（dola → 15s、doubao → 5s）。
+// 若把 7 秒原样下发，用户会拿到 15 秒或 5 秒成片且无任何提示（账实不符）。
+// 因此落入区间后按**就近吸附**到可点档位再下发：6-7→5、8-12→10、13-14→15。
+const (
+	seedance20MinDuration = 5
+	seedance20MaxDuration = 15
+)
+
+// snapSeedance20Duration 校验 5–15 秒区间并吸附到执行端可点档位；区间外 ok=false。
+func snapSeedance20Duration(value int) (int, bool) {
+	switch {
+	case value < seedance20MinDuration || value > seedance20MaxDuration:
+		return 0, false
+	case value <= 7:
+		return 5, true
+	case value <= 12:
+		return 10, true
+	default:
+		return 15, true
+	}
+}
+
+// validateSeedance20Duration 校验单个字段的 5–15 秒区间口径，返回吸附后的时长。
+func validateSeedance20Duration(field string, value int, model string) (int, error) {
+	snapped, ok := snapSeedance20Duration(value)
+	if !ok {
+		return 0, fmt.Errorf("%s must be between 5 and 15 for %s, got %d", field, model, value)
+	}
+	return snapped, nil
 }
 
 var allowedRatios = map[string]bool{
@@ -189,9 +218,10 @@ var allowedRatios = map[string]bool{
 
 // 豆包官网参数白名单（2026-10-06 真机探针订正，与 Worker 侧
 // cron_video_brach src/platforms/doubao/params.ts 同口径）：
-//   - 时长分模型：2.5 四档 5/10/15/30（比 dola 多 30）；2.0 Fast 官网没有 30s
-//     档，只支持 5/10/15（2026-10-08 用户定稿），非法组合直接 400——Worker 侧
-//     setDoubaoDuration 对页面无档位会诚实报错，这里提前挡避免用户下单后才失败；
+//   - 时长分模型：2.5 四档 5/10/15/30（比 dola 多 30）；2.0 Fast 按 5–15 秒
+//     区间受理并就近吸附到官网可点档位（2026-10-10 用户定稿，见
+//     seedance20MinDuration），区间外直接 400——Worker 侧 setDoubaoDuration
+//     对页面无档位会诚实报错，这里提前挡避免用户下单后才失败；
 //   - 比例七档，含官网出厂默认档 `auto`（「自动 · 10s」）；
 //   - 比例「未指定不编造」：豆包未指定时保持官网当前状态（App 侧
 //     resolveDoubaoRatioLabel 空 → null 纪律），不强补 16:9。
@@ -200,14 +230,6 @@ var allowedDoubaoDurations = map[int]bool{
 	10: true,
 	15: true,
 	30: true,
-}
-
-// allowedDoubao20Durations：2.0 Fast 官网无 30s 档（2026-10-08 用户定稿），
-// 比平台级白名单少一档。resolveDoubaoDuration 按模型二选一。
-var allowedDoubao20Durations = map[int]bool{
-	5:  true,
-	10: true,
-	15: true,
 }
 
 var allowedDoubaoRatios = map[string]bool{
@@ -415,7 +437,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 	switch spec.Kind {
 	case kindDolaVideo:
-		duration, err := resolveDuration(req)
+		duration, err := resolveDuration(req, norm.Model)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
@@ -834,20 +856,18 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 	return nil
 }
 
-// resolveDuration 解析 Seedance 2.0 时长：seconds（首选，数字或数字字符串）→ duration → 缺省 15。
-// 白名单 5/10/15，缺省或 null 视为未指定；字段存在但非法（格式错误或不在白名单）
-// 直接报错——上游 ArcReel 对非法值会静默回落 15，厂商侧必须显式拒绝，
-// 避免计费时长与实际生成时长脱节。
-func resolveDuration(req clientRequest) (int, error) {
+// resolveDuration 解析 Seedance 2.0 时长：seconds（首选，数字或数字字符串）→ duration
+// → 缺省 15。口径为 **5–15 秒区间**（2026-10-10 用户定稿），区间内任意整数秒放行
+// 并就近吸附到官网可点档位（6-7→5、8-12→10、13-14→15）；缺省或 null 视为未指定；
+// 字段存在但非法（格式错误或越出 5–15）直接报错——上游 ArcReel 对非法值会静默回落
+// 15，厂商侧必须显式拒绝，避免计费时长与实际生成时长脱节。
+func resolveDuration(req clientRequest, model string) (int, error) {
 	seconds, found, err := parseFlexibleInt(req.Seconds)
 	if err != nil {
 		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
 	}
 	if found {
-		if !allowedDurations[seconds] {
-			return 0, fmt.Errorf("seconds must be one of 5/10/15, got %d", seconds)
-		}
-		return seconds, nil
+		return validateSeedance20Duration("seconds", seconds, model)
 	}
 
 	duration, found, err := parseFlexibleInt(req.Duration)
@@ -855,10 +875,7 @@ func resolveDuration(req clientRequest) (int, error) {
 		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
 	}
 	if found {
-		if !allowedDurations[duration] {
-			return 0, fmt.Errorf("duration must be one of 5/10/15, got %d", duration)
-		}
-		return duration, nil
+		return validateSeedance20Duration("duration", duration, model)
 	}
 
 	return defaultDuration, nil
@@ -868,26 +885,17 @@ func resolveDuration(req clientRequest) (int, error) {
 const doubaoDefaultDuration = 5
 
 // resolveDoubaoDuration 解析豆包时长：seconds（首选，数字或数字字符串）→ duration
-// → 缺省 5。白名单分模型：2.5 四档 5/10/15/30；2.0 Fast 官网无 30s 档只有
-// 5/10/15（2026-10-08 用户定稿）。缺省或 null 视为未指定；字段存在但非法直接
-// 报错——与 resolveDuration 同纪律，避免计费时长与实际生成时长脱节（ArcReel
-// 侧对非法值会静默回落 5）。
+// → 缺省 5。口径分模型：2.5 四档白名单 5/10/15/30；2.0 Fast 按 **5–15 秒区间**
+// 受理（2026-10-10 用户定稿）并就近吸附到官网可点档位。缺省或 null 视为未指定；
+// 字段存在但非法直接报错——与 resolveDuration 同纪律，避免计费时长与实际生成时长
+// 脱节（ArcReel 侧对非法值会静默回落 5）。
 func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
-	allowed := allowedDoubaoDurations
-	durationsHint := "5/10/15/30"
-	if model == ModelDoubao20Fast {
-		allowed = allowedDoubao20Durations
-		durationsHint = "5/10/15"
-	}
 	seconds, found, err := parseFlexibleInt(req.Seconds)
 	if err != nil {
 		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
 	}
 	if found {
-		if !allowed[seconds] {
-			return 0, fmt.Errorf("seconds must be one of %s for %s, got %d", durationsHint, model, seconds)
-		}
-		return seconds, nil
+		return checkDoubaoDuration("seconds", seconds, model)
 	}
 
 	duration, found, err := parseFlexibleInt(req.Duration)
@@ -895,13 +903,22 @@ func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
 		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
 	}
 	if found {
-		if !allowed[duration] {
-			return 0, fmt.Errorf("duration must be one of %s for %s, got %d", durationsHint, model, duration)
-		}
-		return duration, nil
+		return checkDoubaoDuration("duration", duration, model)
 	}
 
 	return doubaoDefaultDuration, nil
+}
+
+// checkDoubaoDuration 豆包时长口径：2.0 Fast = 5–15 秒区间（就近吸附）；
+// 2.5 = 5/10/15/30 四档白名单。
+func checkDoubaoDuration(field string, value int, model string) (int, error) {
+	if model == ModelDoubao20Fast {
+		return validateSeedance20Duration(field, value, model)
+	}
+	if !allowedDoubaoDurations[value] {
+		return 0, fmt.Errorf("%s must be one of 5/10/15/30 for %s, got %d", field, model, value)
+	}
+	return value, nil
 }
 
 // resolveFixedDuration 解析固定时长模型：未指定时使用固定值，显式传入其它值直接拒绝。
