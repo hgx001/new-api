@@ -241,6 +241,14 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **🔥 未经用户明确允许，禁止跑任何真实视频任务（2026-10-06 用户明令，凌驾于下文一切「真实任务」规则之上）**。视频任务上游按次/按秒真金白银扣费（有赞 prime ≈450 积分/单、smart ≈90 积分/单、seedance ¥0.8–1.0/单），且部分上游 402 预检拒绝后任务**仍可能照跑扣费**（2026-10-06 实测：prime 提交被 402 拒，450 积分照扣、成片照出）。诊断类需求一律走替代手段，按优先级：① 单元测试（`go test` 可确定性复现的绝不真打）；② 历史任务产物验证（不新建单）；③ 必然被本地 400 拦下的非法入参探针（断言 quota 差值为 0、`tasks` 无新增）；④ 通道被禁用等纯路由问题查日志/DB 即可。**只有用户明确说「可以跑一单」之后才允许提交真实任务**；「真实任务上限 1 个」等旧规则均以本条为前提。
 - **恢复被 AutoBan 的渠道必须同时改 `channels.status` 与 `abilities.enabled`**。2026-10-02 的真实事故：AutoBan 禁用渠道时连带把能力表置 `enabled=false`，事后只把 `status` 改回 1，导致渠道「看起来正常」但该渠道**所有模型 503 `model_not_found`**，持续数小时无人察觉。恢复用 `scripts/restore-channel.sh <id>`，它两边一起改并打印复核。
 - **裸 SQL 建/改渠道后必须重启 new-api**：能力走内存缓存（`CacheGetRandomSatisfiedChannel`），SQL 改 `abilities` 对**新建**渠道不生效（对已缓存的旧渠道反而会立刻生效，所以容易误判成「缓存已刷新」）。走管理 API 建渠道不会有这个问题。
+- **上下架（隐藏/恢复）一个模型必须「两处同改」**（2026-10-10 定稿）。一个模型的可见性由**三条独立链路**决定，少改一处就会出现「藏了还在」或「改完自己复活」：
+  - **广场 `/api/pricing`** ← `abilities.enabled=true` × `model/pricing.go isAllowedPricingModel` 白名单；
+  - **下游 `/v1/models`** ← `abilities.enabled=true` × `relay/helper.HasModelBillingConfig`（`model/ability.go GetGroupEnabledModels` 直查能力表）；
+  - **路由**（线上 `MEMORY_CACHE_ENABLED=true`）← `channels.models` 字段本身（`model/channel_cache.go InitChannelCache` 按该字段重建 `group2model2channels`，每 `SYNC_FREQUENCY`=60s 一次；未开缓存时才回落到 `abilities`）。
+  - 🔥 **只删 `abilities` 行不够**：`model.UpdateAbilities` 是「按 `channels.models` 删光重建」，渠道一旦被编辑（后台保存 / 管理 API），被删的能力行会**原样复活** → 广场与列表又出现。故必须 ① 从 `channels.models` 摘除模型名，② 删除该 `abilities` 行。白名单 `isAllowedPricingModel` **不用改**：abilities 不在时它不参与展示判定，保留反而便于日后一键恢复。
+  - 下架即**不可调用**（无渠道 → 503 `model_not_found … 无可用渠道`）。此探针不建单、不扣费，属安全的零成本验证手段。
+  - 生效时延：`/v1/models` 立即；广场 pricing TTL 1min；路由缓存 ≤60s。**无需重启、无需重新部署后端**。
+  - 参考脚本 `scripts/prod-hide-seedance25-20261010.sql`（单事务 + 备份表 + 回滚 SQL 注释）。
 - **验证脚本不得用能通过校验的入参**。`seedance-2.0` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。**更硬的坑：`seedance-2.0` 的最小入参 `{"model":"seedance-2.0","prompt":"x"}` 是合法且会真建单**（2026-10-04 又误建 1 次）。规则：① 只用必然被本地校验拦下的输入（越界 seconds / 越界 ratio / 非 http 参考图 / 越界 n）；② 每次跑完断言 `sum(tokens.used_quota)` 差值为 0、`tasks` 无非终态任务、ArcReel `arcreel.log` 里 `remote-generation/jobs` 计数差值为 0；③ 一旦误建，必须**同时**在 new-api（退款 + 任务置 FAILURE + 标记日志；new-api **没有** `/v1/videos/{id}/cancel` 端点）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销。照抄 `scripts/probe-manwu-dola-dual.sh`，它已同时做三项断言。
 - **验证「计费 bug」不得用付费真实任务（2026-10-06 立规，代价 810 上游积分）**。上一条讲的是「别误建单」，这一条更进一步：**有些单就是必须建的，也不该多建**。
   - **实例**：修 `relay_task.go` 的 `OtherRatios` 逐项 `int()` 截断（同一请求扣费在 102739/102735 间随机）时，为了「多跑几次看抖动」跑了 **9 个付费任务**，上游有赞共扣 **810 积分**（9 × 90 分）。客户侧 952039 quota 全额退了，**上游那 810 分撤不回来**，净损由运营方承担（台账见 `logs.content LIKE '%OPERATOR-COST-ACCOUNTING%'`，脚本 `scripts/prod-log-probe-upstream-cost-20261005.sql`）。
