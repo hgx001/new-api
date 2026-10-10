@@ -285,21 +285,26 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 // 公式: baseQuota × ∏(ratio) — 其中 baseQuota 是不含 OtherRatios 的基础额度。
 func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float64) int {
 	// 从 PriceData 获取不含 OtherRatios 的基础价格
-	baseQuota := info.PriceData.Quota
-	// 先除掉原有的 OtherRatios 恢复基础额度
+	originalQuota := info.PriceData.Quota
+	// 先除掉原有的 OtherRatios 恢复基础额度。
+	//
+	// 不变量：**结果与 map 遍历顺序无关**。倍率先累乘、最后只做一次截断，而不是
+	// 边遍历边 int(float64(q)/ra) —— Go map 的迭代顺序随机，三个及以上倍率时同一
+	// 请求会重算出两个不同额度（实测 {seconds:3, size:1.1, extra:1.3} 在 2000 次
+	// 采样里落到 47894 与 47896），而 tasks 表只记最后一次，差额无人认领也无处对账。
+	// 与 applyTaskOtherRatios 是同一个坑，见 commit 860b5402。
+	divisor := 1.0
 	for _, ra := range info.PriceData.OtherRatios {
 		if ra != 1.0 && ra > 0 {
-			baseQuota = int(float64(baseQuota) / ra)
+			divisor *= ra
 		}
+	}
+	baseQuota := originalQuota
+	if divisor != 1.0 {
+		baseQuota = int(float64(originalQuota) / divisor)
 	}
 	// 应用新的 ratios
-	result := float64(baseQuota)
-	for _, ra := range ratios {
-		if ra != 1.0 {
-			result *= ra
-		}
-	}
-	return int(result)
+	return applyTaskOtherRatios(baseQuota, ratios)
 }
 
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
