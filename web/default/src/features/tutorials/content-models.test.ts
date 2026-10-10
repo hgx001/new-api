@@ -67,14 +67,12 @@ describe('tutorials model guide content', () => {
       'wan2.7-r2v',
       'autodl:minimax-h3-u24',
       'seedance-2.0',
-      'seedance-2.5',
       '¥0.15 / 张',
       '¥8.00 / 次',
       '¥0.28/s',
       '¥0.85/s',
       '¥0.10/s',
       '¥1.00 / 次',
-      '¥0.80 / 次',
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
     }
@@ -129,12 +127,19 @@ describe('tutorials model guide content', () => {
   })
 
   // 配额不足在网关里是 403 insufficient_user_quota，不是 402。
-  // seedance-2.0 / seedance-2.5 与 gemini-web-video 均按次计费，文档不能再出现按秒写法。
+  // seedance-2.0 与 gemini-web-video 均按次计费，文档不能再出现按秒写法。
   test('documents remote video models as per-request billing', () => {
     assert.equal(sectionsJson.includes('¥2.50/s'), false)
     assert.equal(sectionsJson.includes('¥1.00 / 次'), true)
-    assert.equal(sectionsJson.includes('¥0.80 / 次'), true)
-    assert.equal(sectionsJson.includes('固定 30 秒、720P'), true)
+  })
+
+  // 回归守卫：seedance-2.5 已于 2026-10-10 下架（接口层 channels.models +
+  // abilities 同时摘除），文档必须同步移除，否则客户照文档调用只会拿到
+  // 503「分组 default 下模型 seedance-2.5 无可用渠道」。
+  test('does not document the de-listed seedance-2.5', () => {
+    assert.equal(sectionsJson.includes('seedance-2.5'), false)
+    assert.equal(sectionsJson.includes('model-seedance-25'), false)
+    assert.equal(sectionsJson.includes('¥0.80 / 次'), false)
   })
 
   test('error table documents 403 for insufficient quota', () => {
