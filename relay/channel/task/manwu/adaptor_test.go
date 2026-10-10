@@ -935,11 +935,37 @@ func TestDoubao20FastRejects30s(t *testing.T) {
 	}
 }
 
-// Seedance 2.0 系（seedance-2.0 / db-seedance-2-0）时长口径（2026-10-10 用户定稿）：
-// 对外受理 **5–15 秒区间**，区间内任意整数秒放行，并就近吸附到执行端可点档位
-// （6-7→5、8-12→10、13-14→15）——非档位值若原样下发，会被 ArcReel 静默回落到
-// 默认档（dola 15s / doubao 5s），用户会拿到与请求不符的成片。
-func TestSeedance20DurationAcceptsRangeAndSnaps(t *testing.T) {
+// Seedance 2.0 系时长口径（2026-10-10 定稿，同日升级两端分口径）：对外受理
+// **5–15 秒区间**，区间外 400。dola 为任意值真跑（区间内原样透传，真机实证
+// 官网后端接受任意值）；豆包 2.0 Fast 就近吸附到官网可点档位（6-7→5、
+// 8-12→10、13-14→15，无 durationHack 非档位值会静默回落）。
+func TestDolaDurationPassesThroughArbitraryValues(t *testing.T) {
+	// 区间内任意整数秒原样透传（含非档位值 7）
+	for _, value := range []int{5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} {
+		for _, field := range []string{"seconds", "duration"} {
+			c, info, a := postVideoCtx(t,
+				fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, ModelDola, field, value))
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info),
+				"dola %s=%d 应在区间内被受理", field, value)
+
+			req, err := getNormalizedRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, value, req.Duration,
+				"dola %s=%d 应原样透传（任意值真跑，不吸附）", field, value)
+		}
+	}
+
+	// 区间外一律 400：下限以下、上限以上、以及 2.0 系没有的 30s 档。
+	for _, value := range []int{4, 16, 30} {
+		c, info, a := postVideoCtx(t,
+			fmt.Sprintf(`{"model":%q,"prompt":"hi","seconds":%d}`, ModelDola, value))
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, "dola seconds=%d 应被拒", value)
+		assert.Equal(t, "invalid_duration", taskErr.Code, "dola seconds=%d", value)
+	}
+}
+
+func TestDoubao20FastDurationSnapsToNearestTier(t *testing.T) {
 	cases := []struct {
 		value int
 		want  int
@@ -948,31 +974,27 @@ func TestSeedance20DurationAcceptsRangeAndSnaps(t *testing.T) {
 		{8, 10}, {10, 10}, {12, 10},
 		{13, 15}, {14, 15}, {15, 15},
 	}
-	for _, model := range []string{ModelDola, ModelDoubao20Fast} {
-		for _, tc := range cases {
-			for _, field := range []string{"seconds", "duration"} {
-				c, info, a := postVideoCtx(t,
-					fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, model, field, tc.value))
-				require.Nil(t, a.ValidateRequestAndSetAction(c, info),
-					"%s %s=%d 应在区间内被受理", model, field, tc.value)
+	for _, tc := range cases {
+		for _, field := range []string{"seconds", "duration"} {
+			c, info, a := postVideoCtx(t,
+				fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, ModelDoubao20Fast, field, tc.value))
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info),
+				"db %s=%d 应在区间内被受理", field, tc.value)
 
-				req, err := getNormalizedRequest(c)
-				require.NoError(t, err)
-				assert.Equal(t, tc.want, req.Duration,
-					"%s %s=%d 应吸附到 %d", model, field, tc.value, tc.want)
-			}
+			req, err := getNormalizedRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, req.Duration,
+				"db %s=%d 应吸附到 %d", field, tc.value, tc.want)
 		}
 	}
 
-	// 区间外一律 400：下限以下、上限以上、以及 2.0 系没有的 30s 档。
-	for _, model := range []string{ModelDola, ModelDoubao20Fast} {
-		for _, value := range []int{4, 16, 30} {
-			c, info, a := postVideoCtx(t,
-				fmt.Sprintf(`{"model":%q,"prompt":"hi","seconds":%d}`, model, value))
-			taskErr := a.ValidateRequestAndSetAction(c, info)
-			require.NotNil(t, taskErr, "%s seconds=%d 应被拒", model, value)
-			assert.Equal(t, "invalid_duration", taskErr.Code, "%s seconds=%d", model, value)
-		}
+	// 区间外一律 400（30s 越界另有 TestDoubao20FastRejects30s 锁口径）。
+	for _, value := range []int{4, 16} {
+		c, info, a := postVideoCtx(t,
+			fmt.Sprintf(`{"model":%q,"prompt":"hi","seconds":%d}`, ModelDoubao20Fast, value))
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, "db seconds=%d 应被拒", value)
+		assert.Equal(t, "invalid_duration", taskErr.Code, "db seconds=%d", value)
 	}
 }
 

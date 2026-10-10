@@ -95,7 +95,7 @@ const (
 // 差异只在 platformId + outputMode + 参数白名单，故用一张路由表而不是多个 adaptor。
 //
 // 模型名口径：
-//   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，5/10/15 秒，按次计费）
+//   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，5-15 秒区间任意值真跑，按次计费）
 //   - seedance-2.5：dola 官网 Seedance 2.5（远端视频，固定 30 秒 / 720p，按次计费）
 //   - db-seedance-2-5：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒四档，
 //     按次计费）。公开名是短名（2026-10-08 用户定稿），转发 ArcReel 前翻译成
@@ -172,19 +172,22 @@ func ModelList() []string {
 	return names
 }
 
-// Seedance 2.0 系（seedance-2.0 / db-seedance-2-0）时长口径（2026-10-10 用户定稿）：
-// 对外按 **5–15 秒区间**受理，区间内任意整数秒都放行。
+// Seedance 2.0 系时长口径（2026-10-10 用户定稿，同日升级为两端分口径）：
+// 对外均按 **5–15 秒区间**受理，区间内任意整数秒都放行；区间外（含 30s）400。
 //
-// 但两个执行端（Dola 官网 / 豆包官网）的时长控件只提供 5/10/15 三个可点档位，
-// 且 ArcReel 中间层对非档位值会**静默回落默认档**（dola → 15s、doubao → 5s）。
-// 若把 7 秒原样下发，用户会拿到 15 秒或 5 秒成片且无任何提示（账实不符）。
-// 因此落入区间后按**就近吸附**到可点档位再下发：6-7→5、8-12→10、13-14→15。
+//   - dola（seedance-2.0）：**任意值真跑**——区间内原样透传、不吸附。依据：
+//     Worker durationHack 真机实证官网后端接受任意值（7 秒提交成片 ffprobe
+//     实测 7.10 秒），且 dola 不点时长 UI、目标值全靠请求体改写下发。
+//   - 豆包（db-seedance-2-0）：区间内**就近吸附**到官网可点档位
+//     （6-7→5、8-12→10、13-14→15）——豆包官网时长控件只有 5/10/15 可点档
+//     且无 durationHack，非档位值原样下发会被静默回落，账实不符。
 const (
 	seedance20MinDuration = 5
 	seedance20MaxDuration = 15
 )
 
-// snapSeedance20Duration 校验 5–15 秒区间并吸附到执行端可点档位；区间外 ok=false。
+// snapSeedance20Duration 校验 5–15 秒区间并吸附到豆包官网可点档位；区间外 ok=false。
+// 仅豆包 2.0 Fast 分支使用（dola 已升级任意值真跑，见 validateDolaDuration）。
 func snapSeedance20Duration(value int) (int, bool) {
 	switch {
 	case value < seedance20MinDuration || value > seedance20MaxDuration:
@@ -198,7 +201,17 @@ func snapSeedance20Duration(value int) (int, bool) {
 	}
 }
 
-// validateSeedance20Duration 校验单个字段的 5–15 秒区间口径，返回吸附后的时长。
+// validateDolaDuration 校验 dola seedance-2.0 单字段的 5–15 秒区间口径：
+// 区间内任意整数秒原样透传（任意值真跑，不吸附），区间外报错。
+func validateDolaDuration(field string, value int, model string) (int, error) {
+	if value < seedance20MinDuration || value > seedance20MaxDuration {
+		return 0, fmt.Errorf("%s must be between 5 and 15 for %s, got %d", field, model, value)
+	}
+	return value, nil
+}
+
+// validateSeedance20Duration 校验豆包 2.0 Fast 单字段的 5–15 秒区间口径，
+// 返回吸附后的时长（豆包官网只认 5/10/15 可点档位）。
 func validateSeedance20Duration(field string, value int, model string) (int, error) {
 	snapped, ok := snapSeedance20Duration(value)
 	if !ok {
@@ -856,18 +869,18 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 	return nil
 }
 
-// resolveDuration 解析 Seedance 2.0 时长：seconds（首选，数字或数字字符串）→ duration
-// → 缺省 15。口径为 **5–15 秒区间**（2026-10-10 用户定稿），区间内任意整数秒放行
-// 并就近吸附到官网可点档位（6-7→5、8-12→10、13-14→15）；缺省或 null 视为未指定；
-// 字段存在但非法（格式错误或越出 5–15）直接报错——上游 ArcReel 对非法值会静默回落
-// 15，厂商侧必须显式拒绝，避免计费时长与实际生成时长脱节。
+// resolveDuration 解析 dola seedance-2.0 时长：seconds（首选，数字或数字字符串）
+// → duration → 缺省 15。口径为 **5–15 秒区间任意值真跑**（2026-10-10 升级）：
+// 区间内任意整数秒原样透传（真机实证官网后端接受任意值）；缺省或 null 视为
+// 未指定；字段存在但非法（格式错误或越出 5–15）直接报错——上游 ArcReel 对
+// 非法值会静默回落 15，厂商侧必须显式拒绝，避免计费时长与实际生成时长脱节。
 func resolveDuration(req clientRequest, model string) (int, error) {
 	seconds, found, err := parseFlexibleInt(req.Seconds)
 	if err != nil {
 		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
 	}
 	if found {
-		return validateSeedance20Duration("seconds", seconds, model)
+		return validateDolaDuration("seconds", seconds, model)
 	}
 
 	duration, found, err := parseFlexibleInt(req.Duration)
@@ -875,7 +888,7 @@ func resolveDuration(req clientRequest, model string) (int, error) {
 		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
 	}
 	if found {
-		return validateSeedance20Duration("duration", duration, model)
+		return validateDolaDuration("duration", duration, model)
 	}
 
 	return defaultDuration, nil
