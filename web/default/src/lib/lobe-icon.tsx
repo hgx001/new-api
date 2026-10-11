@@ -18,14 +18,125 @@ For commercial licensing, please contact support@quantumnous.com
 */
 /**
  * LobeHub Icon Loader
- * Dynamically load and render icons from @lobehub/icons
+ * Renders icons from @lobehub/icons by name.
  *
  * Supports:
  * - Basic: "OpenAI", "OpenAI.Color"
  * - Chained properties: "OpenAI.Avatar.type={'platform'}"
  * - Size parameter: getLobeIcon("OpenAI", 20)
+ *
+ * Icons are imported explicitly rather than via `import * as LobeIcons`.
+ * The namespace form defeats tree-shaking (the lookup key is dynamic, so the
+ * bundler must retain all 320 icons / ~6.8 MB of SVG path data in a shared
+ * chunk), which made every client-side navigation pay for the whole library.
+ * The explicit registry below keeps only the icons this app actually renders.
+ *
+ * To add an icon: import it and add it to LOBE_ICONS. Names come from
+ * `getChannelTypeIcon` (channel types), `defaultVendorIcons`
+ * (model/pricing_default.go), and the provider maps in usage-logs /
+ * rankings / pricing.
  */
-import * as LobeIcons from '@lobehub/icons'
+import {
+  Ai360,
+  Aws,
+  Azure,
+  AzureAI,
+  Baichuan,
+  Baidu,
+  Claude,
+  Cloudflare,
+  Cohere,
+  Coze,
+  DeepSeek,
+  Dify,
+  Doubao,
+  FastGPT,
+  Gemini,
+  Google,
+  Grok,
+  Hunyuan,
+  InternLM,
+  Jimeng,
+  Jina,
+  Kling,
+  Meta,
+  Midjourney,
+  Minimax,
+  Mistral,
+  Moonshot,
+  NewAPI,
+  Ollama,
+  OpenAI,
+  OpenRouter,
+  Perplexity,
+  Qwen,
+  Replicate,
+  SiliconCloud,
+  Spark,
+  Stepfun,
+  Suno,
+  Vidu,
+  Volcengine,
+  Wenxin,
+  XAI,
+  XiaomiMiMo,
+  Xinference,
+  Yi,
+  Zhipu,
+} from '@lobehub/icons'
+
+type LobeIconComponent = React.ComponentType<Record<string, unknown>>
+
+// Each icon is a compounded component (Mono + .Color/.Avatar/.Text/.Combine),
+// so the registry values keep their sub-components for chained lookups.
+const LOBE_ICONS: Record<string, unknown> = {
+  Ai360,
+  Aws,
+  Azure,
+  AzureAI,
+  Baichuan,
+  Baidu,
+  Claude,
+  Cloudflare,
+  Cohere,
+  Coze,
+  DeepSeek,
+  Dify,
+  Doubao,
+  FastGPT,
+  Gemini,
+  Google,
+  Grok,
+  Hunyuan,
+  InternLM,
+  Jimeng,
+  Jina,
+  Kling,
+  Meta,
+  Midjourney,
+  Minimax,
+  Mistral,
+  Moonshot,
+  NewAPI,
+  Ollama,
+  OpenAI,
+  OpenRouter,
+  Perplexity,
+  Qwen,
+  Replicate,
+  SiliconCloud,
+  Spark,
+  Stepfun,
+  Suno,
+  Vidu,
+  Volcengine,
+  Wenxin,
+  XAI,
+  XiaomiMiMo,
+  Xinference,
+  Yi,
+  Zhipu,
+}
 
 /**
  * Parse a property value from string to appropriate type
@@ -76,48 +187,37 @@ export function getLobeIcon(
   iconName: string | undefined | null,
   size: number = 20
 ): React.ReactNode {
+  const renderFallback = (letter: string) => (
+    <div
+      className='bg-muted text-muted-foreground flex items-center justify-center rounded-full text-xs font-medium'
+      style={{ width: size, height: size }}
+    >
+      {letter}
+    </div>
+  )
+
   if (!iconName || typeof iconName !== 'string') {
-    return (
-      <div
-        className='bg-muted text-muted-foreground flex items-center justify-center rounded-full text-xs font-medium'
-        style={{ width: size, height: size }}
-      >
-        ?
-      </div>
-    )
+    return renderFallback('?')
   }
 
   const trimmedName = iconName.trim()
   if (!trimmedName) {
-    return (
-      <div
-        className='bg-muted text-muted-foreground flex items-center justify-center rounded-full text-xs font-medium'
-        style={{ width: size, height: size }}
-      >
-        ?
-      </div>
-    )
+    return renderFallback('?')
   }
 
   // Parse component path and chained properties
   const segments = trimmedName.split('.')
   const baseKey = segments[0]
-  const BaseIcon = (LobeIcons as Record<string, unknown>)[baseKey] as
-    | Record<string, unknown>
-    | undefined
+  const BaseIcon = LOBE_ICONS[baseKey] as Record<string, unknown> | undefined
 
-  let IconComponent: React.ComponentType<Record<string, unknown>> | undefined
+  let IconComponent: LobeIconComponent | undefined
   let propStartIndex: number
 
   if (BaseIcon && segments.length > 1 && BaseIcon[segments[1]]) {
-    IconComponent = BaseIcon[segments[1]] as React.ComponentType<
-      Record<string, unknown>
-    >
+    IconComponent = BaseIcon[segments[1]] as LobeIconComponent
     propStartIndex = 2
   } else {
-    IconComponent = (LobeIcons as Record<string, unknown>)[baseKey] as
-      | React.ComponentType<Record<string, unknown>>
-      | undefined
+    IconComponent = LOBE_ICONS[baseKey] as LobeIconComponent | undefined
     propStartIndex = segments.length > 1 && /^[A-Z]/.test(segments[1]) ? 2 : 1
   }
 
@@ -126,15 +226,13 @@ export function getLobeIcon(
     !IconComponent ||
     (typeof IconComponent !== 'function' && typeof IconComponent !== 'object')
   ) {
-    const firstLetter = trimmedName.charAt(0).toUpperCase()
-    return (
-      <div
-        className='bg-muted text-muted-foreground flex items-center justify-center rounded-full text-xs font-medium'
-        style={{ width: size, height: size }}
-      >
-        {firstLetter}
-      </div>
-    )
+    if (import.meta.env.DEV) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[lobe-icon] "${trimmedName}" is not in LOBE_ICONS; add it to src/lib/lobe-icon.tsx to render the real icon.`
+      )
+    }
+    return renderFallback(trimmedName.charAt(0).toUpperCase())
   }
 
   // Parse chained properties (e.g., "type={'platform'}", "shape='square'")
