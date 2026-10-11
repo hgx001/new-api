@@ -31,6 +31,16 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
 
+	// 本地参考图上交换公网 URL（manwu 渠道闭环，2026-10-11）：multipart 薄转发到
+	// ArcReel 暂存图床。只挂 TokenAuth 不挂 Distribute——没有模型路由语义，
+	// 渠道（baseURL+密钥）在 controller 内按 manwu 类型解析。
+	uploadsV1Router := router.Group("/v1")
+	uploadsV1Router.Use(middleware.RouteTag("relay"))
+	uploadsV1Router.Use(middleware.TokenAuth())
+	{
+		uploadsV1Router.POST("/uploads", controller.UploadStagingFile)
+	}
+
 	klingV1Router := router.Group("/kling/v1")
 	klingV1Router.Use(middleware.RouteTag("relay"))
 	klingV1Router.Use(middleware.KlingRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
