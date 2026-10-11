@@ -27,6 +27,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { loadLanguage } from '@/i18n/config'
 import {
   INTERFACE_LANGUAGE_OPTIONS,
   normalizeInterfaceLanguage,
@@ -42,6 +43,9 @@ export function LanguageSwitcher() {
 
   const handleChangeLanguage = useCallback(
     async (code: string) => {
+      // Fetch the locale before switching; otherwise the UI renders raw keys
+      // until the chunk resolves.
+      await loadLanguage(code)
       await i18n.changeLanguage(code)
       if (user) {
         try {

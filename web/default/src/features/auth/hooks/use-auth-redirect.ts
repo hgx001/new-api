@@ -20,6 +20,7 @@ import { useNavigate } from '@tanstack/react-router'
 import i18n from 'i18next'
 
 import type { User } from '@/features/users/types'
+import { loadLanguage } from '@/i18n/config'
 import { getSelf } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -79,7 +80,11 @@ export function useAuthRedirect() {
         // Restore saved language preference
         const savedLang = getSavedLanguage(user)
         if (savedLang && savedLang !== i18n.language) {
-          i18n.changeLanguage(savedLang)
+          // Fetch the saved language before switching so the UI does not briefly
+          // render raw translation keys.
+          void loadLanguage(savedLang).then(() =>
+            i18n.changeLanguage(savedLang)
+          )
         }
       }
     } catch (error) {
