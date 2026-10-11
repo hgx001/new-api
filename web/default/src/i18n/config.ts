@@ -46,6 +46,19 @@ function isSupportedLanguage(language: string): language is SupportedLanguage {
   return (SUPPORTED_LANGUAGES as string[]).includes(language)
 }
 
+/**
+ * Map a language tag onto one of the bundled locales.
+ *
+ * Tags arrive from several places that do not normalize them — a browser sends
+ * `zh-CN`, while a user's saved preference can be `zh-TW` or `en-US`. Only the
+ * base subtag decides which bundle exists, so `zh-CN` must resolve to `zh`
+ * rather than falling through to the `en` default.
+ */
+function toBundledLanguage(language: string): SupportedLanguage {
+  const base = language.trim().replaceAll('_', '-').toLowerCase().split('-')[0]
+  return isSupportedLanguage(base) ? base : 'en'
+}
+
 const pendingLoads = new Map<string, Promise<void>>()
 
 /**
@@ -56,7 +69,7 @@ const pendingLoads = new Map<string, Promise<void>>()
  * never re-downloads a locale.
  */
 export function loadLanguage(language: string): Promise<void> {
-  const target = isSupportedLanguage(language) ? language : 'en'
+  const target = toBundledLanguage(language)
 
   const existing = pendingLoads.get(target)
   if (existing) {
