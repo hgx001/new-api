@@ -29,6 +29,9 @@ var maxStagingUploadBytes = 25 << 20
 
 // resolveManwuStagingChannel 取用于 staging 转发的 manwu 渠道（baseURL + 密钥）。
 // 包级变量是为了测试可替换；生产实现查 DB 里第一台启用的漫屋渠道。
+// 注意：GetChannelsByType 为列表脱敏故意 Omit("key")，其返回的 Key 恒为空——
+// 直接当 serviceToken 会发出 "Bearer "（HTTP/2 裁尾部空格后变 "Bearer"），
+// 被 ArcReel 判为「缺少 service token」。故选中后按 id 回查带 key 的全量记录。
 var resolveManwuStagingChannel = func() (*model.Channel, error) {
 	channels, err := model.GetChannelsByType(0, 100, false, constant.ChannelTypeManwu)
 	if err != nil {
@@ -36,7 +39,7 @@ var resolveManwuStagingChannel = func() (*model.Channel, error) {
 	}
 	for _, ch := range channels {
 		if ch != nil && ch.Status == common.ChannelStatusEnabled {
-			return ch, nil
+			return model.GetChannelById(ch.Id, true)
 		}
 	}
 	return nil, fmt.Errorf("没有已启用的漫屋渠道")
