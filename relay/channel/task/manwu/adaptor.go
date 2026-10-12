@@ -173,51 +173,29 @@ func ModelList() []string {
 }
 
 // Seedance 2.0 系时长口径（2026-10-10 用户定稿，同日升级为两端分口径）：
-// 对外均按 **5–15 秒区间**受理，区间内任意整数秒都放行；区间外（含 30s）400。
+// 对外均按 **5–15 秒区间**受理，区间内任意整数秒都放行且**原样透传、不吸附**；
+// 区间外（含 30s）400。
 //
-//   - dola（seedance-2.0）：**任意值真跑**——区间内原样透传、不吸附。依据：
-//     Worker durationHack 真机实证官网后端接受任意值（7 秒提交成片 ffprobe
-//     实测 7.10 秒），且 dola 不点时长 UI、目标值全靠请求体改写下发。
-//   - 豆包（db-seedance-2-0）：区间内**就近吸附**到官网可点档位
-//     （6-7→5、8-12→10、13-14→15）——豆包官网时长控件只有 5/10/15 可点档
-//     且无 durationHack，非档位值原样下发会被静默回落，账实不符。
+//   - dola（seedance-2.0）：**任意值真跑**——区间内原样透传。依据：Worker
+//     durationHack 真机实证官网后端接受任意值（7 秒提交成片 ffprobe 实测
+//     7.10 秒），且 dola 不点时长 UI、目标值全靠请求体改写下发。
+//   - 豆包（db-seedance-2-0，2026-10-12 跟进）：与 dola 同口径透传——Worker
+//     侧豆包 durationHack（请求体改写）兜底，非档位值跳过 UI、提交前武装
+//     钩子 + 硬闸门拒单，不会静默回落错误时长。
 const (
 	seedance20MinDuration = 5
 	seedance20MaxDuration = 15
 )
 
-// snapSeedance20Duration 校验 5–15 秒区间并吸附到豆包官网可点档位；区间外 ok=false。
-// 仅豆包 2.0 Fast 分支使用（dola 已升级任意值真跑，见 validateDolaDuration）。
-func snapSeedance20Duration(value int) (int, bool) {
-	switch {
-	case value < seedance20MinDuration || value > seedance20MaxDuration:
-		return 0, false
-	case value <= 7:
-		return 5, true
-	case value <= 12:
-		return 10, true
-	default:
-		return 15, true
-	}
-}
-
-// validateDolaDuration 校验 dola seedance-2.0 单字段的 5–15 秒区间口径：
-// 区间内任意整数秒原样透传（任意值真跑，不吸附），区间外报错。
-func validateDolaDuration(field string, value int, model string) (int, error) {
+// validateSeedance20Duration 校验 Seedance 2.0 系（dola / 豆包 2.0 Fast 共用）
+// 单字段的 5–15 秒区间口径：区间内任意整数秒**原样透传**（任意秒真跑，不吸附），
+// 区间外报错。与 ArcReel `_doubao20_duration_or_default`/`_dola20_duration_or_default`
+// 及 Worker 侧 normalizeDoubaoDuration/normalizeDolaDuration 同边界。
+func validateSeedance20Duration(field string, value int, model string) (int, error) {
 	if value < seedance20MinDuration || value > seedance20MaxDuration {
 		return 0, fmt.Errorf("%s must be between 5 and 15 for %s, got %d", field, model, value)
 	}
 	return value, nil
-}
-
-// validateSeedance20Duration 校验豆包 2.0 Fast 单字段的 5–15 秒区间口径，
-// 返回吸附后的时长（豆包官网只认 5/10/15 可点档位）。
-func validateSeedance20Duration(field string, value int, model string) (int, error) {
-	snapped, ok := snapSeedance20Duration(value)
-	if !ok {
-		return 0, fmt.Errorf("%s must be between 5 and 15 for %s, got %d", field, model, value)
-	}
-	return snapped, nil
 }
 
 var allowedRatios = map[string]bool{
@@ -232,9 +210,9 @@ var allowedRatios = map[string]bool{
 // 豆包官网参数白名单（2026-10-06 真机探针订正，与 Worker 侧
 // cron_video_brach src/platforms/doubao/params.ts 同口径）：
 //   - 时长分模型：2.5 四档 5/10/15/30（比 dola 多 30）；2.0 Fast 按 5–15 秒
-//     区间受理并就近吸附到官网可点档位（2026-10-10 用户定稿，见
-//     seedance20MinDuration），区间外直接 400——Worker 侧 setDoubaoDuration
-//     对页面无档位会诚实报错，这里提前挡避免用户下单后才失败；
+//     区间**透传**（2026-10-12 任意秒真跑，与 dola 同口径，见
+//     validateSeedance20Duration——不再吸附），区间外直接 400——Worker 侧
+//     durationHack 武装失败会硬闸门拒单，这里提前挡避免用户下单后才失败；
 //   - 比例七档，含官网出厂默认档 `auto`（「自动 · 10s」）；
 //   - 比例「未指定不编造」：豆包未指定时保持官网当前状态（App 侧
 //     resolveDoubaoRatioLabel 空 → null 纪律），不强补 16:9。
@@ -880,7 +858,7 @@ func resolveDuration(req clientRequest, model string) (int, error) {
 		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
 	}
 	if found {
-		return validateDolaDuration("seconds", seconds, model)
+		return validateSeedance20Duration("seconds", seconds, model)
 	}
 
 	duration, found, err := parseFlexibleInt(req.Duration)
@@ -888,7 +866,7 @@ func resolveDuration(req clientRequest, model string) (int, error) {
 		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
 	}
 	if found {
-		return validateDolaDuration("duration", duration, model)
+		return validateSeedance20Duration("duration", duration, model)
 	}
 
 	return defaultDuration, nil
@@ -899,9 +877,9 @@ const doubaoDefaultDuration = 5
 
 // resolveDoubaoDuration 解析豆包时长：seconds（首选，数字或数字字符串）→ duration
 // → 缺省 5。口径分模型：2.5 四档白名单 5/10/15/30；2.0 Fast 按 **5–15 秒区间**
-// 受理（2026-10-10 用户定稿）并就近吸附到官网可点档位。缺省或 null 视为未指定；
-// 字段存在但非法直接报错——与 resolveDuration 同纪律，避免计费时长与实际生成时长
-// 脱节（ArcReel 侧对非法值会静默回落 5）。
+// 透传（2026-10-12 任意秒真跑，与 dola 同口径，不再吸附）。缺省或 null 视为
+// 未指定；字段存在但非法直接报错——与 resolveDuration 同纪律，避免计费时长与
+// 实际生成时长脱节（ArcReel 侧对非法值会静默回落 5）。
 func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
 	seconds, found, err := parseFlexibleInt(req.Seconds)
 	if err != nil {
@@ -922,7 +900,7 @@ func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
 	return doubaoDefaultDuration, nil
 }
 
-// checkDoubaoDuration 豆包时长口径：2.0 Fast = 5–15 秒区间（就近吸附）；
+// checkDoubaoDuration 豆包时长口径：2.0 Fast = 5–15 秒区间透传（任意秒真跑）；
 // 2.5 = 5/10/15/30 四档白名单。
 func checkDoubaoDuration(field string, value int, model string) (int, error) {
 	if model == ModelDoubao20Fast {

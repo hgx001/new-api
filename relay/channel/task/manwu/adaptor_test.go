@@ -924,9 +924,9 @@ func TestDoubaoRatioNotInventedWhenUnspecified(t *testing.T) {
 }
 
 func TestDoubao20FastRejects30s(t *testing.T) {
-	// 2.0 Fast 时长口径为 5–15 秒区间（2026-10-10 用户定稿，见
-	// TestSeedance20DurationAcceptsRangeAndSnaps），30s 越界必须在入口 400，
-	// 而不是等 Worker setDoubaoDuration 诚实报错。
+	// 2.0 Fast 时长口径为 5–15 秒区间（2026-10-12 任意秒真跑，见
+	// TestDoubao20FastDurationPassesThroughArbitraryValues），30s 越界必须在
+	// 入口 400——豆包 2.0 无 30s 档（30s 属 2.5 白名单），不能等 Worker 报错。
 	for _, field := range []string{"seconds", "duration"} {
 		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":"db-seedance-2-0","prompt":"x","%s":30}`, field))
 		taskErr := a.ValidateRequestAndSetAction(c, info)
@@ -935,10 +935,11 @@ func TestDoubao20FastRejects30s(t *testing.T) {
 	}
 }
 
-// Seedance 2.0 系时长口径（2026-10-10 定稿，同日升级两端分口径）：对外受理
-// **5–15 秒区间**，区间外 400。dola 为任意值真跑（区间内原样透传，真机实证
-// 官网后端接受任意值）；豆包 2.0 Fast 就近吸附到官网可点档位（6-7→5、
-// 8-12→10、13-14→15，无 durationHack 非档位值会静默回落）。
+// Seedance 2.0 系时长口径（2026-10-10 dola 定稿，2026-10-12 豆包跟进）：对外受理
+// **5–15 秒区间**，区间外 400。dola 与豆包 2.0 Fast 均为区间内原样透传、不吸附
+// ——豆包侧 Worker durationHack（请求体改写）兜底，非档位值跳过 UI、提交前武装
+// 钩子 + 硬闸门拒单，不会静默回落错误时长。三端同口径：new-api → ArcReel
+// （_doubao20_duration_or_default）→ Worker normalizeDoubaoDuration。
 func TestDolaDurationPassesThroughArbitraryValues(t *testing.T) {
 	// 区间内任意整数秒原样透传（含非档位值 7）
 	for _, value := range []int{5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} {
@@ -965,26 +966,19 @@ func TestDolaDurationPassesThroughArbitraryValues(t *testing.T) {
 	}
 }
 
-func TestDoubao20FastDurationSnapsToNearestTier(t *testing.T) {
-	cases := []struct {
-		value int
-		want  int
-	}{
-		{5, 5}, {6, 5}, {7, 5},
-		{8, 10}, {10, 10}, {12, 10},
-		{13, 15}, {14, 15}, {15, 15},
-	}
-	for _, tc := range cases {
+func TestDoubao20FastDurationPassesThroughArbitraryValues(t *testing.T) {
+	// 区间内任意整数秒原样透传（含非档位值 7/13——旧口径会吸附到 5/15）。
+	for _, value := range []int{5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} {
 		for _, field := range []string{"seconds", "duration"} {
 			c, info, a := postVideoCtx(t,
-				fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, ModelDoubao20Fast, field, tc.value))
+				fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, ModelDoubao20Fast, field, value))
 			require.Nil(t, a.ValidateRequestAndSetAction(c, info),
-				"db %s=%d 应在区间内被受理", field, tc.value)
+				"db %s=%d 应在区间内被受理", field, value)
 
 			req, err := getNormalizedRequest(c)
 			require.NoError(t, err)
-			assert.Equal(t, tc.want, req.Duration,
-				"db %s=%d 应吸附到 %d", field, tc.value, tc.want)
+			assert.Equal(t, value, req.Duration,
+				"db %s=%d 应原样透传（任意秒真跑，不吸附）", field, value)
 		}
 	}
 
