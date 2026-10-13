@@ -75,18 +75,29 @@ export function getWan3SampleResolution(modelName: string): string | null {
  * Check if a video model is billed per second.
  *
  * Only adaptors whose EstimateBilling returns a `seconds` ratio bill per
- * second: wan3/youzanwan3 (wan3.0-video*, wan3.0-smart, wan2.7-r2v) and autodl
- * (autodl:* workflows).
+ * second: wan3/youzanwan3 (wan3.0-video*, wan3.0-smart, wan2.7-r2v), autodl
+ * (autodl:* workflows) and the doubao Seedance 2.0 Fast (manwu
+ * `seedance-2-0-fast`, per-second since 2026-10-12).
  * Models whose EstimateBilling returns nil are billed a fixed price per call
- * (e.g. youzan wan3.0-video-prime-1080p, seedance* via doubao), so they must
- * NOT show the per-second suffix.
+ * (e.g. youzan wan3.0-video-prime-1080p, doubao `seedance-2-5`, dola
+ * seedance-2.0/2.5), so they must NOT show the per-second suffix.
  * If a new per-second adaptor (e.g. sora) goes live, add its model prefix here.
+ *
+ * ⚠️ Seedance must be matched by **exact name**: the doubao pair uses hyphens
+ * (`seedance-2-0-fast` per-second, `seedance-2-5` per-call) while the dola pair
+ * uses dots (`seedance-2.0`, `seedance-2.5`, both per-call). A prefix check on
+ * `seedance-2-0` is fine, but never on `seedance-2` — it would flip both the
+ * per-call models to the wrong unit.
  */
 export function isPerSecondModel(model: PricingModel): boolean {
   const name = model.model_name ?? ''
   // 有赞满血 30 秒档按次计费（EstimateBilling 返回 nil），不能显示按秒后缀。
   if (name === 'wan3.0-video-prime-1080p') {
     return false
+  }
+  // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥3/次），不命中。
+  if (name.startsWith('seedance-2-0')) {
+    return true
   }
   return (
     name.startsWith('wan3.0-video') ||

@@ -97,12 +97,12 @@ const (
 // 模型名口径：
 //   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，5-15 秒区间任意值真跑，按次计费）
 //   - seedance-2.5：dola 官网 Seedance 2.5（远端视频，固定 30 秒 / 720p，按次计费）
-//   - db-seedance-2-5：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒四档，
-//     按次计费）。公开名是短名（2026-10-08 用户定稿），转发 ArcReel 前翻译成
-//     官网档位真名 doubao-seedance-2-5-260628（见 modelSpec.UpstreamModel）；
-//     与 dola 的 seedance-2.5 同名不同站，**互不通用**
-//   - db-seedance-2-0：豆包官网 Seedance 2.0 Fast（远端视频，同上），上游真名
-//     doubao-seedance-2-0-fast-260128
+//   - seedance-2-5：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒四档，
+//     按次计费 ¥3.0/次）。公开名是短名（2026-10-08 用户定稿，2026-10-12 去掉
+//     db- 前缀），转发 ArcReel 前翻译成官网档位真名 doubao-seedance-2-5-260628
+//     （见 modelSpec.UpstreamModel）；与 dola 的 seedance-2.5 同名不同站，**互不通用**
+//   - seedance-2-0-fast：豆包官网 Seedance 2.0 Fast（远端视频，5-15 秒逐秒可选，
+//     **按秒计费 ¥0.1/秒**），上游真名 doubao-seedance-2-0-fast-260128
 //   - Nano Banana Pro：ArcReel 抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）。服务端
 //     MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini(nano_banana_2) 还是
 //     jimeng(dreamina_image_5_0_lite)，客户端不感知，也不该猜
@@ -112,8 +112,8 @@ const (
 const (
 	ModelDola         = "seedance-2.0"
 	ModelDola25       = "seedance-2.5"
-	ModelDoubao25     = "db-seedance-2-5"
-	ModelDoubao20Fast = "db-seedance-2-0"
+	ModelDoubao25     = "seedance-2-5"
+	ModelDoubao20Fast = "seedance-2-0-fast"
 	ModelImage        = "Nano Banana Pro"
 	ModelVideo        = "gemini-web-video"
 	ModelReverse      = "jimeng-video-reverse"
@@ -179,7 +179,7 @@ func ModelList() []string {
 //   - dola（seedance-2.0）：**任意值真跑**——区间内原样透传。依据：Worker
 //     durationHack 真机实证官网后端接受任意值（7 秒提交成片 ffprobe 实测
 //     7.10 秒），且 dola 不点时长 UI、目标值全靠请求体改写下发。
-//   - 豆包（db-seedance-2-0，2026-10-12 跟进）：与 dola 同口径透传——Worker
+//   - 豆包（seedance-2-0-fast，2026-10-12 跟进）：与 dola 同口径透传——Worker
 //     侧豆包 durationHack（请求体改写）兜底，非档位值跳过 UI、提交前武装
 //     钩子 + 硬闸门拒单，不会静默回落错误时长。
 const (
@@ -492,8 +492,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
-// EstimateBilling 图片按张计费：把张数作为 n 倍率乘到 ¥0.3/张 的基础价上。
-// 视频与反解按次计费，返回 nil（否则会被 relay_task.go 按倍率再乘一遍）。
+// EstimateBilling 只对按量模型返回倍率：豆包 2.0 Fast 按秒（¥0.1/秒 × 秒数）、
+// 图片按张（张数作为 n 倍率乘到 ¥0.3/张 的基础价上）。
+// 按次模型（豆包 2.5、dola 两档、Gemini Veo、反解）必须返回 nil，否则 relay_task.go
+// 会把按次价再乘一遍（¥3/次 × 30 秒 = ¥90，账实不符）。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
 	if c == nil {
 		return nil
@@ -504,6 +506,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	}
 	if req.Kind == kindImage && req.Count > 1 {
 		return map[string]float64{"n": float64(req.Count)}
+	}
+	if req.Kind == kindDoubaoVideo && req.Model == ModelDoubao20Fast && req.Duration > 0 {
+		return map[string]float64{"seconds": float64(req.Duration)}
 	}
 	return nil
 }

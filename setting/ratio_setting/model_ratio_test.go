@@ -110,6 +110,30 @@ func TestDefaultModelPriceSeedance20PerUse(t *testing.T) {
 	require.InDelta(t, 1.0/USD2RMB, price, 1e-12, "seedance-2.0 must be ¥1/call in USD (2026-10-05 由 ¥1.5 下调)")
 }
 
+// 2026-10-12 豆包官网计价分家：
+//   - seedance-2-0-fast（豆包 2.0 Fast）改按**秒**计价 ¥0.10/秒，由 EstimateBilling
+//     返回 seconds 倍率相乘（与 wan3.0 家族同范式），时长 5–15 秒逐秒可选；
+//   - seedance-2-5（豆包 2.5）按**次**计价 ¥3.00/次；
+//   - 旧公开名 db-seedance-2-0 / db-seedance-2-5 彻底下线，不得再有价格。
+func TestDefaultModelPriceDoubaoSeedance(t *testing.T) {
+	InitRatioSettings()
+
+	fast, ok := GetModelPrice("seedance-2-0-fast", false)
+	require.True(t, ok, "seedance-2-0-fast must have an explicit per-second price")
+	require.InDelta(t, 0.1/USD2RMB, fast, 1e-12, "seedance-2-0-fast must be ¥0.10/sec in USD")
+	require.InDelta(t, 0.0136986, fast, 1e-7, "seedance-2-0-fast must be ¥0.10/sec in USD")
+
+	perCall, ok := GetModelPrice("seedance-2-5", false)
+	require.True(t, ok, "seedance-2-5 must have an explicit per-use price")
+	require.InDelta(t, 3.0/USD2RMB, perCall, 1e-12, "seedance-2-5 must be ¥3/call in USD")
+	require.InDelta(t, 0.4109589, perCall, 1e-7, "seedance-2-5 must be ¥3/call in USD")
+
+	for _, retired := range []string{"db-seedance-2-0", "db-seedance-2-5"} {
+		_, exists := defaultModelPrice[retired]
+		require.False(t, exists, "%s 必须从默认价格表移除", retired)
+	}
+}
+
 func TestDefaultModelPriceSeedance25PerUse(t *testing.T) {
 	InitRatioSettings()
 

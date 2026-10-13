@@ -452,8 +452,9 @@ func isAllowedPricingModel(name string) bool {
 	if name == "seedance-2.0" || name == "seedance-2.5" {
 		return true
 	}
-	// 漫屋 ArcReel 豆包官网视频（公开短名，转发前由 manwu adaptor 翻译成官网真名）
-	if name == "db-seedance-2-5" || name == "db-seedance-2-0" {
+	// 漫屋 ArcReel 豆包官网视频（公开短名，转发前由 manwu adaptor 翻译成官网真名；
+	// 2026-10-12 去掉 db- 前缀：db-seedance-2-0 → seedance-2-0-fast、db-seedance-2-5 → seedance-2-5）
+	if name == "seedance-2-5" || name == "seedance-2-0-fast" {
 		return true
 	}
 	// 漫屋 ArcReel Gemini 官网视频 / Nano Banana Pro 远端图片：价格与 ArcReel 站点口径一致

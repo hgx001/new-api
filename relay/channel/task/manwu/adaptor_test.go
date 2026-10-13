@@ -427,14 +427,29 @@ func TestModelListAndChannelName(t *testing.T) {
 	a := &TaskAdaptor{}
 	assert.Equal(t, []string{
 		"Nano Banana Pro",
-		"db-seedance-2-0",
-		"db-seedance-2-5",
 		"gemini-web-video",
 		"jimeng-video-reverse",
+		"seedance-2-0-fast",
+		"seedance-2-5",
 		"seedance-2.0",
 		"seedance-2.5",
 	}, a.GetModelList())
 	assert.Equal(t, ChannelName, a.GetChannelName())
+}
+
+// 2026-10-12 豆包官网两个公开名去掉 `db-` 前缀：db-seedance-2-0 → seedance-2-0-fast、
+// db-seedance-2-5 → seedance-2-5。旧名必须彻底下线（400），否则客户端改了一半名字
+// 会静默走到旧计费口径。
+func TestDoubaoOldPublicNamesAreRejected(t *testing.T) {
+	for _, retired := range []string{"db-seedance-2-0", "db-seedance-2-5"} {
+		_, ok := SpecFor(retired)
+		assert.False(t, ok, "旧公开名 %s 必须从路由表移除", retired)
+
+		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":%q,"prompt":"x"}`, retired))
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, retired)
+		assert.Equal(t, "invalid_model", taskErr.Code, retired)
+	}
 }
 
 // ── 多模型路由 ──
@@ -884,8 +899,8 @@ func TestConvertToOpenAIVideoPrefersStoredResultText(t *testing.T) {
 // ── doubao（豆包官网，独立于 dola 的执行站点）──
 
 func TestDoubaoVideoRoutesToDoubaoPlatform(t *testing.T) {
-	// 公开名是短名 db-seedance-2-5，载荷里必须翻译成官网真名。
-	c, info, a := postVideoCtx(t, `{"model":"db-seedance-2-5","prompt":"海底世界","seconds":30}`)
+	// 公开名 seedance-2-5，载荷里必须翻译成官网真名。
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2-5","prompt":"海底世界","seconds":30}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 
 	req, err := getNormalizedRequest(c)
@@ -906,7 +921,7 @@ func TestDoubaoVideoRoutesToDoubaoPlatform(t *testing.T) {
 func TestDoubaoRatioNotInventedWhenUnspecified(t *testing.T) {
 	// 豆包「未指定不编造」：公共段 resolveRatio 会把空值填成 16:9（dola 口径），
 	// 豆包必须覆盖回空 —— Worker 端保持官网当前状态（出厂「自动」档）。
-	c, info, a := postVideoCtx(t, `{"model":"db-seedance-2-0","prompt":"x"}`)
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2-0-fast","prompt":"x"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 
 	req, err := getNormalizedRequest(c)
@@ -928,7 +943,7 @@ func TestDoubao20FastRejects30s(t *testing.T) {
 	// TestDoubao20FastDurationPassesThroughArbitraryValues），30s 越界必须在
 	// 入口 400——豆包 2.0 无 30s 档（30s 属 2.5 白名单），不能等 Worker 报错。
 	for _, field := range []string{"seconds", "duration"} {
-		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":"db-seedance-2-0","prompt":"x","%s":30}`, field))
+		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":"seedance-2-0-fast","prompt":"x","%s":30}`, field))
 		taskErr := a.ValidateRequestAndSetAction(c, info)
 		require.NotNil(t, taskErr, field)
 		assert.Equal(t, "invalid_duration", taskErr.Code)
@@ -992,9 +1007,39 @@ func TestDoubao20FastDurationPassesThroughArbitraryValues(t *testing.T) {
 	}
 }
 
+// 2026-10-12 计价口径分家：seedance-2-0-fast 改按秒（¥0.10/秒），
+// seedance-2-5 按次（¥3.00/次）。EstimateBilling 必须如实给出 seconds 倍率——
+// 漏掉它会**静默按 1 秒收费**（relay_task.go 用返回的 OtherRatios 乘 ModelPrice）。
+func TestDoubaoBillingModeIsPerSecondForFastAndPerCallFor25(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		body     string
+		wantSecs float64
+	}{
+		{"5 秒", `{"model":"seedance-2-0-fast","prompt":"x","duration":5}`, 5},
+		{"9 秒非档位值", `{"model":"seedance-2-0-fast","prompt":"x","duration":9}`, 9},
+		{"缺省 5 秒", `{"model":"seedance-2-0-fast","prompt":"x"}`, 5},
+		{"15 秒上限", `{"model":"seedance-2-0-fast","prompt":"x","duration":15}`, 15},
+	} {
+		c, info, a := postVideoCtx(t, tc.body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), tc.name)
+		assert.Equal(t, map[string]float64{"seconds": tc.wantSecs}, a.EstimateBilling(c, info), tc.name)
+	}
+
+	// 按次模型不得注入任何倍率（否则 relay_task.go 会把按次价再乘一遍）。
+	for _, body := range []string{
+		`{"model":"seedance-2-5","prompt":"x","duration":30}`,
+		`{"model":"seedance-2-5","prompt":"x","duration":5}`,
+	} {
+		c, info, a := postVideoCtx(t, body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), body)
+		assert.Nil(t, a.EstimateBilling(c, info), body)
+	}
+}
+
 func TestDoubaoAcceptsAutoRatioAndRejectsIllegal(t *testing.T) {
 	// auto 是豆包官网出厂档，必须接受。
-	c, info, a := postVideoCtx(t, `{"model":"db-seedance-2-5","prompt":"x","ratio":"auto","seconds":10}`)
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2-5","prompt":"x","ratio":"auto","seconds":10}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	req, err := getNormalizedRequest(c)
 	require.NoError(t, err)
@@ -1005,10 +1050,10 @@ func TestDoubaoAcceptsAutoRatioAndRejectsIllegal(t *testing.T) {
 		body string
 		code string
 	}{
-		{"bad ratio", `{"model":"db-seedance-2-5","prompt":"x","ratio":"4:2"}`, "invalid_ratio"},
-		{"bad seconds", `{"model":"db-seedance-2-5","prompt":"x","seconds":8}`, "invalid_duration"},
-		{"bad duration", `{"model":"db-seedance-2-5","prompt":"x","duration":20}`, "invalid_duration"},
-		{"resolution", `{"model":"db-seedance-2-5","prompt":"x","resolution":"1080p"}`, "invalid_request"},
+		{"bad ratio", `{"model":"seedance-2-5","prompt":"x","ratio":"4:2"}`, "invalid_ratio"},
+		{"bad seconds", `{"model":"seedance-2-5","prompt":"x","seconds":8}`, "invalid_duration"},
+		{"bad duration", `{"model":"seedance-2-5","prompt":"x","duration":20}`, "invalid_duration"},
+		{"resolution", `{"model":"seedance-2-5","prompt":"x","resolution":"1080p"}`, "invalid_request"},
 		{"unknown model", `{"model":"doubao-seedance-2-0-260128","prompt":"x"}`, "invalid_model"},
 	}
 	for _, tc := range cases {

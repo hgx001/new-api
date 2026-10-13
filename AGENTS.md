@@ -28,15 +28,15 @@ DO NOT send optional commentary
 
 | 对外模型名 | ArcReel platformId | 执行站点 | 备注 |
 |---|---|---|---|
-| `seedance-2.0` | dola | dola 官网 | 5–15s 区间任意值真跑（透传不吸附），¥1.5/次 |
-| `seedance-2.5` | dola | dola 官网 | 固定 30s/720p，¥1/次 |
-| `db-seedance-2-5`（上游真名 doubao-seedance-2-5-260628） | doubao | **豆包官网**（www.doubao.com） | 5/10/15/30s，¥2/次 |
-| `db-seedance-2-0`（上游真名 doubao-seedance-2-0-fast-260128） | doubao | **豆包官网** | 5–15s 区间受理（吸附 5/10/15，无 30s），¥1/次 |
+| `seedance-2.0` | dola | dola 官网 | 5–15s 区间任意值真跑（透传不吸附），¥1/次 |
+| `seedance-2.5` | dola | dola 官网 | 固定 30s/720p，¥0.8/次（2026-10-10 下架） |
+| `seedance-2-5`（上游真名 doubao-seedance-2-5-260628） | doubao | **豆包官网**（www.doubao.com） | 5/10/15/30s 四档，**¥3/次** |
+| `seedance-2-0-fast`（上游真名 doubao-seedance-2-0-fast-260128） | doubao | **豆包官网** | 5–15s **逐秒**（每秒都支持），**¥0.1/秒** |
 | `gemini-web-video` | gemini | Gemini 官网 Veo | 固定 10s，¥1/次 |
 | `Nano Banana Pro` | manwu-image | gemini/jimeng（服务端路由） | 图片 |
 | `jimeng-video-reverse` | jimeng | 即梦 | 视频反解，文本出参 |
 
-⚠️ **doubao 与 dola 是两个独立的执行站点**——模型同为 Seedance 系，但官网、账号池、风控完全不同。豆包模型名与 Worker 侧白名单（`cron_video_brach/src/platforms/doubao/params.ts`）同口径；渠道侧校验在 adaptor.go 的 `kindDoubaoVideo` 分支（时长 5/10/15/30、比例七档含 auto、未指定比例不编造、拒 resolution）。
+⚠️ **两个 Seedance 站的名字只差分隔符**：`seedance-2.0`/`seedance-2.5`（点号）走 **dola**，`seedance-2-0-fast`/`seedance-2-5`（连字符）走**豆包官网**。2026-10-12 起豆包公开名去掉了 `db-` 前缀（旧名 `db-seedance-2-0`/`db-seedance-2-5` 已从路由表彻底删除，调用返回 400 `invalid_model`）。豆包模型名与 Worker 侧白名单（`cron_video_brach/src/platforms/doubao/params.ts`）同口径；渠道侧校验在 adaptor.go 的 `kindDoubaoVideo` 分支（2.0 Fast 时长 5–15 逐秒透传、2.5 时长 5/10/15/30 四档、比例七档含 auto、未指定比例不编造、拒 resolution）。
 
 ### 环境配对（一一对应，禁止交叉）
 
@@ -51,7 +51,7 @@ DO NOT send optional commentary
 
 - **任务卡 queued** = 没有在线 Worker 上报对应能力（查 ArcReel 库 `remote_worker_nodes` 表）；Worker 离线接不到单 ≠ 生成失败。
 - 本渠道建单 400（invalid_model / invalid_duration / invalid_ratio）= adaptor 白名单拦截，对照上表；ArcReel 侧归一见其 create_job 各平台分支。
-- **Seedance 2.0 系时长口径（2026-10-10 定稿，同日升级两端分口径）**：`seedance-2.0`（dola）与 `db-seedance-2-0`（豆包）对外均按 **5–15 秒区间**受理，区间外（含 30s）一律 400。dola 为**任意值真跑**（区间内原样透传不吸附——Worker durationHack 真机实证官网后端接受任意值，7 秒提交成片实测 7.10 秒，dola 不点时长 UI、全靠请求体改写下发）；豆包为**就近吸附**（6-7→5、8-12→10、13-14→15——豆包官网时长只有 5/10/15 可点档且无 durationHack，非档位值原样下发会静默回落成账实不符）。`db-seedance-2-5` 仍是 5/10/15/30 四档白名单，`seedance-2.5` 固定 30s/720p。
+- **Seedance 2.0 系时长口径（2026-10-10 定稿，2026-10-12 两端统一为逐秒透传）**：`seedance-2.0`（dola）与 `seedance-2-0-fast`（豆包）对外均按 **5–15 秒区间**受理，**区间内每一秒都支持**（5,6,…,15），区间外（含 30s）一律 400，且**原样透传、不吸附**——依据是 Worker durationHack 真机实证官网后端接受任意值（7 秒提交成片实测 7.10 秒；dola 不点时长 UI、豆包非档位值跳过 UI，均靠请求体改写下发，并带硬闸门拒单防静默回落）。`seedance-2-5`（豆包）仍是 5/10/15/30 四档白名单，`seedance-2.5`（dola）固定 30s/720p。
 - 漫屋前端报「没有漫屋授权桥」= 在纯浏览器里点了万相桥链路的按钮（须桌面端 App），与远端任务体系无关，两套通道别混。
 
 ## Overview
@@ -198,10 +198,12 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 ### Manwu（漫屋）通道维护约束
 
-- 通道定位：`relay/channel/task/manwu/` 经 OpenAI 兼容 `POST /v1/videos` 承接五个远端模型，再转 ArcReel 远端建单（默认基址 `https://arcreel.heibaidao.cn`，提交路径 `/api/v1/remote-generation/jobs`）。完整链路：ArcReel 本地任务 → 本中转（heibaidao）→ ArcReel 远端建单 → worker（燃境 App）→ 目标官网。排查必须按此链路逐段确认，不要跳段。
-- 模型路由表（`adaptor.go::modelSpecs`，五个模型共用一条建单链路，差异只在 platformId/outputMode/白名单；新增模型先加表项，禁止新开 adaptor）：
-  - `seedance-2.0` → `platformId: dola` + `outputMode: video`（按次 ¥1.0，支持 5/10/15 秒且同价）
+- 通道定位：`relay/channel/task/manwu/` 经 OpenAI 兼容 `POST /v1/videos` 承接七个远端模型，再转 ArcReel 远端建单（默认基址 `https://arcreel.heibaidao.cn`，提交路径 `/api/v1/remote-generation/jobs`）。完整链路：ArcReel 本地任务 → 本中转（heibaidao）→ ArcReel 远端建单 → worker（燃境 App）→ 目标官网。排查必须按此链路逐段确认，不要跳段。
+- 模型路由表（`adaptor.go::modelSpecs`，七个模型共用一条建单链路，差异只在 platformId/outputMode/白名单；新增模型先加表项，禁止新开 adaptor）：
+  - `seedance-2.0` → `platformId: dola` + `outputMode: video`（按次 ¥1.0，5–15 秒逐秒透传同价）
   - `seedance-2.5` → `platformId: dola` + `outputMode: video`（按次 ¥0.8，固定 30 秒、720p）
+  - `seedance-2-0-fast` → `platformId: doubao` + `outputMode: video`（**按秒 ¥0.1/秒**，5–15 秒每一秒都支持；上游真名 `doubao-seedance-2-0-fast-260128`，转发前在 `modelSpec.UpstreamModel` 翻译）
+  - `seedance-2-5` → `platformId: doubao` + `outputMode: video`（按次 ¥3.0，5/10/15/30 四档；上游真名 `doubao-seedance-2-5-260628`）
   - `gemini-web-video` → `platformId: gemini` + `outputMode: video`。**故意不叫 `veo-*`**：官方 Gemini 渠道已占那些名字，重名会被路由到错渠道
   - `Nano Banana Pro` → `platformId: manwu-image`（对外模型名已改为 Nano Banana Pro；ArcReel 内部仍用抽象 platformId，服务端固定走 Gemini Pro 上游）+ `outputMode: image`
   - `jimeng-video-reverse` → `platformId: jimeng` + `outputMode: prompt`，**文本出参**（`prompt` 可选；视频入参恰好 1 个 http(s) URL）
@@ -210,18 +212,19 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - ArcReel 托管产物（Gemini 图片 blob、Veo 的 data: mp4）的 `sourceUrl` 是**相对路径**且需渠道密钥 → adaptor **不吐** URL，让 new-api 落成 `/v1/videos/{task_id}/content` 代理，由 `controller/video_proxy.go` 的 `ChannelTypeManwu` 分支回查 job 取 sourceUrl 再带密钥下载。
   - dola/tiktok 这类公网 CDN 直链照旧透传，**绝不带渠道密钥**（否则凭证泄露给第三方 CDN）。禁止去掉这个区分。
 - 文本结果链路：`relaycommon.TaskInfo.ResultText` → `model.TaskPrivateData.ResultText`（JSON 列，免迁移）→ `dto.TaskDto.ResultText`；OpenAI video 响应里落在 `metadata.prompt`（`metadata.media_type = "text"`）。新增文本型任务沿用这条链路。
-- 计费：`setting/ratio_setting/model_ratio.go` 定义单价；`seedance-2.0`（¥1.0/次）/ `seedance-2.5`（¥0.8/次）/ `gemini-web-video`（¥1.0/次）/ `jimeng-video-reverse` 按次（`EstimateBilling` 返回 nil）；`Nano Banana Pro` 按张，张数走 `EstimateBilling` 的 `{"n": N}` 倍率。**注意生产 `ModelPrice` option 会覆盖代码默认值**——只改 `model_ratio.go` 线上不会变，改价必须同时改 option（见 2026-10-05 调价 commit）。
-  - ⚠️ **`Nano Banana Pro` 绝不能进 `TASK_PRICE_PATCH` 环境变量**：进了会被 `relay_task.go` 当按次计费跳过倍率相乘，n 张只扣 1 张的钱（静默少收费）。`seedance-2.0`、`seedance-2.5` 在该变量里，属正常。
+- 计费：`setting/ratio_setting/model_ratio.go` 定义单价；`seedance-2.0`（¥1.0/次）/ `seedance-2-5`（¥3.0/次）/ `gemini-web-video`（¥1.0/次）/ `jimeng-video-reverse` 按次（`EstimateBilling` 返回 nil）；`seedance-2-0-fast` **按秒**（¥0.1/秒，`EstimateBilling` 返回 `{"seconds": D}`）；`Nano Banana Pro` 按张，张数走 `EstimateBilling` 的 `{"n": N}` 倍率。**注意生产 `ModelPrice` option 会覆盖代码默认值**——只改 `model_ratio.go` 线上不会变，改价必须同时改 option（见 2026-10-05 调价 commit）。
+  - ⚠️ **`Nano Banana Pro` 绝不能进 `TASK_PRICE_PATCH` 环境变量**：进了会被 `relay_task.go` 当按次计费跳过倍率相乘，n 张只扣 1 张的钱（静默少收费）。
+  - ⚠️ **同理 `seedance-2-0-fast`（按秒）也不能进**：它依赖 `seconds` 倍率，跳过相乘就会把 9 秒的单按 ¥0.1 收（少收 9 倍）。把该变量当作「这些模型都按次」的白名单来读。**2026-10-12 核对：生产容器实际未设置 `TASK_PRICE_PATCH`（`docker inspect new-api` 无此变量）**，即当前没有任何模型跳过倍率相乘；文档里「seedance-2.0/2.5 在该变量里」是旧状态，别据此推断线上行为。
 - 提交耗时：反解的参考视频由 ArcReel 代下载（≤100MB，上限对齐 Worker 硬限制），`POST /v1/videos` 可能阻塞 1–2 分钟。本中转 `RELAY_TIMEOUT` 默认为 0（不超时），不要为了「快」把它调到 60s 以下，否则大视频会出现「网关报错但上游已建单」。
 - ⚠️ **`gemini-web-video` 链路本身已验证可用，但上游 Google 官网会间歇性拒单（2026-10-04 三次真机验证）**。task 246 轮询 20 分钟无果（Worker 重试两次 ×10 分钟上限）；task 247 `provider_running` 后 **5 秒**被官网拒，报 `Gemini官网任务失败: something went wrong`；task 262 一次成功（2.5 分钟出片，1280x720 / 10s / 24fps / h264+aac / 4.5MB）。同期 ArcReel 历史 15 ready / 7 failed（约 68%）。脆弱点在 Worker `mac-mini-001` 只有 1 个可提交 gemini 账号（`1789263965686-jkhdkq`，`max_concurrent=1`），另一个 `1789010295191-v4p8en` 自 2026-09-12 起 `needs_relogin`。
   - 排查口径：先看 ArcReel `remote_worker_accounts` 有几个 `can_submit=1`、再对比 `remote_generation_events` 的 `job.failed` payload。`something went wrong` = 官网侧拒单（额度/风控/会话），**不是**建单参数问题；`生成轮询超过 10 分钟` = Worker 侧 `DomPlatformScheduler.PLATFORM_POLL_TIMEOUT_MS.gemini` 硬上限（第四仓 `cron_video_brach`）。
   - **不要因为这两种报错去改本中转**：路由、请求构造（只传 `videoParams.ratio`）、计费（两侧同为 ¥1.0/次 = 68493 quota）、状态映射、失败退款（精确退回，差值 0）、交付链路都已逐项验证正确。改本中转只会掩盖上游问题。
   - **判定交付链路是否坏，不要靠新建单去试**：既烧钱又受上游波动干扰。直接拿历史 ready job 的 mp4 验（`task_id=task_n1Lka9MuISXORM5jo3sRrh2Vv5SRmRPn` → `gen-6682493b9ae987d87365ed97`，带渠道密钥得 6.2MB 合法 mp4，不带密钥 401）。
-- 模型广场可见性：`seedance-2.0` / `seedance-2.5` / `gemini-web-video` / `Nano Banana Pro` 已在 `model/pricing.go isAllowedPricingModel` 放行；`jimeng-video-reverse` **故意未放行**——¥1.0/次是占位价，商务核定前不得对外展示价格（白名单只管广场，不影响调用）。
+- 模型广场可见性：`seedance-2.0` / `seedance-2-5` / `seedance-2-0-fast` / `gemini-web-video` / `Nano Banana Pro` 已在 `model/pricing.go isAllowedPricingModel` 放行；`jimeng-video-reverse` **故意未放行**——¥1.0/次是占位价，商务核定前不得对外展示价格（白名单只管广场，不影响调用）。卡片描述/供应商/标签存在 `models` 表（`description`/`icon`/`tags`/`vendor_id`），改名或调价时必须同步 `UPDATE models`，否则卡片会继续写旧名与旧价。
 - 本地错误码均为 400：`invalid_model` / `invalid_request` / `invalid_duration` / `invalid_ratio` / `invalid_count` / `invalid_input_reference`，改动错误语义时同步更新 `adaptor_test.go` 的拒绝用例表。
 - 测试：`go test ./relay/channel/task/manwu/`。改上限必须同步维护边界用例（dola 10 张放行见 `TestValidateAcceptsTenReferenceImages`，11 张拒绝见 `TestValidateRejectsIllegalRequests` 的 `too many images`；图片张数上界、反解单视频约束各有独立用例），禁止只改常量不改测试。
 - 双仓库同口径：ArcReel 侧 `lib/video_backends/openai.py` 的 manwu 分支（`_MANWU_MODEL_PATTERN` / `_MANWU_MAX_REFERENCE_IMAGES` / `_manwu_ratio`）必须与本通道同口径。**改对外模型名必须同步改正则**（2026-10-04：`dola-*` 改 `seedance-2.0/2.5` 后，ArcReel 侧正则不改就会退回 Sora 单参考图 + WxH size）。正则在 `seedance-2.0` 前禁止 `._:-`，否则会误吃 `doubao-seedance-2-0-260128`、`huixin:seedance-2.5-burst-15s`。任一侧改上限、比例档或字段语义，必须双侧同步改、同步发版。注意 ArcReel 的部署脚本只更新 ArcReel 两台服务器，不会更新本中转；本中转发版走上面的 Deployment Rules 远程构建流程。
-- 第四仓 Worker（`C:\work\即梦网站\cron_video_brach`，dola 官网浏览器执行体）**无需改**：它按 `duration` 收敛官网模型（5/10/15 → `dola-seedance-2-0-fast`，30 → `dola-seedance-2-5`），两个公开模型靠 ArcReel 归一后的时长自动落到正确官网档位。但本地 master 与 origin/master **已分叉**，改动前先核对。
+- 第四仓 Worker（`C:\work\即梦网站\cron_video_brach`）对 dola **无需改**：它按 `duration` 收敛官网模型（5/10/15 → `dola-seedance-2-0-fast`，30 → `dola-seedance-2-5`），两个公开模型靠 ArcReel 归一后的时长自动落到正确官网档位。但它的 `shared/constants/heibaidaoModelCapabilities.ts` / `modelProviderPresets.ts` 里**存着黑白道公开模型名**（本中转改名后必须同步改，否则工作台下拉里选中改名后的模型会查不到能力、时长/比例白名单全丢）。本中转**不认识** Worker 侧的 `doubao-*` 官网真名以外的别名，故改名无需 Worker 改 DOM 白名单。
 
 ### MiniMax / hailuo 通道维护约束
 
@@ -240,6 +243,11 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 - **🔥 未经用户明确允许，禁止跑任何真实视频任务（2026-10-06 用户明令，凌驾于下文一切「真实任务」规则之上）**。视频任务上游按次/按秒真金白银扣费（有赞 prime ≈450 积分/单、smart ≈90 积分/单、seedance ¥0.8–1.0/单），且部分上游 402 预检拒绝后任务**仍可能照跑扣费**（2026-10-06 实测：prime 提交被 402 拒，450 积分照扣、成片照出）。诊断类需求一律走替代手段，按优先级：① 单元测试（`go test` 可确定性复现的绝不真打）；② 历史任务产物验证（不新建单）；③ 必然被本地 400 拦下的非法入参探针（断言 quota 差值为 0、`tasks` 无新增）；④ 通道被禁用等纯路由问题查日志/DB 即可。**只有用户明确说「可以跑一单」之后才允许提交真实任务**；「真实任务上限 1 个」等旧规则均以本条为前提。
 - **恢复被 AutoBan 的渠道必须同时改 `channels.status` 与 `abilities.enabled`**。2026-10-02 的真实事故：AutoBan 禁用渠道时连带把能力表置 `enabled=false`，事后只把 `status` 改回 1，导致渠道「看起来正常」但该渠道**所有模型 503 `model_not_found`**，持续数小时无人察觉。恢复用 `scripts/restore-channel.sh <id>`，它两边一起改并打印复核。
+- **模型改名/调价的生产步骤（2026-10-12 定稿口径）**：① **先发版**：`scripts/deploy-new-api.sh <sha>`（按秒逻辑与白名单在代码里）；② **再跑 SQL**：`scripts/prod-rename-doubao-seedance-20261012.sql`（**单事务**，channels.models → abilities → models 卡片描述 → ModelPrice option 四步原子完成）。SQL 跑完后路由缓存 ≤60s 重建，`/v1/models` 立即，广场 TTL 1min，**无需重启**。
+
+  **顺序不能反，理由是「可见性」而不是「会不会错价」**：反序（SQL 先、后端旧）时 abilities 已有新名，`/v1/models` 会**对外列出** `seedance-2-0-fast`，但旧二进制的 adaptor 表里没有它 → 调用即 400 `invalid_model`。即「模型可见但一调就坏」。正序（先发版）时 abilities 未更新，该模型既不在 `/v1/models` 也不在广场，完全隐形，没人能调到它，SQL 一跑即刻整体生效——没有任何半可用窗口。两种顺序都不会错价（前者 400、后者 503 `model_not_found`，都进不了计费），但正序没有坏体验窗口。
+
+  ⚠️ **绝不能只跑 SQL 不发版**：单价 option 已是新值而代码仍是旧的 `EstimateBilling`，一旦有人绕过 abilities 直接命中渠道，就会用新价配旧倍率扣费。
 - **裸 SQL 建/改渠道后必须重启 new-api**：能力走内存缓存（`CacheGetRandomSatisfiedChannel`），SQL 改 `abilities` 对**新建**渠道不生效（对已缓存的旧渠道反而会立刻生效，所以容易误判成「缓存已刷新」）。走管理 API 建渠道不会有这个问题。
 - **上下架（隐藏/恢复）一个模型必须「两处同改」**（2026-10-10 定稿）。一个模型的可见性由**三条独立链路**决定，少改一处就会出现「藏了还在」或「改完自己复活」：
   - **广场 `/api/pricing`** ← `abilities.enabled=true` × `model/pricing.go isAllowedPricingModel` 白名单；
@@ -249,7 +257,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - 下架即**不可调用**（无渠道 → 503 `model_not_found … 无可用渠道`）。此探针不建单、不扣费，属安全的零成本验证手段。
   - 生效时延：`/v1/models` 立即；广场 pricing TTL 1min；路由缓存 ≤60s。**无需重启、无需重新部署后端**。
   - 参考脚本 `scripts/prod-hide-seedance25-20261010.sql`（单事务 + 备份表 + 回滚 SQL 注释）。
-- **验证脚本不得用能通过校验的入参**。`seedance-2.0` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。**更硬的坑：`seedance-2.0` 的最小入参 `{"model":"seedance-2.0","prompt":"x"}` 是合法且会真建单**（2026-10-04 又误建 1 次）。规则：① 只用必然被本地校验拦下的输入（越界 seconds / 越界 ratio / 非 http 参考图 / 越界 n）；② 每次跑完断言 `sum(tokens.used_quota)` 差值为 0、`tasks` 无非终态任务、ArcReel `arcreel.log` 里 `remote-generation/jobs` 计数差值为 0；③ 一旦误建，必须**同时**在 new-api（退款 + 任务置 FAILURE + 标记日志；new-api **没有** `/v1/videos/{id}/cancel` 端点）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销。照抄 `scripts/probe-manwu-dola-dual.sh`，它已同时做三项断言。
+- **验证脚本不得用能通过校验的入参**。`seedance-2.0` 的 `n` 字段不参与校验，拿它当「探针」会**真建单并扣费**（本项目已因此误建 2 次 dola 任务）。**更硬的坑：`seedance-2.0` / `seedance-2-5` / `seedance-2-0-fast` 的最小入参 `{"model":"<模型名>","prompt":"x"}` 都是合法且会真建单**（2026-10-04 又误建 1 次；2026-10-12 两个豆包模型改名后同样成立）。规则：① 只用必然被本地校验拦下的输入（越界 seconds / 越界 ratio / 非 http 参考图 / 越界 n）；② 每次跑完断言 `sum(tokens.used_quota)` 差值为 0、`tasks` 无非终态任务、ArcReel `arcreel.log` 里 `remote-generation/jobs` 计数差值为 0；③ 一旦误建，必须**同时**在 new-api（退款 + 任务置 FAILURE + 标记日志；new-api **没有** `/v1/videos/{id}/cancel` 端点）与 ArcReel（`POST /remote-generation/jobs/{id}/cancel`）两侧撤销。照抄 `scripts/probe-manwu-dola-dual.sh`，它已同时做三项断言。
 - **验证「计费 bug」不得用付费真实任务（2026-10-06 立规，代价 810 上游积分）**。上一条讲的是「别误建单」，这一条更进一步：**有些单就是必须建的，也不该多建**。
   - **实例**：修 `relay_task.go` 的 `OtherRatios` 逐项 `int()` 截断（同一请求扣费在 102739/102735 间随机）时，为了「多跑几次看抖动」跑了 **9 个付费任务**，上游有赞共扣 **810 积分**（9 × 90 分）。客户侧 952039 quota 全额退了，**上游那 810 分撤不回来**，净损由运营方承担（台账见 `logs.content LIKE '%OPERATOR-COST-ACCOUNTING%'`，脚本 `scripts/prod-log-probe-upstream-cost-20261005.sql`）。
   - **方法错误不在疏忽，在选错验证手段**：同一提交里已写了 `relay/relay_task_billing_test.go`，它用三个硬编码数值（单次累乘 102739；两种遍历顺序 102739 / 102735；并断言两者不同）就把顺序依赖**确定性复现**了。观察随机性根本不需要真金白银去撞。

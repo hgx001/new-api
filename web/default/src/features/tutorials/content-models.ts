@@ -34,6 +34,8 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5/10/15 秒',
+  'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
+  'seedance-2-5｜视频（按次）｜¥3.00 / 次，5/10/15/30 秒同价',
   'gemini-web-video｜视频（按次）｜¥1.00 / 次',
   'Nano Banana Pro｜图片（按张）｜¥0.30 / 张',
   'jimeng-video-reverse｜提示词（按次）｜¥1.00 / 次',
@@ -80,8 +82,8 @@ const MEDIA_RULE_ITEMS = [
 const BILLING_ITEMS = [
   '文本：输入、输出 token 分别计价',
   '图片：按张计费，gpt-image-2.5-官方 ¥0.15 / 张（n=2 扣两次）；Nano Banana Pro ¥0.30 / 张，走 /v1/videos 异步任务，成图读 metadata.url',
-  '视频（按秒）：单价 × 秒数 × 分辨率档位倍率',
-  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，seedance-2.0 ¥1.00 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
+  '视频（按秒）：单价 × 秒数 × 分辨率档位倍率；seedance-2-0-fast 无分辨率档位，固定 ¥0.10 / 秒',
+  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，seedance-2.0 ¥1.00 / 次，seedance-2-5 ¥3.00 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
   '任务失败：自动全额退还，无需申请',
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
@@ -432,6 +434,44 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'heading',
           level: 3,
+          id: 'model-seedance-2-0-fast',
+          children: [{ type: 'strong', value: 'seedance-2-0-fast（漫屋豆包官网 Seedance 2.0 Fast）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['seconds / duration：5–15 秒逐秒，默认 5；区间外（含 4、16、30）直接 400'],
+          ['ratio：auto（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；不传则保持官网当前档位'],
+          ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
+          ['resolution：不支持，传入直接 400（官网无分辨率控件）'],
+          ['计费：按秒 ¥0.10 × 秒数，无分辨率倍率'],
+        ] },
+        {
+          type: 'codeBlock',
+          lang: 'bash',
+          value: `curl ${videoUrl} \\
+  -H "Authorization: Bearer $NEW_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "seedance-2-0-fast",
+    "prompt": "一只橘猫在窗台晒太阳，午后暖光",
+    "duration": 9
+  }'`,
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-seedance-2-5',
+          children: [{ type: 'strong', value: 'seedance-2-5（漫屋豆包官网 Seedance 2.5）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['seconds / duration：5 / 10 / 15 / 30 四档，默认 5；非档位值直接 400'],
+          ['ratio：auto（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；不传则保持官网当前档位'],
+          ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
+          ['resolution：不支持，传入直接 400'],
+          ['计费：按次 ¥3.00，与时长无关'],
+        ] },
+        {
+          type: 'heading',
+          level: 3,
           id: 'model-gemini-web-video',
           children: [{ type: 'strong', value: 'gemini-web-video（漫屋 Gemini 官网 Veo）' }],
         },
@@ -547,6 +587,8 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: 'wan2.7-r2v', href: '#model-wan27-r2v' },
     { title: 'autodl:minimax-h3-u24', href: '#model-autodl-h3-u24' },
     { title: 'seedance-2.0', href: '#model-seedance-2' },
+    { title: 'seedance-2-0-fast', href: '#model-seedance-2-0-fast' },
+    { title: 'seedance-2-5', href: '#model-seedance-2-5' },
     { title: '参考素材要求', href: '#video-media-rules' },
     { title: '计费与退款', href: '#billing-refund' },
     { title: '错误码', href: '#api-errors' },

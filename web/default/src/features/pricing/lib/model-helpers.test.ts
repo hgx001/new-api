@@ -123,6 +123,17 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(isPerSecondModel(autoDLModel('wan3.0-video-官网')), true)
   })
 
+  // 豆包官网两个 Seedance 计价方式不同（2026-10-12）：
+  // seedance-2-0-fast 按秒（EstimateBilling 返回 seconds），卡片必须显示 /秒；
+  // seedance-2-5 按次（返回 nil），显示 /次。名字只差分隔符，不能用前缀判断。
+  test('marks doubao seedance-2-0-fast per second and seedance-2-5 per request', () => {
+    assert.equal(isPerSecondModel(autoDLModel('seedance-2-0-fast')), true)
+    assert.equal(isPerSecondModel(autoDLModel('seedance-2-5')), false)
+    // dola 两个模型一直是按次，不能被连字符新名带偏。
+    assert.equal(isPerSecondModel(autoDLModel('seedance-2.0')), false)
+    assert.equal(isPerSecondModel(autoDLModel('seedance-2.5')), false)
+  })
+
   // 有赞/官网 wan3 系模型都接受 resolution 参数，示例值按模型给：
   // smart/官网 默认 480P，r2v 只能 720p/1080p（上游要小写），prime 固定 1080P。
   test('returns the wan3 sample resolution per model', () => {

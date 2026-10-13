@@ -53,6 +53,16 @@ func TestIsAllowedPricingModelDolaSeedance(t *testing.T) {
 	}
 }
 
+// 漫屋 ArcReel 豆包官网视频上广场（2026-10-12 公开名去掉 db- 前缀，旧名退役）。
+func TestIsAllowedPricingModelDoubaoSeedance(t *testing.T) {
+	for _, name := range []string{"seedance-2-0-fast", "seedance-2-5"} {
+		require.True(t, isAllowedPricingModel(name), "%s must show in pricing square", name)
+	}
+	for _, retired := range []string{"db-seedance-2-0", "db-seedance-2-5"} {
+		assert.False(t, isAllowedPricingModel(retired), "%s must be hidden after renaming", retired)
+	}
+}
+
 // 漫屋新增两个模型上广场；视频反解在价格核定前**不**上（占位价不得对外发布）。
 func TestIsAllowedPricingModelManwuRemote(t *testing.T) {
 	for _, name := range []string{"gemini-web-video", "Nano Banana Pro"} {
