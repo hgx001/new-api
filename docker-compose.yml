@@ -1,5 +1,7 @@
 # New-API Docker Compose Configuration
-# 
+#
+# ⚠️ 上游模板，仅供本地体验，生产不使用本文件（生产为 deploy/backend-remote.sh 裸 docker run，见 deploy/README.md）。
+#
 # Quick Start:
 #   1. docker-compose up -d
 #   2. Access at http://localhost:3000

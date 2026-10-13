@@ -1,5 +1,7 @@
 # 生产部署规范
 
+> ⚠️ **历史文档（2026-07-05），仅存档**。现行部署流程以 [deploy/README.md](../../../deploy/README.md) 为准；本文与脚本不一致之处（compose、tar 回滚）已就地修正为脚本真实行为。
+
 **日期**: 2026-07-05  
 **背景**: 之前前端通过 `//go:embed` 编译进 Go 二进制,每次改前端展示文本都需要完整构建 Docker 镜像。已通过 NGINX 反代 + 独立 dist 目录优化为前端独立部署。
 
@@ -71,14 +73,17 @@ deploy/deploy-frontend.sh --no-push --ref <commit-sha>
 
 适用于:修改 API、middleware、relay 适配器、模型处理逻辑等
 
-后端发布默认通过部署脚本 SSH 到生产服务器执行，不要求本地启动 Docker Desktop。脚本需要在服务器源码目录固定到待发布的精确 commit，然后在服务器执行以下等价步骤：
+后端发布默认通过部署脚本 SSH 到生产服务器执行，不要求本地启动 Docker Desktop。脚本需要在服务器源码目录固定到待发布的精确 commit，然后在服务器执行以下等价步骤（生产为**裸 docker run，非 compose**；完整参数与本地入口见 `deploy/README.md`）：
 
 ```bash
 cd /home/ubuntu/new-api-src
 git checkout --detach <commit-sha>
 docker build -f Dockerfile.deploy -t new-api-custom:latest .
-docker compose -f /home/ubuntu/new-api/docker-compose.yml \
-  up -d --force-recreate new-api
+docker stop new-api && docker rename new-api "new-api-prev-$(date +%Y%m%d%H%M%S)"
+docker run -d --name new-api --restart always -p 127.0.0.1:3000:3000 \
+  -v /home/ubuntu/new-api/data:/data -v /home/ubuntu/new-api/logs:/app/logs \
+  --network new-api_new-api-network --env-file /tmp/newapi-<ts>.env \
+  new-api-custom:latest --log-dir /app/logs
 ```
 
 完成后必须检查 `new-api` 容器为 healthy，并请求 HTTPS 健康检查地址及本次变更涉及的业务接口。只有在生产服务器无法构建时，才允许将本地构建 Docker 作为明确的应急回退方案。
@@ -180,18 +185,15 @@ sudo nginx -t && sudo systemctl reload nginx
 
 ### 后端回滚
 
+部署脚本停旧容器时改名为 `new-api-prev-<ts>`（保留最近 3 个）。回滚**不能直接 `docker start` 旧容器**（3000 端口被新容器占用），按此序列：
+
 ```bash
-# 恢复到上一个版本的 Docker 镜像
-docker load -i /tmp/new-api-custom.previous.tar
-docker restart new-api
+docker stop new-api && docker rm new-api
+docker rename new-api-prev-<ts> new-api
+docker start new-api
 ```
 
-若无保留旧 tar,可从 Docker 历史缓存恢复:
-```bash
-docker images | grep new-api-custom
-docker tag <previous-image-id> new-api-custom:latest
-docker restart new-api
-```
+旧容器自带原镜像与环境变量，无需 tar 或历史镜像。
 
 ## 6. 模型展示名覆盖配置
 

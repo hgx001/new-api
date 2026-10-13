@@ -39,6 +39,9 @@ deploy/deploy-frontend.sh --no-push --ref <commit-sha>
 
 后端发布默认通过 SSH 在生产服务器上构建 Docker 镜像，再重建 `new-api` 容器；本地不需要启动 Docker Desktop，也不需要在本地执行 `docker build` 或 `docker save`。发布脚本必须将源码精确固定到待发布 commit，完成远程构建、容器重建、健康检查和业务接口验证。
 
+- 入口：`deploy/deploy-backend.sh <sha>`（服务器侧执行体 `deploy/backend-remote.sh`）
+- 完整流程、已知约束（服务器连不上 github，bundle 直传）与回滚：`deploy/README.md`
+
 `deploy/deploy-frontend.sh` 仅用于前端静态文件发布，不能代替后端发布流程。后端变更不得按“只发布前端”处理。
 
 ### 模型广场展示名覆盖

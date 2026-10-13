@@ -1,5 +1,7 @@
 # Frontend Development - Backend built from local source
 #
+# ⚠️ 本地开发模板，生产不使用（生产为 deploy/backend-remote.sh 裸 docker run，见 deploy/README.md）。
+#
 # Usage:
 #   1. docker compose -f docker-compose.dev.yml up -d
 #   2. cd web && bun install && bun run dev

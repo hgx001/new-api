@@ -176,7 +176,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 ### Deployment Rules
 
-- Production Go backend releases MUST use the remote-build flow: SSH to the production server, check out the exact committed SHA there, build `Dockerfile.deploy` on the server, then recreate the backend container and run the health checks.
+- Production Go backend releases MUST use the remote-build flow: SSH to the production server, check out the exact committed SHA there, build `Dockerfile.deploy` on the server, then recreate the backend container and run the health checks. 入口：本地 `deploy/deploy-backend.sh <sha>`（服务器侧执行体 `deploy/backend-remote.sh`）；完整流程与回滚见 `deploy/README.md`。
 - A local Docker daemon MUST NOT be a prerequisite for backend deployment. Do not ask the user to start Docker Desktop or build the production image locally when the production server can build it remotely.
 - The frontend and backend have separate deployment paths. `deploy/deploy-frontend.sh` is for the frontend static release only; backend changes must use the backend remote-build deployment flow and must not be treated as frontend-only changes.
 - Before deployment, keep the source checkout pinned to the exact commit being released, preserve unrelated local files, use the smallest necessary production change, and verify the container status, application health endpoint, and relevant business API after release.
@@ -243,7 +243,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 - **🔥 未经用户明确允许，禁止跑任何真实视频任务（2026-10-06 用户明令，凌驾于下文一切「真实任务」规则之上）**。视频任务上游按次/按秒真金白银扣费（有赞 prime ≈450 积分/单、smart ≈90 积分/单、seedance ¥0.8–1.0/单），且部分上游 402 预检拒绝后任务**仍可能照跑扣费**（2026-10-06 实测：prime 提交被 402 拒，450 积分照扣、成片照出）。诊断类需求一律走替代手段，按优先级：① 单元测试（`go test` 可确定性复现的绝不真打）；② 历史任务产物验证（不新建单）；③ 必然被本地 400 拦下的非法入参探针（断言 quota 差值为 0、`tasks` 无新增）；④ 通道被禁用等纯路由问题查日志/DB 即可。**只有用户明确说「可以跑一单」之后才允许提交真实任务**；「真实任务上限 1 个」等旧规则均以本条为前提。
 - **恢复被 AutoBan 的渠道必须同时改 `channels.status` 与 `abilities.enabled`**。2026-10-02 的真实事故：AutoBan 禁用渠道时连带把能力表置 `enabled=false`，事后只把 `status` 改回 1，导致渠道「看起来正常」但该渠道**所有模型 503 `model_not_found`**，持续数小时无人察觉。恢复用 `scripts/restore-channel.sh <id>`，它两边一起改并打印复核。
-- **模型改名/调价的生产步骤（2026-10-12 定稿口径）**：① **先发版**：`scripts/deploy-new-api.sh <sha>`（按秒逻辑与白名单在代码里）；② **再跑 SQL**：`scripts/prod-rename-doubao-seedance-20261012.sql`（**单事务**，channels.models → abilities → models 卡片描述 → ModelPrice option 四步原子完成）。SQL 跑完后路由缓存 ≤60s 重建，`/v1/models` 立即，广场 TTL 1min，**无需重启**。
+- **模型改名/调价的生产步骤（2026-10-12 定稿口径）**：① **先发版**：`deploy/deploy-backend.sh <sha>`（按秒逻辑与白名单在代码里）；② **再跑 SQL**：`scripts/prod-rename-doubao-seedance-20261012.sql`（**单事务**，channels.models → abilities → models 卡片描述 → ModelPrice option 四步原子完成）。SQL 跑完后路由缓存 ≤60s 重建，`/v1/models` 立即，广场 TTL 1min，**无需重启**。
 
   **顺序不能反，理由是「可见性」而不是「会不会错价」**：反序（SQL 先、后端旧）时 abilities 已有新名，`/v1/models` 会**对外列出** `seedance-2-0-fast`，但旧二进制的 adaptor 表里没有它 → 调用即 400 `invalid_model`。即「模型可见但一调就坏」。正序（先发版）时 abilities 未更新，该模型既不在 `/v1/models` 也不在广场，完全隐形，没人能调到它，SQL 一跑即刻整体生效——没有任何半可用窗口。两种顺序都不会错价（前者 400、后者 503 `model_not_found`，都进不了计费），但正序没有坏体验窗口。
 
@@ -265,7 +265,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - **什么值得跑真实任务**：验证**调价后单价** → 1 个（真实账目是唯一事实源，见「Model Pricing and Catalog Rules」）；验证**交付链路** → 0 个（拿历史 ready 任务的产物验）；验证**上游拒单/审核** → 1 个（只能真打，但一次足以定性）。
   - **先查上游计费维度再选档**：有赞 `wan3.0-smart` **不按分辨率区分扣点**（720p 与 1080p 同为 90 分/任务）。我默认跑 1080p 属于**运气**（恰好没多花），不是判断。
   - **每个付费探针跑完必须写 `OPERATOR-COST-ACCOUNTING` 台账**，把上游实扣与客户侧退款并列留痕，否则这笔成本会在对账时凭空消失。
-- 部署走 `scripts/deploy-new-api.sh <sha>`：它带 **SHA 前缀断言**（曾出现「构建了旧 commit 却以为成功」）、fetch 失败时校验本地是否已有该 commit、旧容器只保留最近 3 个。生产容器不是 compose 管理，必须按旧容器原参数 `docker run` 重建。
+- 部署走 `deploy/deploy-backend.sh <sha>`（服务器侧执行体 `deploy/backend-remote.sh`）：它带 **SHA 前缀断言**（曾出现「构建了旧 commit 却以为成功」）、fetch 失败时校验本地是否已有该 commit、旧容器只保留最近 3 个。生产容器不是 compose 管理，必须按旧容器原参数 `docker run` 重建。
 
 - **🔧 GPT 通道（sub2api）掉线排查：先跑自动恢复脚本，别手工瞎试**。sub2api 上游（`119.29.253.97:8080`，账号 id=4，Codex OAuth）是渠道 13 GPT-Pool 的唯一来源，它一掉线**文本和生图一起挂**，但 new-api 侧看不出任何异常迹象。
   - **脚本**：`deploy-vpn/sub2api_autocheck_task.py`（不在 git 里，`deploy-vpn/` 已列入 `.git/info/exclude`）。**Windows 计划任务「sub2api GPT OAuth 自动恢复」每小时 :05 自动跑它**；手工跑：`<托管python> deploy-vpn/sub2api_autocheck_task.py`。
