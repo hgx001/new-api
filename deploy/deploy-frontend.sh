@@ -157,7 +157,12 @@ if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
 fi
 
 log "fetching $COMMIT_SHA from $SERVER_GIT_REMOTE"
-git fetch --prune -- "$SERVER_GIT_REMOTE"
+# 生产机连不上 github.com:443；fetch 失败但本地 checkout 已有该 commit（如 bundle 直传）时继续
+if ! git fetch --prune -- "$SERVER_GIT_REMOTE"; then
+  git cat-file -e "$COMMIT_SHA^{commit}" 2>/dev/null \
+    || die "fetch failed and commit is not available locally: $COMMIT_SHA"
+  log "fetch failed; using locally available commit $COMMIT_SHA"
+fi
 git cat-file -e "$COMMIT_SHA^{commit}" || die "commit is not available after fetch: $COMMIT_SHA"
 git checkout --detach --quiet "$COMMIT_SHA"
 
