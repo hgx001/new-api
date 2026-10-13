@@ -76,12 +76,20 @@ export function getWan3SampleResolution(modelName: string): string | null {
  *
  * Only adaptors whose EstimateBilling returns a `seconds` ratio bill per
  * second: wan3/youzanwan3 (wan3.0-video*, wan3.0-smart, wan2.7-r2v), autodl
- * (autodl:* workflows) and the doubao Seedance 2.0 Fast (manwu
- * `seedance-2-0-fast`, per-second since 2026-10-12).
+ * (autodl:* workflows), erchun (wan3.0-480p) and the doubao Seedance 2.0 Fast
+ * (manwu `seedance-2-0-fast`, per-second since 2026-10-12).
  * Models whose EstimateBilling returns nil are billed a fixed price per call
  * (e.g. youzan wan3.0-video-prime-1080p, doubao `seedance-2-5`, dola
  * seedance-2.0/2.5), so they must NOT show the per-second suffix.
- * If a new per-second adaptor (e.g. sora) goes live, add its model prefix here.
+ * If a new per-second adaptor goes live, add its model name here AND to the
+ * exhaustive table in model-helpers.test.ts.
+ *
+ * ⚠️ This list is a hand-maintained copy of the backend billing mode and has
+ * silently dropped models twice — `seedance-2-0-fast` (2026-10-12) and
+ * `wan3.0-480p` (erchun) — both of which rendered a per-second price under a
+ * "/ request" unit on the model square. A new per-second model is a silent
+ * mispricing until someone remembers to add it here, so the test enumerates
+ * every model currently sold.
  *
  * ⚠️ Seedance must be matched by **exact name**: the doubao pair uses hyphens
  * (`seedance-2-0-fast` per-second, `seedance-2-5` per-call) while the dola pair
@@ -97,6 +105,11 @@ export function isPerSecondModel(model: PricingModel): boolean {
   }
   // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥3/次），不命中。
   if (name.startsWith('seedance-2-0')) {
+    return true
+  }
+  // Erchun 的 480P 专用档：名字不以 wan3.0-video 开头（那是官网/有赞的命名），
+  // 必须单列，否则 ¥0.28/秒 会被显示成按次。
+  if (name === 'wan3.0-480p') {
     return true
   }
   return (

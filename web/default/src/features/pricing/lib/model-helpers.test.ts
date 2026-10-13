@@ -134,6 +134,56 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(isPerSecondModel(autoDLModel('seedance-2.5')), false)
   })
 
+  // Erchun wan3.0-480p 的 EstimateBilling 返回 {"seconds": D}（见
+  // relay/channel/task/erchun/adaptor.go），即按秒计费。但它的模型名既不以
+  // wan3.0-video 也不以 wan3.0-smart 开头 historically 从未被本函数命中，
+  // 卡片一直把 ¥0.28/秒 显示成「/ 次」。这是「硬编码前缀表漏登记」的实例，
+  // 同 seedance-2-0-fast 一起修。
+  test('marks erchun wan3.0-480p as per second', () => {
+    assert.equal(isPerSecondModel(autoDLModel('wan3.0-480p')), true)
+  })
+
+  // 穷举守卫：广场当前在售的每一个视频/图片模型，其计价单位必须逐条写明。
+  // 新增按秒 adaptor 时，这个表会强迫作者显式登记，避免「后端按秒、前端按次」
+  // 这种静默错价再次发生（已经出过两次：seedance-2-0-fast、wan3.0-480p）。
+  test('classifies every model currently sold by billing unit', () => {
+    const perSecond = [
+      'seedance-2-0-fast', // manwu 豆包 2.0 Fast
+      'wan2.7-r2v', // 有赞参考生
+      'wan3.0-480p', // Erchun（仅 480P）
+      'wan3.0-smart', // 有赞智能调度
+      'wan3.0-video-官网', // 官网标准版
+      'autodl:minimax-h3-u24', // AutoDL H3
+    ]
+    const perRequest = [
+      'gpt-6-luna', // 文本
+      'gpt-6-sol', // 文本
+      'gpt-image-2.5-官方', // 图片按张
+      'Nano Banana Pro', // 图片按张（n 倍率）
+      'gemini-web-video', // 漫屋 Veo 固定 10s
+      'jimeng-video-reverse', // 文本出参
+      'seedance-2-5', // 豆包 2.5 按次
+      'seedance-2.0', // dola 2.0 按次
+      'seedance-2.5', // dola 2.5 按次（已下架）
+      'wan3.0-video-prime-1080p', // 满血 30s 档按次
+    ]
+
+    for (const name of perSecond) {
+      assert.equal(
+        isPerSecondModel(autoDLModel(name)),
+        true,
+        `${name} 应显示 / 秒`
+      )
+    }
+    for (const name of perRequest) {
+      assert.equal(
+        isPerSecondModel(autoDLModel(name)),
+        false,
+        `${name} 应显示 / 次`
+      )
+    }
+  })
+
   // 有赞/官网 wan3 系模型都接受 resolution 参数，示例值按模型给：
   // smart/官网 默认 480P，r2v 只能 720p/1080p（上游要小写），prime 固定 1080P。
   test('returns the wan3 sample resolution per model', () => {
