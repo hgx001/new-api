@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# 带 SHA 断言的 new-api 部署脚本（避免"构建了旧 commit 却以为成功"）
-# 用法: bash deploy-new-api.sh <short-sha>
+# new-api 后端部署脚本（服务器侧执行体），带 SHA 断言（避免"构建了旧 commit 却以为成功"）。
+# ⚠️ 在生产服务器上执行，勿在本地直接运行。
+# 本地入口: deploy/deploy-backend.sh <sha>（SSH 管道把本脚本送上服务器执行）
+# 用法（服务器上）: bash deploy/backend-remote.sh <short-sha>
 set -euo pipefail
 TARGET="${1:?need target sha}"
-cd /home/ubuntu/new-api-src
+APP_DIR="${DEPLOY_APP_DIR:-/home/ubuntu/new-api-src}"
+cd "$APP_DIR"
 
 # github 偶尔连不上（本次就遇到）。只要本地已有该 commit 就继续，
 # 否则必须报错退出——绝不能在代码不对的情况下构建。
