@@ -5,8 +5,14 @@
 #       deploy/deploy-backend.sh --dry-run <short-sha>
 set -euo pipefail
 
-if [ "${1:-}" = "--dry-run" ]; then DRY=1; shift; fi
-TARGET="${1:?usage: deploy-backend.sh [--dry-run] <short-sha>}"
+DRY=0
+TARGET=""
+for a in "$@"; do
+  if [ "$a" = "--dry-run" ]; then DRY=1
+  elif [ -z "$TARGET" ]; then TARGET="$a"
+  else echo "ABORT: 多余参数 '$a'" >&2; exit 1; fi
+done
+[ -n "$TARGET" ] || { echo "usage: deploy-backend.sh [--dry-run] <short-sha>" >&2; exit 1; }
 
 # 边界校验：SHA 只允许十六进制，防止注入进远程命令串
 if ! [[ "$TARGET" =~ ^[0-9a-f]{7,40}$ ]]; then
