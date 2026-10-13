@@ -321,7 +321,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-wan30-smart',
-          children: [{ type: 'strong', value: 'wan3.0-smart（有赞智能调度）' }],
+          children: [{ type: 'strong', value: 'wan3.0-smart（智能调度）' }],
         },
         { type: 'list', ordered: false, items: [
           ['resolution：480P（默认）/ 720P / 1080P'],
@@ -423,7 +423,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-seedance-2',
-          children: [{ type: 'strong', value: 'seedance-2.0（漫屋）' }],
+          children: [{ type: 'strong', value: 'seedance-2.0' }],
         },
         { type: 'list', ordered: false, items: [
           ['seconds：5 / 10 / 15，默认 15'],
@@ -435,7 +435,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-seedance-2-0-fast',
-          children: [{ type: 'strong', value: 'seedance-2-0-fast（漫屋豆包官网 Seedance 2.0 Fast）' }],
+          children: [{ type: 'strong', value: 'seedance-2-0-fast' }],
         },
         { type: 'list', ordered: false, items: [
           ['seconds / duration：5–15 秒逐秒，默认 5；区间外（含 4、16、30）直接 400'],
@@ -460,7 +460,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-seedance-2-5',
-          children: [{ type: 'strong', value: 'seedance-2-5（漫屋豆包官网 Seedance 2.5）' }],
+          children: [{ type: 'strong', value: 'seedance-2-5' }],
         },
         { type: 'list', ordered: false, items: [
           ['seconds / duration：5 / 10 / 15 / 30 四档，默认 5；非档位值直接 400'],
@@ -473,7 +473,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-gemini-web-video',
-          children: [{ type: 'strong', value: 'gemini-web-video（漫屋 Gemini 官网 Veo）' }],
+          children: [{ type: 'strong', value: 'gemini-web-video' }],
         },
         { type: 'list', ordered: false, items: [
           ['prompt：必填'],
@@ -492,7 +492,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-nano-banana-pro',
-          children: [{ type: 'strong', value: 'Nano Banana Pro（漫屋远端图片）' }],
+          children: [{ type: 'strong', value: 'Nano Banana Pro' }],
         },
         { type: 'list', ordered: false, items: [
           ['prompt：必填'],
@@ -506,11 +506,11 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-jimeng-video-reverse',
-          children: [{ type: 'strong', value: 'jimeng-video-reverse（即梦视频反解）' }],
+          children: [{ type: 'strong', value: 'jimeng-video-reverse（视频反解）' }],
         },
         { type: 'list', ordered: false, items: [
           ['input_reference（或 video / videos）：必填，恰好 1 个公网 http/https 视频 URL（服务端代下载，mp4/mov/webm，≤100MB）'],
-          ['prompt：可选，作为给即梦助手的附加指令'],
+          ['prompt：可选，作为附加指令'],
           ['ratio / seconds / images：不支持，传入直接 400'],
           ['产物：metadata.prompt（文本），metadata.media_type = text；无媒体产物'],
           ['计费：按次 ¥1.00；30 秒视频实测约 90 秒出结果，上限 5 分钟'],
