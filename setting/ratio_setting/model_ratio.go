@@ -320,6 +320,7 @@ var defaultModelPrice = map[string]float64{
 	"MiniMax-H3":                        0.5 / USD2RMB,   // MiniMax 官方 v2 视频，**按秒**（基础档 768P ¥0.5/秒；2K 走 size 倍率 1.625）
 	"MiniMax-H3-Max":                    0.365 / USD2RMB, // MiniMax 官方 v2 高速档，**按秒**（基础档 480P ¥0.365/秒；768P 倍率 1.6）
 	"MiniMax-H3-Context-IR":             1.0 / USD2RMB,   // MiniMax 官方 H3 上下文解析（只产提示词），按次 ¥1.0/次（占位价，待商务核定）
+	"wan3.0-1080p-慢速":                   2.0 / USD2RMB,   // 三元巡狩 wanwan 1080P（拼车），按次 ¥2.0/次（上游成本 ¥1/次）；拼车批次制，次日出片（EstimateBilling 返回 nil）
 	"autodl:minimax-h3-text-to-video":   autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5":     autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5-15s": autoDLVideoBasePrice,

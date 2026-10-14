@@ -36,6 +36,7 @@ import (
 	taskdashscope "github.com/QuantumNous/new-api/relay/channel/task/dashscope"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	"github.com/QuantumNous/new-api/relay/channel/task/erchun"
+	"github.com/QuantumNous/new-api/relay/channel/task/sanyuan"
 	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
@@ -183,6 +184,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &manwu.TaskAdaptor{}
 		case constant.ChannelTypeErchun:
 			return &erchun.TaskAdaptor{}
+		case constant.ChannelTypeSanyuan:
+			return &sanyuan.TaskAdaptor{}
 		}
 	}
 	return nil

@@ -31,6 +31,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan3.0-smart｜视频（按秒）｜480P ¥0.28/s、720P ¥0.28/s、1080P ¥0.30/s',
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.27/s、720P ¥0.54/s、1080P ¥1.08/s',
   'wan3.0-video-prime-1080p｜视频（按次）｜¥8.00 / 次，固定 1080P、30 秒',
+  'wan3.0-1080p-慢速｜视频（按次）｜¥2.00 / 次，480p–1080p 竖横可选，次日出片',
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s（仅此两档）',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5/10/15 秒',
@@ -86,7 +87,7 @@ const BILLING_ITEMS = [
   '文本：输入、输出 token 分别计价',
   '图片：按张计费，gpt-image-2.5-官方 ¥0.15 / 张（n=2 扣两次）；Nano Banana Pro ¥0.30 / 张，走 /v1/videos 异步任务，成图读 metadata.url',
   '视频（按秒）：单价 × 秒数 × 分辨率档位倍率；seedance-2-0-fast 无分辨率档位，固定 ¥0.10 / 秒',
-  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，seedance-2.0 ¥1.00 / 次，seedance-2-5 ¥3.00 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
+  '视频（按次）：wan3.0-video-prime-1080p 固定 ¥8 / 次，wan3.0-1080p-慢速 ¥2.00 / 次，seedance-2.0 ¥1.00 / 次，seedance-2-5 ¥3.00 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
   '任务失败：自动全额退还，无需申请',
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
@@ -103,7 +104,7 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟，gemini-web-video 约 2.5 分钟，jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟，wan3.0-1080p-慢速 需一天（拼车批次，今日提交次日取片），gemini-web-video 约 2.5 分钟，jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
@@ -456,6 +457,33 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'heading',
           level: 3,
+          id: 'model-wan30-1080p-slow',
+          children: [{ type: 'strong', value: 'wan3.0-1080p-慢速（拼车批次）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['resolution：480p竖（默认）/ 480p横 / 720p竖 / 720p横 / 1080p竖 / 1080p横；传裸档位（如 1080p）时按 metadata.ratio / size 自动选竖横，无提示默认竖'],
+          ['seconds / duration：1–30 逐秒任意值（默认 5），区间外直接 400，不就近取档'],
+          ['参考素材：图 ≤9 张（首张即首帧）、音频 ≤3 条，支持公网 https 直链或 base64 data URL；不支持参考视频与尾帧（传了直接 400，不消耗费用）'],
+          ['seed：可选，透传上游'],
+          ['计费：按次 ¥2.00，与时长、分辨率无关'],
+        ] },
+        {
+          type: 'hint',
+          children: [
+            '需要一天时间生成，适合今天耕耘明天收获。拼车批次制：任务进入批次后次日出片，请勿重复提交；提交与轮询接口与其它视频模型一致（POST /v1/videos → GET /v1/videos/{id} → /content）。',
+          ],
+        },
+        {
+          type: 'codeBlock',
+          lang: 'bash',
+          value: `curl ${videoUrl} \\
+  -H "Authorization: Bearer $NEW_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "wan3.0-1080p-慢速", "prompt": "海边的日落延时", "duration": 10, "resolution": "1080p横"}'`,
+        },
+        {
+          type: 'heading',
+          level: 3,
           id: 'model-wan27-r2v',
           children: [{ type: 'strong', value: 'wan2.7-r2v（参考生视频）' }],
         },
@@ -664,6 +692,7 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: 'wan3.0-smart', href: '#model-wan30-smart' },
     { title: 'wan3.0-video-官网', href: '#model-wan30-guanwang' },
     { title: 'wan3.0-video-prime-1080p', href: '#model-wan30-prime' },
+    { title: 'wan3.0-1080p-慢速', href: '#model-wan30-1080p-slow' },
     { title: 'wan2.7-r2v', href: '#model-wan27-r2v' },
     { title: 'autodl:minimax-h3-u24', href: '#model-autodl-h3-u24' },
     { title: 'seedance-2.0', href: '#model-seedance-2' },

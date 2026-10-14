@@ -437,6 +437,10 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan3.0-smart" {
 		return true
 	}
+	// 三元巡狩 wanwan 1080P（拼车）慢速档：按次计费，次日出片
+	if name == "wan3.0-1080p-慢速" {
+		return true
+	}
 	if name == "wan2.7-r2v" {
 		return true
 	}

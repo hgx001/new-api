@@ -64,7 +64,10 @@ const (
 	// ChannelTypeErchun 二春（Erchun）v1 开放 API：异步视频，素材需先上传换 media_id。
 	ChannelTypeErchun = 65
 	ChannelTypeManwu  = 66
-	ChannelTypeDummy  = 67 // this one is only for count, do not add any channel after this
+	// ChannelTypeSanyuan 三元巡狩（SYX）视频生成平台：自定义 JSON 协议，
+	// 提交 POST /v1/video/generate → event_id，轮询 /v1/video/check，下载 /v1/video/file/{id}。
+	ChannelTypeSanyuan = 67
+	ChannelTypeDummy   = 68 // this one is only for count, do not add any channel after this
 
 )
 
@@ -136,6 +139,7 @@ var ChannelBaseURLs = []string{
 	"https://newapi.megabyai.cc",                //64 (MegaAI)
 	"",                                          //65
 	"https://arcreel.heibaidao.cn",              //66 (漫屋 ArcReel)
+	"http://47.93.118.167:5000",                 //67 (三元巡狩)
 }
 
 // GetChannelBaseURL returns the built-in base URL for a channel type.
@@ -210,6 +214,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeDashScope:      "DashScope",
 	ChannelTypeYouzanWan3:     "Youzan Wan3",
 	ChannelTypeManwu:          "漫屋",
+	ChannelTypeSanyuan:        "三元巡狩",
 }
 
 func GetChannelTypeName(channelType int) string {

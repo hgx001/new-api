@@ -122,6 +122,13 @@ func VideoProxy(c *gin.Context) {
 		// 所以 Bearer 不会跟着跳到第三方 CDN，无需额外处理。
 		videoURL = fmt.Sprintf("%s/v1/tasks/%s/content", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
+	case constant.ChannelTypeSanyuan:
+		// 三元巡狩：成片在 /v1/video/file/{event_id}，必须带渠道密钥才能取。
+		// adaptor 不吐上游地址（ParseTaskResult 留空 Url，由轮询落成站内代理路径），
+		// 这里按渠道密钥回源。上游偶发 302 到第三方 CDN 时 Authorization 会被
+		// net/http 跨 host 剥离，与二春同口径，无需额外处理。
+		videoURL = fmt.Sprintf("%s/v1/video/file/%s", baseURL, task.GetUpstreamTaskID())
+		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	case constant.ChannelTypeManwu:
 		// 漫屋（ArcReel）：Worker 上传到本站托管目录的产物（Gemini 图片 blob、Veo 的
 		// data: mp4）在 ArcReel 侧存的是**相对路径**且需要渠道密钥，不是公网地址，
