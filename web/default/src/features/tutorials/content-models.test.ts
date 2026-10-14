@@ -88,7 +88,7 @@ describe('tutorials model guide content', () => {
   //     基准 ¥0.28/秒 → 0.28 / 0.28 / 0.30
   //   - wan3/constants.go resolutionSizeRatio{480P:1.0,720P:2.0,1080P:4.0}
   //     基准 ¥0.27/秒 → 0.27 / 0.54 / 1.08
-  //   - autodl/constants.go 480p ¥0.10、768p ¥0.12、1080p ¥0.20
+  //   - autodl/constants.go u24 的 Resolutions 只含 480p/768p → 0.10 / 0.12，**没有 1080p**
   // 调价时必须同步改这里，否则测试会红。
   test('prices match the resolution tiers the adaptors actually charge', () => {
     const expected = [
@@ -97,8 +97,8 @@ describe('tutorials model guide content', () => {
       '¥0.28 / ¥0.28 / ¥0.30（480P / 720P / 1080P）', // wan3.0-smart 详情
       '480P ¥0.27/s、720P ¥0.54/s、1080P ¥1.08/s', // wan3.0-video-官网 索引
       '¥0.27 / ¥0.54 / ¥1.08（480P / 720P / 1080P）', // wan3.0-video-官网 详情
-      '480p ¥0.10/s、768p ¥0.12/s、1080p ¥0.20/s', // autodl H3 索引
-      '480p ¥0.10、768p ¥0.12、1080p ¥0.20', // autodl H3 详情
+      '480p ¥0.10/s、768p ¥0.12/s（仅此两档）', // autodl H3 索引
+      '480p ¥0.10、768p ¥0.12（仅这两档', // autodl H3 详情
     ]
     for (const price of expected) {
       assert.equal(
@@ -116,6 +116,16 @@ describe('tutorials model guide content', () => {
         `stale price still documented: ${stale}`
       )
     }
+
+    // autodl:minimax-h3-u24 的分辨率白名单（constants.go Resolutions）只有
+    // 480p/768p 竖横/(1:1)，传 1080p 会被 invalid_resolution 拦下。
+    // h3ResolutionRatios 里虽有 1080p 档，但那是给 u08/lightx2v 等其它模型用的，
+    // u24 走不到 —— 写进文档就成了永远收不到钱的死价格。
+    assert.equal(
+      sectionsJson.includes('1080p ¥0.20'),
+      false,
+      'autodl u24 does not accept 1080p; documenting its price sends clients into invalid_resolution'
+    )
   })
 
   test('documents the three relay endpoints used by downstream clients', () => {
@@ -151,6 +161,26 @@ describe('tutorials model guide content', () => {
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
     }
+  })
+
+  // 回归守卫：wan3.0-video-官网 曾被文档描述成「仅支持文生视频，传入参考图/视频/
+  // 音频会被忽略（不会报错）」，这是错的。wan3/adaptor.go 的 buildWan3Media +
+  // validateWan3Media 走的是和 youzanwan3 完全相同的素材解析与校验，并经
+  // Media 字段真实下发上游，限额为图 ≤10 / 视频 ≤5 / 音频 ≤5。
+  // 按旧文档接入的客户会白白放弃已经可用的图生视频与多模态参考能力。
+  test('does not claim the official wan3 channel ignores reference media', () => {
+    // 不能只断言「会被忽略」四个字：prime 的「固定 1080P/30，传其它值会被忽略」
+    // 是合法描述。要断的是官网那条具体的错误断言。
+    assert.equal(sectionsJson.includes('仅支持文生视频'), false)
+    assert.equal(
+      sectionsJson.includes('需要图生视频或多模态参考请改用 wan3.0-smart'),
+      false,
+      'wan3.0-video-官网 supports reference media; do not steer clients away from it'
+    )
+    assert.equal(
+      sectionsJson.includes('本渠道同样支持图生视频与多模态参考'),
+      true
+    )
   })
 
   // 回归守卫：seconds 在网关里是字符串字段，JSON 示例里写数字会直接报 invalid_json。

@@ -32,7 +32,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.27/s、720P ¥0.54/s、1080P ¥1.08/s',
   'wan3.0-video-prime-1080p｜视频（按次）｜¥8.00 / 次，固定 1080P、30 秒',
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
-  'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s、1080p ¥0.20/s',
+  'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s（仅此两档）',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5/10/15 秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
   'seedance-2-5｜视频（按次）｜¥3.00 / 次，5/10/15/30 秒同价',
@@ -61,7 +61,7 @@ const VIDEO_COMMON_FIELDS = [
   'ratio / aspect_ratio：画幅比例（官网渠道请放在 metadata.ratio，或用 size）',
   'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链',
   'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio / first_frame / last_frame',
-  'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media、metadata.audio',
+  'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media、metadata.audio（audio 仅 wan3 系 smart / 官网 / prime 生效）',
 ]
 
 const VIDEO_STATUS_ITEMS = [
@@ -327,7 +327,8 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['resolution：480P（默认）/ 720P / 1080P'],
           ['seconds：2–30，默认 5'],
           ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4'],
-          ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 个、首尾帧各 1 张'],
+          ['参考素材：图 ≤10 张、视频 ≤5 个（合计 ≤15 秒）、音频 ≤5 条（合计 ≤15 秒）、首尾帧各 1 张'],
+          ['metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）'],
           ['计费：按秒 ¥0.28 / ¥0.28 / ¥0.30（480P / 720P / 1080P）'],
         ] },
         {
@@ -346,12 +347,14 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['resolution：480P（默认）/ 720P / 1080P'],
           ['seconds：2–30，默认 5'],
           ['ratio：metadata.ratio 传 adaptive / 16:9 / 4:3 / 1:1 / 3:4 / 9:16，也可用 size（960x540 / 1280x720 / 1920x1080）'],
+          ['参考素材：图 ≤10 张、视频 ≤5 个（合计 ≤15 秒）、音频 ≤5 条（合计 ≤15 秒）、首尾帧各 1 张'],
+          ['metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）'],
           ['计费：按秒 ¥0.27 / ¥0.54 / ¥1.08（480P / 720P / 1080P）'],
         ] },
         {
           type: 'hint',
           children: [
-            '该渠道目前仅支持文生视频：传入参考图/视频/音频会被忽略（不会报错）。需要图生视频或多模态参考请改用 wan3.0-smart。',
+            '本渠道同样支持图生视频与多模态参考，与 wan3.0-smart 走相同的 media 解析逻辑；唯一区别是分辨率倍率（1:2:4，720P、1080P 更贵）且没有 adaptive 比例之外的智能调度。',
           ],
         },
         {
@@ -365,6 +368,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['seconds：固定 30，传其它值会被忽略'],
           ['ratio：同 wan3.0-smart'],
           ['参考素材：图 ≤8 张、视频 ≤5 个、音频 ≤5 个、首尾帧各 1 张'],
+          ['metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）'],
           ['计费：按次 ¥8.00，与时长、分辨率无关'],
         ] },
         {
@@ -421,9 +425,9 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['images：必填，1–9 张'],
           ['audios：可选，≤3 条'],
           ['seconds：1–15，默认 5'],
-          ['resolution：480p竖 / 768p竖 / 480p横 / 768p横 / 480p(1:1) / 768p(1:1)，默认 768p竖'],
+          ['resolution：480p竖 / 768p竖 / 480p横 / 768p横 / 480p(1:1) / 768p(1:1)，默认 768p竖；传其它值直接 400'],
           ['seed：可选，0 ~ 999999999999999'],
-          ['计费：按秒 480p ¥0.10、768p ¥0.12、1080p ¥0.20（768p 即上游 720P 档）'],
+          ['计费：按秒 480p ¥0.10、768p ¥0.12（仅这两档，768p 即上游 720P 档）'],
         ] },
         {
           type: 'heading',
