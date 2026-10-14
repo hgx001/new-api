@@ -72,12 +72,49 @@ describe('tutorials model guide content', () => {
       '¥0.15 / 张',
       '¥8.00 / 次',
       '¥0.28/s',
-      '¥0.85/s',
       '¥0.10/s',
       '¥1.00 / 次',
       '¥3.00 / 次',
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
+    }
+  })
+
+  // 价格守卫：上面的用例只检查「某个价格字符串存在」，不检查「价格对不对」，
+  // 所以 2026-10-13 之前 wan3.0-smart 与 wan3.0-video-官网 的错价（分别写成
+  // ¥0.32/¥0.40 与 ¥0.53/¥0.85）一直没被拦住，官网 1080P 比实际低 27%。
+  // 这里把每个分辨率档的实际单价钉死，依据：
+  //   - youzanwan3/constants.go smartResolutionSizeRatio{480P:1.0,720P:1.0,1080P:0.30/0.28}
+  //     基准 ¥0.28/秒 → 0.28 / 0.28 / 0.30
+  //   - wan3/constants.go resolutionSizeRatio{480P:1.0,720P:2.0,1080P:4.0}
+  //     基准 ¥0.27/秒 → 0.27 / 0.54 / 1.08
+  //   - autodl/constants.go 480p ¥0.10、768p ¥0.12、1080p ¥0.20
+  // 调价时必须同步改这里，否则测试会红。
+  test('prices match the resolution tiers the adaptors actually charge', () => {
+    const expected = [
+      // 索引区与详情区都要写对，且两处必须一致
+      '480P ¥0.28/s、720P ¥0.28/s、1080P ¥0.30/s', // wan3.0-smart 索引
+      '¥0.28 / ¥0.28 / ¥0.30（480P / 720P / 1080P）', // wan3.0-smart 详情
+      '480P ¥0.27/s、720P ¥0.54/s、1080P ¥1.08/s', // wan3.0-video-官网 索引
+      '¥0.27 / ¥0.54 / ¥1.08（480P / 720P / 1080P）', // wan3.0-video-官网 详情
+      '480p ¥0.10/s、768p ¥0.12/s、1080p ¥0.20/s', // autodl H3 索引
+      '480p ¥0.10、768p ¥0.12、1080p ¥0.20', // autodl H3 详情
+    ]
+    for (const price of expected) {
+      assert.equal(
+        sectionsJson.includes(price),
+        true,
+        `missing or stale price line: ${price}`
+      )
+    }
+
+    // 已下线的旧价格必须不再出现，避免同时展示两套价。
+    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s']) {
+      assert.equal(
+        sectionsJson.includes(stale),
+        false,
+        `stale price still documented: ${stale}`
+      )
     }
   })
 

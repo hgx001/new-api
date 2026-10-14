@@ -29,10 +29,10 @@ const MODEL_OVERVIEW_ITEMS = [
   'gpt-6-sol｜文本｜输入 ¥18.75 / 1M，输出 ¥150.00 / 1M',
   'gpt-image-2.5-官方｜图片｜¥0.15 / 张',
   'wan3.0-smart｜视频（按秒）｜480P ¥0.28/s、720P ¥0.28/s、1080P ¥0.30/s',
-  'wan3.0-video-官网｜视频（按秒）｜480P ¥0.27/s、720P ¥0.53/s、1080P ¥0.85/s',
+  'wan3.0-video-官网｜视频（按秒）｜480P ¥0.27/s、720P ¥0.54/s、1080P ¥1.08/s',
   'wan3.0-video-prime-1080p｜视频（按次）｜¥8.00 / 次，固定 1080P、30 秒',
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
-  'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s',
+  'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s、1080p ¥0.20/s',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5/10/15 秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
   'seedance-2-5｜视频（按次）｜¥3.00 / 次，5/10/15/30 秒同价',
@@ -328,7 +328,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['seconds：2–30，默认 5'],
           ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4'],
           ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 个、首尾帧各 1 张'],
-          ['计费：按秒 ¥0.28 / ¥0.32 / ¥0.40（480P / 720P / 1080P）'],
+          ['计费：按秒 ¥0.28 / ¥0.28 / ¥0.30（480P / 720P / 1080P）'],
         ] },
         {
           type: 'hint',
@@ -346,7 +346,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['resolution：480P（默认）/ 720P / 1080P'],
           ['seconds：2–30，默认 5'],
           ['ratio：metadata.ratio 传 adaptive / 16:9 / 4:3 / 1:1 / 3:4 / 9:16，也可用 size（960x540 / 1280x720 / 1920x1080）'],
-          ['计费：按秒 ¥0.27 / ¥0.53 / ¥0.85（480P / 720P / 1080P）'],
+          ['计费：按秒 ¥0.27 / ¥0.54 / ¥1.08（480P / 720P / 1080P）'],
         ] },
         {
           type: 'hint',
@@ -367,6 +367,12 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['参考素材：图 ≤8 张、视频 ≤5 个、音频 ≤5 个、首尾帧各 1 张'],
           ['计费：按次 ¥8.00，与时长、分辨率无关'],
         ] },
+        {
+          type: 'hint',
+          children: [
+            '首尾帧不能与普通参考图/视频/音频混用，混用会直接报错（不消耗费用）。支持纯文生视频、图生视频与多模态参考；分辨率固定 1080P、时长固定 30 秒，不随传入参数变化。',
+          ],
+        },
         {
           type: 'codeBlock',
           lang: 'bash',
@@ -417,7 +423,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['seconds：1–15，默认 5'],
           ['resolution：480p竖 / 768p竖 / 480p横 / 768p横 / 480p(1:1) / 768p(1:1)，默认 768p竖'],
           ['seed：可选，0 ~ 999999999999999'],
-          ['计费：按秒 480p ¥0.10、768p ¥0.12（768p 即上游 720P 档）'],
+          ['计费：按秒 480p ¥0.10、768p ¥0.12、1080p ¥0.20（768p 即上游 720P 档）'],
         ] },
         {
           type: 'heading',
