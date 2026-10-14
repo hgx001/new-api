@@ -314,6 +314,70 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
             '视频接口同时支持 application/json 与 multipart/form-data 两种提交方式，按需选择。',
           ],
         },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'video-media-examples',
+          children: [{ type: 'strong', value: '传递参考素材（图片 / 视频 / 音频）' }],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            'wan3 系（smart / 官网 / prime）传入图片、视频、音频推荐使用顶层 ',
+            { type: 'code', value: 'media' },
+            ' 数组，元素结构为 ',
+            { type: 'code', value: '{"type":"...","url":"..."}' },
+            '，type 可取 reference_image（参考图）/ reference_video（参考视频）/ reference_audio（参考音频）/ first_frame（首帧）/ last_frame（尾帧）。提示词中用 ',
+            { type: 'code', value: '@图片1 / @视频1 / @音频1' },
+            ' 引用对应素材，编号按 media 数组顺序从 1 开始。',
+          ],
+        },
+        {
+          type: 'paragraph',
+          children: [{ type: 'strong', value: '图生视频（锁定首帧）' }],
+        },
+        {
+          type: 'codeBlock',
+          lang: 'bash',
+          value: `curl ${videoUrl} \\
+  -H "Authorization: Bearer $NEW_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "wan3.0-smart",
+    "prompt": "让画面里的橘猫跳下窗台走向镜头",
+    "duration": 5,
+    "resolution": "720P",
+    "media": [{"type": "first_frame", "url": "https://your-cdn.com/cat.png"}]
+  }'`,
+        },
+        {
+          type: 'paragraph',
+          children: [{ type: 'strong', value: '多模态参考（图 + 视频 + 音频）' }],
+        },
+        {
+          type: 'codeBlock',
+          lang: 'bash',
+          value: `curl ${videoUrl} \\
+  -H "Authorization: Bearer $NEW_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "wan3.0-smart",
+    "prompt": "参考 @图片1 的角色形象与 @视频1 的运镜，配音跟随 @音频1 的节奏",
+    "duration": 10,
+    "resolution": "720P",
+    "media": [
+      {"type": "reference_image", "url": "https://your-cdn.com/character.png"},
+      {"type": "reference_video", "url": "https://your-cdn.com/camera-move.mp4"},
+      {"type": "reference_audio", "url": "https://your-cdn.com/narration.mp3"}
+    ]
+  }'`,
+        },
+        {
+          type: 'hint',
+          children: [
+            'wan3.0-smart / 官网 / prime 的参考视频、参考音频只能走 media（或 metadata.media，格式相同）这一条路，顶层 audios / audio 会被静默丢弃；images 旧字段一律按参考图处理。首帧、尾帧各最多 1 张，且不能与参考素材混用（混用直接 400，不消耗费用）。素材 URL 须为公网 HTTPS 直链，要求见「参考素材要求」。',
+          ],
+        },
       ],
     },
     {
@@ -595,6 +659,7 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: '文本对话接口', href: '#text-api' },
     { title: '图片生成接口', href: '#image-api' },
     { title: '视频生成接口', href: '#video-api' },
+    { title: '传递参考素材（图片 / 视频 / 音频）', href: '#video-media-examples' },
     { title: '各视频模型参数', href: '#video-model-params' },
     { title: 'wan3.0-smart', href: '#model-wan30-smart' },
     { title: 'wan3.0-video-官网', href: '#model-wan30-guanwang' },

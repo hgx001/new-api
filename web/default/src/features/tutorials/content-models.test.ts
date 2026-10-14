@@ -234,6 +234,32 @@ describe('tutorials model guide content', () => {
     }
   })
 
+  // 回归守卫：wan3 系传参考素材此前只有字段列表、没有可照抄的请求示例，
+  // 下游开发不知道 media 数组怎么写。文档必须给出图生视频（首帧）与多模态
+  // 参考（图 + 视频 + 音频）的完整 JSON 示例，且示例要与 wan3/adaptor.go 的
+  // TaskMedia{type,url} 结构一致（type 取值 reference_image / reference_video /
+  // reference_audio / first_frame / last_frame），并说明提示词内 @素材N 引用。
+  test('shows concrete media-array examples for passing image/video/audio to wan3', () => {
+    const codeBlocks: string[] = []
+    for (const section of sections) {
+      for (const node of section.content ?? []) {
+        if (node.type === 'codeBlock') codeBlocks.push(node.value)
+      }
+    }
+    const code = codeBlocks.join('\n')
+    // 图生视频：首帧写法
+    assert.equal(code.includes('"type": "first_frame"'), true, 'missing first_frame media example')
+    // 多模态参考：图 + 视频 + 音频各一条完整示例
+    assert.equal(code.includes('"type": "reference_image"'), true, 'missing reference_image media example')
+    assert.equal(code.includes('"type": "reference_video"'), true, 'missing reference_video media example')
+    assert.equal(code.includes('"type": "reference_audio"'), true, 'missing reference_audio media example')
+    // 专讲「怎么传素材」的小节存在且进了文档目录
+    assert.equal(collectAnchorIds().has('video-media-examples'), true, 'missing video-media-examples heading')
+    // 提示词里 @视频1 / @音频1 的素材引用写法有示例
+    assert.equal(sectionsJson.includes('@视频1'), true, 'missing @视频1 prompt reference')
+    assert.equal(sectionsJson.includes('@音频1'), true, 'missing @音频1 prompt reference')
+  })
+
   // 回归守卫：seedance-2.5（dola 站）已于 2026-10-10 下架（接口层 channels.models +
   // abilities 同时摘除），文档必须同步移除，否则客户照文档调用只会拿到
   // 503「分组 default 下模型 seedance-2.5 无可用渠道」。豆包站的 seedance-2-5
