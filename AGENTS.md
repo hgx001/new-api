@@ -180,6 +180,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - A local Docker daemon MUST NOT be a prerequisite for backend deployment. Do not ask the user to start Docker Desktop or build the production image locally when the production server can build it remotely.
 - The frontend and backend have separate deployment paths. `deploy/deploy-frontend.sh` is for the frontend static release only; backend changes must use the backend remote-build deployment flow and must not be treated as frontend-only changes.
 - Before deployment, keep the source checkout pinned to the exact commit being released, preserve unrelated local files, use the smallest necessary production change, and verify the container status, application health endpoint, and relevant business API after release.
+- **发版必须用仓库脚本，不得用临时脚本绕过**（2026-10-14 定）。生产机连不上 github:443，`deploy/deploy-frontend.sh` L161-165 的 fetch fallback 正是为此存在：fetch 失败 → 查本地 checkout 是否已有该 commit → 继续，所以 bundle 直传后直接跑脚本即可，不需要手工复刻发布逻辑。手工绕过会让脚本的该分支永远得不到验证：`c2f63c6b` 修完 P0-A/P0-B 后，截至 2026-10-14 两个分支在生产**均未执行过**，而当日两次前端发布（`18cf13b2`、`d337494`）走的都是临时脚本 `/tmp/publish-frontend.sh`，因此**不构成验证**。P0-A 还需一次后端发版（服务器 `.git/info/exclude:7` 的 `Dockerfile.deploy` 是 scp 时代残留，应顺手删除）。详见 `docs/superpowers/specs/2026-10-13-deploy-restructure-spec.md` 第 3.x 节。
 
 ### Model Pricing and Catalog Rules
 

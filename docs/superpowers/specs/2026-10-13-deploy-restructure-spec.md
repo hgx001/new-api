@@ -182,6 +182,21 @@ docker start new-api
 
 **生产侧验证项**（留待下一次真实发版，本方案不执行）：后端构建不再出现 `no such dockerfile`；前端 fetch 失败时 fallback 生效（或 bundle 约束生效）。
 
+#### 3.x 验证状态（2026-10-14 复核，**两项均未结案**）
+
+| 项 | 状态 | 依据 |
+|---|---|---|
+| P0-A 后端构建不再报 `no such dockerfile` | ⛔ 未验证 | 2026-10-14 未发生过后端部署。容器 `created=2026-10-13T06:21:32Z`（14:21 CST）早于当日两次前端发布 |
+| P0-B 前端 fetch fallback 生效 | ⛔ 未验证 | `deploy-frontend.sh` L161-165 的 fallback 分支至今未在生产执行过 |
+
+⚠️ **「14:21 那次后端部署在 c2f63c6b（14:10:17）之后」不能当作 P0-A 的验证。** 服务器 `.git/info/exclude:7` 至今仍含 `Dockerfile.deploy`，服务器上那个文件来自 11:47 的手工 scp，git 从未提供过它。那次部署证明的是「scp 的文件可用」，不是「入库后 clean checkout 可用」。
+
+⚠️ **2026-10-14 的两次前端发布（`18cf13b2`、`d337494`）不构成 P0-B 的验证**：它们跑的是临时脚本 `/tmp/publish-frontend.sh`（复刻了远端逻辑），**绕过了仓库脚本**。发版发生 ≠ 脚本被验证。
+
+同日两次发布确实证实了 nginx 侧机制正确（symlink 原子切换无冲突、release 命名稳定、健康检查 200），但因逻辑是复刻的，这只能证明机制成立，不能证明仓库脚本成立。
+
+**下次发版约定**：前端直接跑 `deploy/deploy-frontend.sh`，失败再回退手工流程。服务器 fetch 会失败 → 查本地 checkout 是否已有该 commit（bundle 直传已有）→ 继续，即脚本 L161-165 的设计场景。跑通即当场结案 P0-B。P0-A 需一次后端发版，顺手删除服务器 `.git/info/exclude:7` 的残留行。
+
 ## 4. 风险与缓解
 
 | 风险 | 缓解 |
@@ -209,3 +224,15 @@ docker start new-api
 | 本地与服务器文件一致 | 双侧 md5 = `23631a1db27f8573151e34717ba32631`，入库即实测跑通版 |
 | 前端 fetch 无 fallback | `deploy-frontend.sh` L160 裸 `git fetch --prune`，L132 `set -Eeuo pipefail` 下失败即终止；后端脚本头注「github 偶尔连不上（本次就遇到）」从侧面佐证服务器 github:443 不通 |
 | 引用数实为 3 文件 8 处 | 精确 grep `deploy-new-api`：AGENTS.md ×2（L246、L268）、本 spec ×5、脚本自身 ×1；CLAUDE.md ×0 |
+
+#### 附录二：修复后现状（2026-10-14 复核）
+
+上表记录的是 2026-10-13 的问题状态。两项 P0 已由 `c2f63c6b fix(deploy): Dockerfile.deploy 入库 + 前端 fetch 失败回退本地已有 commit（P0)` 修复并在 main、已推 `hgx001/new-api`：
+
+- `git ls-files --error-unmatch Dockerfile.deploy` → 输出 `Dockerfile.deploy`（已入库）
+- `.git/info/exclude:17` 现为 `Dockerfile.full`；第 50 行 `web/classic/Dockerfile.deploy` 是另一路径，与之无关
+- `deploy/deploy-frontend.sh` L160 已是注释行，fetch 在 L161 且包于 `if ! ... then ... fi` fallback 内
+
+⚠️ 服务器 `/home/ubuntu/new-api-src/.git/info/exclude:7` 的 `Dockerfile.deploy` 是**残留**：文件已 tracked（exclude 只影响 untracked），因此无害，但会误导下一个查看仓库状态的人，应清理。
+
+⚠️ 本文档第 1 节问题清单（L13、L14）保留的是修复前状态，读时请结合本附录；L183 的「生产侧验证项」仍**未结案**（见 3.x）。
