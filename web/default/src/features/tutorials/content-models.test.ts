@@ -203,6 +203,37 @@ describe('tutorials model guide content', () => {
     assert.equal(sectionsJson.includes('¥1.00 / 次'), true)
   })
 
+  // 回归守卫：三个静默失败点。它们都不会报错，客户端只会看到任务正常跑完，
+  // 但实际素材根本没到上游，属于最难排查的一类。
+  //   1. 顶层 audios / audio 只有 autodl 读；youzanwan3 与 wan3 的 buildMedia
+  //      均不读 req.Audios / req.Audio，进了 validateMedia 都到不了。
+  //   2. metadata.audio 是音轨开关（bool），与顶层 audios（素材）同名不同义。
+  //   3. images / input_reference / image 在 youzanwan3 里被强制标成
+  //      reference_image；只有 wan3 走 inferLegacyMediaType 按 URL 后缀推断。
+  // 实测：youzanwan3 与 wan3 的 req.Audios/req.Audio 命中数均为 0，
+  //      autodl 为 3；youzanwan3 的 inferLegacyMediaType 为 0，wan3 为 2。
+  test('warns about the silently-ignored media fields for the wan3 models', () => {
+    for (const expected of [
+      '顶层 audios / audio：',
+      '仅 autodl:minimax-h3-u24 生效',
+      '传了会被静默丢弃',
+      'metadata.audio 是「是否生成音轨」开关',
+      '与顶层 audios 不是一回事',
+      '只有 wan3.0-video-官网 会按 URL 后缀推断类型',
+      '传参考视频、参考音频只有这一条路',
+      '「传图片给视频模型」的三种写法',
+      '优先级 media > metadata.media > 旧字段',
+      '首尾帧是图片的一种特殊类型',
+      '请用 reference_image',
+      // Nano Banana Pro 走 /v1/videos 且支持 n：客户端若按图片接口习惯
+      // 直接 POST /v1/images/generations 会拿不到模型，这两点之前都没写。
+      '本模型走 /v1/videos 异步任务（不是 /v1/images/generations）',
+      '其余 OpenAI 图片字段（quality / style / background / output_format 等）会被透传给上游',
+    ]) {
+      assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
+    }
+  })
+
   // 回归守卫：seedance-2.5（dola 站）已于 2026-10-10 下架（接口层 channels.models +
   // abilities 同时摘除），文档必须同步移除，否则客户照文档调用只会拿到
   // 503「分组 default 下模型 seedance-2.5 无可用渠道」。豆包站的 seedance-2-5

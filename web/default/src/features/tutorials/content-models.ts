@@ -59,9 +59,12 @@ const VIDEO_COMMON_FIELDS = [
   'seconds / duration：时长（秒），duration 传整数（推荐）；seconds 为字符串（OpenAI 风格，如 "5"），传数字会报 invalid_json；两者都传时以 duration 为准',
   'resolution：分辨率档位，大小写均可（720p / 720P）',
   'ratio / aspect_ratio：画幅比例（官网渠道请放在 metadata.ratio，或用 size）',
-  'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链',
-  'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio / first_frame / last_frame',
-  'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media、metadata.audio（audio 仅 wan3 系 smart / 官网 / prime 生效）',
+  'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链。⚠️ 这几个字段在 wan3.0-smart / prime 上一律被标记为 reference_image（往里塞 .mp4 会被当图片送上游），只有 wan3.0-video-官网 会按 URL 后缀推断类型',
+  'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio / first_frame / last_frame。⚠️ wan3.0-smart / 官网 / prime 传参考视频、参考音频只有这一条路',
+  '顶层 audios / audio：⚠️ 仅 autodl:minimax-h3-u24 生效。wan3 系不读这两个字段，传了会被静默丢弃——不报错、不计入上限、任务照跑，请改用 media 数组',
+  'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media、metadata.audio。⚠️ metadata.audio 是「是否生成音轨」开关（默认 true，false 关闭，别名 generate_audio），仅 wan3 系 smart / 官网 / prime 生效，与顶层 audios 不是一回事',
+  '⚠️ 「传图片给视频模型」的三种写法（任选其一，优先级 media > metadata.media > 旧字段）：① media 里 type=reference_image；② metadata.media（同样格式）；③ images / input_reference / image。后者会被一律标记为参考图，不会按后缀推断类型；autodl:minimax-h3-u24 的 images 是必填，缺失直接 400',
+  '⚠️ 首尾帧是图片的一种特殊类型：在 media 里用 type=first_frame / last_frame，各最多 1 张，且不能与 reference_image / reference_video / reference_audio 混用（混用直接 400，不消耗费用）。若下游只想表达「参考图」而非「锁定起始画面」，请用 reference_image',
 ]
 
 const VIDEO_STATUS_ITEMS = [
@@ -191,10 +194,11 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         },
         { type: 'list', ordered: false, items: [
           ['model：gpt-image-2.5-官方'],
-          ['prompt：图片描述'],
+          ['prompt：必填，图片描述'],
           ['size：如 1024x1024，不支持时自动回落模型默认尺寸，不报错'],
-          ['n：张数，默认 1'],
+          ['n：出图张数，默认 1，n=2 扣两次 ¥0.15'],
           ['response_format：url（默认）或 b64_json'],
+          ['其余 OpenAI 图片字段（quality / style / background / output_format 等）会被透传给上游，本平台不校验、不保证生效'],
         ] },
         {
           type: 'codeBlock',
@@ -510,6 +514,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['ratio：同 dola 六档，默认 16:9'],
           ['input_reference / images：可选，≤10 张 http/https URL'],
           ['产物：metadata.url，metadata.media_type = image'],
+          ['⚠️ 本模型走 /v1/videos 异步任务（不是 /v1/images/generations），需轮询后从 metadata.url 取图'],
           ['计费：按张 ¥0.30 × 张数'],
         ] },
         {
