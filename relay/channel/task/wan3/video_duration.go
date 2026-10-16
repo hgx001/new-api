@@ -95,7 +95,8 @@ func parseMvhd(payload []byte) (float64, bool) {
 	return float64(duration) / float64(timescale), true
 }
 
-// probeReferenceVideoSeconds 探测单个参考视频的时长并向上取整为整秒。
+// probeReferenceVideoSeconds 探测单个参考视频的时长并取整为整秒（四舍五入，与上游
+// input_video_duration 口径一致，见 probedSeconds）。
 // 支持 data URL 与公网 http(s) URL；解析不出时长时返回错误（fail-loud，防少收）。
 func probeReferenceVideoSeconds(rawURL string) (int, error) {
 	rawURL = strings.TrimSpace(rawURL)
@@ -106,24 +107,27 @@ func probeReferenceVideoSeconds(rawURL string) (int, error) {
 		if err != nil {
 			return 0, errors.Wrap(err, "decode reference video data URL failed")
 		}
-		return ceilProbedSeconds(data)
+		return probedSeconds(data)
 	case strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://"):
 		data, err := downloadReferenceVideoPrefix(rawURL)
 		if err != nil {
 			return 0, err
 		}
-		return ceilProbedSeconds(data)
+		return probedSeconds(data)
 	default:
 		return 0, errors.New("wan3 reference video url must be http(s) or data URL")
 	}
 }
 
-func ceilProbedSeconds(data []byte) (int, error) {
+func probedSeconds(data []byte) (int, error) {
 	seconds, ok := mp4Seconds(data)
 	if !ok {
 		return 0, errors.New("reference video duration unavailable: no mvhd box found (MP4/MOV only)")
 	}
-	return int(math.Ceil(seconds)), nil
+	// 与上游取整口径对齐：DashScope 自己的 usage 把 2.02 秒的参考视频记为
+	// input_video_duration=2（2026-10-16 真机实证），所以这里四舍五入而非向上取整——
+	// 上游生成的成片天然带约 20ms 尾巴，向上取整会让每个参考视频都多收 1 秒。
+	return int(math.Round(seconds)), nil
 }
 
 // decodeDataURLPrefix 解码 data URL 的 base64 部分。数据本就随请求体驻留内存，全量解码不增加额外开销。

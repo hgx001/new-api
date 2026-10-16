@@ -202,7 +202,7 @@ describe('tutorials model guide content', () => {
   // 否则客户会按纯生成秒数理解账单。
   test('documents official wan3 reference-video surcharge billing', () => {
     assert.equal(
-      sectionsJson.includes('生成秒数 + 参考视频总秒数（向上取整）'),
+      sectionsJson.includes('生成秒数 + 参考视频总秒数（四舍五入）'),
       true
     )
     assert.equal(

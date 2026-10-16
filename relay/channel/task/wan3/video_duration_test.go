@@ -121,11 +121,25 @@ func disableSSRF(t *testing.T) {
 func TestProbeReferenceVideoSecondsFromDataURL(t *testing.T) {
 	seconds, err := probeReferenceVideoSeconds(buildDataURLVideo(7.3))
 	require.NoError(t, err)
-	require.Equal(t, 8, seconds) // 7.3 → 向上取整
+	require.Equal(t, 7, seconds) // 7.3 → 四舍五入
 
 	seconds, err = probeReferenceVideoSeconds(buildDataURLVideo(10))
 	require.NoError(t, err)
 	require.Equal(t, 10, seconds)
+
+	seconds, err = probeReferenceVideoSeconds(buildDataURLVideo(4.6))
+	require.NoError(t, err)
+	require.Equal(t, 5, seconds) // 4.6 → 四舍五入进位
+}
+
+// 回归守卫（2026-10-16 真机实证）：DashScope 生成的「2 秒」成片，mvhd 实测
+// timescale=1000 / duration=2020（2.02 秒），上游自己的 usage 把它记为
+// input_video_duration=2。若这里用向上取整会得到 3 秒，比上游多收 1 秒
+// （2 秒参考视频多收 50%），故必须四舍五入。
+func TestProbeReferenceVideoSecondsRoundsDashScopeTwoSecondClip(t *testing.T) {
+	seconds, err := probeReferenceVideoSeconds("data:video/mp4;base64," + base64.StdEncoding.EncodeToString(buildMP4(buildMvhd(0, 1000, 2020))))
+	require.NoError(t, err)
+	require.Equal(t, 2, seconds)
 }
 
 func TestProbeReferenceVideoSecondsFromHTTP(t *testing.T) {
@@ -137,7 +151,7 @@ func TestProbeReferenceVideoSecondsFromHTTP(t *testing.T) {
 
 	seconds, err := probeReferenceVideoSeconds(srv.URL)
 	require.NoError(t, err)
-	require.Equal(t, 13, seconds) // 12.4 → 向上取整
+	require.Equal(t, 12, seconds) // 12.4 → 四舍五入
 }
 
 func TestProbeReferenceVideoSecondsRejectsBadSources(t *testing.T) {
@@ -197,8 +211,8 @@ func TestValidateRequestAndSetActionSetsReferenceVideoSeconds(t *testing.T) {
 
 	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
 	require.Nil(t, taskErr)
-	// 7.3(→8) + 4 = 12
-	require.Equal(t, 12, c.MustGet(refVideoSecondsContextKey))
+	// 7.3(→7) + 4 = 11
+	require.Equal(t, 11, c.MustGet(refVideoSecondsContextKey))
 }
 
 func TestValidateRequestAndSetActionRejectsUndeterminableVideo(t *testing.T) {
