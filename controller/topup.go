@@ -95,8 +95,24 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
+	if complianceConfirmed && isAlipayTopUpEnabled() {
+		hasAlipay := false
+		for _, method := range payMethods {
+			if method["type"] == model.PaymentMethodAlipay {
+				hasAlipay = true
+				break
+			}
+		}
+		if !hasAlipay {
+			payMethods = append(payMethods, map[string]string{
+				"name": "支付宝", "type": model.PaymentMethodAlipay,
+			})
+		}
+	}
+
 	data := gin.H{
-		"enable_online_topup":              isEpayTopUpEnabled(),
+		"enable_online_topup":              isEpayTopUpEnabled() || isAlipayTopUpEnabled(),
+		"enable_alipay_topup":              isAlipayTopUpEnabled(),
 		"enable_stripe_topup":              isStripeTopUpEnabled(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
@@ -210,8 +226,12 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 
-	if !operation_setting.ContainsPayMethod(req.PaymentMethod) {
+	if !operation_setting.ContainsPayMethod(req.PaymentMethod) && !(req.PaymentMethod == model.PaymentMethodAlipay && isAlipayTopUpEnabled()) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付方式不存在"})
+		return
+	}
+	if req.PaymentMethod == model.PaymentMethodAlipay && isAlipayTopUpEnabled() {
+		RequestAlipay(c, req.Amount, group)
 		return
 	}
 

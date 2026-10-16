@@ -13,6 +13,17 @@ var PayAddress = ""
 var CustomCallbackAddress = ""
 var EpayId = ""
 var EpayKey = ""
+
+// Alipay official computer-website payment configuration.
+// Keep disabled until the merchant credentials and callback URL are verified.
+var AlipayEnabled = false
+var AlipayAppID = ""
+var AlipayPrivateKey = ""
+var AlipayPublicKey = ""
+var AlipayProduction = true
+var AlipayNotifyURL = ""
+var AlipayReturnURL = ""
+
 var Price = 7.3
 var MinTopUp = 1
 var USDExchangeRate = 7.3

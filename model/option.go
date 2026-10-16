@@ -80,6 +80,13 @@ func InitOptionMap() {
 	common.OptionMap["CustomCallbackAddress"] = ""
 	common.OptionMap["EpayId"] = ""
 	common.OptionMap["EpayKey"] = ""
+	common.OptionMap["AlipayEnabled"] = strconv.FormatBool(operation_setting.AlipayEnabled)
+	common.OptionMap["AlipayAppID"] = ""
+	common.OptionMap["AlipayPrivateKey"] = ""
+	common.OptionMap["AlipayPublicKey"] = ""
+	common.OptionMap["AlipayProduction"] = strconv.FormatBool(operation_setting.AlipayProduction)
+	common.OptionMap["AlipayNotifyURL"] = ""
+	common.OptionMap["AlipayReturnURL"] = ""
 	common.OptionMap["Price"] = strconv.FormatFloat(operation_setting.Price, 'f', -1, 64)
 	common.OptionMap["USDExchangeRate"] = strconv.FormatFloat(operation_setting.USDExchangeRate, 'f', -1, 64)
 	common.OptionMap["MinTopUp"] = strconv.Itoa(operation_setting.MinTopUp)
@@ -277,7 +284,7 @@ func updateOptionMap(key string, value string) (err error) {
 			common.ImageDownloadPermission = intValue
 		}
 	}
-	if strings.HasSuffix(key, "Enabled") || key == "DefaultCollapseSidebar" || key == "DefaultUseAutoGroup" || key == "SMTPForceAuthLogin" || key == "SMTPInsecureSkipVerify" {
+	if strings.HasSuffix(key, "Enabled") || key == "DefaultCollapseSidebar" || key == "DefaultUseAutoGroup" || key == "SMTPForceAuthLogin" || key == "SMTPInsecureSkipVerify" || key == "AlipayProduction" {
 		boolValue := value == "true"
 		switch key {
 		case "PasswordRegisterEnabled":
@@ -360,6 +367,10 @@ func updateOptionMap(key string, value string) (err error) {
 			common.SMTPForceAuthLogin = boolValue
 		case "WorkerAllowHttpImageRequestEnabled":
 			system_setting.WorkerAllowHttpImageRequestEnabled = boolValue
+		case "AlipayEnabled":
+			operation_setting.AlipayEnabled = boolValue
+		case "AlipayProduction":
+			operation_setting.AlipayProduction = boolValue
 		case "DefaultUseAutoGroup":
 			setting.DefaultUseAutoGroup = boolValue
 		case "ExposeRatioEnabled":
@@ -398,6 +409,16 @@ func updateOptionMap(key string, value string) (err error) {
 		operation_setting.EpayId = value
 	case "EpayKey":
 		operation_setting.EpayKey = value
+	case "AlipayAppID":
+		operation_setting.AlipayAppID = value
+	case "AlipayPrivateKey":
+		operation_setting.AlipayPrivateKey = value
+	case "AlipayPublicKey":
+		operation_setting.AlipayPublicKey = value
+	case "AlipayNotifyURL":
+		operation_setting.AlipayNotifyURL = value
+	case "AlipayReturnURL":
+		operation_setting.AlipayReturnURL = value
 	case "Price":
 		operation_setting.Price, _ = strconv.ParseFloat(value, 64)
 	case "USDExchangeRate":

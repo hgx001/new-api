@@ -30,6 +30,7 @@ const (
 	PaymentMethodWaffo        = "waffo"
 	PaymentMethodWaffoPancake = "waffo_pancake"
 	PaymentMethodBalance      = "balance"
+	PaymentMethodAlipay       = "alipay"
 )
 
 const (
@@ -38,6 +39,7 @@ const (
 	PaymentProviderCreem        = "creem"
 	PaymentProviderWaffo        = "waffo"
 	PaymentProviderWaffoPancake = "waffo_pancake"
+	PaymentProviderAlipay       = "alipay"
 	PaymentProviderBalance      = "balance"
 )
 
@@ -156,6 +158,60 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(int(quota)), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)
 
+	return nil
+}
+
+// RechargeAlipay completes a pending official Alipay order exactly once.
+// The asynchronous notification is authoritative; the browser return page must
+// never credit the user directly.
+func RechargeAlipay(referenceId string, totalAmount decimal.Decimal, callerIp string) error {
+	if referenceId == "" {
+		return errors.New("未提供支付宝订单号")
+	}
+
+	var topUp TopUp
+	var quotaToAdd int
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		refCol := "`trade_no`"
+		if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+			refCol = `"trade_no"`
+		}
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", referenceId).First(&topUp).Error; err != nil {
+			return errors.New("支付宝充值订单不存在")
+		}
+		if topUp.PaymentProvider != PaymentProviderAlipay {
+			return ErrPaymentMethodMismatch
+		}
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
+		}
+		if topUp.Status != common.TopUpStatusPending {
+			return errors.New("支付宝充值订单状态错误")
+		}
+		expected := decimal.NewFromFloat(topUp.Money).Round(2)
+		if !expected.Equal(totalAmount.Round(2)) {
+			return fmt.Errorf("支付宝订单金额不一致：expected=%s actual=%s", expected.StringFixed(2), totalAmount.StringFixed(2))
+		}
+		quotaToAdd = int(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart())
+		if quotaToAdd <= 0 {
+			return errors.New("无效的充值额度")
+		}
+		topUp.Status = common.TopUpStatusSuccess
+		topUp.CompleteTime = common.GetTimestamp()
+		if err := tx.Save(&topUp).Error; err != nil {
+			return err
+		}
+		return tx.Model(&User{}).Where("id = ?", topUp.UserId).
+			Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error
+	})
+	if err != nil {
+		return err
+	}
+	if quotaToAdd > 0 {
+		RecordTopupLog(topUp.UserId,
+			fmt.Sprintf("支付宝官方直连充值成功，充值额度: %v，支付金额：%s", logger.FormatQuota(quotaToAdd), totalAmount.StringFixed(2)),
+			callerIp, PaymentMethodAlipay, PaymentProviderAlipay)
+	}
 	return nil
 }
 
