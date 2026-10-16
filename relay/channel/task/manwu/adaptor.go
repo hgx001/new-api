@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -53,6 +54,11 @@ const (
 	// 它是内部建单协议值，与对外模型名 ModelImage 分离；服务端按
 	// MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini 还是 jimeng。
 	PlatformIDImage = "manwu-image"
+	// PlatformIDTongyiwan 是通义万相官网平台，走 **wan2.7 免灵感值（relax_mode）
+	// 慢队列**。Worker 侧 RemoteTaskAdapter 对 tongyiwan 已硬编码
+	// generateWithCredits + requireFreeMode，因此这条通路**不消耗灵感值**。
+	// 对外两个模型（图生 / 编辑）共用该 platformId，靠素材类型分流 DOM 路线。
+	PlatformIDTongyiwan = "tongyiwan"
 
 	// baseURLDefault 为渠道未配置 BaseURL 时的兜底（ArcReel 生产地址）
 	baseURLDefault = "https://arcreel.heibaidao.cn"
@@ -117,6 +123,10 @@ const (
 	ModelImage        = "Nano Banana Pro"
 	ModelVideo        = "gemini-web-video"
 	ModelReverse      = "jimeng-video-reverse"
+	// 万相 wan2.7 免灵感值（2026-10-16 上架，老板定稿）：后缀用中文，
+	// 与 dola/doubao 的公开名风格区分，避免和上游 dashscope 的 wan 系重名。
+	ModelWan27I2V  = "wan2.7-图生"
+	ModelWan27Edit = "wan2.7-编辑"
 )
 
 // 豆包官网档位真名：Worker 侧 DOM 点击目标（src/platforms/doubao/params.ts），
@@ -134,7 +144,31 @@ const (
 	kindVeoVideo    = "veo_video"    // 只有宽高比：官网无模型/时长/分辨率控件
 	kindImage       = "image"        // 张数 + 宽高比 + 参考图
 	kindReverse     = "reverse"      // 单视频入参，文本出参
+	// 万相两条 DOM 路线：上游模型同为 Wan2_7，分流全靠素材类型 ——
+	// 图生带 reference_image；编辑带 reference_video（Worker 侧据
+	// generationMode='edit' || !!referenceVideo 判定 isEditMode）。
+	kindWanI2VVideo  = "wan_i2v_video"  // 图生：5–15 秒逐秒 / 720P-1080P / 参考图 ≤2 / 不收参考视频
+	kindWanEditVideo = "wan_edit_video" // 编辑：主视频恰 1 个 / 参考图 ≤10 / 时长跟随
 )
+
+// 万相 wan2.7 免灵感值参数口径（与 Worker 侧 TONGYIWAN_UNLIMITED_VIDEO_PROFILE 同源：
+// cron_video_brach src/platforms/tongyiwan/params.ts:101-107）。
+// 时长 5–15 秒逐秒真跑（官网档位），分辨率两档；缺省 5 秒 / 720P。
+const (
+	wanMinDuration     = 5
+	wanMaxDuration     = 15
+	wanDefaultDuration = 5
+	// 图生路线的参考图上限 2：万相官网通道的既有约束（RemoteTaskAdapter 同口径）。
+	wanMaxI2VImages = 2
+	// 编辑路线的参考图上限 10：对齐 MANWU_EDIT_VIDEO_PROFILE.maxReferenceImages。
+	wanMaxEditImages = 10
+	// wanUpstreamModel 是发往 ArcReel 的官网模型 id。公开名只在本表内存在，
+	// Worker 侧 normalizeTongyiwanTaskOverrides 还会把它收敛成 Wan2_7（双保险）。
+	wanUpstreamModel = "Wan2_7"
+)
+
+// wanAllowedResolutions 只认 720P/1080P（大小写不敏感，解析时统一转大写）。
+var wanAllowedResolutions = map[string]bool{"720P": true, "1080P": true}
 
 type modelSpec struct {
 	PlatformID string
@@ -153,6 +187,9 @@ var modelSpecs = map[string]modelSpec{
 	ModelVideo:        {PlatformID: PlatformIDGemini, OutputMode: OutputModeVideo, Kind: kindVeoVideo},
 	ModelImage:        {PlatformID: PlatformIDImage, OutputMode: OutputModeImage, Kind: kindImage},
 	ModelReverse:      {PlatformID: PlatformIDJimeng, OutputMode: OutputModeText, Kind: kindReverse},
+	// 万相两个模型共用 tongyiwan 平台，差异在 Kind（→ 校验分支 / DOM 路线）。
+	ModelWan27I2V:  {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanI2VVideo},
+	ModelWan27Edit: {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanEditVideo},
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -265,6 +302,7 @@ type normalizedRequest struct {
 	Prompt         string
 	Duration       int
 	Ratio          string
+	Resolution     string
 	Count          int
 	Images         []string
 	Videos         []string
@@ -288,6 +326,10 @@ type videoParams struct {
 	Ratio      string `json:"ratio"`
 	Duration   *int   `json:"duration,omitempty"`
 	Resolution string `json:"resolution,omitempty"`
+	// GenerationMode='edit' 让 ArcReel/Worker 明确走视频编辑链路。万相编辑模型专用；
+	// 图生模型不带该字段。Worker 侧 RemoteTaskAdapter 同时按 reference_video 判定，
+	// 故这是显式双保险，不是唯一开关。
+	GenerationMode string `json:"generationMode,omitempty"`
 }
 
 type imageParams struct {
@@ -485,6 +527,58 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "invalid_count", http.StatusBadRequest)
 		}
 		norm.Count = count
+	case kindWanI2VVideo:
+		// 万相图生/文生：prompt + 参考图（≤2）→ 视频。不收参考视频（那是编辑路线）。
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		if hasValue(req.Videos) || hasValue(req.Video) {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("%s is the image-to-video route and accepts no reference video; use %s instead", norm.Model, ModelWan27Edit),
+				"invalid_input_reference", http.StatusBadRequest,
+			)
+		}
+		// 图生路线的参考图上限比编辑路线严（2 vs 10）：官网首/尾帧 + 参考图通道的
+		// 既有约束。resolveReferenceImages 只卡全局 10，这里按 kind 再收一道。
+		if len(images) > wanMaxI2VImages {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("%s accepts at most %d reference images, got %d", norm.Model, wanMaxI2VImages, len(images)),
+				"invalid_input_reference", http.StatusBadRequest,
+			)
+		}
+		norm.Duration, err = resolveWanDuration(req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		norm.Resolution, err = resolveWanResolution(req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
+		}
+	case kindWanEditVideo:
+		// 万相视频编辑：主视频恰 1 个（ArcReel/Worker 硬约束，多传只取首个 → 明确拒绝），
+		// 参考图 ≤10，时长跟随主视频（5–15 逐秒）。
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		videos, vErr := resolveReferenceVideos(req)
+		if vErr != nil {
+			return service.TaskErrorWrapperLocal(vErr, "invalid_input_reference", http.StatusBadRequest)
+		}
+		norm.Videos = videos
+		if len(images) > wanMaxEditImages {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("%s accepts at most %d reference images, got %d", norm.Model, wanMaxEditImages, len(images)),
+				"invalid_input_reference", http.StatusBadRequest,
+			)
+		}
+		norm.Duration, err = resolveWanDuration(req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		norm.Resolution, err = resolveWanResolution(req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
+		}
 	}
 
 	c.Set(normalizedRequestKey, norm)
@@ -570,6 +664,25 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// 豆包无分辨率控件，不传 resolution。
 		body.VideoParams = &videoParams{Model: firstNonEmpty(spec.UpstreamModel, req.Model), Ratio: req.Ratio, Duration: &req.Duration}
 		body.Inputs = toInputs(InputTypeImage, req.Images)
+	case kindWanI2VVideo, kindWanEditVideo:
+		// 万相免灵感值：model 固定官网 id Wan2_7（公开名 wan2.7-图生/编辑 只在本表内），
+		// ratio/duration/resolution 透传。Worker 侧 RemoteTaskAdapter 对 tongyiwan
+		// 已硬编码免灵感值 + Wan2_7 兜底，这里显式写 model 只是让 job 记录自解释。
+		body.VideoParams = &videoParams{
+			Model:      wanUpstreamModel,
+			Ratio:      req.Ratio,
+			Duration:   &req.Duration,
+			Resolution: req.Resolution,
+		}
+		if spec.Kind == kindWanEditVideo {
+			// 编辑链路双保险：Worker 侧 RemoteTaskAdapter 同时按 reference_video
+			// 判定 isEditMode，这里显式带 generationMode 让 ArcReel job 记录可读。
+			body.VideoParams.GenerationMode = "edit"
+			// 主视频走 reference_video 素材槽，Worker 据此分流到编辑 DOM 路线。
+			body.Inputs = append(body.Inputs, jobInput{Type: InputTypeVideo, URL: req.Videos[0]})
+		}
+		// 图生的首/尾帧与编辑的参考图都走 reference_image 槽。
+		body.Inputs = append(body.Inputs, toInputs(InputTypeImage, req.Images)...)
 	default:
 		return nil, fmt.Errorf("unsupported manwu request kind: %s", spec.Kind)
 	}
@@ -625,6 +738,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
 	c.JSON(http.StatusOK, ov)
+	// 订单号对账（2026-10-14 用户要求）：公开单号 task_xxx 与 ArcReel 上游单号
+	// gen-xxx 一起落系统日志，排查时在 newapi / ArcReel / App 三方 Ctrl-F 同一个
+	// id 即可对上同一笔订单，不再靠时间+提示词猜配对。
+	logger.LogInfo(c, fmt.Sprintf("manwu 任务已提交 task_id=%s upstream_job_id=%s model=%s",
+		info.PublicTaskID, taskID, info.OriginModelName))
 	return taskID, responseBody, nil
 }
 
@@ -848,6 +966,11 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 		if len(parseStringList(req.Images)) > 0 {
 			return fmt.Errorf("%s accepts exactly one reference video, not images", modelName)
 		}
+	case kindWanI2VVideo, kindWanEditVideo:
+		// 万相两条路线都是视频模型：n/count 无意义（照旧按次计费，1 请求 = 1 条视频）。
+		if hasValue(req.Count) || hasValue(req.N) {
+			return fmt.Errorf("%s is a video model: n/count is not supported (billed per request)", modelName)
+		}
 	}
 	return nil
 }
@@ -875,6 +998,64 @@ func resolveDuration(req clientRequest, model string) (int, error) {
 	}
 
 	return defaultDuration, nil
+}
+
+// resolveWanDuration 解析万相（图生/编辑）时长：seconds → duration → 缺省 5。
+// 口径 5–15 秒逐秒（与 Worker 侧 TONGYIWAN_UNLIMITED_VIDEO_PROFILE.durations 同源），
+// 越界显式报错 —— ArcReel 侧对非法值会静默回落 5，厂商侧必须显式拒绝，
+// 否则「要 30 秒」的用户会按默认价拿到 5 秒片子。
+func resolveWanDuration(req clientRequest) (int, error) {
+	seconds, found, err := parseFlexibleInt(req.Seconds)
+	if err != nil {
+		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
+	}
+	if found {
+		return validateWanDuration("seconds", seconds)
+	}
+
+	duration, found, err := parseFlexibleInt(req.Duration)
+	if err != nil {
+		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
+	}
+	if found {
+		return validateWanDuration("duration", duration)
+	}
+
+	return wanDefaultDuration, nil
+}
+
+func validateWanDuration(field string, value int) (int, error) {
+	if value < wanMinDuration || value > wanMaxDuration {
+		return 0, fmt.Errorf("%s must be between %d and %d seconds, got %d", field, wanMinDuration, wanMaxDuration, value)
+	}
+	return value, nil
+}
+
+// resolveWanResolution 解析万相分辨率：未指定返回空串（ArcReel 回落 720P，
+// 与 Worker defaultResolution 一致）；指定了就必须是 720P/1080P（大小写不敏感）。
+func resolveWanResolution(req clientRequest) (string, error) {
+	raw := strings.TrimSpace(req.Resolution)
+	if raw == "" {
+		return "", nil
+	}
+	normalized := strings.ToUpper(raw)
+	if !wanAllowedResolutions[normalized] {
+		return "", fmt.Errorf("resolution must be one of 720P/1080P, got %q", raw)
+	}
+	return normalized, nil
+}
+
+// resolveReferenceVideos 解析编辑路线的**主视频**：input_reference → videos → video，
+// 必须恰好 1 个（ArcReel 编辑任务硬约束，多传只取首个会静默丢掉用户素材）。
+func resolveReferenceVideos(req clientRequest) ([]string, error) {
+	videos, err := resolveVideos(req)
+	if err != nil {
+		return nil, err
+	}
+	if len(videos) != 1 {
+		return nil, fmt.Errorf("video edit requires exactly one reference video, got %d", len(videos))
+	}
+	return videos, nil
 }
 
 // doubaoDefaultDuration 与 Worker 侧 DOUBAO_DEFAULT_DURATION（5s 档）一致。

@@ -433,6 +433,8 @@ func TestModelListAndChannelName(t *testing.T) {
 		"seedance-2-5",
 		"seedance-2.0",
 		"seedance-2.5",
+		"wan2.7-图生",
+		"wan2.7-编辑",
 	}, a.GetModelList())
 	assert.Equal(t, ChannelName, a.GetChannelName())
 }
@@ -1062,6 +1064,196 @@ func TestDoubaoAcceptsAutoRatioAndRejectsIllegal(t *testing.T) {
 			taskErr := badAdaptor.ValidateRequestAndSetAction(badCtx, badInfo)
 			require.NotNil(t, taskErr)
 			assert.Equal(t, tc.code, taskErr.Code)
+		})
+	}
+}
+
+// ============================
+// 万相 wan2.7 免灵感值（图生 / 编辑，2026-10-16 上架）
+// ============================
+
+// SpecFor 必须把两个公开模型都路由到 tongyiwan 平台；未知模型不回落 dola。
+func TestSpecForRoutesEveryWanModel(t *testing.T) {
+	spec, ok := SpecFor(ModelWan27I2V)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDTongyiwan, spec.PlatformID)
+	assert.Equal(t, OutputModeVideo, spec.OutputMode)
+	assert.Equal(t, kindWanI2VVideo, spec.Kind)
+
+	spec, ok = SpecFor(ModelWan27Edit)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDTongyiwan, spec.PlatformID)
+	assert.Equal(t, OutputModeVideo, spec.OutputMode)
+	assert.Equal(t, kindWanEditVideo, spec.Kind)
+
+	// 上游 wan 系真名（dashscope/官网口径）不得被本渠道接受：那本该走 custom-provider。
+	_, ok = SpecFor("wan2.7-t2v")
+	assert.False(t, ok)
+	_, ok = SpecFor("wan3.0")
+	assert.False(t, ok)
+}
+
+// 图生路线：prompt 必填；缺省时长 5、无分辨率；参考图 ≤2；不收参考视频。
+func TestWanI2VValidateAcceptsMinimalAndLimitsReferences(t *testing.T) {
+	c, info, a := postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"一只熊猫在竹林里散步"}`, ModelWan27I2V))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, kindWanI2VVideo, req.Kind)
+	assert.Equal(t, wanDefaultDuration, req.Duration)
+	assert.Empty(t, req.Resolution)
+	assert.Empty(t, req.Videos)
+
+	// 2 张参考图是上限，合法。
+	c, info, a = postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"p","seconds":10,"resolution":"1080P","images":["https://a.example/1.png","https://a.example/2.png"]}`,
+		ModelWan27I2V))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err = getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, 10, req.Duration)
+	assert.Equal(t, "1080P", req.Resolution)
+	assert.Len(t, req.Images, 2)
+}
+
+// 图生路线越界一律 400，且**不产生建单**（由 ValidateRequestAndSetAction 提前拦截）。
+func TestWanI2VRejectsIllegalRequests(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		code string
+	}{
+		"prompt is required": {fmt.Sprintf(`{"model":%q}`, ModelWan27I2V), "invalid_request"},
+		"duration too long":  {fmt.Sprintf(`{"model":%q,"prompt":"p","seconds":30}`, ModelWan27I2V), "invalid_duration"},
+		"duration too short": {fmt.Sprintf(`{"model":%q,"prompt":"p","duration":2}`, ModelWan27I2V), "invalid_duration"},
+		"resolution illegal": {fmt.Sprintf(`{"model":%q,"prompt":"p","resolution":"480P"}`, ModelWan27I2V), "invalid_resolution"},
+		"too many images": {fmt.Sprintf(`{"model":%q,"prompt":"p","images":["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png"]}`,
+			ModelWan27I2V), "invalid_input_reference"},
+		"no reference video":     {fmt.Sprintf(`{"model":%q,"prompt":"p","videos":["https://a.example/clip.mp4"]}`, ModelWan27I2V), "invalid_input_reference"},
+		"n is meaningless":       {fmt.Sprintf(`{"model":%q,"prompt":"p","n":2}`, ModelWan27I2V), "invalid_request"},
+		"image url must be http": {fmt.Sprintf(`{"model":%q,"prompt":"p","images":["data:image/png;base64,AAAA"]}`, ModelWan27I2V), "invalid_input_reference"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c, info, a := postVideoCtx(t, tc.body)
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr, name)
+			assert.Equal(t, tc.code, taskErr.Code, name)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode, name)
+		})
+	}
+}
+
+// 图生路线建单载荷：platformId=tongyiwan、model=Wan2_7、generationMode 为空、
+// inputs 全是 reference_image。
+func TestWanI2VBuildsTongyiwanPayload(t *testing.T) {
+	c, info, a := postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"海边日落","duration":5,"resolution":"720P","ratio":"16:9","images":["https://a.example/1.png"]}`,
+		ModelWan27I2V))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := decodePayload(t, reader)
+	assert.Equal(t, PlatformIDTongyiwan, payload["platformId"])
+	assert.Equal(t, OutputModeVideo, payload["outputMode"])
+	vp, _ := payload["videoParams"].(map[string]any)
+	require.NotNil(t, vp)
+	assert.Equal(t, wanUpstreamModel, vp["model"])
+	assert.Equal(t, float64(5), vp["duration"])
+	assert.Equal(t, "720P", vp["resolution"])
+	assert.Equal(t, "16:9", vp["ratio"])
+	assert.NotContains(t, vp, "generationMode", "图生路线不得带 generationMode")
+
+	inputs, _ := payload["inputs"].([]any)
+	require.Len(t, inputs, 1)
+	first, _ := inputs[0].(map[string]any)
+	assert.Equal(t, InputTypeImage, first["type"])
+}
+
+// 编辑路线：主视频必须恰 1 个，走 reference_video 槽；payload 带 generationMode='edit'。
+func TestWanEditRequiresOneVideoAndBuildsEditPayload(t *testing.T) {
+	c, info, a := postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"把背景换成雪山","videos":["https://a.example/clip.mp4"],"images":["https://a.example/ref.png"]}`,
+		ModelWan27Edit))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, kindWanEditVideo, req.Kind)
+	assert.Len(t, req.Videos, 1)
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := decodePayload(t, reader)
+	vp, _ := payload["videoParams"].(map[string]any)
+	require.NotNil(t, vp)
+	assert.Equal(t, "edit", vp["generationMode"], "编辑路线必须显式带 generationMode，让 job 记录自解释")
+	assert.Equal(t, wanUpstreamModel, vp["model"])
+
+	inputs, _ := payload["inputs"].([]any)
+	require.Len(t, inputs, 2, "主视频 + 1 张参考图")
+	first, _ := inputs[0].(map[string]any)
+	assert.Equal(t, InputTypeVideo, first["type"], "主视频必须排在最前并走 reference_video 槽")
+	second, _ := inputs[1].(map[string]any)
+	assert.Equal(t, InputTypeImage, second["type"])
+}
+
+// 编辑路线：素材数量不合法一律 400。
+func TestWanEditRejectsIllegalRequests(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		code string
+	}{
+		"no video": {fmt.Sprintf(`{"model":%q,"prompt":"p"}`, ModelWan27Edit), "invalid_input_reference"},
+		"two videos": {fmt.Sprintf(`{"model":%q,"prompt":"p","videos":["https://a.example/a.mp4","https://a.example/b.mp4"]}`,
+			ModelWan27Edit), "invalid_input_reference"},
+		"too many images": {fmt.Sprintf(`{"model":%q,"prompt":"p","videos":["https://a.example/a.mp4"],"images":["https://a.example/1.png","https://a.example/2.png","https://a.example/3.png","https://a.example/4.png","https://a.example/5.png","https://a.example/6.png","https://a.example/7.png","https://a.example/8.png","https://a.example/9.png","https://a.example/10.png","https://a.example/11.png"]}`,
+			ModelWan27Edit), "invalid_input_reference"},
+		"video url must be http": {fmt.Sprintf(`{"model":%q,"prompt":"p","videos":["/tmp/clip.mp4"]}`, ModelWan27Edit), "invalid_input_reference"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c, info, a := postVideoCtx(t, tc.body)
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr, name)
+			assert.Equal(t, tc.code, taskErr.Code, name)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode, name)
+		})
+	}
+}
+
+// 万相两个模型都是**按次**计费：EstimateBilling 必须返回 nil。
+// 否则 relay_task.go 会把按次价再乘一遍倍率（¥0.3/次 × 15 秒 = ¥4.5，账实不符）。
+func TestWanBillingIsPerCall(t *testing.T) {
+	for _, modelName := range []string{ModelWan27I2V, ModelWan27Edit} {
+		t.Run(modelName, func(t *testing.T) {
+			body := fmt.Sprintf(`{"model":%q,"prompt":"p","seconds":10}`, modelName)
+			if modelName == ModelWan27Edit {
+				body = fmt.Sprintf(`{"model":%q,"prompt":"p","seconds":10,"videos":["https://a.example/clip.mp4"]}`, modelName)
+			}
+			c, info, a := postVideoCtx(t, body)
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+			assert.Nil(t, a.EstimateBilling(c, info), "按次模型不得返回倍率")
+		})
+	}
+}
+
+// 直接上传（multipart）对万相同样必须拒绝：ArcReel 只收公网 URL 素材。
+func TestWanRejectsMultipartUpload(t *testing.T) {
+	for _, modelName := range []string{ModelWan27I2V, ModelWan27Edit} {
+		t.Run(modelName, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader("--x--"))
+			c.Request.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+			info := fixedModelInfo()
+			a := &TaskAdaptor{}
+			a.Init(info)
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr, modelName)
+			assert.Equal(t, "invalid_input_reference", taskErr.Code)
 		})
 	}
 }
