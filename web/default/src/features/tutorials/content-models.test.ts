@@ -196,6 +196,25 @@ describe('tutorials model guide content', () => {
     assert.equal(code.includes('"duration": 5'), true)
   })
 
+  // 回归守卫：wan3.0-video-官网 带参考视频时按「生成秒数 + 参考视频总秒数（向上取整）」
+  // 同分辨率单价计费（wan3/adaptor.go EstimateBilling + video_duration.go 探测），
+  // 解析不出时长直接 400 invalid_input_reference（不建单不扣费）。文档必须如实描述，
+  // 否则客户会按纯生成秒数理解账单。
+  test('documents official wan3 reference-video surcharge billing', () => {
+    assert.equal(
+      sectionsJson.includes('生成秒数 + 参考视频总秒数（向上取整）'),
+      true
+    )
+    assert.equal(
+      sectionsJson.includes('0.27 × 20 = ¥5.40'),
+      true
+    )
+    assert.equal(
+      sectionsJson.includes('无法解析时长的参考视频会被拒绝'),
+      true
+    )
+  })
+
   // 配额不足在网关里是 403 insufficient_user_quota，不是 402。
   // seedance-2.0 与 gemini-web-video 均按次计费，文档不能再出现按秒写法。
   test('documents remote video models as per-request billing', () => {

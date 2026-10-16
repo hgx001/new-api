@@ -87,7 +87,35 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	return relaycommon.ValidateMultipartDirect(c, info)
+	if taskErr := relaycommon.ValidateMultipartDirect(c, info); taskErr != nil {
+		return taskErr
+	}
+	// 参考视频按时长同价计费（生成秒数 + 参考视频总秒数）。
+	// 探测必须放在 validate 阶段：EstimateBilling 没有错误返回值，解析失败时无法拒单，
+	// 而计费拿不到时长就会按纯生成时长收费（少收）。
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	media, err := buildWan3Media(req)
+	if err != nil {
+		return service.TaskErrorWrapper(err, "invalid_input_reference", http.StatusBadRequest)
+	}
+	total := 0
+	for _, item := range media {
+		if item.Type != "reference_video" {
+			continue
+		}
+		seconds, err := probeReferenceVideoSeconds(item.URL)
+		if err != nil {
+			return service.TaskErrorWrapper(errors.Wrap(err, "probe reference video duration failed"), "invalid_input_reference", http.StatusBadRequest)
+		}
+		total += seconds
+	}
+	if total > 0 {
+		c.Set(refVideoSecondsContextKey, total)
+	}
+	return nil
 }
 
 // resolveDuration 解析时长并钳制到 wan3 允许的 2–30 秒
@@ -365,7 +393,9 @@ func validateWan3Media(media []relaycommon.TaskMedia) error {
 	return nil
 }
 
-// EstimateBilling 按秒和分辨率计费：框架用 ModelPrice × seconds × size 计算配额
+// EstimateBilling 按秒和分辨率计费：框架用 ModelPrice × seconds × size 计算配额。
+// 有参考视频时 seconds = 生成时长 + 参考视频总秒数（同分辨率单价），
+// 例如 10 秒参考视频生成 10 秒 480P → 0.27 × 20。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
@@ -375,8 +405,14 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if resolutionRatio == 0 {
 		resolutionRatio = 1.0
 	}
+	seconds := resolveDuration(req)
+	if value, ok := c.Get(refVideoSecondsContextKey); ok {
+		if refSeconds, ok := value.(int); ok && refSeconds > 0 {
+			seconds += refSeconds
+		}
+	}
 	return map[string]float64{
-		"seconds": float64(resolveDuration(req)),
+		"seconds": float64(seconds),
 		"size":    resolutionRatio,
 	}
 }
