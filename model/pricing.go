@@ -466,6 +466,13 @@ func isAllowedPricingModel(name string) bool {
 	if name == "gemini-web-video" || name == "Nano Banana Pro" {
 		return true
 	}
+	// 漫屋 ArcReel 通义万相 wan2.7 免灵感值（relax 慢队列）：图生 / 编辑两个模型共用
+	// platformId=tongyiwan，靠素材类型分流两条 DOM 路线（同上游 Wan2_7）。
+	// ¥0.30/次，与 ArcReel 站点口径一致；交付预期「通常 3 小时左右出一条」写在
+	// models 表 description 里（广场正文）。
+	if name == "wan2.7-图生" || name == "wan2.7-编辑" {
+		return true
+	}
 	// ⚠️ jimeng-video-reverse 故意**不**上广场：反解定价（¥1.0/次）是占位值，
 	// 尚未商务核定。在价格确认前只保证可调用（白名单只管广场展示，不影响调用），
 	// 确认后再加这一行，并同步接入教程的模型总览

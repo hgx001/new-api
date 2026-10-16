@@ -38,6 +38,8 @@ const MODEL_OVERVIEW_ITEMS = [
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
   'seedance-2-5｜视频（按次）｜¥3.00 / 次，5/10/15/30 秒同价',
   'gemini-web-video｜视频（按次）｜¥1.00 / 次',
+  'wan2.7-图生｜视频（按次）｜¥0.30 / 次，5–15 秒逐秒，720P/1080P，≤2 张参考图。⚠️ 免灵感值慢队列，通常 3 小时左右出一条',
+  'wan2.7-编辑｜视频（按次）｜¥0.30 / 次，需 1 个主视频（≤10 秒），≤10 张参考图。⚠️ 免灵感值慢队列，通常 3 小时左右出一条',
   'Nano Banana Pro｜图片（按张）｜¥0.30 / 张',
   'jimeng-video-reverse｜提示词（按次）｜¥1.00 / 次',
 ]
@@ -104,7 +106,7 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟，wan3.0-1080p-慢速 需一天（拼车批次，今日提交次日取片），gemini-web-video 约 2.5 分钟，jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟，wan3.0-1080p-慢速 需一天（拼车批次，今日提交次日取片），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',

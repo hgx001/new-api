@@ -71,3 +71,15 @@ func TestIsAllowedPricingModelManwuRemote(t *testing.T) {
 	assert.False(t, isAllowedPricingModel("jimeng-video-reverse"),
 		"jimeng-video-reverse 定价未核定，不得出现在广场")
 }
+
+// 漫屋 ArcReel 通义万相 wan2.7 免灵感值双模型上广场（2026-10-16）。
+// 两个公开名共用 platformId=tongyiwan，靠素材类型分流图生 / 编辑两条 DOM 路线。
+func TestIsAllowedPricingModelManwuWan27(t *testing.T) {
+	for _, name := range []string{"wan2.7-图生", "wan2.7-编辑"} {
+		require.True(t, isAllowedPricingModel(name), "%s must show in pricing square", name)
+	}
+	// 上游真名 / 旧名一律不对外：公开名只存在于 adaptor 的 modelSpecs 里。
+	for _, hidden := range []string{"wan2.7", "Wan2_7", "wan2.7-i2v", "wan2.7-edit"} {
+		assert.False(t, isAllowedPricingModel(hidden), "%s must not show in pricing square", hidden)
+	}
+}

@@ -203,6 +203,29 @@ describe('tutorials model guide content', () => {
     assert.equal(sectionsJson.includes('¥1.00 / 次'), true)
   })
 
+  // 回归守卫：wan2.7 免灵感值双模型 2026-10-16 上架（图生 / 编辑，¥0.30/次）。
+  // 文档必须写出慢队列交付预期（「通常 3 小时左右出一条」），否则客户会按分钟级
+  // 预期接入、白白等待；也必须在索引与 FAQ 实测耗时两处都写，单写一处不一致。
+  test('documents the wan2.7 relax models with their 3-hour delivery expectation', () => {
+    for (const expected of ['wan2.7-图生', 'wan2.7-编辑', '¥0.30 / 次']) {
+      assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
+    }
+    assert.equal(
+      sectionsJson.includes('免灵感值慢队列，通常 3 小时左右出一条'),
+      true,
+      'wan2.7 relax models must document the ~3h queue expectation in the overview'
+    )
+    assert.equal(
+      sectionsJson.includes('wan2.7-图生 / wan2.7-编辑 需 3 小时左右'),
+      true,
+      'wan2.7 relax models must appear in the FAQ measured-latency line'
+    )
+    // 上游真名不得出现在对外文档：公开名只存在于 adaptor 的 modelSpecs。
+    for (const hidden of ['Wan2_7', 'wan2.7-i2v', 'wan2.7-edit']) {
+      assert.equal(sectionsJson.includes(hidden), false, `${hidden} must not be documented`)
+    }
+  })
+
   // 回归守卫：三个静默失败点。它们都不会报错，客户端只会看到任务正常跑完，
   // 但实际素材根本没到上游，属于最难排查的一类。
   //   1. 顶层 audios / audio 只有 autodl 读；youzanwan3 与 wan3 的 buildMedia
