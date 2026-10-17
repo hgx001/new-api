@@ -103,9 +103,22 @@ export async function requestPayment(
   const res = await api.post('/api/user/pay', request, {
     skipBusinessError: true,
   } as Record<string, unknown>)
+  const paymentData: unknown = res.data.data
+  const nestedUrl =
+    typeof paymentData === 'object' &&
+    paymentData !== null &&
+    'url' in paymentData &&
+    typeof paymentData.url === 'string'
+      ? paymentData.url
+      : undefined
+  const responseUrl =
+    typeof res.data.url === 'string'
+      ? res.data.url
+      : (res as unknown as { url?: string }).url
+
   return {
     ...res.data,
-    url: res.data.url || (res as unknown as { url?: string }).url,
+    url: responseUrl || nestedUrl,
   }
 }
 

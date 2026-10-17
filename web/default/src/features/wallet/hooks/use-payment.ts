@@ -28,6 +28,7 @@ import {
   requestStripePayment,
   isApiSuccess,
 } from '../api'
+import { PAYMENT_TYPES } from '../constants'
 import {
   isStripePayment,
   isWaffoPancakePayment,
@@ -51,14 +52,17 @@ export function usePayment() {
 
         const isStripe = isStripePayment(paymentType)
         const isPancake = isWaffoPancakePayment(paymentType)
-        const response = isStripe
-          ? await calculateStripeAmount({ amount: topupAmount })
-          : isPancake
-            ? await calculateWaffoPancakeAmount({ amount: topupAmount })
-            : await calculateAmount({ amount: topupAmount })
+        let response: Awaited<ReturnType<typeof calculateAmount>>
+        if (isStripe) {
+          response = await calculateStripeAmount({ amount: topupAmount })
+        } else if (isPancake) {
+          response = await calculateWaffoPancakeAmount({ amount: topupAmount })
+        } else {
+          response = await calculateAmount({ amount: topupAmount })
+        }
 
         if (isApiSuccess(response) && response.data) {
-          const calculatedAmount = parseFloat(response.data)
+          const calculatedAmount = Number.parseFloat(response.data)
           setAmount(calculatedAmount)
           return calculatedAmount
         }
@@ -66,7 +70,7 @@ export function usePayment() {
         // Don't show error for calculation, just set to 0
         setAmount(0)
         return 0
-      } catch (_error) {
+      } catch {
         setAmount(0)
         return 0
       } finally {
@@ -109,16 +113,30 @@ export function usePayment() {
 
         // Handle non-Stripe payment
         if (!isStripe && response.data) {
-          const url = (response as unknown as { url?: string }).url
+          const url = 'url' in response ? response.url : undefined
           if (url) {
-            submitPaymentForm(url, response.data)
+            if (paymentType === PAYMENT_TYPES.ALIPAY) {
+              const checkoutUrl = new URL(url)
+              if (
+                checkoutUrl.protocol !== 'https:' ||
+                !['openapi.alipay.com', 'openapi.alipaydev.com'].includes(
+                  checkoutUrl.hostname
+                )
+              ) {
+                toast.error(i18next.t('Invalid payment redirect URL'))
+                return false
+              }
+              window.location.assign(checkoutUrl.href)
+            } else {
+              submitPaymentForm(url, response.data)
+            }
             toast.success(i18next.t('Redirecting to payment page...'))
             return true
           }
         }
 
         return false
-      } catch (_error) {
+      } catch {
         toast.error(i18next.t('Payment request failed'))
         return false
       } finally {
