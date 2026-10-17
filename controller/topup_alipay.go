@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
@@ -28,10 +30,28 @@ func isAlipayTopUpEnabled() bool {
 
 func normalizeAlipayPrivateKey(value string) string {
 	value = strings.TrimSpace(value)
+	var privateKeyDER []byte
 	if block, _ := pem.Decode([]byte(value)); block != nil {
-		return base64.StdEncoding.EncodeToString(block.Bytes)
+		privateKeyDER = block.Bytes
+	} else {
+		compact := strings.Join(strings.Fields(value), "")
+		decoded, err := base64.StdEncoding.DecodeString(compact)
+		if err != nil {
+			return compact
+		}
+		privateKeyDER = decoded
 	}
-	return strings.Join(strings.Fields(value), "")
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(privateKeyDER)
+	if err != nil {
+		parsedKey, parseErr := x509.ParsePKCS8PrivateKey(privateKeyDER)
+		rsaKey, isRSA := parsedKey.(*rsa.PrivateKey)
+		if parseErr != nil || !isRSA {
+			return base64.StdEncoding.EncodeToString(privateKeyDER)
+		}
+		privateKey = rsaKey
+	}
+	return base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(privateKey))
 }
 
 func normalizeAlipayPublicKey(value string) string {
