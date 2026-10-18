@@ -39,6 +39,12 @@ func TestIsAllowedPricingModelGpt6(t *testing.T) {
 	}
 }
 
+// opus-5.5：对外售卖名，实际调用 gpt-6-luna（倍率 0.32106 = 5×luna）。
+// 名字不带 gpt- 前缀，白名单必须单独放行，否则广场不可见。
+func TestIsAllowedPricingModelOpus55(t *testing.T) {
+	require.True(t, isAllowedPricingModel("opus-5.5"), "opus-5.5 must show in pricing square")
+}
+
 // 官方渠道图片模型 gpt-image-2.5-官方 需与二手渠道的 gpt-image-2/2.5 同时在广场展示。
 func TestIsAllowedPricingModelGptImageOfficial(t *testing.T) {
 	for _, name := range []string{"gpt-image-2", "gpt-image-2.5", "gpt-image-2.5-官方"} {
