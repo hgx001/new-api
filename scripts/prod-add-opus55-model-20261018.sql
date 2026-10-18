@@ -107,7 +107,7 @@ SELECT a."group", 'opus-5.5', a.channel_id, a.enabled, a.priority, a.weight, a.t
 INSERT INTO models (model_name, description, icon, tags, vendor_id, endpoints,
                     status, sync_official, created_time, updated_time, name_rule)
 SELECT 'opus-5.5',
-       'opus-5.5 旗舰模型，0.1倍率。超长上下文，推理与代码能力全面升级，响应迅捷稳定。',
+       'opus-5.5 旗舰文本模型，0.1倍率。',
        m.icon, m.tags, m.vendor_id, m.endpoints,
        m.status, 1,
        EXTRACT(EPOCH FROM now())::bigint, EXTRACT(EPOCH FROM now())::bigint, m.name_rule
