@@ -2,6 +2,7 @@ package manwu
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -91,6 +92,11 @@ const (
 	// 「内容审核不通过」兜底——2026-10-08 豆包首单实证：ArcReel 校验器白名单缺失误判
 	// 时，用户看到「内容审核不通过」会误以为自己提示词违规，实际是基础设施问题。
 	reasonOutputUnavailable = "产物 URL 校验失败：生成结果暂不可用或已过期"
+	// reasonUnknownFailure：上游报 failed 但没给任何原因。**不能用
+	// taskcommon.ReasonContentModeration**——那是「无理由失败统一归内容审核」的旧口径，
+	// 会把 Worker 失联/服务端回收/超时这类基础设施问题谎报成内容违规，客户拿着错的
+	// 方向去改提示词，白折腾一轮。2026-10-18 用户拍板改成中性文案。
+	reasonUnknownFailure = "上游生成失败（未提供具体原因），请稍后重试或联系客服"
 	// reasonDirectUploadUnsupported：全渠道都不收 multipart 文件。参考素材必须是
 	// ArcReel 能回源的公网 URL（图片 URL、dola/gemini 的参考图 URL、反解的视频 URL），
 	// 因此这条拒绝对四个模型都成立，不能写成只讲反解。
@@ -360,8 +366,16 @@ type jobResponse struct {
 	ResultPrompt  string `json:"resultPrompt"`
 	ResultPrompt2 string `json:"result_prompt"`
 	Error         string `json:"error"`
-	CreatedAt     string `json:"createdAt"`
-	UpdatedAt     string `json:"updatedAt"`
+	// ErrorCode / ErrorDiagnostic：2026-10-18 ArcReel 的失败原因对内/对外拆分。
+	//   Error           = 对外文案（官网拒绝类 = 官网原话原样），**给客户**；
+	//   ErrorDiagnostic = Worker 上报的内部诊断原文（含 free-mode-guard / params-ok
+	//                     等内部符号），**只进日志，绝不下发客户**；
+	//   ErrorCode       = 稳定机器码（content_rejected / quota_exhausted / …）。
+	// 老版本 ArcReel 不带后两个字段 → 空串，走既有回落，行为不变。
+	ErrorCode       string `json:"errorCode"`
+	ErrorDiagnostic string `json:"errorDiagnostic"`
+	CreatedAt       string `json:"createdAt"`
+	UpdatedAt       string `json:"updatedAt"`
 }
 
 func (r jobResponse) resultURL() string {
@@ -819,7 +833,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		if status == "url_unavailable" {
 			taskResult.Reason = firstNonEmpty(res.Error, reasonOutputUnavailable)
 		} else {
-			taskResult.Reason = res.Error
+			// res.Error 是 ArcReel 的**对外**文案；为空时给中性兜底，
+			// 不能落到「内容审核不通过」（那会把基础设施问题谎报成内容违规）。
+			taskResult.Reason = firstNonEmpty(res.Error, reasonUnknownFailure)
 		}
 	case "cancelled":
 		taskResult.Status = model.TaskStatusFailure
@@ -878,10 +894,18 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 			openAIResp.Error = &dto.OpenAIVideoError{Code: "empty_result", Message: reasonEmptyResult}
 		}
 	case "failed", "url_unavailable":
-		fallback := taskcommon.ReasonContentModeration
+		// 2026-10-18 用户拍板：对外只给 res.Error（ArcReel 的 user_message，
+		// 官网拒绝类就是官网原话原样），内部诊断原文只进日志。
+		// 兜底**不能**再用「内容审核不通过」——上游没给原因时那是谎报归因。
+		fallback := reasonUnknownFailure
 		if status == "url_unavailable" {
 			// url_unavailable 是基础设施侧产物校验失败，不能归因为内容审核。
 			fallback = reasonOutputUnavailable
+		}
+		if diag := strings.TrimSpace(res.ErrorDiagnostic); diag != "" && diag != strings.TrimSpace(res.Error) {
+			// 只记日志，不进响应体。errorCode 一起带上，便于按码统计。
+			logger.LogDebug(context.Background(), "manwu job failed: task=%s code=%s diagnostic=%s",
+				task.TaskID, res.ErrorCode, diag)
 		}
 		openAIResp.Status = dto.VideoStatusFailed
 		openAIResp.Error = &dto.OpenAIVideoError{
