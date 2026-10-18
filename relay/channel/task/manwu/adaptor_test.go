@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1256,4 +1257,90 @@ func TestWanRejectsMultipartUpload(t *testing.T) {
 			assert.Equal(t, "invalid_input_reference", taskErr.Code)
 		})
 	}
+}
+
+// 2026-10-18 用户拍板：失败原因对内/对外拆分。
+//
+// 背景：旧链路把 Worker 的内部诊断串（含 free-mode-guard / params-ok 这类内部符号）
+// 原样塞进 OpenAIVideoError.Message 返回给终端客户。客户看到的是
+// `提交重试耗尽(free_mode_not_ready): free-mode-guard: 提交将消耗灵感值（cost:unknown）…`
+// —— 既有内部符号，判断本身还是错的。
+//
+// 现在 ArcReel 把 `error`（对外，官网拒绝类 = 官网原话原样）与
+// `errorDiagnostic`（内部原文）分开返回，这里守三件事：
+//  1. 客户只拿到对外文案；
+//  2. 内部诊断**不出现在响应体任何位置**；
+//  3. 上游没给原因时兜底是中性文案，不再谎报「内容审核不通过」。
+func TestConvertToOpenAIVideoKeepsDiagnosticsOutOfResponse(t *testing.T) {
+	a := &TaskAdaptor{}
+
+	task := &model.Task{
+		TaskID:     "task_public_fail",
+		Progress:   "100%",
+		Properties: model.Properties{OriginModelName: ModelDola},
+		Data: []byte(`{"jobId":"gen-1","status":"failed",` +
+			`"error":"抱歉，由于模型可能带来准确性问题，我无法为你生成相应内容。",` +
+			`"errorCode":"content_rejected",` +
+			`"errorDiagnostic":"提交重试耗尽(free_mode_not_ready): free-mode-guard: 提交将消耗灵感值（cost:unknown），远端任务拒绝扣费提交"}`),
+	}
+	raw, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	// 整段响应里都不得出现内部符号——不只 error.message，防止将来挪到别的字段。
+	body := string(raw)
+	for _, internal := range []string{"free-mode-guard", "free_mode_not_ready", "cost:unknown", "params-ok", "提交重试耗尽"} {
+		assert.NotContains(t, body, internal, "内部诊断不得出现在客户响应里")
+	}
+
+	var ov map[string]any
+	require.NoError(t, json.Unmarshal(raw, &ov))
+	assert.Equal(t, "failed", ov["status"])
+	errObj, ok := ov["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "failed", errObj["code"])
+	// 官网原话原样回传（用户明确要求）。
+	assert.Equal(t, "抱歉，由于模型可能带来准确性问题，我无法为你生成相应内容。", errObj["message"])
+}
+
+// 上游没给原因时，兜底必须是中性文案：不能再用「内容审核不通过」谎报归因
+// （那会让客户拿着错误方向去改提示词）。
+func TestParseTaskResultFailureFallbackIsNeutral(t *testing.T) {
+	a := &TaskAdaptor{}
+
+	noReason, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"failed"}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailure, noReason.Status)
+	assert.Equal(t, reasonUnknownFailure, noReason.Reason)
+	assert.NotEqual(t, taskcommon.ReasonContentModeration, noReason.Reason)
+
+	// ConvertToOpenAIVideo 走的是 task.Data 快照，同一口径。
+	task := &model.Task{
+		TaskID:     "task_public_noreason",
+		Progress:   "100%",
+		Properties: model.Properties{OriginModelName: ModelDola},
+		Data:       []byte(`{"jobId":"job-1","status":"failed"}`),
+	}
+	raw, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var ov map[string]any
+	require.NoError(t, json.Unmarshal(raw, &ov))
+	errObj := ov["error"].(map[string]any)
+	assert.Equal(t, reasonUnknownFailure, errObj["message"])
+	assert.NotContains(t, errObj["message"], "内容审核")
+}
+
+// 官网拒绝类必须原样回传官网原话（哪怕它含「不支持」「额度」等会被规则改写的词），
+// 且 errorCode 要能区分「换号有用（quota）」与「换号无用（content）」。
+func TestParseTaskResultPassesThroughOfficialQuote(t *testing.T) {
+	a := &TaskAdaptor{}
+
+	refusal := "抱歉，由于模型可能带来准确性问题，我无法为你生成相应内容。你可以尝试提出其他需求。"
+	res, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"failed","error":` + strconv.Quote(refusal) + `,"errorCode":"content_rejected"}`))
+	require.NoError(t, err)
+	assert.Equal(t, refusal, res.Reason)
+
+	paywall := "这是专业版 Dola Plus 专属能力，开通 Dola Plus，我就能继续为你服务。"
+	res2, err := a.ParseTaskResult([]byte(`{"jobId":"job-2","status":"failed","error":` + strconv.Quote(paywall) + `,"errorCode":"quota_exhausted"}`))
+	require.NoError(t, err)
+	assert.Equal(t, paywall, res2.Reason)
 }
