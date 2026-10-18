@@ -168,6 +168,15 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		logger.LogError(c, fmt.Sprintf("error handling last response: %s, lastStreamData: [%s]", err.Error(), lastStreamData))
 	}
 
+	// 映射过的模型：最后一段 chunk 不走 HandleStreamFormat，需要单独改写；
+	// 同时把 model 变量（用于最终 usage 帧）也改成对外售卖名。
+	if echoModel := responseModelName(info); echoModel != "" {
+		if rewritten, ok := rewriteJSONModelField(lastStreamData, echoModel); ok {
+			lastStreamData = rewritten
+		}
+		model = echoModel
+	}
+
 	if info.RelayFormat == types.RelayFormatOpenAI {
 		if shouldSendLastResp {
 			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
@@ -220,6 +229,13 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	// 映射过的模型：响应体里的 model 必须回显用户请求的原始名，
+	// 否则用户从返回结果就能直接看到底层模型。未映射时 echoModel 为空，行为不变。
+	echoModel := responseModelName(info)
+	if echoModel != "" {
+		simpleResponse.Model = echoModel
+	}
+
 	for _, choice := range simpleResponse.Choices {
 		if choice.FinishReason == constant.FinishReasonContentFilter {
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "openai_finish_reason=content_filter")
@@ -267,8 +283,11 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			if err != nil {
 				return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 			}
-		} else {
-			break
+		} else if echoModel != "" {
+			// 非强制格式化：上游原文透传，只替换 model 字段。
+			if rewritten, ok := rewriteJSONModelField(string(responseBody), echoModel); ok {
+				responseBody = []byte(rewritten)
+			}
 		}
 	case types.RelayFormatClaude:
 		claudeResp := service.ResponseOpenAI2Claude(&simpleResponse, info)

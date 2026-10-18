@@ -40,6 +40,14 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		c.Set("image_generation_call_size", responsesResponse.GetSize())
 	}
 
+	// 映射过的模型：响应体里的 model 必须回显用户请求的原始名，避免暴露底层模型。
+	if echoModel := responseModelName(info); echoModel != "" {
+		responsesResponse.Model = echoModel
+		if rewritten, ok := rewriteJSONModelField(string(responseBody), echoModel); ok {
+			responseBody = []byte(rewritten)
+		}
+	}
+
 	// 写入新的 response body
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
@@ -87,6 +95,12 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 			sr.Error(err)
 			return
+		}
+		// 映射过的模型：事件里的 response.model 换成用户请求的原始名。
+		if echoModel := responseModelName(info); echoModel != "" {
+			if rewritten, ok := rewriteResponsesStreamModelField(data, echoModel); ok {
+				data = rewritten
+			}
 		}
 		sendResponsesStreamData(c, streamResponse, data)
 		switch streamResponse.Type {

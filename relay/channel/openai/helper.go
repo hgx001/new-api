@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,6 +22,14 @@ import (
 // 辅助函数
 func HandleStreamFormat(c *gin.Context, info *relaycommon.RelayInfo, data string, forceFormat bool, thinkToContent bool) error {
 	info.SendResponseCount++
+
+	// 映射过的模型：先把回显的 model 换成用户请求的原始名，再交给各格式的转换逻辑，
+	// 这样 OpenAI / Claude / Gemini 三种下游格式都不会泄露上游模型名。
+	if echoModel := responseModelName(info); echoModel != "" {
+		if rewritten, ok := rewriteJSONModelField(data, echoModel); ok {
+			data = rewritten
+		}
+	}
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
@@ -207,4 +217,88 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
 		return
 	}
 	helper.ResponseChunkData(c, streamResponse, data)
+}
+
+// responseModelName 返回需要回显给客户端的模型名；无映射时返回空串。
+//
+// 渠道 model_mapping 生效后（如 opus-5.5 → gpt-6-luna），上游响应里的 model
+// 字段仍是真实模型名。对下游必须统一回显用户请求的原始名，否则用户从响应体
+// 就能直接看到底层模型。只对映射过的请求生效，未映射模型行为完全不变。
+func responseModelName(info *relaycommon.RelayInfo) string {
+	if info != nil && info.IsModelMapped && info.OriginModelName != "" {
+		return info.OriginModelName
+	}
+	return ""
+}
+
+// marshalJSONNoEscape 序列化 JSON 且不转义 < > &，并去掉 Encoder 追加的换行。
+//
+// 标准 json.Marshal 会把 < 转义成 \u003c，即使字段是 json.RawMessage 也会被
+// compact 重新转义一遍；用不转义的编码器才能真正做到「其余字段原样保留」。
+func marshalJSONNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// replaceJSONField 把 JSON 对象的指定字段替换为给定的 JSON 字面量。
+//
+// 其余字段一律以 json.RawMessage 原样保留，不重新解析再序列化，因此数字精度、
+// 字符串转义风格、嵌套结构都不会被改动；只有被替换的字段和顶层键顺序会变化。
+func replaceJSONField(data string, field string, rawValue []byte) (string, bool) {
+	var body map[string]json.RawMessage
+	if err := common.UnmarshalJsonStr(data, &body); err != nil {
+		return "", false
+	}
+	if _, ok := body[field]; !ok {
+		return "", false
+	}
+	body[field] = rawValue
+	rewritten, err := marshalJSONNoEscape(body)
+	if err != nil {
+		return "", false
+	}
+	return string(rewritten), true
+}
+
+// rewriteJSONModelField 把 JSON 顶层的 model 字段替换为 modelName。
+func rewriteJSONModelField(data string, modelName string) (string, bool) {
+	encoded, err := marshalJSONNoEscape(modelName)
+	if err != nil {
+		return "", false
+	}
+	return replaceJSONField(data, "model", encoded)
+}
+
+// rewriteResponsesStreamModelField 改写 Responses API 流式事件里的 response.model。
+//
+// Responses 的 model 不在事件顶层，而是嵌在 response 对象内（如 response.created、
+// response.completed），因此不能复用顶层改写。
+func rewriteResponsesStreamModelField(data string, modelName string) (string, bool) {
+	var body map[string]json.RawMessage
+	if err := common.UnmarshalJsonStr(data, &body); err != nil {
+		return "", false
+	}
+	rawResponse, ok := body["response"]
+	if !ok {
+		return "", false
+	}
+	encoded, err := marshalJSONNoEscape(modelName)
+	if err != nil {
+		return "", false
+	}
+	rewrittenResponse, ok := replaceJSONField(string(rawResponse), "model", encoded)
+	if !ok {
+		return "", false
+	}
+	body["response"] = json.RawMessage(rewrittenResponse)
+	rewritten, err := marshalJSONNoEscape(body)
+	if err != nil {
+		return "", false
+	}
+	return string(rewritten), true
 }
