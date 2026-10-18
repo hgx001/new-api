@@ -17,7 +17,11 @@
 --   ② 再跑本 SQL（单事务 + 备份表，出错即回滚）。
 --
 -- 生效时延：channels.models 路由缓存 ≤60s（SYNC_FREQUENCY）重建；
---           /v1/models 立即；广场 /api/pricing TTL 1min。
+--           /v1/models 立即；广场 /api/pricing TTL 1min；
+--           options 每 60s 从 DB 同步一次（整表替换内存 map）。
+--           ⚠️ 跑完 SQL 后务必等 ≥70s 再做对外验证/放量：这 60 秒内 opus-5.5
+--           已有能力但内存里还没有 0.32106，命中 GetModelRatio 兜底 37.5（若
+--           SelfUseModeEnabled=true 会按 37.5 倍扣费；关闭时则报「模型价格未配置」）。
 --           线上 MEMORY_CACHE_ENABLED=true，路由以 channels.models 为准；
 --           若部署未开内存缓存，跑完本 SQL 需重启后端或经管理 API 保存一次
 --           luna 渠道，让 abilities 缓存刷新（见 AGENTS.md）。
