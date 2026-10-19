@@ -366,11 +366,6 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "gpt-6") {
 		return true
 	}
-	// opus-5.5：对外售卖名（渠道 model_mapping 实际转发到 gpt-6-luna，
-	// 计费倍率 0.32106 = luna 的 5 倍）。名字不带 gpt- 前缀，需单独放行。
-	if name == "opus-5.5" {
-		return true
-	}
 	if strings.EqualFold(name, "MiniMax-M3") || strings.EqualFold(name, "MiniMax-M3.1") {
 		return true
 	}

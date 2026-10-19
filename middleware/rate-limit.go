@@ -195,6 +195,15 @@ func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key
 	}
 }
 
+// QuotaQueryRateLimit returns a per-user rate limiter for the quota query endpoint.
+// 6 requests per 60s per user ID: enough for 10s-interval polling while
+// preventing the cheap endpoint from being used as a heartbeat. Keyed by user
+// ID (not IP), so rotating proxy IPs does not bypass it. Must be used AFTER
+// TokenAuth.
+func QuotaQueryRateLimit() func(c *gin.Context) {
+	return userRateLimitFactory(6, 60, "QQ")
+}
+
 // SearchRateLimit returns a per-user rate limiter for search endpoints.
 // Configurable via SEARCH_RATE_LIMIT_ENABLE / SEARCH_RATE_LIMIT / SEARCH_RATE_LIMIT_DURATION.
 func SearchRateLimit() func(c *gin.Context) {

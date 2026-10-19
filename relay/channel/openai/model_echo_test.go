@@ -15,7 +15,7 @@ import (
 )
 
 // newModelEchoInfo 构造一个用于验证 model 回显的 RelayInfo。
-// mapped=true 时模拟渠道 model_mapping 生效（如 opus-5.5 → gpt-6-luna）。
+// mapped=true 时模拟渠道 model_mapping 生效（如 demo-alias → gpt-6-luna）。
 func newModelEchoInfo(originModel, upstreamModel string, mapped bool) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{
@@ -41,7 +41,7 @@ func newModelEchoTestContext(body string, contentType string) (*gin.Context, *ht
 }
 
 func TestResponseModelNameOnlyForMappedModels(t *testing.T) {
-	require.Equal(t, "opus-5.5", responseModelName(newModelEchoInfo("opus-5.5", "gpt-6-luna", true)),
+	require.Equal(t, "demo-alias", responseModelName(newModelEchoInfo("demo-alias", "gpt-6-luna", true)),
 		"映射生效时必须回显用户请求的原始名")
 	require.Equal(t, "", responseModelName(newModelEchoInfo("gpt-6-luna", "gpt-6-luna", false)),
 		"未映射时不得改写，保持原文透传")
@@ -55,9 +55,9 @@ func TestRewriteJSONModelFieldReplacesTopLevelModelOnly(t *testing.T) {
 	in := `{"id":"chatcmpl-1","model":"gpt-6-luna","created":1710000000,` +
 		`"nested":{"ratio":0.064212000001,"keep":"<tag>"},"choices":[]}`
 
-	out, ok := rewriteJSONModelField(in, "opus-5.5")
+	out, ok := rewriteJSONModelField(in, "demo-alias")
 	require.True(t, ok)
-	require.Contains(t, out, `"model":"opus-5.5"`)
+	require.Contains(t, out, `"model":"demo-alias"`)
 	require.NotContains(t, out, "gpt-6-luna")
 
 	// 其它字段按原始字节保留：数字精度不被重排，字符串转义风格不变
@@ -68,10 +68,10 @@ func TestRewriteJSONModelFieldReplacesTopLevelModelOnly(t *testing.T) {
 }
 
 func TestRewriteJSONModelFieldReturnsFalseWithoutModel(t *testing.T) {
-	_, ok := rewriteJSONModelField(`{"id":"x"}`, "opus-5.5")
+	_, ok := rewriteJSONModelField(`{"id":"x"}`, "demo-alias")
 	require.False(t, ok, "没有 model 字段时不应改写")
 
-	_, ok = rewriteJSONModelField(`not-json`, "opus-5.5")
+	_, ok = rewriteJSONModelField(`not-json`, "demo-alias")
 	require.False(t, ok, "非 JSON 数据必须原样保留，不能因改写失败丢内容")
 }
 
@@ -79,14 +79,14 @@ func TestRewriteResponsesStreamModelFieldReplacesNestedModel(t *testing.T) {
 	in := `{"type":"response.completed","response":{"id":"resp_1","model":"gpt-6-luna",` +
 		`"usage":{"input_tokens":2,"output_tokens":3}}}`
 
-	out, ok := rewriteResponsesStreamModelField(in, "opus-5.5")
+	out, ok := rewriteResponsesStreamModelField(in, "demo-alias")
 	require.True(t, ok)
-	require.Contains(t, out, `"model":"opus-5.5"`)
+	require.Contains(t, out, `"model":"demo-alias"`)
 	require.NotContains(t, out, "gpt-6-luna")
 	require.Contains(t, out, `"type":"response.completed"`)
 	require.Contains(t, out, `"input_tokens":2`)
 
-	_, ok = rewriteResponsesStreamModelField(`{"type":"response.output_text.delta","delta":"hi"}`, "opus-5.5")
+	_, ok = rewriteResponsesStreamModelField(`{"type":"response.output_text.delta","delta":"hi"}`, "demo-alias")
 	require.False(t, ok, "不含 response 对象的事件应保持原样")
 }
 
@@ -100,12 +100,12 @@ func TestOpenaiHandlerEchoesOriginModelNameWhenMapped(t *testing.T) {
 		`"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}`
 
 	c, recorder, resp := newModelEchoTestContext(body, "application/json")
-	usage, apiErr := OpenaiHandler(c, newModelEchoInfo("opus-5.5", "gpt-6-luna", true), resp)
+	usage, apiErr := OpenaiHandler(c, newModelEchoInfo("demo-alias", "gpt-6-luna", true), resp)
 	require.Nil(t, apiErr)
 	require.Equal(t, 10, usage.PromptTokens)
 
 	got := recorder.Body.String()
-	require.Contains(t, got, `"model":"opus-5.5"`)
+	require.Contains(t, got, `"model":"demo-alias"`)
 	require.NotContains(t, got, "gpt-6-luna", "响应体不得泄露上游模型名")
 	require.Contains(t, got, `"content":"hi"`, "改写 model 不能影响正文内容")
 }
@@ -136,12 +136,12 @@ func TestOaiResponsesHandlerEchoesOriginModelNameWhenMapped(t *testing.T) {
 		`"model":"gpt-6-luna","output":[],"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}`
 
 	c, recorder, resp := newModelEchoTestContext(body, "application/json")
-	usage, apiErr := OaiResponsesHandler(c, newModelEchoInfo("opus-5.5", "gpt-6-luna", true), resp)
+	usage, apiErr := OaiResponsesHandler(c, newModelEchoInfo("demo-alias", "gpt-6-luna", true), resp)
 	require.Nil(t, apiErr)
 	require.Equal(t, 2, usage.PromptTokens)
 
 	got := recorder.Body.String()
-	require.Contains(t, got, `"model":"opus-5.5"`)
+	require.Contains(t, got, `"model":"demo-alias"`)
 	require.NotContains(t, got, "gpt-6-luna")
 }
 
@@ -162,7 +162,7 @@ func TestOaiStreamHandlerEchoesOriginModelNameWhenMapped(t *testing.T) {
 	}, "\n")
 
 	c, recorder, resp := newModelEchoTestContext(body, "text/event-stream")
-	info := newModelEchoInfo("opus-5.5", "gpt-6-luna", true)
+	info := newModelEchoInfo("demo-alias", "gpt-6-luna", true)
 	info.IsStream = true
 	info.ShouldIncludeUsage = true
 	info.DisablePing = true
@@ -173,7 +173,7 @@ func TestOaiStreamHandlerEchoesOriginModelNameWhenMapped(t *testing.T) {
 	require.Equal(t, 5, usage.PromptTokens)
 
 	got := recorder.Body.String()
-	require.Contains(t, got, `"model":"opus-5.5"`)
+	require.Contains(t, got, `"model":"demo-alias"`)
 	require.NotContains(t, got, "gpt-6-luna", "流式每一段 chunk 都不得泄露上游模型名")
 	require.Contains(t, got, `"content":"hi"`)
 	require.Contains(t, got, "data: [DONE]")

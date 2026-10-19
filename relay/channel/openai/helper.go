@@ -221,7 +221,7 @@ func sendResponsesStreamData(c *gin.Context, streamResponse dto.ResponsesStreamR
 
 // responseModelName 返回需要回显给客户端的模型名；无映射时返回空串。
 //
-// 渠道 model_mapping 生效后（如 opus-5.5 → gpt-6-luna），上游响应里的 model
+// 渠道 model_mapping 生效后（如 demo-alias → gpt-6-luna），上游响应里的 model
 // 字段仍是真实模型名。对下游必须统一回显用户请求的原始名，否则用户从响应体
 // 就能直接看到底层模型。只对映射过的请求生效，未映射模型行为完全不变。
 func responseModelName(info *relaycommon.RelayInfo) string {

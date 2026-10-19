@@ -38,21 +38,16 @@ func TestDefaultModelRatioGpt6Family(t *testing.T) {
 	}
 }
 
-// opus-5.5：对外售卖名，实际调用 gpt-6-luna，计费 = luna 的 5 倍。
-// modelRatio 0.32106 = 0.064212 × 5；completionRatio 与 luna 一致（8），
-// 保证输入/输出/cache 每一类 token 都是 5 倍。
-// 注意：广场卡片备注里的「0.1倍率」只是展示文案，与计费无关。
-func TestDefaultModelRatioOpus55IsFiveTimesLuna(t *testing.T) {
+// opus-5.5 已下架：它把 gpt-6-luna 挂上 Claude 的名字售卖，实测模型自认 OpenAI，
+// 2026-10-18 从生产与源码一并删除。倍率必须同时清掉，否则日后有人重新挂渠道时
+// 它会带着 5 倍加价无声复活。
+func TestDefaultModelRatioOpus55Removed(t *testing.T) {
 	InitRatioSettings()
 
-	luna, ok, _ := GetModelRatio("gpt-6-luna")
-	require.True(t, ok, "gpt-6-luna must have an explicit ratio")
-
-	opus, ok, _ := GetModelRatio("opus-5.5")
-	require.True(t, ok, "opus-5.5 must have an explicit ratio")
-	require.InDelta(t, 5*luna, opus, 1e-12, "opus-5.5 must be exactly 5x gpt-6-luna")
-	require.Equal(t, 0.32106, opus)
-	require.Equal(t, 8.0, GetCompletionRatio("opus-5.5"), "completionRatio must match gpt-6-luna")
+	_, ok, _ := GetModelRatio("opus-5.5")
+	require.False(t, ok, "opus-5.5 must have no explicit ratio after removal")
+	require.NotContains(t, defaultModelRatio, "opus-5.5")
+	require.NotContains(t, defaultCompletionRatio, "opus-5.5")
 }
 
 func TestDefaultModelRatioMiniMaxM31MatchesM3Price(t *testing.T) {

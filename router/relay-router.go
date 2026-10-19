@@ -59,6 +59,15 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
+	// 下游自助余额查询：只读，身份只由 key 决定，不挂 Distribute（无模型路由语义）
+	quotaRouter := router.Group("/v1/dashboard")
+	quotaRouter.Use(middleware.RouteTag("relay"))
+	quotaRouter.Use(middleware.TokenAuth())
+	quotaRouter.Use(middleware.QuotaQueryRateLimit())
+	{
+		quotaRouter.GET("/billing/quota", controller.GetQuota)
+	}
+
 	playgroundRouter := router.Group("/pg")
 	playgroundRouter.Use(middleware.RouteTag("relay"))
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())

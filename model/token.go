@@ -3,9 +3,11 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
@@ -281,6 +283,34 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 	fromDB = true
 	err = DB.Where(commonKeyCol+" = ?", key).First(&token).Error
 	return token, err
+}
+
+// GetTokenRemainQuota 返回令牌的实时剩余额度（单位：quota）。
+// Redis 启用时优先读缓存 hash 的 RemainQuota 字段：扣费走 HINCRBY 字段级实时维护，
+// 不受整份缓存 TTL 影响，读到的是查询这一刻的值；Redis 未启用、字段缺失或读取失败时
+// 回退数据库（受批量落库影响，最多滞后 BatchUpdateInterval 秒）。
+// 注意：unlimited_quota=true 的令牌该字段可能为负（从 0 起扣的记账垃圾），
+// 语义由调用方解释，本函数原样返回。
+func GetTokenRemainQuota(tokenId int, key string) (int, error) {
+	if common.RedisEnabled && key != "" {
+		val, err := common.RedisHGetField("token:"+common.GenerateHMAC(key), constant.TokenFiledRemainQuota)
+		if err == nil {
+			if quota, convErr := strconv.Atoi(val); convErr == nil {
+				return quota, nil
+			}
+		}
+	}
+	var quota int
+	err := DB.Model(&Token{}).Where("id = ?", tokenId).Select("remain_quota").Find(&quota).Error
+	return quota, err
+}
+
+// GetTokenUsedQuota 返回令牌累计已用额度（单位：quota）。
+// 该字段没有实时缓存路径，只能读数据库，受批量落库影响最多滞后 BatchUpdateInterval 秒。
+func GetTokenUsedQuota(tokenId int) (int, error) {
+	var quota int
+	err := DB.Model(&Token{}).Where("id = ?", tokenId).Select("used_quota").Find(&quota).Error
+	return quota, err
 }
 
 func (token *Token) Insert() error {

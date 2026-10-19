@@ -29,7 +29,7 @@ DO NOT send optional commentary
 | 对外模型名 | ArcReel platformId | 执行站点 | 备注 |
 |---|---|---|---|
 | `seedance-2.0` | dola | dola 官网 | 5–15s 区间任意值真跑（透传不吸附），¥1/次 |
-| `seedance-2.5` | dola | dola 官网 | 固定 30s/720p，¥0.8/次（2026-10-10 下架） |
+| `seedance-2.5` | dola | dola 官网 | ~~固定 30s/720p，¥0.8/次~~（2026-10-10 下架；**2026-10-18 硬删除，调用 503**） |
 | `seedance-2-5`（上游真名 doubao-seedance-2-5-260628） | doubao | **豆包官网**（www.doubao.com） | 5/10/15/30s 四档，**¥3/次** |
 | `seedance-2-0-fast`（上游真名 doubao-seedance-2-0-fast-260128） | doubao | **豆包官网** | 5–15s **逐秒**（每秒都支持），**¥0.1/秒** |
 | `gemini-web-video` | gemini | Gemini 官网 Veo | 固定 10s，¥1/次 |

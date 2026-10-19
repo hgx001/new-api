@@ -100,12 +100,7 @@ var defaultModelRatio = map[string]float64{
 	"gpt-5-nano-2025-08-07":                   0.025,
 	"gpt-6-luna":                              0.064212, // 与 gpt-5.6-luna 同名同价
 	"gpt-6-sol":                               1.28424,  // 与 gpt-5.6-sol 同名同价
-	// opus-5.5：对外售卖名，渠道 model_mapping 实际转发到 gpt-6-luna。
-	// 计费口径 = gpt-6-luna 的 5 倍（0.064212 × 5 = 0.32106），
-	// completionRatio 与 luna 保持一致（8），保证每个 token 类型都是 5 倍。
-	// 注意：模型广场卡片备注里向用户展示的「0.1倍率」只是展示文案，不代表计费倍率。
-	"opus-5.5":     0.32106,
-	"MiniMax-M3.1": 0.015103, // 沿用 MiniMax-M3 输入价格
+	"MiniMax-M3.1":                            0.015103, // 沿用 MiniMax-M3 输入价格
 	// gpt-5.6 旧名保留为兼容别名（渠道 model_mapping 转发到 gpt-6），
 	// 不在模型广场展示，价格与同名 gpt-6 保持一致。
 	"gpt-5.6-luna":                              0.064212,
@@ -364,10 +359,7 @@ var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 
 var defaultCompletionRatio = map[string]float64{
-	"MiniMax-M3.1": 0.410959, // 沿用 MiniMax-M3 输出价格
-	// opus-5.5 实际调用 gpt-6-luna（completionRatio=8），保持同口径才能使
-	// 整单费用恰好是 luna 的 5 倍（倍率 0.32106 = 0.064212 × 5）。
-	"opus-5.5":       8,
+	"MiniMax-M3.1":   0.410959, // 沿用 MiniMax-M3 输出价格
 	"gpt-4-gizmo-*":  2,
 	"gpt-4o-gizmo-*": 3,
 	"gpt-4-all":      2,

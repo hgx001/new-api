@@ -299,6 +299,14 @@ func RedisHIncrBy(key, field string, delta int64) error {
 	return nil
 }
 
+func RedisHGetField(key, field string) (string, error) {
+	if DebugEnabled {
+		SysLog(fmt.Sprintf("Redis HGET field: key=%s, field=%s", key, field))
+	}
+	ctx := context.Background()
+	return RDB.HGet(ctx, key, field).Result()
+}
+
 func RedisHSetField(key, field string, value interface{}) error {
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis HSET field: key=%s, field=%s, value=%v", key, field, value))
