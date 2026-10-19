@@ -94,6 +94,18 @@ const BILLING_ITEMS = [
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
 
+const QUOTA_QUERY_ITEMS = [
+  '接口：GET /v1/dashboard/billing/quota；使用 Authorization: Bearer <API_KEY>，不需要 query 参数或 request body。身份只由当前 API Key 决定。',
+  '查询为只读操作：不扣费、不记模型调用日志；响应带 Cache-Control: no-store。',
+  'quota.remain_user 是用户钱包剩余 quota；quota.remain_token 是令牌剩余额度，不限量令牌为 null。quota.effective_remain 是下游应使用的可用余额：有限额令牌取 min(remain_user, remain_token)，不限量令牌取 remain_user。',
+  '程序判断和告警请使用 effective_remain（quota）；display_remain 仅供展示，受站点币种与汇率设置影响。quota_per_unit 表示 500000 quota = $1。',
+  '响应可能因批量落库最多滞后 5 秒；建议每 10 秒或更长时间轮询一次。限流为每用户 6 次 / 60 秒；429 不带 Retry-After，等下一轮再请求。',
+  'HTTP 状态：200 成功（余额低也返回 200）；401 API Key 无效/缺失；403 IP 白名单拒绝、用户封禁或调用权限不足；429 触发限流；500 查询失败。错误体为 OpenAI 风格 error 对象。',
+]
+
+const QUOTA_QUERY_EXAMPLE = (url: string) => `curl ${url}/v1/dashboard/billing/quota \\
+  -H "Authorization: Bearer $NEW_API_KEY"`
+
 const ERROR_ITEMS = [
   '400：参数错误（时长/比例/分辨率非法、缺少必填素材、首尾帧与参考素材混用等），按 message 修正后重试',
   '401：Key 缺失 / 无效 / 过期，检查 Authorization 头',
@@ -636,6 +648,35 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
       ],
     },
     {
+      id: 'quota-query',
+      title: '余额查询接口',
+      level: 2,
+      content: [
+        {
+          type: 'paragraph',
+          children: [
+            '下游可使用只读接口查询当前 API Key 对应账户的余额。接口不接受其他用户或令牌标识，身份完全由 API Key 决定。',
+          ],
+        },
+        {
+          type: 'codeBlock',
+          lang: 'bash',
+          value: QUOTA_QUERY_EXAMPLE(url),
+        },
+        { type: 'list', ordered: false, items: QUOTA_QUERY_ITEMS.map((t) => [t]) },
+        {
+          type: 'paragraph',
+          children: [
+            '核心判断字段：',
+            { type: 'code', value: 'data.quota.effective_remain' },
+            '（quota）。不限量令牌的 ',
+            { type: 'code', value: 'remain_token' },
+            ' 为 null；不要仅用它判断是否还有余额。',
+          ],
+        },
+      ],
+    },
+    {
       id: 'billing-refund',
       title: '计费与退款',
       level: 2,
@@ -692,6 +733,7 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: '视频生成接口', href: '#video-api' },
     { title: '传递参考素材（图片 / 视频 / 音频）', href: '#video-media-examples' },
     { title: '各视频模型参数', href: '#video-model-params' },
+    { title: '余额查询接口', href: '#quota-query' },
     { title: 'wan3.0-smart', href: '#model-wan30-smart' },
     { title: 'wan3.0-video-官网', href: '#model-wan30-guanwang' },
     { title: 'wan3.0-video-prime-1080p', href: '#model-wan30-prime' },

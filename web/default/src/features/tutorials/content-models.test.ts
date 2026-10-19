@@ -48,6 +48,7 @@ describe('tutorials model guide content', () => {
       'video-model-params',
       'video-media-rules',
       'billing-refund',
+      'quota-query',
       'api-errors',
       'integration-faq',
     ]) {
@@ -125,6 +126,34 @@ describe('tutorials model guide content', () => {
       sectionsJson.includes('1080p ¥0.20'),
       false,
       'autodl u24 does not accept 1080p; documenting its price sends clients into invalid_resolution'
+    )
+  })
+
+  test('documents the quota query endpoint, fields, limits, and HTTP semantics', () => {
+    const quotaSection = sections.find((section) => section.id === 'quota-query')
+    assert.ok(quotaSection, 'missing quota-query section')
+    for (const expected of [
+      'GET /v1/dashboard/billing/quota',
+      'Authorization: Bearer <API_KEY>',
+      'effective_remain',
+      'remain_token',
+      'Cache-Control: no-store',
+      '每用户 6 次 / 60 秒',
+      '429 不带 Retry-After',
+      '不扣费、不记模型调用日志',
+    ]) {
+      assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
+    }
+    assert.equal(collectAnchorIds().has('quota-query'), true)
+    assert.equal(
+      getDocIndex().some((entry) => entry.href === '#quota-query'),
+      true,
+      'quota query section must appear in the tutorial index'
+    )
+    assert.equal(
+      sectionsJson.includes(`${platformUrl}/v1/dashboard/billing/quota`),
+      true,
+      'quota curl example must use the configured platform URL'
     )
   })
 
