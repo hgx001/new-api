@@ -2,6 +2,8 @@
 
 生产环境：`api.heibaidao.cn`。前端与后端是两条独立链路，入口都在本目录：
 
+后端 Gin 默认信任所有代理传来的客户端 IP 头不安全。应用默认仅信任 Docker bridge 网关 `172.18.0.1`（生产 nginx 容器连接后端时的代理地址），来源由该代理传递的 `X-Real-IP`/`X-Forwarded-For` 才参与 IP 白名单判定。若生产网络结构变更，必须通过容器环境变量 `TRUSTED_PROXIES` 配置实际代理的逗号分隔 IP/CIDR；应配置代理在后端容器看来使用的源地址，不要配置任意客户端网段或 `0.0.0.0/0`。
+
 | | 前端 | 后端 |
 |---|---|---|
 | 本地入口 | `deploy/deploy-frontend.sh` | `deploy/deploy-backend.sh <sha>` |

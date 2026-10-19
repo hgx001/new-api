@@ -167,8 +167,13 @@ func main() {
 		common.SysError(fmt.Sprintf("start pyroscope error : %v", err))
 	}
 
-	// Initialize HTTP server
+	// Initialize HTTP server. Only trust the local reverse-proxy peer when
+	// resolving forwarded client IP headers; never inherit Gin's trust-all default.
 	server := gin.New()
+	if err := middleware.ConfigureTrustedProxies(server, middleware.ParseTrustedProxyAddresses(os.Getenv("TRUSTED_PROXIES"))); err != nil {
+		common.FatalLog(fmt.Sprintf("invalid TRUSTED_PROXIES configuration: %v", err))
+		return
+	}
 	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
 		common.SysLog(fmt.Sprintf("panic detected: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{
