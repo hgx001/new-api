@@ -1,12 +1,17 @@
 package controller
 
 import (
+	"crypto"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -60,6 +65,74 @@ func normalizeAlipayPublicKey(value string) string {
 		return base64.StdEncoding.EncodeToString(block.Bytes)
 	}
 	return strings.Join(strings.Fields(value), "")
+}
+
+// parseAlipayPublicKey decodes the stored Alipay public key (base64 DER or PEM) into an RSA key.
+func parseAlipayPublicKey(value string) (*rsa.PublicKey, error) {
+	value = strings.TrimSpace(value)
+	var der []byte
+	if block, _ := pem.Decode([]byte(value)); block != nil {
+		der = block.Bytes
+	} else {
+		compact := strings.Join(strings.Fields(value), "")
+		decoded, err := base64.StdEncoding.DecodeString(compact)
+		if err != nil {
+			return nil, fmt.Errorf("支付宝公钥不是合法 base64: %w", err)
+		}
+		der = decoded
+	}
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		return nil, fmt.Errorf("支付宝公钥解析失败: %w", err)
+	}
+	publicKey, ok := parsed.(*rsa.PublicKey)
+	if !ok {
+		return nil, errors.New("支付宝公钥不是 RSA 公钥")
+	}
+	return publicKey, nil
+}
+
+// verifyAlipayNotifySignature verifies the asynchronous notification with the raw form
+// values, following the official Alipay SDK (rsaCheckV1): every received parameter except
+// sign / sign_type, sorted by key, joined as "k=v&k=v", then RSA2 (SHA256) verified with
+// the Alipay public key.
+//
+// It deliberately does NOT use gopay's struct-based VerifySign: gopay re-serializes the
+// parsed NotifyRequest struct, and `omitempty` silently drops empty arrays such as
+// "voucher_detail_list=[]". Alipay signs the raw transmitted value, so the two signing
+// sources differ by that field and verification fails on every real notification
+// (payment succeeds, quota is never credited).
+func verifyAlipayNotifySignature(form url.Values, alipayPublicKey string) (bool, error) {
+	signValue := strings.TrimSpace(form.Get("sign"))
+	if signValue == "" {
+		return false, errors.New("通知缺少 sign")
+	}
+	publicKey, err := parseAlipayPublicKey(alipayPublicKey)
+	if err != nil {
+		return false, err
+	}
+	keys := make([]string, 0, len(form))
+	for key := range form {
+		if key == "sign" || key == "sign_type" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+form.Get(key))
+	}
+	source := strings.Join(parts, "&")
+	signature, err := base64.StdEncoding.DecodeString(signValue)
+	if err != nil {
+		return false, fmt.Errorf("通知 sign 不是合法 base64: %w", err)
+	}
+	digest := sha256.Sum256([]byte(source))
+	if err := rsa.VerifyPKCS1v15(publicKey, crypto.SHA256, digest[:], signature); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func getAlipayClient() *alipay.Client {
@@ -155,7 +228,7 @@ func AlipayNotify(c *gin.Context) {
 		c.String(http.StatusOK, "fail")
 		return
 	}
-	verified, err := alipay.VerifySign(normalizeAlipayPublicKey(operation_setting.AlipayPublicKey), notify)
+	verified, err := verifyAlipayNotifySignature(c.Request.Form, operation_setting.AlipayPublicKey)
 	if err != nil || !verified {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("支付宝回调验签失败 trade_no=%s error=%v", notify.OutTradeNo, err))
 		c.String(http.StatusOK, "fail")
