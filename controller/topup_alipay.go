@@ -171,6 +171,11 @@ func alipayReturnURL() string {
 // It is called from the legacy /api/user/pay endpoint when payment_method=alipay
 // and official direct Alipay mode is enabled.
 func RequestAlipay(c *gin.Context, amount int64, group string) {
+	// 服务端强制最小充值额：前端只在「算价」接口校验，直接打 /api/user/pay 可以绕过
+	if amount < getMinTopup() {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getMinTopup())})
+		return
+	}
 	payMoney := getPayMoney(amount, group)
 	if payMoney < 0.01 {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
@@ -254,6 +259,10 @@ func AlipayNotify(c *gin.Context) {
 		c.String(http.StatusOK, "fail")
 		return
 	}
+	// 进程内按订单号互斥：同一笔订单的并发通知串行入账
+	// （与易支付回调一致；model 层还有行锁 + 条件更新兜底）
+	LockOrder(notify.OutTradeNo)
+	defer UnlockOrder(notify.OutTradeNo)
 	if err := model.RechargeAlipay(notify.OutTradeNo, totalAmount, c.ClientIP()); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("支付宝回调入账失败 trade_no=%s error=%q", notify.OutTradeNo, err.Error()))
 		c.String(http.StatusOK, "fail")

@@ -299,6 +299,13 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **零成本只读探针**：`alipay.trade.query` 查一个**不存在**的 `out_trade_no`，返回 `ACQ.TRADE_NOT_EXIST` 即说明 app_id / 私钥 / 交易类 API 权限都正常（不建单、不扣费）；响应里的 `sign` 可用 `AlipayPublicKey` 验签 → 确认支付宝公钥与该应用匹配（回调验签就靠它）。
 - **收银台必须用真浏览器验**：服务端裸 GET 签名 URL 会被支付宝风控拦成 `excashier.alipay.com/home/error.htm?errorCode=FISHING_RISK`，**这不是配置错误**（同一 URL 在浏览器里正常渲染 `excashier.alipay.com/standard/auth.htm?payOrderId=...`，能看到商品/收款方/金额）。别据此判断「没开通」。
 - **测试单要清**：测试单是 `pending` + `payment_provider=alipay` + `trade_no` 形如 `USR<id>ALIPAY<rand>`，验完记得删，否则后台充值记录里堆一堆 pending。
+- 🔥 **入账必须「原子 + 幂等」，三条硬规矩（2026-10-20 安全审查定稿）**：
+  1. **行锁要用 `clause.Locking{Strength:"UPDATE"}`**：`tx.Set("gorm:query_option","FOR UPDATE")` 是 **gorm v1** 的写法，**gorm v2 已移除该特性，会被静默忽略（等于没锁）**。本仓库是 gorm v1.25.2。SQLite 驱动会主动忽略 `FOR` 子句（其 `ClauseBuilders` 里写了 "SQLite3 does not support row-level locking"），所以 SQLite 部署不受影响，PG/MySQL 才会真正加锁。
+  2. **状态流转要 CAS（条件更新）+ `RowsAffected` 判定**：`UPDATE ... WHERE trade_no=? AND status='pending'`，只有 `RowsAffected==1` 的那个请求才可以加额度；其余按幂等返回。**为什么必须**：支付宝/易支付的回调报文是**可重放的合法签名**（签名伪造不了，但报文能重放），攻击者拿自己那笔合法通知并发重放 N 份，若状态流转不是原子的，N 个事务会同时通过状态检查、各加一次额度 = 直接资金损失。
+  3. **「置成功」与「加额度」必须同一事务**：旧易支付实现是 `topUp.Update()`（置成功）后再 `IncreaseUserQuota()`（加额度）两步，额度更新一旦失败就变成「订单已成功、额度没加」，而管理员补单又会被状态校验拒绝 → **钱货两失且无法补救**。现已收敛到 `model.CompleteEpayTopUp`（行锁+CAS+加额度同事务）。
+- **加额度后要同步 Redis 额度缓存**：`model.GetUserQuota` **优先读 Redis**（TTL=`SYNC_FREQUENCY`=60s），裸 `quota = quota + ?` 只改库会让用户看到旧余额、且额度差值持续漂移。直接写库的路径要额外 `gopool.Go(cacheIncrUserQuota(...))`（`IncreaseUserQuota` 就是这么做的）。
+- **当前生产的支付面**：支付宝（`AlipayEnabled=true`）+ 易支付（EpayId/EpayKey/PayAddress 有值，但 `PayMethods` 只有 `alipay`，故新单走不了易支付；**历史 41 笔 pending 易支付订单的回调仍然活着**，那条链路同样受上面的并发规则约束）。Stripe/Creem/Waffo 未配置。
+- **已知未覆盖的风险（产品决策，不是 bug）**：支付宝侧**退款/拒付不回收额度**——我们只处理 `TRADE_SUCCESS`/`TRADE_FINISHED`，用户付款到账后再在支付宝侧退款或被拒付，额度不退。要堵这个口子需要接入退款/拒付通知并做额度回收，属功能需求。
 
 ### Project Governance
 

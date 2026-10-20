@@ -7,8 +7,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type TopUp struct {
@@ -59,6 +61,40 @@ func (topUp *TopUp) Update() error {
 	var err error
 	err = DB.Save(topUp).Error
 	return err
+}
+
+// MarkTopUpPaidOnce 原子地把一笔待支付订单置为成功（CAS：条件更新 + RowsAffected 判定）。
+//
+// 返回 true 表示本次调用抢到了「完成权」，调用方才可以给用户加额度；
+// 返回 false 表示订单已被其它并发回调处理（状态已不是 pending），调用方必须跳过加额度。
+//
+// 这是防「同一笔付款的并发/重放回调重复入账」的最后一道闸门：
+// UPDATE ... WHERE status='pending' 由数据库保证只有一个事务能拿到转换权，
+// 剩下的并发者拿到 RowsAffected=0，直接按幂等处理。
+//
+// tx 传 nil 时使用全局 DB；传事务句柄时与该事务同生命周期（如支付宝回调里的行锁事务）。
+func MarkTopUpPaidOnce(tx *gorm.DB, tradeNo string, provider string, extraUpdates map[string]interface{}) (bool, error) {
+	if tx == nil {
+		tx = DB
+	}
+	updates := map[string]interface{}{
+		"status":        common.TopUpStatusSuccess,
+		"complete_time": common.GetTimestamp(),
+	}
+	for key, value := range extraUpdates {
+		updates[key] = value
+	}
+	refCol := "`trade_no`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		refCol = `"trade_no"`
+	}
+	result := tx.Model(&TopUp{}).
+		Where(refCol+" = ? AND status = ? AND payment_provider = ?", tradeNo, common.TopUpStatusPending, provider).
+		Updates(updates)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
 }
 
 func GetTopUpById(id int) *TopUp {
@@ -164,6 +200,14 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 // RechargeAlipay completes a pending official Alipay order exactly once.
 // The asynchronous notification is authoritative; the browser return page must
 // never credit the user directly.
+//
+// 并发安全：支付宝的同一笔通知可能被并发投递（用户点「返回」与异步通知同时到达、
+// 支付宝重试与真实通知重叠），而通知报文本身是**可重放的合法签名**。因此这里必须做到
+// 「pending → success」的状态转换全局只有一次：
+//  1. 用 gorm v2 的 clause.Locking 真正加行锁（gorm v1 时代的 gorm:query_option 在 v2
+//     已被移除，写上去会被静默忽略，等于没锁）；
+//  2. 状态流转改成条件更新（CAS）并以 RowsAffected 判定，拿到转换权的那一个才加额度；
+//  3. 进程内再由 controller 侧 LockOrder 兜一层（与易支付路径保持一致）。
 func RechargeAlipay(referenceId string, totalAmount decimal.Decimal, callerIp string) error {
 	if referenceId == "" {
 		return errors.New("未提供支付宝订单号")
@@ -176,13 +220,16 @@ func RechargeAlipay(referenceId string, totalAmount decimal.Decimal, callerIp st
 		if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 			refCol = `"trade_no"`
 		}
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", referenceId).First(&topUp).Error; err != nil {
+		// 行级锁：并发回调时后到的事务会阻塞在这里，等前一个提交后再读到最新状态
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(refCol+" = ?", referenceId).First(&topUp).Error; err != nil {
 			return errors.New("支付宝充值订单不存在")
 		}
 		if topUp.PaymentProvider != PaymentProviderAlipay {
 			return ErrPaymentMethodMismatch
 		}
 		if topUp.Status == common.TopUpStatusSuccess {
+			// 幂等：已入账，绝不重复加额度
 			return nil
 		}
 		if topUp.Status != common.TopUpStatusPending {
@@ -196,10 +243,15 @@ func RechargeAlipay(referenceId string, totalAmount decimal.Decimal, callerIp st
 		if quotaToAdd <= 0 {
 			return errors.New("无效的充值额度")
 		}
-		topUp.Status = common.TopUpStatusSuccess
-		topUp.CompleteTime = common.GetTimestamp()
-		if err := tx.Save(&topUp).Error; err != nil {
+		// 条件更新（CAS）：只有把 pending 改成 success 的那一个请求才能拿到转换权
+		completed, err := MarkTopUpPaidOnce(tx, referenceId, PaymentProviderAlipay, nil)
+		if err != nil {
 			return err
+		}
+		if !completed {
+			// 已被并发回调抢先处理：按幂等返回，不加额度
+			quotaToAdd = 0
+			return nil
 		}
 		return tx.Model(&User{}).Where("id = ?", topUp.UserId).
 			Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error
@@ -208,11 +260,80 @@ func RechargeAlipay(referenceId string, totalAmount decimal.Decimal, callerIp st
 		return err
 	}
 	if quotaToAdd > 0 {
+		// 同步 Redis 里的用户额度缓存：读余额时 GetUserQuota 优先读缓存，
+		// 这里不加缓存，用户付完款会看到旧余额，且额度差值会持续漂移。
+		gopool.Go(func() {
+			if cacheErr := cacheIncrUserQuota(topUp.UserId, int64(quotaToAdd)); cacheErr != nil {
+				common.SysLog("failed to increase user quota cache: " + cacheErr.Error())
+			}
+		})
 		RecordTopupLog(topUp.UserId,
 			fmt.Sprintf("支付宝官方直连充值成功，充值额度: %v，支付金额：%s", logger.FormatQuota(quotaToAdd), totalAmount.StringFixed(2)),
 			callerIp, PaymentMethodAlipay, PaymentProviderAlipay)
 	}
 	return nil
+}
+
+// CompleteEpayTopUp 事务内完成一笔易支付订单：行锁 → 校验 → 条件更新（CAS）置成功 → 加额度。
+//
+// 三步在同一事务里，任一步失败整体回滚，避免旧实现里「订单已置成功、额度没加上」的丢单
+// （旧实现一旦额度更新失败，订单已是 success，管理员补单也会被状态校验拒绝，钱货两失）。
+//
+// credited=false 表示该订单此前已被其它并发/重放回调处理（幂等，不重复加额度）。
+// actualPaymentMethod 是网关回传的**实际**支付方式，与下单时的方式不同时会一并记录。
+func CompleteEpayTopUp(tradeNo string, actualPaymentMethod string) (credited bool, err error) {
+	var topUp TopUp
+	var quotaToAdd int
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		refCol := "`trade_no`"
+		if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+			refCol = `"trade_no"`
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(refCol+" = ?", tradeNo).First(&topUp).Error; err != nil {
+			return ErrTopUpNotFound
+		}
+		if topUp.PaymentProvider != PaymentProviderEpay {
+			return ErrPaymentMethodMismatch
+		}
+		if topUp.Status == common.TopUpStatusSuccess {
+			// 幂等：已入账
+			return nil
+		}
+		if topUp.Status != common.TopUpStatusPending {
+			return ErrTopUpStatusInvalid
+		}
+		quotaToAdd = int(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart())
+		if quotaToAdd <= 0 {
+			return errors.New("无效的充值额度")
+		}
+		extraUpdates := map[string]interface{}{}
+		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
+			extraUpdates["payment_method"] = actualPaymentMethod
+		}
+		completed, err := MarkTopUpPaidOnce(tx, tradeNo, PaymentProviderEpay, extraUpdates)
+		if err != nil {
+			return err
+		}
+		if !completed {
+			quotaToAdd = 0
+			return nil
+		}
+		return tx.Model(&User{}).Where("id = ?", topUp.UserId).
+			Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error
+	})
+	if err != nil {
+		return false, err
+	}
+	if quotaToAdd > 0 {
+		// 同步 Redis 里的用户额度缓存（读余额时优先读缓存）
+		gopool.Go(func() {
+			if cacheErr := cacheIncrUserQuota(topUp.UserId, int64(quotaToAdd)); cacheErr != nil {
+				common.SysLog("failed to increase user quota cache: " + cacheErr.Error())
+			}
+		})
+	}
+	return quotaToAdd > 0, nil
 }
 
 // topUpQueryWindowSeconds 限制充值记录查询的时间窗口（秒）。
@@ -390,8 +511,11 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
-		// 行级锁，避免并发补单
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
+		// 行级锁，避免并发补单。
+		// 注意：gorm v1 的 tx.Set("gorm:query_option", "FOR UPDATE") 在 gorm v2 已被移除、
+		// 会被静默忽略（等于没锁），必须用 clause.Locking 才会真正发出 FOR UPDATE。
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
 			return errors.New("充值订单不存在")
 		}
 
@@ -419,11 +543,15 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return errors.New("无效的充值额度")
 		}
 
-		// 标记完成
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		if err := tx.Save(topUp).Error; err != nil {
+		// 标记完成：用条件更新（CAS），只有把 pending 改成 success 的那一个请求才加额度
+		completed, err := MarkTopUpPaidOnce(tx, tradeNo, topUp.PaymentProvider, nil)
+		if err != nil {
 			return err
+		}
+		if !completed {
+			// 已被并发补单处理：按幂等返回，不加额度
+			quotaToAdd = 0
+			return nil
 		}
 
 		// 增加用户额度（立即写库，保持一致性）
