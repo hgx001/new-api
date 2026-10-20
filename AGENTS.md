@@ -287,9 +287,9 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 ### 支付宝官方直连（电脑网站支付，2026-10-20 上线并可支付）
 
-- **现状**：生产已开通并启用。option `AlipayEnabled=true`，AppID `2021007109672654`，电脑网站支付已签约、即时到账，收款方显示为「**算力 服务**」（支付宝商家账号主体名，不是「黑白道」）。回调 `https://api.heibaidao.cn/api/user/alipay/notify`，同步返回 `https://api.heibaidao.cn/api/user/alipay/return`。`Price=7.3` → 充值 10 美元 = ¥73。订单表名是 **`top_ups`**（不是 `topups`）。
+- **现状**：生产已开通并启用。option `AlipayEnabled=true`，AppID `2021007109672654`，电脑网站支付已签约、即时到账，**商家简称已改为「黑白道」**（2026-10-20 在支付宝商家平台改的，收银台显示为支付宝掩码后的「*白道」）。回调 `https://api.heibaidao.cn/api/user/alipay/notify`，同步返回 `https://api.heibaidao.cn/api/user/alipay/return`。`Price=7.3` → 充值 10 美元 = ¥73。订单表名是 **`top_ups`**（不是 `topups`）。
 - ✅ **端到端已验收（2026-10-20 22:12 首笔真实付款 ¥7.30）**：支付宝服务器 IP `203.209.251.104` POST 回调 → 验签通过（响应体 7 字节 `success`，日志无「验签失败」）→ 订单 `USR28ALIPAYV1WXNm53jNOouXzxKwERiYIw` 转 `success` → 充值日志「支付宝官方直连充值成功，充值额度: ¥7.300000，支付金额：7.30」→ 额度 +500000（$1 × QuotaPerUnit 500000）。同步 return 302 回 `/usage-logs`。**改回调/验签相关代码后，用同样方式再验一次**（小额真实付款 + 查 `top_ups.status='success'` + `logs.content LIKE '%充值成功%'`）。
-- **三道闸门缺一不可**（`isAlipayTopUpEnabled()` = `AlipayEnabled` + `AlipayAppID` + `AlipayPrivateKey` + `AlipayPublicKey` 全非空）：① option `AlipayEnabled`；② `payment_setting.compliance_confirmed=true` 且 `compliance_terms_version=v1`（不确认则前端**一个支付方式都不显示**）；③ `PayMethods` 含 `type=alipay`。
+- **三道闸门缺一不可**（`isAlipayTopUpEnabled()` = **支付合规已确认** + `AlipayEnabled` + `AlipayAppID` + `AlipayPrivateKey` + `AlipayPublicKey` 全非空）：① option `AlipayEnabled`；② `payment_setting.compliance_confirmed=true` 且 `compliance_terms_version=v1`（不确认则前端**一个支付方式都不显示**，且支付宝通道整体关闭——与 Stripe/Creem/易支付一致）；③ `PayMethods` 含 `type=alipay`。
 - **改 option 后必须等 ≥70s**：`SYNC_FREQUENCY`=60s 才同步进内存，早查会读到旧值、误判「没生效」。
 - 🔥 **通知验签必须用「原始表单参数」，不能用 gopay 的结构体验签**：gopay 的 `VerifySign` 把解析后的 `NotifyRequest` 结构体重新序列化再拼签名串，`json` 的 `omitempty` 会把**空数组字段**（支付宝通知里常见的 `voucher_detail_list=[]`）整条丢掉，而支付宝签的是原始上报值 → 签名源差这一个字段 → **每一笔真实回调都判验签失败，用户付了钱却充不到账**。本项目已按官方 SDK 口径自己验签：`controller/topup_alipay.go` 的 `verifyAlipayNotifySignature`。回归用例 `TestAlipayGopayStructVerificationDropsEmptyVoucherList` 锁死该行为，**改回调验签前先跑它**。
   - 官方口径 = 支付宝 Java SDK `AlipaySignature.rsaCheckV1` → `getSignCheckContentV1`：**排除 `sign` 与 `sign_type`** + **跳过空值参数**（`areNotEmpty(key,value)`）+ 按 key 升序 + `k=v&k=v` + RSA2(SHA256)。原文可查 `alipay/alipay-sdk-java-all` → `v2/src/main/java/com/alipay/api/internal/util/AlipaySignature.java`（V2 才是「只排 sign、保留 sign_type」，那是**请求签名**方向，别混用）。
@@ -306,6 +306,18 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **加额度后要同步 Redis 额度缓存**：`model.GetUserQuota` **优先读 Redis**（TTL=`SYNC_FREQUENCY`=60s），裸 `quota = quota + ?` 只改库会让用户看到旧余额、且额度差值持续漂移。直接写库的路径要额外 `gopool.Go(cacheIncrUserQuota(...))`（`IncreaseUserQuota` 就是这么做的）。
 - **当前生产的支付面**：支付宝（`AlipayEnabled=true`）+ 易支付（EpayId/EpayKey/PayAddress 有值，但 `PayMethods` 只有 `alipay`，故新单走不了易支付；**历史 41 笔 pending 易支付订单的回调仍然活着**，那条链路同样受上面的并发规则约束）。Stripe/Creem/Waffo 未配置。
 - **已知未覆盖的风险（产品决策，不是 bug）**：支付宝侧**退款/拒付不回收额度**——我们只处理 `TRADE_SUCCESS`/`TRADE_FINISHED`，用户付款到账后再在支付宝侧退款或被拒付，额度不退。要堵这个口子需要接入退款/拒付通知并做额度回收，属功能需求。
+
+#### 支付安全加固（2026-10-20 第二轮，commit 见「支付安全加固」）
+
+- 🔥 **支付金额必须「只算一次、下发与校验共用同一份」**（`controller.getPayMoney` 现在返回 `decimal.Decimal`，统一 `Round(2)` 到分）：
+  - **旧 bug 的根因**：建单下发用 `strconv.FormatFloat(money,'f',2,64)`（按 float64 的**二进制精确值**舍入），回调校验用 `decimal.NewFromFloat(money).Round(2)`（按**最短十进制表示**舍入）——两种口径在「第三位小数正好是 5」时**差 0.01**。实测 `Price=7.3 × 分组倍率0.95 = 6.935` → 下发 `6.93`、校验按 `6.94` → 回调判「金额不一致」→ **钱扣了、额度不加、订单永远 pending**。50000 组（金额 × 常用折扣）里约 **11%** 会踩中。
+  - **现在的规矩**：金额一律用十进制算一次并舍入到分；**下发给网关的字符串**（`payMoney.StringFixed(2)`）、**存库的 float64**（`payMoneyToFloat`）、**回调校验的值**（`decimal.NewFromFloat(topUp.Money).Round(2)`）三者必须一致。回归用例 `TestGetPayMoneyUsesSingleRoundingRule` 锁死这个不变量。**改任何算钱的地方，先跑它。**
+  - 注：`top_ups.money` 是 float64 列，2 位小数经 float64 存读往返是稳定的（10 万组样本验证），别再改回「先算 float 再各自舍入」。
+- 🔥 **回调的 `app_id` 必须强制相等，缺失即拒**（`AlipayNotify`）：支付宝异步通知必带 `app_id`（gopay 也把它当通知的一等字段解析）。以前写成「非空才比对」，空值就跳过检查 → 万一管理员把**别的应用的支付宝公钥**配进来，别的应用的付款通知会被当成本应用的付款入账。现在缺失/不匹配一律回 `fail`（订单保持 pending + 写错误日志，管理员可补单；不会静默入账）。回归用例 `TestAlipayNotifyRejectsNotificationWithWrongAppID`（同时覆盖 app_id 正确/缺失/串应用/金额篡改四种）。
+- 🔥 **所有支付网关回调都要「先入账、后回 success」**（易支付原先在入账前就回 `success`，入账失败网关也不再重试 → **已付款不发货**）：现在统一用 `writeEpayNotifyResult(c, ok)`，入账成功才回 `success`，失败/异常一律回 `fail` 让网关重试；订单已是终态属于幂等重放，回 `success`。回归用例 `TestEpayNotifyRespondsSuccessOnlyAfterCredit`（订单不存在/正常入账/跨网关/重放四种）。
+- **支付回调端点要有独立限流**（`middleware.PaymentNotifyRateLimit`）：支付回调是匿名接口，不能无限刷。**绝不能沿用 `CriticalRateLimit`（20 次/20 分钟）**——业务高峰时同一批来源 IP 短时间集中到达，阈值太低会 429 掉真实付款（钱扣了但订单不入账）。默认 `PAYMENT_NOTIFY_RATE_LIMIT=600` 次/分钟/来源 IP（`PAYMENT_NOTIFY_RATE_LIMIT_DURATION=60`、`PAYMENT_NOTIFY_RATE_LIMIT_ENABLE=true` 可调）。IP 取值可信：`main.go` 的 `ConfigureTrustedProxies` 只信任 nginx（默认 `172.18.0.1`），客户端伪造 XFF 无效。
+- ✅ **失效行锁已全量修完**（2026-10-20）：`gorm:query_option` 那个写法在 `model/` 里**一处不剩**（`topup.go` 5 处、`subscription.go` 9 处、`redemption.go` 1 处、`user.go` 1 处），全部改成 `clause.Locking{Strength:"UPDATE"}`。受益的除了支付，还有**兑换码并发核销**（同一张码可能被核销多次）和**邀请额度转移**。回归用例：`TestModelPackageDoesNotUseIgnoredForUpdateOption`（AST 扫描 `model/`，禁止再出现那个写法）+ `TestClauseLockingEmitsForUpdateOnPostgres`（用 postgres dialect DryRun 证明 `clause.Locking` 真会生成 `FOR UPDATE`，并用旧写法做反面对照）。
+- **管理员补单的幂等分支不得写假日志**：`ManualCompleteTopUp` 在「订单已是 success / 并发补单被抢」时 `quotaToAdd=0、userId=0`，照样记日志会产生一条 `user_id=0` 的假「补单成功」记录。现在只有真加了额度才记。回归用例 `TestManualCompleteTopUpDoesNotRecordFakeSuccessLog`。
 
 ### Project Governance
 

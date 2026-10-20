@@ -55,12 +55,12 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/oauth/:provider", middleware.CriticalRateLimit(), controller.HandleOAuth)
 		apiRouter.GET("/ratio_config", middleware.CriticalRateLimit(), controller.GetRatioConfig)
 
-		apiRouter.POST("/stripe/webhook", anonymousRequestBodyLimit, controller.StripeWebhook)
-		apiRouter.POST("/creem/webhook", anonymousRequestBodyLimit, controller.CreemWebhook)
-		apiRouter.POST("/waffo/webhook", anonymousRequestBodyLimit, controller.WaffoWebhook)
+		apiRouter.POST("/stripe/webhook", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.StripeWebhook)
+		apiRouter.POST("/creem/webhook", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.CreemWebhook)
+		apiRouter.POST("/waffo/webhook", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.WaffoWebhook)
 		// :env separates test vs prod URLs so the operator can register each
 		// in Pancake's matching webhook slot; handler enforces env match.
-		apiRouter.POST("/waffo-pancake/webhook/:env", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook)
+		apiRouter.POST("/waffo-pancake/webhook/:env", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.WaffoPancakeWebhook)
 
 		// Universal secure verification routes
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.UniversalVerify)
@@ -74,14 +74,14 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.POST("/passkey/login/finish", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.PasskeyLoginFinish)
 			//userRoute.POST("/tokenlog", middleware.CriticalRateLimit(), controller.TokenLog)
 			userRoute.GET("/logout", controller.Logout)
-			userRoute.POST("/epay/notify", anonymousRequestBodyLimit, controller.EpayNotify)
-			userRoute.GET("/epay/notify", controller.EpayNotify)
-			userRoute.POST("/alipay/notify", anonymousRequestBodyLimit, controller.AlipayNotify)
-			userRoute.GET("/alipay/notify", controller.AlipayNotify)
+			userRoute.POST("/epay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.EpayNotify)
+			userRoute.GET("/epay/notify", middleware.PaymentNotifyRateLimit(), controller.EpayNotify)
+			userRoute.POST("/alipay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.AlipayNotify)
+			userRoute.GET("/alipay/notify", middleware.PaymentNotifyRateLimit(), controller.AlipayNotify)
 			userRoute.GET("/alipay/return", controller.AlipayReturn)
 			userRoute.POST("/alipay/return", anonymousRequestBodyLimit, controller.AlipayReturn)
-			userRoute.POST("/vpn/epay/notify", anonymousRequestBodyLimit, controller.VpnEpayNotify)
-			userRoute.GET("/vpn/epay/notify", controller.VpnEpayNotify)
+			userRoute.POST("/vpn/epay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.VpnEpayNotify)
+			userRoute.GET("/vpn/epay/notify", middleware.PaymentNotifyRateLimit(), controller.VpnEpayNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)
 
 			selfRoute := userRoute.Group("/")
@@ -188,8 +188,8 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		// Subscription payment callbacks (no auth)
-		apiRouter.POST("/subscription/epay/notify", anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
-		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
+		apiRouter.POST("/subscription/epay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
+		apiRouter.GET("/subscription/epay/notify", middleware.PaymentNotifyRateLimit(), controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
 		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
 		optionRoute := apiRouter.Group("/option")

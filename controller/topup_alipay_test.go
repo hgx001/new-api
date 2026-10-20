@@ -43,6 +43,9 @@ func testRSA2PKCS8PrivateKey(t *testing.T) string {
 }
 
 func TestAlipayClientBuildsComputerWebsitePaymentURL(t *testing.T) {
+	// 支付宝通道和其它网关一样受支付合规闸门约束：合规未确认时不允许收款，
+	// getAlipayClient() 会返回 nil。本用例只关心「能否拼出收银台 URL」。
+	confirmPaymentComplianceForTest(t)
 	originalEnabled := operation_setting.AlipayEnabled
 	originalAppID := operation_setting.AlipayAppID
 	originalPrivateKey := operation_setting.AlipayPrivateKey

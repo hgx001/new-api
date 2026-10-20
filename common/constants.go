@@ -230,6 +230,13 @@ var (
 	CriticalRateLimitNum            = 20
 	CriticalRateLimitDuration int64 = 20 * 60
 
+	// 支付回调（webhook/notify）专用限流，按来源 IP 计数。
+	// 阈值必须比 CriticalRateLimit 宽松得多：支付网关的合法回调在业务高峰期
+	// 会短时间集中到达同一批来源 IP，阈值太低会误伤真实付款（订单不入账）。
+	PaymentNotifyRateLimitEnable   bool
+	PaymentNotifyRateLimitNum            = 600
+	PaymentNotifyRateLimitDuration int64 = 60
+
 	UploadRateLimitNum            = 10
 	UploadRateLimitDuration int64 = 60
 

@@ -108,6 +108,21 @@ func CriticalRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
+// PaymentNotifyRateLimit 支付回调（webhook / notify）专用限流，按来源 IP 计数。
+//
+// 支付回调是匿名接口：没有它，任何人都能无限刷回调端点（触发 RSA 验签 + 数据库查询 +
+// 日志写入）。但阈值必须比 CriticalRateLimit 宽松得多——支付网关的合法回调在业务高峰期
+// 会短时间集中到达同一批来源 IP，阈值太低会误伤真实付款（钱扣了但订单不入账）。
+//
+// 依赖可信代理配置（main.go 的 ConfigureTrustedProxies）：只有来自 nginx 的
+// X-Forwarded-For 才被采信，客户端伪造 XFF 无法绕过本限流。
+func PaymentNotifyRateLimit() func(c *gin.Context) {
+	if common.PaymentNotifyRateLimitEnable {
+		return rateLimitFactory(common.PaymentNotifyRateLimitNum, common.PaymentNotifyRateLimitDuration, "PN")
+	}
+	return defNext
+}
+
 func DownloadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.DownloadRateLimitNum, common.DownloadRateLimitDuration, "DW")
 }

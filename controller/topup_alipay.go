@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -27,6 +26,12 @@ import (
 )
 
 func isAlipayTopUpEnabled() bool {
+	// 合规闸门：与 Stripe / Creem / 易支付保持一致。
+	// 未确认支付合规条款时不允许走任何收款通道（以前支付宝这条路径漏了这道闸门，
+	// 合规未确认时仍能下单收款）。
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
 	return operation_setting.AlipayEnabled &&
 		strings.TrimSpace(operation_setting.AlipayAppID) != "" &&
 		strings.TrimSpace(operation_setting.AlipayPrivateKey) != "" &&
@@ -177,7 +182,7 @@ func RequestAlipay(c *gin.Context, amount int64, group string) {
 		return
 	}
 	payMoney := getPayMoney(amount, group)
-	if payMoney < 0.01 {
+	if payMoney.LessThan(decimal.NewFromFloat(0.01)) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
 	}
@@ -197,7 +202,7 @@ func RequestAlipay(c *gin.Context, amount int64, group string) {
 	topUp := &model.TopUp{
 		UserId:          userID,
 		Amount:          topUpAmount,
-		Money:           payMoney,
+		Money:           payMoneyToFloat(payMoney),
 		TradeNo:         tradeNo,
 		PaymentMethod:   model.PaymentMethodAlipay,
 		PaymentProvider: model.PaymentProviderAlipay,
@@ -214,7 +219,11 @@ func RequestAlipay(c *gin.Context, amount int64, group string) {
 	body := make(gopay.BodyMap)
 	body.Set("subject", fmt.Sprintf("New API 账户充值 %d", amount))
 	body.Set("out_trade_no", tradeNo)
-	body.Set("total_amount", strconv.FormatFloat(payMoney, 'f', 2, 64))
+	// 下发给支付宝的金额必须是「已经舍入到分」的那一份，
+	// 回调校验时用的是同一个值（见 model.RechargeAlipay）。
+	// 若这里改用 strconv.FormatFloat 按二进制精确值舍入，两者会在第三位小数为 5 时差 0.01，
+	// 回调会被判「金额不一致」→ 钱扣了、额度不加、订单永远 pending。
+	body.Set("total_amount", payMoney.StringFixed(2))
 	body.Set("product_code", "FAST_INSTANT_TRADE_PAY")
 	payURL, err := client.TradePagePay(body)
 	if err != nil {
@@ -244,8 +253,13 @@ func AlipayNotify(c *gin.Context) {
 		c.String(http.StatusOK, "fail")
 		return
 	}
-	if notify.AppId != "" && notify.AppId != strings.TrimSpace(operation_setting.AlipayAppID) {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("支付宝回调 APPID 不匹配 trade_no=%s app_id=%s", notify.OutTradeNo, notify.AppId))
+	// app_id 必须与本应用一致：防止「公钥配错 / 串应用」的通知被当成本应用的付款入账。
+	// 支付宝的异步通知必带 app_id，缺失即视为异常通知，直接拒绝。
+	// 拒绝是显式的：订单保持 pending + 写错误日志，管理员可补单；
+	// 静默入账则可能把「别的应用的付款」记到我们头上。
+	configuredAppID := strings.TrimSpace(operation_setting.AlipayAppID)
+	if notify.AppId == "" || notify.AppId != configuredAppID {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("支付宝回调 APPID 不匹配 trade_no=%s notify_app_id=%q configured_app_id=%q", notify.OutTradeNo, notify.AppId, configuredAppID))
 		c.String(http.StatusOK, "fail")
 		return
 	}

@@ -125,6 +125,13 @@ func InitEnv() {
 	CriticalRateLimitNum = GetEnvOrDefault("CRITICAL_RATE_LIMIT", 20)
 	CriticalRateLimitDuration = int64(GetEnvOrDefault("CRITICAL_RATE_LIMIT_DURATION", 20*60))
 
+	// 支付回调限流：默认 600 次/分钟/来源 IP。
+	// 不能沿用 CriticalRateLimit（20 次/20 分钟），否则支付宝/易支付的合法回调
+	// 集中到达时会被 429 拦掉 → 钱扣了但订单不入账。
+	PaymentNotifyRateLimitEnable = GetEnvOrDefaultBool("PAYMENT_NOTIFY_RATE_LIMIT_ENABLE", true)
+	PaymentNotifyRateLimitNum = GetEnvOrDefault("PAYMENT_NOTIFY_RATE_LIMIT", 600)
+	PaymentNotifyRateLimitDuration = int64(GetEnvOrDefault("PAYMENT_NOTIFY_RATE_LIMIT_DURATION", 60))
+
 	SearchRateLimitEnable = GetEnvOrDefaultBool("SEARCH_RATE_LIMIT_ENABLE", true)
 	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
 	SearchRateLimitDuration = int64(GetEnvOrDefault("SEARCH_RATE_LIMIT_DURATION", 60))
