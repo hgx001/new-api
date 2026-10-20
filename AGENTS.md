@@ -288,6 +288,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 ### 支付宝官方直连（电脑网站支付，2026-10-20 上线并可支付）
 
 - **现状**：生产已开通并启用。option `AlipayEnabled=true`，AppID `2021007109672654`，电脑网站支付已签约、即时到账，收款方显示为「**算力 服务**」（支付宝商家账号主体名，不是「黑白道」）。回调 `https://api.heibaidao.cn/api/user/alipay/notify`，同步返回 `https://api.heibaidao.cn/api/user/alipay/return`。`Price=7.3` → 充值 10 美元 = ¥73。订单表名是 **`top_ups`**（不是 `topups`）。
+- ✅ **端到端已验收（2026-10-20 22:12 首笔真实付款 ¥7.30）**：支付宝服务器 IP `203.209.251.104` POST 回调 → 验签通过（响应体 7 字节 `success`，日志无「验签失败」）→ 订单 `USR28ALIPAYV1WXNm53jNOouXzxKwERiYIw` 转 `success` → 充值日志「支付宝官方直连充值成功，充值额度: ¥7.300000，支付金额：7.30」→ 额度 +500000（$1 × QuotaPerUnit 500000）。同步 return 302 回 `/usage-logs`。**改回调/验签相关代码后，用同样方式再验一次**（小额真实付款 + 查 `top_ups.status='success'` + `logs.content LIKE '%充值成功%'`）。
 - **三道闸门缺一不可**（`isAlipayTopUpEnabled()` = `AlipayEnabled` + `AlipayAppID` + `AlipayPrivateKey` + `AlipayPublicKey` 全非空）：① option `AlipayEnabled`；② `payment_setting.compliance_confirmed=true` 且 `compliance_terms_version=v1`（不确认则前端**一个支付方式都不显示**）；③ `PayMethods` 含 `type=alipay`。
 - **改 option 后必须等 ≥70s**：`SYNC_FREQUENCY`=60s 才同步进内存，早查会读到旧值、误判「没生效」。
 - 🔥 **通知验签必须用「原始表单参数」，不能用 gopay 的结构体验签**：gopay 的 `VerifySign` 把解析后的 `NotifyRequest` 结构体重新序列化再拼签名串，`json` 的 `omitempty` 会把**空数组字段**（支付宝通知里常见的 `voucher_detail_list=[]`）整条丢掉，而支付宝签的是原始上报值 → 签名源差这一个字段 → **每一笔真实回调都判验签失败，用户付了钱却充不到账**。本项目已按官方 SDK 口径自己验签：`controller/topup_alipay.go` 的 `verifyAlipayNotifySignature`。回归用例 `TestAlipayGopayStructVerificationDropsEmptyVoucherList` 锁死该行为，**改回调验签前先跑它**。
