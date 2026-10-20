@@ -25,7 +25,10 @@ UPDATE models SET description = 'Seedance 2.0 Fast 文/图生视频。5–15 秒
 UPDATE models SET description = 'Seedance 2.5 文/图生视频。5/10/15/30 秒四档，¥3.00/次；7 档比例（含 auto），≤10 张参考图'
  WHERE model_name = 'seedance-2-5' AND deleted_at IS NULL;
 
-UPDATE models SET description = 'Seedance 2.0 文/图生视频，5/10/15 秒，6 档比例，≤10 张参考图'
+-- 2026-10-20 补记：seedance-2.0 卡片后来又追加了「卡人脸」备注
+-- （见 scripts/prod-note-seedance20-face-20261020.sql）。此处同步为当前线上文案，
+-- 重跑本脚本不会把该备注冲掉。
+UPDATE models SET description = 'Seedance 2.0 文/图生视频，5/10/15 秒，6 档比例，≤10 张参考图，卡人脸'
  WHERE model_name = 'seedance-2.0' AND deleted_at IS NULL;
 
 UPDATE models SET description = 'Seedance 2.5 文/图生视频，固定 30 秒 720P，6 档比例，≤10 张参考图'
