@@ -444,10 +444,16 @@ func EpayNotify(c *gin.Context) {
 			model.RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), c.ClientIP(), topUp.PaymentMethod, "epay")
 			// 只有额度确实入账后才回 success
 			writeEpayNotifyResult(c, true)
-		} else {
-			// 已是终态（此前已入账）：属于幂等重放，回 success 让网关停止重试
-			logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 订单已是终态，跳过入账 trade_no=%s user_id=%d status=%s client_ip=%s", topUp.TradeNo, topUp.UserId, topUp.Status, c.ClientIP()))
+		} else if topUp.Status == common.TopUpStatusSuccess {
+			// 幂等重放：这一笔早已入账，回 success 让网关停止重试
+			logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 订单已入账，跳过重复入账 trade_no=%s user_id=%d client_ip=%s", topUp.TradeNo, topUp.UserId, c.ClientIP()))
 			writeEpayNotifyResult(c, true)
+		} else {
+			// 订单已是 failed/expired 之类的终态，但网关说付款成功 —— 这是异常。
+			// 必须回 fail：网关据此重试，错误日志同时指向人工介入（管理员补单）。
+			// 回 success 会让网关停止重试 → 用户付了钱却静默不到账。
+			logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 订单状态非待支付却收到成功回调 trade_no=%s user_id=%d status=%s client_ip=%s", topUp.TradeNo, topUp.UserId, topUp.Status, c.ClientIP()))
+			writeEpayNotifyResult(c, false)
 		}
 	} else {
 		// 非成功事件（如支付关闭）无需入账，明确回 success 让网关停止重试

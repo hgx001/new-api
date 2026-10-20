@@ -398,4 +398,20 @@ func TestEpayNotifyRespondsSuccessOnlyAfterCredit(t *testing.T) {
 	require.Equal(t, "success", callEpayNotify(t, buildParams(topUp.TradeNo)))
 	require.NoError(t, model.DB.First(&gotUser, user.Id).Error)
 	assert.Equal(t, 5_000_000, gotUser.Quota, "重放回调不得重复加额度")
+
+	// 5) 订单已是 failed 终态却收到「付款成功」→ 必须回 fail（异常，不能静默吞掉）
+	failedTopUp := model.TopUp{
+		UserId:          user.Id,
+		Amount:          10,
+		Money:           73,
+		TradeNo:         "USR1EPAYFAILED",
+		PaymentMethod:   model.PaymentMethodAlipay,
+		PaymentProvider: model.PaymentProviderEpay,
+		CreateTime:      common.GetTimestamp(),
+		Status:          common.TopUpStatusFailed,
+	}
+	require.NoError(t, model.DB.Create(&failedTopUp).Error)
+	require.Equal(t, "fail", callEpayNotify(t, buildParams(failedTopUp.TradeNo)))
+	require.NoError(t, model.DB.First(&gotUser, user.Id).Error)
+	assert.Equal(t, 5_000_000, gotUser.Quota, "异常订单不得加额度")
 }
