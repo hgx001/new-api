@@ -93,9 +93,10 @@ func parseAlipayPublicKey(value string) (*rsa.PublicKey, error) {
 }
 
 // verifyAlipayNotifySignature verifies the asynchronous notification with the raw form
-// values, following the official Alipay SDK (rsaCheckV1): every received parameter except
-// sign / sign_type, sorted by key, joined as "k=v&k=v", then RSA2 (SHA256) verified with
-// the Alipay public key.
+// values, following the official Alipay SDK (AlipaySignature.rsaCheckV1 →
+// getSignCheckContentV1): every received parameter except sign / sign_type, empty values
+// skipped, sorted by key, joined as "k=v&k=v", then RSA2 (SHA256) verified with the
+// Alipay public key.
 //
 // It deliberately does NOT use gopay's struct-based VerifySign: gopay re-serializes the
 // parsed NotifyRequest struct, and `omitempty` silently drops empty arrays such as
@@ -114,6 +115,10 @@ func verifyAlipayNotifySignature(form url.Values, alipayPublicKey string) (bool,
 	keys := make([]string, 0, len(form))
 	for key := range form {
 		if key == "sign" || key == "sign_type" {
+			continue
+		}
+		if form.Get(key) == "" {
+			// 官方 SDK 对空值参数不参与签名
 			continue
 		}
 		keys = append(keys, key)

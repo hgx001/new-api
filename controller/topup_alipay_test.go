@@ -95,12 +95,16 @@ func TestAlipayClientBuildsComputerWebsitePaymentURL(t *testing.T) {
 	}
 }
 
-// alipayNotifySignSource builds the official signing source of an asynchronous
-// notification: every received parameter except sign / sign_type, sorted by key.
+// alipayNotifySignSource builds the signing source of an asynchronous notification the
+// same way the official SDK does (AlipaySignature.getSignCheckContentV1): every received
+// parameter except sign / sign_type, empty values skipped, sorted by key.
 func alipayNotifySignSource(form url.Values) string {
 	keys := make([]string, 0, len(form))
 	for key := range form {
 		if key == "sign" || key == "sign_type" {
+			continue
+		}
+		if form.Get(key) == "" {
 			continue
 		}
 		keys = append(keys, key)
@@ -176,6 +180,23 @@ func TestVerifyAlipayNotifySignatureRejectsTamperedAmount(t *testing.T) {
 	verified, err := verifyAlipayNotifySignature(form, encodedPublicKey)
 	require.Error(t, err)
 	require.False(t, verified)
+}
+
+// TestVerifyAlipayNotifySignatureSkipsEmptyParameters locks the official SDK rule that
+// empty-valued parameters do not take part in the signature.
+func TestVerifyAlipayNotifySignatureSkipsEmptyParameters(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	form, encodedPublicKey := buildAlipayNotifyForm(t, key)
+
+	form.Set("passback_params", "")
+	form.Set("gmt_refund", "")
+	form.Set("body", "")
+	signAlipayNotify(t, form, key)
+
+	verified, err := verifyAlipayNotifySignature(form, encodedPublicKey)
+	require.NoError(t, err)
+	require.True(t, verified)
 }
 
 // TestAlipayGopayStructVerificationDropsEmptyVoucherList documents why the
