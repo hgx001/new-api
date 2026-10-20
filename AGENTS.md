@@ -285,6 +285,17 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - **严禁**用 `/test`、`/v1/models`（返 200 假象）或图片/视频请求做健康验证——`/test` 与真实调用会触发 refresh 把账号打回 error；验证只能用**恢复后**的一次最小文本探活。
   - **监控配置注意**：该计划任务 `LogonType` 若为 `Interactive`，**用户未登录 Windows 时根本不跑**（改 S4U 需管理员权限）；任务 XML 备份见 `deploy-vpn/scheduled_task_backup_20261006.xml`。
 
+### 支付宝官方直连（电脑网站支付，2026-10-20 上线并可支付）
+
+- **现状**：生产已开通并启用。option `AlipayEnabled=true`，AppID `2021007109672654`，电脑网站支付已签约、即时到账，收款方显示为「**算力 服务**」（支付宝商家账号主体名，不是「黑白道」）。回调 `https://api.heibaidao.cn/api/user/alipay/notify`，同步返回 `https://api.heibaidao.cn/api/user/alipay/return`。`Price=7.3` → 充值 10 美元 = ¥73。订单表名是 **`top_ups`**（不是 `topups`）。
+- **三道闸门缺一不可**（`isAlipayTopUpEnabled()` = `AlipayEnabled` + `AlipayAppID` + `AlipayPrivateKey` + `AlipayPublicKey` 全非空）：① option `AlipayEnabled`；② `payment_setting.compliance_confirmed=true` 且 `compliance_terms_version=v1`（不确认则前端**一个支付方式都不显示**）；③ `PayMethods` 含 `type=alipay`。
+- **改 option 后必须等 ≥70s**：`SYNC_FREQUENCY`=60s 才同步进内存，早查会读到旧值、误判「没生效」。
+- 🔥 **通知验签必须用「原始表单参数」，不能用 gopay 的结构体验签**：gopay 的 `VerifySign` 把解析后的 `NotifyRequest` 结构体重新序列化再拼签名串，`json` 的 `omitempty` 会把**空数组字段**（支付宝通知里常见的 `voucher_detail_list=[]`）整条丢掉，而支付宝签的是原始上报值 → 签名源差这一个字段 → **每一笔真实回调都判验签失败，用户付了钱却充不到账**。本项目已改为按官方 SDK（`rsaCheckV1`）口径自己验签：`controller/topup_alipay.go` 的 `verifyAlipayNotifySignature`（原始 `c.Request.Form`，除 `sign`/`sign_type` 外按 key 升序拼串，RSA2 验签）。回归用例 `TestAlipayGopayStructVerificationDropsEmptyVoucherList` 锁死该行为，**改回调验签前先跑它**。
+- **RSA2 签名串两个方向口径不同**：**请求**（拉起支付）的签名串**包含 `sign_type`**（gopay `EncodeAliPaySignParams()` 只排除 `sign`，与官方 Java SDK `getSignContent` 一致）；**异步通知验签**要**同时排除 `sign` 和 `sign_type`**（官方 `rsaCheckV1` 就这么干）。手写签名时搞混 → `isv.invalid-signature`。
+- **验证收银台必须用真浏览器**：服务端裸 GET 签名 URL 会被支付宝风控拦成 `excashier.alipay.com/home/error.htm?errorCode=FISHING_RISK`，**这不是配置错误**（同一 URL 在浏览器里正常渲染 `excashier.alipay.com/standard/auth.htm?payOrderId=...`，能看到商品/收款方/金额）。别据此判断「没开通」。
+- **零成本只读探针**：`alipay.trade.query` 查一个**不存在**的 `out_trade_no`，返回 `ACQ.TRADE_NOT_EXIST` 即说明 app_id / 私钥 / 交易类 API 权限都正常（不建单、不扣费）；响应里的 `sign` 可用 `AlipayPublicKey` 验签 → 确认公钥与该应用匹配（回调验签就靠它）。想验证整条回调链路，可用**生产私钥自签一个假通知**打到 `/api/user/alipay/notify`，`out_trade_no` 用不存在的值 → 日志应出现「支付宝充值订单不存在」而不是「验签失败」。
+- **测试单要清**：测试单是 `pending` + `payment_provider=alipay` + `trade_no` 形如 `USR<id>ALIPAY<rand>`，验完记得删，否则后台充值记录里堆一堆 pending。
+
 ### Project Governance
 
 **Required attribution:** The footer must always include a line crediting the original project:
