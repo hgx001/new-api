@@ -69,7 +69,31 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
 
-func (a *TaskAdaptor) GetModelList() []string { return []string{PublicModel} }
+func (a *TaskAdaptor) GetModelList() []string {
+	return []string{SlowPublicModel, PrimePublicModel}
+}
+
+// ---------------------------------------------------------------- 模型档位
+
+// requestProfile 按请求的模型名取档位（工作流 + 各自的时长/分辨率/素材约束）。
+//
+// 模型名取自请求体（req.Model）或路由时的 info.OriginModelName —— 两者都是**用户
+// 请求的原始模型名**：relay_task.go 在 ValidateRequestAndSetAction 之后才应用渠道的
+// model_mapping，所以这里拿到的始终是原始名，不会被映射结果污染。
+func requestProfile(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) (*modelProfile, error) {
+	name := strings.TrimSpace(req.Model)
+	if name == "" && info != nil {
+		name = strings.TrimSpace(info.OriginModelName)
+	}
+	if name == "" {
+		return nil, errors.New("sanyuan requires a model name")
+	}
+	profile, ok := profilesByModel[name]
+	if !ok {
+		return nil, errors.Errorf("sanyuan does not serve model %q", name)
+	}
+	return profile, nil
+}
 
 // ---------------------------------------------------------------- 请求校验
 
@@ -83,59 +107,95 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return nil
 	}
-	if _, mediaErr := buildMedia(req); mediaErr != nil {
+	profile, profileErr := requestProfile(req, info)
+	if profileErr != nil {
+		return service.TaskErrorWrapperLocal(profileErr, "invalid_model", http.StatusBadRequest)
+	}
+	if _, mediaErr := buildMedia(req, profile); mediaErr != nil {
 		return service.TaskErrorWrapperLocal(mediaErr, "invalid_request", http.StatusBadRequest)
 	}
-	if _, resErr := resolveResolution(req); resErr != nil {
+	if _, resErr := resolveResolution(req, profile); resErr != nil {
 		return service.TaskErrorWrapperLocal(resErr, "invalid_resolution", http.StatusBadRequest)
 	}
-	if _, durErr := resolveDuration(req); durErr != nil {
+	if _, durErr := resolveDuration(req, profile); durErr != nil {
 		return service.TaskErrorWrapperLocal(durErr, "invalid_duration", http.StatusBadRequest)
 	}
 	return nil
 }
 
-// resolveDuration 时长 1..30 自由整数，区间外报错不吸附。
+// resolveDuration 时长按档位解析：慢速档 1..30 自由整数，区间外报错不吸附；
+// 满血档固定 30 秒（与原 youzan prime 的对外语义一致：传其它值被忽略）。
+//
 // **req.Seconds 是必须的回退路径**：下游按 OpenAI video 形状传的是 {"seconds":"7"}
 //（字符串），落到 TaskSubmitReq.Seconds 而不是 Duration。漏读 Seconds 会静默按
 // 默认 5 秒建单 —— 二春渠道 2026-10-06 首次真机验证就是这么多收了 2.5 倍。
-func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
+func resolveDuration(req relaycommon.TaskSubmitReq, profile *modelProfile) (int, error) {
+	if profile.FixedDuration > 0 {
+		return profile.FixedDuration, nil
+	}
 	if req.Duration > 0 {
-		if req.Duration < minDurationSeconds || req.Duration > maxDurationSeconds {
-			return 0, durationError(req.Duration)
+		if req.Duration < profile.MinDuration || req.Duration > profile.MaxDuration {
+			return 0, durationError(req.Duration, profile)
 		}
 		return req.Duration, nil
 	}
 	if seconds := strings.TrimSpace(req.Seconds); seconds != "" {
 		if parsed, err := strconv.Atoi(seconds); err == nil {
-			if parsed < minDurationSeconds || parsed > maxDurationSeconds {
-				return 0, durationError(parsed)
+			if parsed < profile.MinDuration || parsed > profile.MaxDuration {
+				return 0, durationError(parsed, profile)
 			}
 			return parsed, nil
 		}
 	}
-	return defaultDurationSeconds, nil
+	return profile.DefaultDuration, nil
 }
 
-func durationError(got int) error {
-	return errors.Errorf("%s accepts %d-%d seconds, got %d", PublicModel, minDurationSeconds, maxDurationSeconds, got)
+func durationError(got int, profile *modelProfile) error {
+	return errors.Errorf("%s accepts %d-%d seconds, got %d",
+		profile.PublicModel, profile.MinDuration, profile.MaxDuration, got)
 }
 
-// resolveResolution 解析分辨率 6 档：完整档位（如 "1080p横"）大小写归一后精确匹配；
-// tier-only（如 "1080p"）从 metadata.orientation / ratio / size 推方向；无提示默认竖。
-func resolveResolution(req relaycommon.TaskSubmitReq) (string, error) {
+// resolveResolution 解析分辨率：
+//   - 自由档位（慢速）：完整档位（如 "1080p横"）大小写归一后精确匹配；tier-only
+//     （如 "1080p"）从 metadata.orientation / ratio / size 推方向；无提示默认竖；
+//     越界 400 不吸附。
+//   - 固定档位（满血 1080p）：忽略请求里的 tier（对外承诺「固定 1080P，传其它值会被
+//     忽略」），但**保留方向** —— 完整档位 "1080p横" 要落到 1080p横，不能被拍成竖屏。
+func resolveResolution(req relaycommon.TaskSubmitReq, profile *modelProfile) (string, error) {
 	raw := strings.ToLower(strings.TrimSpace(req.Resolution))
-	if raw == "" {
-		return defaultResolution + resolveDirection(req), nil
+	tier := profile.FixedTier
+	if tier == "" {
+		switch {
+		case raw == "":
+			tier = profile.DefaultTier
+		case profile.Resolutions[raw]:
+			return raw, nil
+		default:
+			parsed, ok := parseTier(raw)
+			if !ok {
+				return "", errors.Errorf("%s only supports resolutions %s, got %q",
+					profile.PublicModel, strings.Join(sortedResolutionKeys(profile), "/"), req.Resolution)
+			}
+			tier = parsed
+		}
 	}
-	if allowedResolutions[raw] {
-		return raw, nil
+	direction := directionOfResolution(raw)
+	if direction == "" {
+		direction = resolveDirection(req)
 	}
-	if tier, ok := parseTier(raw); ok {
-		return tier + resolveDirection(req), nil
+	return tier + direction, nil
+}
+
+// directionOfResolution 从完整档位里取方向后缀（"1080p横" → 横）；tier-only 档位
+// 没有方向，返回空串交给 metadata/size 推断。
+func directionOfResolution(raw string) string {
+	switch {
+	case strings.HasSuffix(raw, directionPortrait):
+		return directionPortrait
+	case strings.HasSuffix(raw, directionLandscape):
+		return directionLandscape
 	}
-	return "", errors.Errorf("%s only supports resolutions %s, got %q",
-		PublicModel, strings.Join(sortedResolutionKeys(), "/"), req.Resolution)
+	return ""
 }
 
 func parseTier(raw string) (string, bool) {
@@ -204,8 +264,8 @@ func directionFromDimensions(value string) (string, bool) {
 
 // buildMedia 归一化素材，取值顺序沿用 youzanwan3：显式 media → metadata.media →
 // 旧版扁平字段。first_frame 接受（上游把第一张图当首帧）并前插占额；
-// reference_video / last_frame / 未知类型一律拒绝（拼车工作流没有这些入参）。
-func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) {
+// reference_video / last_frame / 未知类型一律拒绝（开放 API 没有这两个入参）。
+func buildMedia(req relaycommon.TaskSubmitReq, profile *modelProfile) ([]relaycommon.TaskMedia, error) {
 	media := append([]relaycommon.TaskMedia(nil), req.Media...)
 	if len(media) == 0 {
 		var err error
@@ -247,7 +307,7 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 			ordered = append(ordered, item)
 		}
 	}
-	return ordered, validateMedia(ordered)
+	return ordered, validateMedia(ordered, profile)
 }
 
 func metadataMedia(metadata map[string]interface{}) ([]relaycommon.TaskMedia, error) {
@@ -274,7 +334,7 @@ func metadataMedia(metadata map[string]interface{}) ([]relaycommon.TaskMedia, er
 	return media, nil
 }
 
-func validateMedia(media []relaycommon.TaskMedia) error {
+func validateMedia(media []relaycommon.TaskMedia, profile *modelProfile) error {
 	imageCount, audioCount := 0, 0
 	for _, item := range media {
 		item.Type = strings.TrimSpace(item.Type)
@@ -291,11 +351,11 @@ func validateMedia(media []relaycommon.TaskMedia) error {
 			return errors.Errorf("sanyuan does not accept media type %q (upstream workflow supports reference images and audio only)", item.Type)
 		}
 	}
-	if imageCount > maxReferenceImages {
-		return errors.Errorf("sanyuan accepts at most %d reference images", maxReferenceImages)
+	if imageCount > profile.MaxReferenceImages {
+		return errors.Errorf("sanyuan accepts at most %d reference images", profile.MaxReferenceImages)
 	}
-	if audioCount > maxReferenceAudios {
-		return errors.Errorf("sanyuan accepts at most %d reference audios", maxReferenceAudios)
+	if audioCount > profile.MaxReferenceAudios {
+		return errors.Errorf("sanyuan accepts at most %d reference audios", profile.MaxReferenceAudios)
 	}
 	return nil
 }
@@ -384,7 +444,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	media, err := buildMedia(req)
+	profile, profileErr := requestProfile(req, info)
+	if profileErr != nil {
+		return nil, taskcommon.NewUserError(profileErr, "invalid_model")
+	}
+	media, err := buildMedia(req, profile)
 	if err != nil {
 		return nil, taskcommon.NewUserError(err, "invalid_request")
 	}
@@ -392,18 +456,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if prompt == "" && len(media) == 0 {
 		return nil, taskcommon.NewUserError(errors.New("sanyuan requires prompt or reference media"), "invalid_request")
 	}
-	resolution, err := resolveResolution(req)
+	resolution, err := resolveResolution(req, profile)
 	if err != nil {
 		return nil, taskcommon.NewUserError(err, "invalid_resolution")
 	}
-	duration, err := resolveDuration(req)
+	duration, err := resolveDuration(req, profile)
 	if err != nil {
 		return nil, taskcommon.NewUserError(err, "invalid_duration")
 	}
 
 	body := createRequest{
 		Prompt:           prompt,
-		Workflow:         UpstreamWorkflow,
+		Workflow:         profile.Workflow,
 		Duration:         duration,
 		Resolution:       resolution,
 		ContextIREnabled: resolveContextIREnabled(req),
@@ -648,9 +712,9 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func sortedResolutionKeys() []string {
-	keys := make([]string, 0, len(allowedResolutions))
-	for key := range allowedResolutions {
+func sortedResolutionKeys(profile *modelProfile) []string {
+	keys := make([]string, 0, len(profile.Resolutions))
+	for key := range profile.Resolutions {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)

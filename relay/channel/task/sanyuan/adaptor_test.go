@@ -64,7 +64,7 @@ func TestResolveDurationRejectsOutOfRange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveDuration(tt.req)
+			got, err := resolveDuration(tt.req, slowProfile)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				return
@@ -73,6 +73,59 @@ func TestResolveDurationRejectsOutOfRange(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// 满血档（prime）对外承诺「固定 30 秒、1080P」：请求里的其它时长/分辨率被忽略，
+// 不是报错 —— 与原 youzan prime 的契约一致，避免老客户端被 400 打回。
+func TestPrimeProfileForcesDurationAndResolution(t *testing.T) {
+	// 时长固定 30 秒。
+	duration, err := resolveDuration(relaycommon.TaskSubmitReq{Model: PrimePublicModel, Duration: 5}, primeProfile)
+	require.NoError(t, err)
+	require.Equal(t, 30, duration)
+	duration, err = resolveDuration(relaycommon.TaskSubmitReq{Model: PrimePublicModel, Seconds: "12"}, primeProfile)
+	require.NoError(t, err)
+	require.Equal(t, 30, duration)
+
+	// 分辨率固定 1080p，但方向要跟着请求走。
+	resolution, err := resolveResolution(relaycommon.TaskSubmitReq{Model: PrimePublicModel}, primeProfile)
+	require.NoError(t, err)
+	require.Equal(t, "1080p竖", resolution)
+	resolution, err = resolveResolution(relaycommon.TaskSubmitReq{Model: PrimePublicModel, Resolution: "480p"}, primeProfile)
+	require.NoError(t, err)
+	require.Equal(t, "1080p竖", resolution, "固定档位：其它 tier 被忽略")
+	resolution, err = resolveResolution(relaycommon.TaskSubmitReq{Model: PrimePublicModel, Resolution: "1080p横"}, primeProfile)
+	require.NoError(t, err)
+	require.Equal(t, "1080p横", resolution, "固定档位：方向必须保留")
+	resolution, err = resolveResolution(relaycommon.TaskSubmitReq{
+		Model: PrimePublicModel, Resolution: "1080p", Metadata: map[string]interface{}{"ratio": "16:9"},
+	}, primeProfile)
+	require.NoError(t, err)
+	require.Equal(t, "1080p横", resolution)
+}
+
+// 慢速档的越界档位必须 400（不吸附）；满血档是固定档位，忽略即可。
+func TestPrimeProfileIgnoresUnsupportedTierButSlowProfileRejects(t *testing.T) {
+	_, err := resolveResolution(relaycommon.TaskSubmitReq{Resolution: "4k"}, slowProfile)
+	require.ErrorContains(t, err, "resolution")
+
+	_, err = resolveResolution(relaycommon.TaskSubmitReq{Model: PrimePublicModel, Resolution: "4k"}, primeProfile)
+	require.NoError(t, err)
+}
+
+// profile 查不到就是「这个渠道不提供这个模型」，必须 fail-loud，不许静默走默认档
+// （静默走默认 = 把 prime 的请求发到拼车档，用户拿到次日片还按 30 秒 1080P 收费）。
+func TestRequestProfileRejectsUnknownModel(t *testing.T) {
+	_, err := requestProfile(relaycommon.TaskSubmitReq{Model: "wan3.0-smart"}, nil)
+	require.ErrorContains(t, err, "does not serve model")
+
+	profile, err := requestProfile(relaycommon.TaskSubmitReq{Model: PrimePublicModel}, nil)
+	require.NoError(t, err)
+	require.Equal(t, PrimeWorkflow, profile.Workflow)
+
+	// 请求体没有 model 时回落到路由用的原始模型名。
+	profile, err = requestProfile(relaycommon.TaskSubmitReq{}, &relaycommon.RelayInfo{OriginModelName: PrimePublicModel})
+	require.NoError(t, err)
+	require.Equal(t, PrimeWorkflow, profile.Workflow)
 }
 
 // 按次计费（拼车批次制，与时长/分辨率无关），EstimateBilling 必须返回 nil，
@@ -110,7 +163,7 @@ func TestResolveResolution(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveResolution(tt.req)
+			got, err := resolveResolution(tt.req, slowProfile)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				return
@@ -128,27 +181,27 @@ func TestValidateMediaEnforcesUpstreamLimits(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		images = append(images, relaycommon.TaskMedia{Type: "reference_image", URL: "https://cdn.example/a.png"})
 	}
-	err := validateMedia(images)
+	err := validateMedia(images, slowProfile)
 	require.ErrorContains(t, err, "at most 9")
 
 	audios := make([]relaycommon.TaskMedia, 0, 4)
 	for i := 0; i < 4; i++ {
 		audios = append(audios, relaycommon.TaskMedia{Type: "reference_audio", URL: "https://cdn.example/a.mp3"})
 	}
-	err = validateMedia(audios)
+	err = validateMedia(audios, slowProfile)
 	require.ErrorContains(t, err, "at most 3")
 
 	require.ErrorContains(t, validateMedia([]relaycommon.TaskMedia{
 		{Type: "reference_video", URL: "https://cdn.example/v.mp4"},
-	}), "reference_video")
+	}, slowProfile), "reference_video")
 
 	require.ErrorContains(t, validateMedia([]relaycommon.TaskMedia{
 		{Type: "last_frame", URL: "https://cdn.example/a.png"},
-	}), "last_frame")
+	}, slowProfile), "last_frame")
 
 	require.ErrorContains(t, validateMedia([]relaycommon.TaskMedia{
 		{Type: "reference_image", URL: "  "},
-	}), "url is required")
+	}, slowProfile), "url is required")
 
 	// 边界内通过：9 图 + 3 音
 	okMedia := make([]relaycommon.TaskMedia, 0, 12)
@@ -158,7 +211,9 @@ func TestValidateMediaEnforcesUpstreamLimits(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		okMedia = append(okMedia, relaycommon.TaskMedia{Type: "reference_audio", URL: "https://cdn.example/a.mp3"})
 	}
-	require.NoError(t, validateMedia(okMedia))
+	require.NoError(t, validateMedia(okMedia, slowProfile))
+	// 满血档同一套素材上限（开放 API 只有 image_data_urls / audio_data_urls）。
+	require.NoError(t, validateMedia(okMedia, primeProfile))
 }
 
 // first_frame 必须前插到 image_data_urls 首位（上游把第一张当首帧），且占图额度；
@@ -170,7 +225,7 @@ func TestBuildMediaOrdersFirstFrameFirst(t *testing.T) {
 			{Type: "first_frame", URL: "https://cdn.example/first.png"},
 			{Type: "reference_audio", URL: "https://cdn.example/bgm.mp3"},
 		},
-	})
+	}, slowProfile)
 	require.NoError(t, err)
 	require.Len(t, media, 3)
 	require.Equal(t, "first_frame", media[0].Type)
@@ -181,7 +236,7 @@ func TestBuildMediaOrdersFirstFrameFirst(t *testing.T) {
 	media, err = buildMedia(relaycommon.TaskSubmitReq{
 		Image: "https://cdn.example/a.png",
 		Audio: "https://cdn.example/bgm.mp3",
-	})
+	}, slowProfile)
 	require.NoError(t, err)
 	require.Len(t, media, 2)
 	require.Equal(t, "reference_image", media[0].Type)
@@ -197,6 +252,7 @@ func TestBuildRequestBody(t *testing.T) {
 	seed := int64(42)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:      SlowPublicModel,
 		Prompt:     "一只猫",
 		Duration:   10,
 		Resolution: "1080p",
@@ -224,6 +280,7 @@ func TestBuildRequestBody(t *testing.T) {
 	// metadata.context_ir_enabled=false 必须覆盖默认 true。
 	ctx2, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx2.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:    SlowPublicModel,
 		Prompt:   "x",
 		Metadata: map[string]interface{}{"context_ir_enabled": false},
 	})
@@ -236,12 +293,39 @@ func TestBuildRequestBody(t *testing.T) {
 	assert.Equal(t, false, payload2["context_ir_enabled"])
 }
 
+// 满血档必须发到 WAN 3.0 工作流，且时长/分辨率被固定成 30 秒 1080p ——
+// 这是 2026-10-21 prime 换上游的核心契约。
+func TestBuildRequestBodyUsesPrimeWorkflow(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:      PrimePublicModel,
+		Prompt:     "海边的日落延时",
+		Duration:   8,
+		Resolution: "480p",
+	})
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_prime"}}
+
+	body, err := (&TaskAdaptor{}).BuildRequestBody(ctx, info)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var payload map[string]interface{}
+	require.NoError(t, common.Unmarshal(raw, &payload))
+	assert.Equal(t, PrimeWorkflow, payload["workflow"])
+	assert.Equal(t, "WAN 3.0（ 720P/1080P · 30s）", payload["workflow"], "工作流名必须与上游原文逐字一致")
+	assert.InEpsilon(t, float64(30), payload["duration"], 0)
+	assert.Equal(t, "1080p竖", payload["resolution"])
+	assert.Equal(t, "newapi-task_prime", payload["client_request_id"])
+}
+
 // prompt 与素材全空必须拒绝，且走 UserError（400 降级）而不是普通 error
 // （普通 error 会被 relay_task 包成 500 build_request_failed，触发重试与 AutoBan）。
 func TestBuildRequestBodyRejectsEmptyPromptAndMedia(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Set("task_request", relaycommon.TaskSubmitReq{})
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{Model: SlowPublicModel})
 
 	_, err := (&TaskAdaptor{}).BuildRequestBody(
 		ctx, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_abc"}})
@@ -270,6 +354,7 @@ func TestBuildRequestBodyConvertsMediaToDataURLs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  SlowPublicModel,
 		Prompt: "x",
 		Media: []relaycommon.TaskMedia{
 			{Type: "reference_image", URL: "data:image/png;base64,AAAA"},
@@ -299,7 +384,7 @@ func TestBuildRequestBodyConvertsMediaToDataURLs(t *testing.T) {
 
 func TestGetModelListAndChannelName(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	require.Equal(t, []string{PublicModel}, adaptor.GetModelList())
+	require.Equal(t, []string{SlowPublicModel, PrimePublicModel}, adaptor.GetModelList())
 	require.Equal(t, ChannelName, adaptor.GetChannelName())
 }
 

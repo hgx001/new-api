@@ -30,7 +30,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'gpt-image-2.5-官方｜图片｜¥0.15 / 张',
   'wan3.0-smart｜视频（按秒）｜480P ¥0.28/s、720P ¥0.28/s、1080P ¥0.30/s',
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.27/s、720P ¥0.54/s、1080P ¥1.08/s，参考视频按时长同价并入（生成秒数+参考视频秒数）',
-  'wan3.0-video-prime-1080p｜视频（按次）｜¥8.00 / 次，固定 1080P、30 秒',
+  'wan3.0-video-prime-1080p｜视频（按次）｜¥8.00 / 次，固定 1080P、30 秒，实时出片，参考图 ≤9 张、参考音频 ≤3 条（不支持参考视频与首尾帧）',
   'wan3.0-1080p-慢速｜视频（按次）｜¥2.00 / 次，480p–1080p 竖横可选，次日出片',
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s（仅此两档）',
@@ -65,9 +65,9 @@ const VIDEO_COMMON_FIELDS = [
   'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链。⚠️ 这几个字段在 wan3.0-smart / prime 上一律被标记为 reference_image（往里塞 .mp4 会被当图片送上游），只有 wan3.0-video-官网 会按 URL 后缀推断类型',
   'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio / first_frame / last_frame。⚠️ wan3.0-smart / 官网 / prime 传参考视频、参考音频只有这一条路',
   '顶层 audios / audio：⚠️ 仅 autodl:minimax-h3-u24 生效。wan3 系不读这两个字段，传了会被静默丢弃——不报错、不计入上限、任务照跑，请改用 media 数组',
-  'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media、metadata.audio。⚠️ metadata.audio 是「是否生成音轨」开关（默认 true，false 关闭，别名 generate_audio），仅 wan3 系 smart / 官网 / prime 生效，与顶层 audios 不是一回事',
+  'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media、metadata.audio。⚠️ metadata.audio 是「是否生成音轨」开关（默认 true，false 关闭，别名 generate_audio），仅 wan3 系 smart / 官网 生效，与顶层 audios 不是一回事；wan3.0-video-prime-1080p 走三元巡狩上游，没有这个开关',
   '⚠️ 「传图片给视频模型」的三种写法（任选其一，优先级 media > metadata.media > 旧字段）：① media 里 type=reference_image；② metadata.media（同样格式）；③ images / input_reference / image。后者会被一律标记为参考图，不会按后缀推断类型；autodl:minimax-h3-u24 的 images 是必填，缺失直接 400',
-  '⚠️ 首尾帧是图片的一种特殊类型：在 media 里用 type=first_frame / last_frame，各最多 1 张，且不能与 reference_image / reference_video / reference_audio 混用（混用直接 400，不消耗费用）。若下游只想表达「参考图」而非「锁定起始画面」，请用 reference_image',
+  '⚠️ 首尾帧是图片的一种特殊类型：在 media 里用 type=first_frame / last_frame，各最多 1 张，且不能与 reference_image / reference_video / reference_audio 混用（混用直接 400，不消耗费用）。若下游只想表达「参考图」而非「锁定起始画面」，请用 reference_image。⚠️ wan3.0-video-prime-1080p 走三元巡狩上游，开放接口没有首尾帧入参，传了直接 400',
 ]
 
 const VIDEO_STATUS_ITEMS = [
@@ -118,7 +118,7 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–10 分钟，wan3.0-1080p-慢速 需一天（拼车批次，今日提交次日取片），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart / wan2.7-r2v 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan3.0-video-prime-1080p 预计 5–15 分钟（2026-10-21 上游换为三元巡狩 WAN 3.0 实时档，暂无实测样本），wan3.0-1080p-慢速 需一天（拼车批次，今日提交次日取片），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
@@ -448,17 +448,15 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           children: [{ type: 'strong', value: 'wan3.0-video-prime-1080p（满血 30 秒档）' }],
         },
         { type: 'list', ordered: false, items: [
-          ['resolution：固定 1080P，传其它值会被忽略'],
+          ['resolution：固定 1080P，传其它值会被忽略；竖/横看 metadata.ratio（16:9 / 9:16）或 size（1920x1080 / 1080x1920），无提示默认竖'],
           ['seconds：固定 30，传其它值会被忽略'],
-          ['ratio：同 wan3.0-smart'],
-          ['参考素材：图 ≤8 张、视频 ≤5 个、音频 ≤5 个、首尾帧各 1 张'],
-          ['metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）'],
+          ['参考素材：图 ≤9 张、音频 ≤3 条；⚠️ 不支持参考视频与首尾帧（传了直接 400，不消耗费用）'],
           ['计费：按次 ¥8.00，与时长、分辨率无关'],
         ] },
         {
           type: 'hint',
           children: [
-            '首尾帧不能与普通参考图/视频/音频混用，混用会直接报错（不消耗费用）。支持纯文生视频、图生视频与多模态参考；分辨率固定 1080P、时长固定 30 秒，不随传入参数变化。',
+            '2026-10-21 起上游从有赞切到三元巡狩的 WAN 3.0 实时档（上游成本 ¥4/次，售价 ¥8.00 不变，实时出片）。分辨率固定 1080P、时长固定 30 秒，不随传入参数变化。新上游的开放接口没有参考视频与首尾帧入参，素材请用参考图 + 参考音频表达。',
           ],
         },
         {

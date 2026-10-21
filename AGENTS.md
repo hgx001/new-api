@@ -319,6 +319,19 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - ✅ **失效行锁已全量修完**（2026-10-20）：`gorm:query_option` 那个写法在 `model/` 里**一处不剩**（`topup.go` 5 处、`subscription.go` 9 处、`redemption.go` 1 处、`user.go` 1 处），全部改成 `clause.Locking{Strength:"UPDATE"}`。受益的除了支付，还有**兑换码并发核销**（同一张码可能被核销多次）和**邀请额度转移**。回归用例：`TestModelPackageDoesNotUseIgnoredForUpdateOption`（AST 扫描 `model/`，禁止再出现那个写法）+ `TestClauseLockingEmitsForUpdateOnPostgres`（用 postgres dialect DryRun 证明 `clause.Locking` 真会生成 `FOR UPDATE`，并用旧写法做反面对照）。
 - **管理员补单的幂等分支不得写假日志**：`ManualCompleteTopUp` 在「订单已是 success / 并发补单被抢」时 `quotaToAdd=0、userId=0`，照样记日志会产生一条 `user_id=0` 的假「补单成功」记录。现在只有真加了额度才记。回归用例 `TestManualCompleteTopUpDoesNotRecordFakeSuccessLog`。
 
+### wan3.0-video-prime-1080p 换上游：三元巡狩 WAN 3.0（2026-10-21）
+
+- **背景**：原上游「有赞 Wan3」（channel 17）的「wan3满血30秒」**已被上游撤下** —— 2026-10-16 起上游对该渠道返回「模型 …不存在或未启用」（该文案不在本站代码里），`GET /v1/models` 实时目录里也已没有 prime。对外模型名与 ¥8.00/次 的定价**不变**，只换实际上游。
+- **新上游**：三元巡狩（channel 23，`http://47.93.118.167:5000`）的工作流 **`WAN 3.0（ 720P/1080P · 30s）`** —— ¥4/次、**实时**（`offline=false`）、720p/1080p 竖横、5–30 秒。适配器侧见 `relay/channel/task/sanyuan/`。
+  - **工作流名必须逐字匹配上游原文**（全角括号、括号后的空格、中间的间隔号 `·`），差一个字符上游就 400「不支持的子接口」。同平台另有 `wanwan 1080P（拼车）` ¥1/次（= `wan3.0-1080p-慢速` 现用档）、`WAN 3.0 PRO` ¥5.2/次、`wan3.0-smart` ¥0.2/秒。
+  - **没选拼车档的理由**：拼车是 `offline=true` 次日发车（12–14 点 / 20 点发车，`submission_wait_seconds=1262`），会把 ¥8 的实时满血档变成次日档，而 ¥2 的慢速档已经在卖同一批片子 → 用户花 4 倍钱等一天，必然投诉退款。慢速需求由 `wan3.0-1080p-慢速` 覆盖。
+- 🔥 **三元巡狩开放 API 只有 8 个入参**（2026-10-21 读 `GET /v1/meta?type=catalog` 实测，8 条工作流的 params 完全一致）：`prompt / duration / resolution / image_data_urls(≤10) / audio_data_urls(≤5) / seed / context_ir_enabled / workflow`。**没有参考视频、没有首尾帧字段** → prime 原宣传的「参考视频 ≤5 个、首尾帧各 1 张」**在开放 API 上无法表达**，必须从卡片描述与前端教程里删掉（不是「少支持一点」，是传了直接 400）。素材上限实际取更严的合并协议文档口径：图 ≤9、音频 ≤3。
+- **适配器已改成「按模型选工作流 + 每模型各自档位」**（`sanyuan/constants.go` 的 `modelProfile` + `profilesByModel`）：慢速档沿用原行为（拼车工作流、时长 1–30 自由、6 档分辨率），满血档固定 30 秒 1080p（方向仍由 `metadata.ratio` / `size` 决定，**不能把横屏拍成竖屏**）、时长/分辨率越界**忽略而非报错**（与原 youzan prime 对外契约一致）。查不到模型名一律 400 `invalid_model`，**绝不静默回落到默认档**（静默回落 = 把 prime 的请求发到拼车档，用户按 30 秒 1080P 付费却拿到次日片）。
+- **上线顺序（与「模型改名/调价」同一口径）**：① **先发版** `deploy/deploy-backend.sh <sha>`（让 sanyuan 适配器认识 prime 并按 WAN 3.0 工作流建单）；② **再跑 SQL** `scripts/prod-switch-prime-upstream-20261021.sql`（**单事务**：channels.models 源头 → abilities 删旧加新 → models 卡片描述；ModelPrice 不变，脚本只复核）。反序会出现「模型可见但一调就 400 invalid_model」。
+- **abilities 换渠道时必须连 group / priority / weight 一起搬**：SQL 用 `INSERT ... SELECT` 从同渠道慢速档那一行复制（`abilities` 主键是 `group+model+channel_id`），否则 prime 会掉出某些分组或优先级错位。
+- ⚠️ **「上游模型自动同步」job 只增不删**（`controller/channel_upstream_update.go`）：它只在 `UpstreamModelUpdateAutoSyncEnabled` 打开时**自动新增**上游新模型，且只写 `channels.models`、**不碰 `abilities`**；`ChannelTypeSanyuan` 不在白名单里，渠道 23 的 models 不会被它改写。
+- **验证手段**：不跑真实任务（上游真金白银扣费）。用**必然被本地 400 拦下**的非法入参探针（如带 `media.type=reference_video` → sanyuan 适配器在 `validateMedia` 阶段就拒，不下载素材、不建单、不扣费），断言返回 400 且文案是 sanyuan 的，即证明路由已切到渠道 23。
+
 ### Project Governance
 
 **Required attribution:** The footer must always include a line crediting the original project:
