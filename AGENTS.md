@@ -259,7 +259,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **入参必须翻译成上游「统一参数」**（`wan30.go`）：`duration` / `ratio` / `resolution` / `referenceImages` / `referenceVideos` / `referenceAudios`。上游文档明确**不要与 `seconds`/`size`/`image`/`input_reference` 混用**，所以 `wan-3.0` **不透传原始 JSON**。素材上限（图 ≤10 / 视频 ≤5 / 音频 ≤5）本地 400。
 - **结果解析必须容错**：成片地址可能在 `video_url`/`url`/`result_url`/`data.url`/`data.video_url`/`output.video_url` 等多处；错误字段可能是对象 / 字符串 / `fail_reason`；状态可能返回 `succeeded`。**严格解析一失败，任务就永远停在非终态**（既看不到失败原因，也永远退不了款）。认不出的非空状态按「还在跑」处理（误判失败=用户白等一次生成，误判成功=把没出的片子当成功交付）。
 - **交付链路**（`controller/video_proxy.go` 的 `ChannelTypeMegaAI` 分支）：轮询响应带成片直链 → 透传且**不带渠道密钥**；没有直链 → 回源上游 `{base}/v1/videos/{upstream_task_id}/content`（带密钥）。⚠️ 必须用 `isSelfProxyPath` 排除站内代理地址，否则代理自我递归。
-- 接入细节与真机验证结论见 `docs/plans/2026-10-22-megabyai-wan3-integration.md`。
+- 接入细节与真机验证结论见 `docs/channel/megabyai-wan3-integration.md`。
 
 ### 生产运维硬约束（血泪教训）
 
