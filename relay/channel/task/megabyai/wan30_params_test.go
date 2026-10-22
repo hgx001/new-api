@@ -146,7 +146,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 			expected: map[string]any{
 				"resolution": "720p",
 			},
-			expectedSize: float64Ptr(1.25),
+			expectedSize: float64Ptr(3.5 / 3.0),
 		},
 		{
 			name: "resolution 1080p：下发与计费同档",
@@ -154,7 +154,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 			expected: map[string]any{
 				"resolution": "1080p",
 			},
-			expectedSize: float64Ptr(1.666667),
+			expectedSize: float64Ptr(4.0 / 3.0),
 		},
 		{
 			name: "size 传 WxH：同时推出分辨率档与宽高比",
@@ -163,7 +163,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 				"resolution": "1080p",
 				"ratio":      "16:9",
 			},
-			expectedSize: float64Ptr(1.666667),
+			expectedSize: float64Ptr(4.0 / 3.0),
 		},
 		{
 			name: "size 传竖屏 WxH：比例取竖屏",
@@ -172,7 +172,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 				"resolution": "720p",
 				"ratio":      "9:16",
 			},
-			expectedSize: float64Ptr(1.25),
+			expectedSize: float64Ptr(3.5 / 3.0),
 		},
 		{
 			name: "metadata 里带分辨率与比例",
@@ -181,7 +181,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 				"resolution": "1080p",
 				"ratio":      "9:16",
 			},
-			expectedSize: float64Ptr(1.666667),
+			expectedSize: float64Ptr(4.0 / 3.0),
 		},
 		{
 			name: "顶层 ratio 透传（通用入参里没有 ratio 字段）",
@@ -328,7 +328,7 @@ func TestWan30UpstreamPayloadNeverLeaksClientFields(t *testing.T) {
 	require.NotContains(t, result.body, "images")
 	require.NotContains(t, result.body, "input_reference")
 
-	require.Equal(t, map[string]float64{"size": 1.25}, result.ratios)
+	require.Equal(t, map[string]float64{"size": 3.5 / 3.0}, result.ratios)
 	require.NotContains(t, result.ratios, "seconds")
 }
 

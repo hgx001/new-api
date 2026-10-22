@@ -31,15 +31,15 @@ func TestEstimateBillingIsFixedPerUse(t *testing.T) {
 }
 
 // wan-3.0 上游按次计价（时长不参与），只有分辨率档参与计价：
-// 480p 1.0 / 720p 1.25 / 1080p 1.666667，且**不能**出现 seconds 倍率。
+// 480p 1.0 / 720p 3.5/3.0 / 1080p 4.0/3.0，且**不能**出现 seconds 倍率。
 func TestEstimateBillingWan30UsesResolutionTierOnly(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	info := &relaycommon.RelayInfo{OriginModelName: "wan-3.0"}
 
 	for resolution, expected := range map[string]float64{
 		"480p":  1.0,
-		"720p":  1.25,
-		"1080p": 1.666667,
+		"720p":  3.5 / 3.0,
+		"1080p": 4.0 / 3.0,
 	} {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Set(wan30ResolutionContextKey, resolution)
@@ -220,7 +220,7 @@ func int64Ptr(value int64) *int64 {
 	return &value
 }
 
-// 对外价必须锁死：480p ¥2.4 / 720p ¥3.0 / 1080p ¥4.0（每次）。
+// 对外价必须锁死：480p ¥3.0 / 720p ¥3.5 / 1080p ¥4.0（每次）。
 // 改价会红：改价要同时改 defaultModelPrice、本测试的期望值和生产 ModelPrice option。
 func TestWan30PriceTiers(t *testing.T) {
 	basePrice, ok := ratio_setting.GetDefaultModelPriceMap()["wan-3.0"]
@@ -228,8 +228,8 @@ func TestWan30PriceTiers(t *testing.T) {
 	baseQuota := int(basePrice * common.QuotaPerUnit)
 
 	for resolution, expectedCny := range map[string]float64{
-		"480p":  2.4,
-		"720p":  3.0,
+		"480p":  3.0,
+		"720p":  3.5,
 		"1080p": 4.0,
 	} {
 		quota := int(float64(baseQuota) * wan30ResolutionSizeRatio[resolution])
