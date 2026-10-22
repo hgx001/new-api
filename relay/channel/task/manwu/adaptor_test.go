@@ -214,6 +214,32 @@ func TestValidateAcceptsReferenceImageFieldAliases(t *testing.T) {
 	}
 }
 
+// camelCase 字段名必须一样接住（2026-10-22 丢图事故的同类变种）。
+//
+// 为什么单独一组：Go 的 encoding/json 匹配 json tag 时**忽略大小写但不忽略下划线**
+// ——「referenceImages」匹配不上 tag「reference_images」。而 JS/TS 生态的客户端
+// 默认就是 camelCase，于是这类请求的图会被**静默丢弃** → 建单无图 →
+// 官网回「参考资源 图 N 当前不存在」，额度照烧。
+func TestValidateAcceptsCamelCaseReferenceImageFields(t *testing.T) {
+	cases := map[string]string{
+		"inputReference":  `"inputReference":["https://a.example/1.png"]`,
+		"imageUrl":        `"imageUrl":"https://a.example/1.png"`,
+		"imageUrls":       `"imageUrls":["https://a.example/1.png"]`,
+		"referenceImage":  `"referenceImage":"https://a.example/1.png"`,
+		"referenceImages": `"referenceImages":["https://a.example/1.png"]`,
+		"inputImages":     `"inputImages":["https://a.example/1.png"]`,
+	}
+	for name, field := range cases {
+		c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi",`+field+`}`)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), name)
+		req, err := getNormalizedRequest(c)
+		require.NoError(t, err, name)
+		assert.Equal(t, []string{"https://a.example/1.png"}, req.Images, name)
+		assert.Equal(t, name, req.ReferenceSource, name)
+		assert.Equal(t, 1, req.ReferenceCount, name)
+	}
+}
+
 // 解析失败必须报错：旧实现 parseStringList 两种形态都失败就**静默返回 nil**，
 // 于是 ["https://a.png", 123] 这种混合数组会把整组图丢掉，建单变成「无图」。
 func TestValidateRejectsMalformedReferenceImages(t *testing.T) {
@@ -752,9 +778,26 @@ func TestReverseBuildsPromptModeJob(t *testing.T) {
 	assert.Equal(t, "https://cdn.example/clip.mp4", first["url"])
 }
 
+// 反解链路的 camelCase 视频字段：inputReference 必须当**视频**接住，
+// 且不得被当成「图片 + 视频混传」而误毙（hasAnyReferenceImage 要跳过它）。
+func TestReverseAcceptsCamelCaseVideoField(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"jimeng-video-reverse","inputReference":"https://cdn.example/clip.mp4"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	payload := decodePayload(t, reader)
+	inputs, ok := payload["inputs"].([]any)
+	require.True(t, ok)
+	require.Len(t, inputs, 1)
+	first, ok := inputs[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, InputTypeVideo, first["type"])
+	assert.Equal(t, "https://cdn.example/clip.mp4", first["url"])
+}
+
 // 反解的 prompt 可选（ArcReel 建单允许空 prompt），带 prompt 则当附加指令透传。
-func TestReversePromptIsOptional(t *testing.T) {
-	c, info, a := postVideoCtx(t, `{"model":"jimeng-video-reverse","input_reference":"https://cdn.example/c.mp4","prompt":"突出镜头运动"}`)
+func TestReversePromptIsOptional(t *testing.T) {	c, info, a := postVideoCtx(t, `{"model":"jimeng-video-reverse","input_reference":"https://cdn.example/c.mp4","prompt":"突出镜头运动"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	reader, err := a.BuildRequestBody(c, info)
 	require.NoError(t, err)

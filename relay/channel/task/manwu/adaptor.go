@@ -305,6 +305,15 @@ type clientRequest struct {
 	ReferenceImage  json.RawMessage `json:"reference_image"`
 	ReferenceImages json.RawMessage `json:"reference_images"`
 	InputImages     json.RawMessage `json:"input_images"`
+	// camelCase 变体：Go 的 encoding/json 匹配 json tag 时**忽略大小写但不忽略下划线**
+	// ——「referenceImages」匹配不上 tag「reference_images」。而 JS/TS 生态的客户端
+	// 默认就发 camelCase，不单列就是又一次静默丢图（2026-10-22 丢图事故的同类变种）。
+	InputReferenceCamelCase  json.RawMessage `json:"inputReference"`
+	ImageURLCamelCase        json.RawMessage `json:"imageUrl"`
+	ImageURLsCamelCase       json.RawMessage `json:"imageUrls"`
+	ReferenceImageCamelCase  json.RawMessage `json:"referenceImage"`
+	ReferenceImagesCamelCase json.RawMessage `json:"referenceImages"`
+	InputImagesCamelCase     json.RawMessage `json:"inputImages"`
 	Videos          json.RawMessage `json:"videos"`
 	Video           json.RawMessage `json:"video"`
 	N               json.RawMessage `json:"n"`
@@ -1218,13 +1227,19 @@ type referenceImageField struct {
 // （客户端同时传 images 和 image_urls 时），反而制造新的错位。
 var referenceImageFields = []referenceImageField{
 	{"input_reference", func(r clientRequest) json.RawMessage { return r.InputReference }},
+	{"inputReference", func(r clientRequest) json.RawMessage { return r.InputReferenceCamelCase }},
 	{"images", func(r clientRequest) json.RawMessage { return r.Images }},
 	{"image", func(r clientRequest) json.RawMessage { return r.Image }},
 	{"image_url", func(r clientRequest) json.RawMessage { return r.ImageURL }},
+	{"imageUrl", func(r clientRequest) json.RawMessage { return r.ImageURLCamelCase }},
 	{"image_urls", func(r clientRequest) json.RawMessage { return r.ImageURLs }},
+	{"imageUrls", func(r clientRequest) json.RawMessage { return r.ImageURLsCamelCase }},
 	{"reference_image", func(r clientRequest) json.RawMessage { return r.ReferenceImage }},
+	{"referenceImage", func(r clientRequest) json.RawMessage { return r.ReferenceImageCamelCase }},
 	{"reference_images", func(r clientRequest) json.RawMessage { return r.ReferenceImages }},
+	{"referenceImages", func(r clientRequest) json.RawMessage { return r.ReferenceImagesCamelCase }},
 	{"input_images", func(r clientRequest) json.RawMessage { return r.InputImages }},
+	{"inputImages", func(r clientRequest) json.RawMessage { return r.InputImagesCamelCase }},
 }
 
 // resolveReferenceImages 解析参考图：按 referenceImageFields 的优先级取第一个有值的字段。
@@ -1265,9 +1280,10 @@ func resolveReferenceImages(req clientRequest) ([]string, string, error) {
 //
 // 注意 input_reference 不算图片：反解链路里 input_reference 装的是**参考视频**
 // （resolveVideos 复用同一字段），把它算成图片会把所有反解请求都毙掉。
+// camelCase 的 inputReference 同理（那是同一个字段的另一种写法）。
 func hasAnyReferenceImage(req clientRequest) bool {
 	for _, field := range referenceImageFields {
-		if field.Name == "input_reference" {
+		if field.Name == "input_reference" || field.Name == "inputReference" {
 			continue
 		}
 		if hasValue(field.Raw(req)) {
@@ -1375,6 +1391,7 @@ func assertPromptReferenceCoverage(prompt string, images []string) error {
 func resolveVideos(req clientRequest) ([]string, error) {
 	fields := []referenceImageField{
 		{"input_reference", func(r clientRequest) json.RawMessage { return r.InputReference }},
+		{"inputReference", func(r clientRequest) json.RawMessage { return r.InputReferenceCamelCase }},
 		{"videos", func(r clientRequest) json.RawMessage { return r.Videos }},
 		{"video", func(r clientRequest) json.RawMessage { return r.Video }},
 	}
