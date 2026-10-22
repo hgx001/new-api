@@ -82,6 +82,11 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('VPN'), href: '/vpn' })
   }
 
+  // Cloud servers (server rental)
+  if (modules?.servers !== false) {
+    links.push({ title: t('Cloud Servers'), href: '/servers' })
+  }
+
   // Tutorials (internal integration guide page)
   if (modules?.tutorials !== false) {
     links.push({ title: t('Tutorials'), href: '/tutorials' })

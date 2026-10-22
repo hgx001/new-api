@@ -31,6 +31,8 @@ export type HeaderNavModules = {
   about: boolean
   tutorials?: boolean
   blog?: boolean
+  /** 服务器租赁入口；未配置时默认显示，配置为 false 可隐藏 */
+  servers?: boolean
   [key: string]: boolean | ModuleAccess | undefined
 }
 
@@ -43,6 +45,7 @@ const DEFAULT_HEADER_NAV_MODULES: HeaderNavModules = {
   about: true,
   tutorials: true,
   blog: true,
+  servers: true,
 }
 
 const DEFAULTS: Record<HeaderNavModule, ModuleAccess> = {
