@@ -145,6 +145,21 @@
 再改渠道（管理 API 加 `models` + `model_mapping`，自动重建能力行）→ 改 `ModelPrice` option
 → 建 `models` 广场卡片。顺序反了会出现「模型可见但一调就坏」。
 
+### 生产上线记录（2026-10-22）
+
+- 后端 commit：`f5699fdd`（部署镜像内已验证含 `seedance2.5-特惠` 字面量）
+- 渠道 24：`models = wan-3.0,seedance2.5-特惠`、
+  `model_mapping = {"seedance2.5-特惠":"wan-3.0"}`、`status=1`、密钥未变
+  （len=51 / md5=634b4ecc8476f75d516bd0204116c065）
+- 能力：`seedance2.5-特惠` 与 `wan-3.0` 均 `enabled=true`（default 组）
+- `ModelPrice` option：`"seedance2.5-特惠": 0.6849315068493151`（= ¥5.00/条）
+- 广场卡片已建；`/api/pricing` 与 `/v1/models` 均已列出（endpoint=openai-video）
+- ⚠️ **未跑真实任务**（用户未授权）：功能未端到端验证。首单需人工核对
+  「下游报 seedance2.5-特惠、上游实际是 wan-3.0、成片正常」。
+- 前端改动（渠道类型白名单 + 按次穷举表）**无需单独发版**：
+  `supportedModels` 在前端没有任何消费方（死配置），且线上旧前端的按秒判定
+  对本模型名不匹配 → 广场本就显示为按次。
+
 ## 风险与注意
 
 - ⚠️ **上游实际扣费以「每次固定价」为准**。若上游改成按时长计价（当前价目表是
