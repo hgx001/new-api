@@ -174,7 +174,10 @@ export function MyServers({
           plan.specs.find((s) => s.id === server.config.specId) ?? plan.specs[0]
         const region = getRegion(server.config.region)
         const bandwidth = getBandwidth(server.config.mbps)
-        const expired = server.status === 'expired'
+        // 到期时间到了同样算过期：演示态的 status 只在开通时写成 running，
+        // 不会随时间翻转，只看 status 会一直显示「运行中」。
+        const expired =
+          server.status === 'expired' || server.expireAt * 1000 <= Date.now()
 
         return (
           <Card

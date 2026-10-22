@@ -60,7 +60,6 @@ export function ServerHero({
         embedded ? 'pt-8 md:pt-10' : 'pt-10 md:pt-14'
       )}
     >
-
       {/* 光晕与网格纹理 */}
       <div className='pointer-events-none absolute -top-32 -left-20 size-96 rounded-full bg-[#7dd3c0]/15 blur-3xl' />
       <div className='pointer-events-none absolute -right-24 -bottom-32 size-[28rem] rounded-full bg-sky-500/10 blur-3xl' />

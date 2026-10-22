@@ -172,7 +172,7 @@ const newKeys = {
       'Change plan, specs or bandwidth and the remaining period is charged at a prorated price.',
     'Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.':
       'Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.',
-    'Shanghai': 'Shanghai',
+    Shanghai: 'Shanghai',
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       'Talk to the engineers who run the platform instead of a generic ticket queue.',
     '{{days}} days left': '{{days}} days left',
@@ -182,6 +182,11 @@ const newKeys = {
     'Save it to your album and scan later':
       'Save it to your album and scan later',
     'WeChat ID': 'WeChat ID',
+    'Demo payment (no real charge)': 'Demo payment (no real charge)',
+    'Demo mode: the payment is simulated and no real money is charged.':
+      'Demo mode: the payment is simulated and no real money is charged.',
+    'Online payment is not available yet, please contact the administrator':
+      'Online payment is not available yet, please contact the administrator',
   },
   zh: {
     '+{{price}} / month': '+{{price}} / 月',
@@ -324,7 +329,7 @@ const newKeys = {
       '变更型号、配置或带宽后，剩余周期按比例折算补差价。',
     'Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.':
       '计算优化实例，适合批处理任务、模型推理与数据处理，配备高主频 vCPU。',
-    'Shanghai': '上海',
+    Shanghai: '上海',
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       '直接和运营平台的工程师沟通，而不是在通用工单队列里排队。',
     '{{days}} days left': '剩余 {{days}} 天',
@@ -333,6 +338,11 @@ const newKeys = {
     'Save QR code': '保存二维码',
     'Save it to your album and scan later': '保存到相册后再扫码',
     'WeChat ID': '微信号',
+    'Demo payment (no real charge)': '演示支付（不会真实扣费）',
+    'Demo mode: the payment is simulated and no real money is charged.':
+      '演示模式：支付流程为模拟，不会产生真实扣费。',
+    'Online payment is not available yet, please contact the administrator':
+      '在线支付暂未开通，请联系管理员',
   },
   fr: {
     '+{{price}} / month': '+{{price}} / mois',
@@ -486,7 +496,7 @@ const newKeys = {
       'Modifier l’offre, les spécifications ou la bande passante : la période restante est facturée au prorata.',
     'Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.':
       'Instances optimisées pour le calcul : tâches par lots, inférence de modèles et traitement de données. vCPU à haute fréquence.',
-    'Shanghai': 'Shanghai',
+    Shanghai: 'Shanghai',
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       'Échangez avec les ingénieurs qui exploitent la plateforme au lieu d’attendre dans une file de tickets générique.',
     '{{days}} days left': '{{days}} jours restants',
@@ -496,6 +506,12 @@ const newKeys = {
     'Save it to your album and scan later':
       'Enregistrez-le dans vos photos pour le scanner plus tard',
     'WeChat ID': 'Identifiant WeChat',
+    'Demo payment (no real charge)':
+      'Paiement de démonstration (aucun débit réel)',
+    'Demo mode: the payment is simulated and no real money is charged.':
+      'Mode démonstration : le paiement est simulé, aucun montant réel n’est débité.',
+    'Online payment is not available yet, please contact the administrator':
+      'Le paiement en ligne n’est pas encore disponible, veuillez contacter l’administrateur',
   },
   ja: {
     '+{{price}} / month': '+{{price}} / 月',
@@ -648,16 +664,20 @@ const newKeys = {
       'プラン・仕様・帯域を変更すると、残り期間は按分精算されます。',
     'Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.':
       '計算最適化インスタンス。バッチ処理、モデル推論、データ処理に適しています。高クロック速度の vCPU を搭載。',
-    'Shanghai': '上海',
+    Shanghai: '上海',
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       '汎用チケットの待ち行列ではなく、プラットフォームを運用するエンジニアと直接話せます。',
     '{{days}} days left': '残り {{days}} 日',
     'Click to enlarge': 'クリックして拡大',
     'Enlarge QR code': 'QRコードを拡大',
     'Save QR code': 'QRコードを保存',
-    'Save it to your album and scan later':
-      'アルバムに保存して後からスキャン',
+    'Save it to your album and scan later': 'アルバムに保存して後からスキャン',
     'WeChat ID': 'WeChatのアカウントID',
+    'Demo payment (no real charge)': 'デモ決済（実際の請求は発生しません）',
+    'Demo mode: the payment is simulated and no real money is charged.':
+      'デモモード：決済はシミュレーションであり、実際の請求は発生しません。',
+    'Online payment is not available yet, please contact the administrator':
+      'オンライン決済はまだ利用できません。管理者までお問い合わせください。',
   },
   ru: {
     '+{{price}} / month': '+{{price}} / мес.',
@@ -809,7 +829,7 @@ const newKeys = {
       'При смене тарифа, конфигурации или полосы пропорционально оплачивается остаток периода.',
     'Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.':
       'Инстансы, оптимизированные для вычислений: пакетные задачи, инференс моделей и обработка данных. Высокочастотные vCPU.',
-    'Shanghai': 'Шанхай',
+    Shanghai: 'Шанхай',
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       'Общайтесь напрямую с инженерами, которые ведут платформу, а не в общей очереди тикетов.',
     '{{days}} days left': 'Осталось {{days}} дн.',
@@ -819,6 +839,12 @@ const newKeys = {
     'Save it to your album and scan later':
       'Сохраните в галерею, чтобы отсканировать позже',
     'WeChat ID': 'Идентификатор WeChat',
+    'Demo payment (no real charge)':
+      'Демонстрационная оплата (без реального списания)',
+    'Demo mode: the payment is simulated and no real money is charged.':
+      'Демо-режим: платёж имитируется, реальное списание средств не происходит.',
+    'Online payment is not available yet, please contact the administrator':
+      'Онлайн-оплата пока недоступна, пожалуйста, свяжитесь с администратором',
   },
   vi: {
     '+{{price}} / month': '+{{price}} / tháng',
@@ -963,22 +989,26 @@ const newKeys = {
     'You pay': 'Bạn trả',
     'Your server is being provisioned. The IP address, username and password are available under My servers.':
       'Máy chủ đang được cấp phát. IP, tên đăng nhập và mật khẩu có trong Máy chủ của tôi.',
-    'Best for personal projects and blogs':
-      'Phù hợp với dự án cá nhân và blog',
+    'Best for personal projects and blogs': 'Phù hợp với dự án cá nhân và blog',
     'Change plan, specs or bandwidth and the remaining period is charged at a prorated price.':
       'Khi đổi gói, cấu hình hoặc băng thông, thời gian còn lại được tính theo tỷ lệ.',
     'Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.':
       'Máy chủ tối ưu cho tính toán: xử lý hàng loạt, suy luận mô hình và xử lý dữ liệu. vCPU tần số cao.',
-    'Shanghai': 'Thượng Hải',
+    Shanghai: 'Thượng Hải',
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       'Nói chuyện trực tiếp với các kỹ sư vận hành nền tảng thay vì xếp hàng trong hàng đợi ticket chung.',
     '{{days}} days left': 'Còn {{days}} ngày',
     'Click to enlarge': 'Nhấn để phóng to',
     'Enlarge QR code': 'Phóng to mã QR',
     'Save QR code': 'Lưu mã QR',
-    'Save it to your album and scan later':
-      'Lưu vào thư viện rồi quét sau',
+    'Save it to your album and scan later': 'Lưu vào thư viện rồi quét sau',
     'WeChat ID': 'Tài khoản WeChat',
+    'Demo payment (no real charge)':
+      'Thanh toán thử nghiệm (không bị trừ tiền thật)',
+    'Demo mode: the payment is simulated and no real money is charged.':
+      'Chế độ thử nghiệm: thanh toán được mô phỏng, không có khoản tiền nào bị trừ thật.',
+    'Online payment is not available yet, please contact the administrator':
+      'Thanh toán trực tuyến chưa mở, vui lòng liên hệ quản trị viên',
   },
 }
 

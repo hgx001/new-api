@@ -63,8 +63,6 @@ export interface ServerPlan {
   basePricePerMonth: number
   /** 可选规格 */
   specs: ServerSpec[]
-  /** 推荐标记用的 i18n key（可为空） */
-  highlightKey?: string
   /** 角标标签 i18n key（可为空） */
   badgeKey?: string
 }
@@ -130,6 +128,8 @@ export interface ServerOrder {
   status: 'pending' | 'success' | 'failed'
   createdAt: number
   paidAt?: number
+  /** 下单账号的 user id（演示态用于多账号隔离） */
+  ownerUid?: string
 }
 
 export interface OwnedServer {
@@ -148,10 +148,20 @@ export interface OwnedServer {
   createdAt: number
   /** 是否为演示数据（前端模拟） */
   demo: boolean
+  /** 所属账号的 user id（演示态用于多账号隔离） */
+  ownerUid?: string
 }
 
 export interface PayMethod {
-  name: string
+  /** 后端下发的渠道名（可能是中文，前端不翻译） */
+  name?: string
+  /** 渠道标识，例如 alipay / wechat / balance / demo */
   type: string
   icon?: string
+  /** 展示名 i18n key；内置渠道用它替代后端返回的原文 */
+  nameKey?: string
+  /** 渠道最低金额（后端 min_topup 是字符串，这里已转成数字） */
+  min_topup?: number
+  /** 是否为演示渠道（不产生真实扣费） */
+  demo?: boolean
 }

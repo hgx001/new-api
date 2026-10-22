@@ -5202,7 +5202,10 @@
     "Enlarge QR code": "QRコードを拡大",
     "Save QR code": "QRコードを保存",
     "Save it to your album and scan later": "アルバムに保存して後からスキャン",
-    "WeChat ID": "WeChatのアカウントID"
+    "WeChat ID": "WeChatのアカウントID",
+    "Demo payment (no real charge)": "デモ決済（実際の請求は発生しません）",
+    "Demo mode: the payment is simulated and no real money is charged.": "デモモード：決済はシミュレーションであり、実際の請求は発生しません。",
+    "Online payment is not available yet, please contact the administrator": "オンライン決済はまだ利用できません。管理者までお問い合わせください。"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",

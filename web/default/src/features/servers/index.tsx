@@ -53,7 +53,7 @@ import {
   DEFAULT_TERM,
 } from './constants'
 import { computePrice, defaultConfigFor } from './lib/pricing'
-import { useServerStore } from './store'
+import { useOwnedServers, useServerStore } from './store'
 import type { OwnedServer, PayMethod, ServerConfig } from './types'
 
 const ADVANTAGES = [
@@ -131,7 +131,7 @@ export function ServersContent({
   const [passwordTarget, setPasswordTarget] = useState<OwnedServer | null>(null)
   const [passwordSubmitting, setPasswordSubmitting] = useState(false)
 
-  const servers = useServerStore((s) => s.servers)
+  const servers = useOwnedServers()
   const addOrder = useServerStore((s) => s.addOrder)
   const settleOrder = useServerStore((s) => s.settleOrder)
   const updatePassword = useServerStore((s) => s.updatePassword)
@@ -155,12 +155,15 @@ export function ServersContent({
   useEffect(() => {
     // 支付方式列表要登录后才有意义，未登录时不必去请求（否则必然 401）
     if (!isAuthenticated) return
-    getServerPayMethods().then((methods) => {
-      setPayMethods(methods)
-      if (methods.length > 0) {
-        setSelectedMethod((current) => current || methods[0].type)
-      }
-    })
+    getServerPayMethods()
+      .then((methods) => {
+        setPayMethods(methods)
+        // 空列表表示站点当前没有可用的在线支付渠道，收银台会提示并禁用支付
+        setSelectedMethod((current) => current || methods[0]?.type || '')
+      })
+      .catch(() => {
+        setPayMethods([])
+      })
   }, [isAuthenticated])
 
   const handleConfigChange = useCallback((patch: Partial<ServerConfig>) => {

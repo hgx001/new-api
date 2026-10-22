@@ -5202,7 +5202,10 @@
     "Enlarge QR code": "Увеличить QR-код",
     "Save QR code": "Сохранить QR-код",
     "Save it to your album and scan later": "Сохраните в галерею, чтобы отсканировать позже",
-    "WeChat ID": "Идентификатор WeChat"
+    "WeChat ID": "Идентификатор WeChat",
+    "Demo payment (no real charge)": "Демонстрационная оплата (без реального списания)",
+    "Demo mode: the payment is simulated and no real money is charged.": "Демо-режим: платёж имитируется, реальное списание средств не происходит.",
+    "Online payment is not available yet, please contact the administrator": "Онлайн-оплата пока недоступна, пожалуйста, свяжитесь с администратором"
   },
   "Integration Tutorial": "Руководство по интеграции",
   "Claude Code Installation": "Установка Claude Code",

@@ -1,4 +1,4 @@
-import { CheckCircle2, Loader2, ShieldCheck, Wallet } from 'lucide-react'
+import { CheckCircle2, Info, Loader2, ShieldCheck, Wallet } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
+import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
 
 import { getBandwidth, getPlan, getRegion, getTerm } from '../constants'
@@ -69,6 +70,7 @@ export function CheckoutDialog({
   onDone,
 }: CheckoutDialogProps) {
   const { t } = useTranslation()
+  const { currency } = useSystemConfig()
 
   const plan = getPlan(config.plan)
   const spec = plan.specs.find((s) => s.id === config.specId) ?? plan.specs[0]
@@ -76,6 +78,13 @@ export function CheckoutDialog({
   const bandwidth = getBandwidth(config.mbps)
   const term = getTerm(config.term)
   const price = computePrice(config)
+
+  // 后端下发的 min_topup 是「美元单位」，本页价格是人民币，
+  // 与钱包页保持一致：按站点汇率换算后再比较门槛。
+  const usdExchangeRate =
+    currency?.quotaDisplayType === 'USD' ? 1 : currency?.usdExchangeRate || 1
+  const selectedIsDemo =
+    payMethods.find((m) => m.type === selectedMethod)?.demo ?? false
 
   useEffect(() => {
     if (open && payMethods.length > 0 && !selectedMethod) {
@@ -152,39 +161,73 @@ export function CheckoutDialog({
                 <div className='text-sm font-semibold'>
                   {t('Payment Method')}
                 </div>
-                <div className='grid gap-2 sm:grid-cols-2'>
-                  {payMethods.map((method) => {
-                    const active = selectedMethod === method.type
-                    const isAlipay = method.type === 'alipay'
-                    return (
-                      <button
-                        key={method.type}
-                        type='button'
-                        disabled={paying}
-                        onClick={() => onSelectMethod(method.type)}
-                        className={cn(
-                          'flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left text-sm transition-all disabled:opacity-60',
-                          active
-                            ? 'border-[#7dd3c0] bg-[#7dd3c0]/[0.08] shadow-[0_0_0_3px_rgba(125,211,192,0.16)]'
-                            : 'border-border hover:border-[#7dd3c0]/60'
+                {payMethods.length === 0 ? (
+                  <div className='border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-xl border px-3.5 py-3 text-xs leading-relaxed'>
+                    <Info className='mt-0.5 size-4 shrink-0' />
+                    <span>
+                      {t(
+                        'Online payment is not available yet, please contact the administrator'
+                      )}
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className='grid gap-2 sm:grid-cols-2'>
+                      {payMethods.map((method) => {
+                        const active = selectedMethod === method.type
+                        const isAlipay = method.type === 'alipay'
+                        const minTopup = method.min_topup ?? 0
+                        const minTopupCny = minTopup * usdExchangeRate
+                        const belowMin =
+                          minTopup > 0 && minTopupCny > price.total
+                        const label = method.nameKey
+                          ? t(method.nameKey)
+                          : method.name || method.type
+                        return (
+                          <button
+                            key={method.type}
+                            type='button'
+                            disabled={paying || belowMin}
+                            title={
+                              belowMin
+                                ? t('Minimum topup amount: {{amount}}', {
+                                    amount: formatPrice(minTopupCny),
+                                  })
+                                : undefined
+                            }
+                            onClick={() => onSelectMethod(method.type)}
+                            className={cn(
+                              'flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left text-sm transition-all disabled:opacity-60',
+                              active
+                                ? 'border-[#7dd3c0] bg-[#7dd3c0]/[0.08] shadow-[0_0_0_3px_rgba(125,211,192,0.16)]'
+                                : 'border-border hover:border-[#7dd3c0]/60'
+                            )}
+                          >
+                            {isAlipay ? (
+                              <span className='flex size-6 shrink-0 items-center justify-center rounded-md bg-[#1677ff] text-[11px] font-bold text-white'>
+                                支
+                              </span>
+                            ) : (
+                              <span className='bg-muted flex size-6 shrink-0 items-center justify-center rounded-md'>
+                                <Wallet className='text-muted-foreground size-3.5' />
+                              </span>
+                            )}
+                            <span className='truncate font-medium'>
+                              {label}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {selectedIsDemo && (
+                      <p className='text-muted-foreground text-[11px] leading-relaxed'>
+                        {t(
+                          'Demo mode: the payment is simulated and no real money is charged.'
                         )}
-                      >
-                        {isAlipay ? (
-                          <span className='flex size-6 shrink-0 items-center justify-center rounded-md bg-[#1677ff] text-[11px] font-bold text-white'>
-                            支
-                          </span>
-                        ) : (
-                          <span className='bg-muted flex size-6 shrink-0 items-center justify-center rounded-md'>
-                            <Wallet className='text-muted-foreground size-3.5' />
-                          </span>
-                        )}
-                        <span className='truncate font-medium'>
-                          {method.name || method.type}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
+                      </p>
+                    )}
+                  </>
+                )}
               </div>
 
               <div className='bg-muted/50 rounded-xl p-3.5'>
@@ -227,7 +270,9 @@ export function CheckoutDialog({
                   {t('Cancel')}
                 </Button>
                 <Button
-                  disabled={paying || !selectedMethod}
+                  disabled={
+                    paying || !selectedMethod || payMethods.length === 0
+                  }
                   onClick={onPay}
                   className='bg-[#3a8f7a] text-white hover:bg-[#2f7a66]'
                 >

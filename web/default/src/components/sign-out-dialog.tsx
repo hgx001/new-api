@@ -21,6 +21,7 @@ import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { logout } from '@/features/auth/api'
+import { clearServerData } from '@/features/servers/store'
 import { useAuthStore } from '@/stores/auth-store'
 
 interface SignOutDialogProps {
@@ -39,6 +40,9 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
       /* empty */
     }
     auth.reset()
+    // 服务器实例的凭据（公网 IP / root 密码）保存在浏览器本地，
+    // 登出时必须一起清掉，否则同一台电脑上的下一个登录用户可以直接看到。
+    clearServerData()
     try {
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem('uid')

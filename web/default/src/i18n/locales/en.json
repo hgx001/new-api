@@ -5202,7 +5202,10 @@
     "Enlarge QR code": "Enlarge QR code",
     "Save QR code": "Save QR code",
     "Save it to your album and scan later": "Save it to your album and scan later",
-    "WeChat ID": "WeChat ID"
+    "WeChat ID": "WeChat ID",
+    "Demo payment (no real charge)": "Demo payment (no real charge)",
+    "Demo mode: the payment is simulated and no real money is charged.": "Demo mode: the payment is simulated and no real money is charged.",
+    "Online payment is not available yet, please contact the administrator": "Online payment is not available yet, please contact the administrator"
   },
   "Integration Tutorial": "Integration Tutorial",
   "Claude Code Installation": "Claude Code Installation",

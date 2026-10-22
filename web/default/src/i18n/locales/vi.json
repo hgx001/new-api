@@ -5202,7 +5202,10 @@
     "Enlarge QR code": "Phóng to mã QR",
     "Save QR code": "Lưu mã QR",
     "Save it to your album and scan later": "Lưu vào thư viện rồi quét sau",
-    "WeChat ID": "Tài khoản WeChat"
+    "WeChat ID": "Tài khoản WeChat",
+    "Demo payment (no real charge)": "Thanh toán thử nghiệm (không bị trừ tiền thật)",
+    "Demo mode: the payment is simulated and no real money is charged.": "Chế độ thử nghiệm: thanh toán được mô phỏng, không có khoản tiền nào bị trừ thật.",
+    "Online payment is not available yet, please contact the administrator": "Thanh toán trực tuyến chưa mở, vui lòng liên hệ quản trị viên"
   },
   "Integration Tutorial": "Hướng dẫn tích hợp",
   "Claude Code Installation": "Cài đặt Claude Code",

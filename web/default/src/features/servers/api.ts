@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { api } from '@/lib/api'
 
-import { getPlan, getRegion, getTerm } from './constants'
+import { getRegion, getTerm } from './constants'
 import type { OwnedServer, PayMethod, ServerConfig, ServerOrder } from './types'
 
 /**
@@ -32,12 +32,47 @@ import type { OwnedServer, PayMethod, ServerConfig, ServerOrder } from './types'
  *    三个函数内部换成真实请求，调用方无需改动。
  */
 
-/** 真实支付方式拉取失败时的兜底，保证收银台始终可用 */
-const FALLBACK_PAY_METHODS: PayMethod[] = [
-  { name: 'Alipay', type: 'alipay' },
-  { name: 'WeChat Pay', type: 'wechat' },
-  { name: 'Balance', type: 'balance' },
-]
+/**
+ * 后端接入后置为 true。
+ *
+ * 为 true 时不再提供演示支付渠道，支付方式完全以服务端下发的为准；
+ * 同时 `createServerOrder` / `payServerOrder` / `changeServerPassword`
+ * 换成真实请求。
+ */
+export const PAYMENT_BACKEND_ENABLED = false
+
+/**
+ * 演示支付渠道。
+ *
+ * 只在后端未接入、且站点没有开通在线支付时出现，并且**明确标注为演示**，
+ * 不冒充支付宝 / 微信等真实渠道，避免用户以为站点真的能收款。
+ */
+const DEMO_PAY_METHOD: PayMethod = {
+  type: 'demo',
+  nameKey: 'Demo payment (no real charge)',
+  demo: true,
+}
+
+/** 后端 pay_methods 的原始结构（min_topup 是字符串） */
+interface RawPayMethod {
+  name?: string
+  type?: string
+  icon?: string
+  min_topup?: string | number
+}
+
+function parsePayMethods(raw: unknown): PayMethod[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((m): m is RawPayMethod => !!m && typeof m === 'object')
+    .filter((m) => !!m.type)
+    .map((m) => ({
+      name: m.name,
+      type: m.type as string,
+      icon: m.icon,
+      min_topup: Number(m.min_topup) || 0,
+    }))
+}
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -74,7 +109,12 @@ function generateIp(regionId: string) {
   )}`
 }
 
-/** 获取可用支付方式（优先真实配置，回退到内置列表） */
+/**
+ * 获取可用支付方式。
+ *
+ * 返回空数组表示「站点当前没有可用的在线支付渠道」，调用方需要禁用支付并提示；
+ * 不会伪造支付宝 / 微信等真实渠道。
+ */
 export async function getServerPayMethods(): Promise<PayMethod[]> {
   try {
     const res = await api.get('/api/user/topup/info', {
@@ -83,15 +123,16 @@ export async function getServerPayMethods(): Promise<PayMethod[]> {
       skipErrorHandler: true,
     })
     const info = res.data?.data as
-      | { pay_methods?: PayMethod[]; enable_online_topup?: boolean }
+      | { pay_methods?: unknown; enable_online_topup?: boolean }
       | undefined
-    if (info?.enable_online_topup && info.pay_methods?.length) {
-      return info.pay_methods
+    const methods = parsePayMethods(info?.pay_methods)
+    if (info?.enable_online_topup && methods.length > 0) {
+      return methods
     }
   } catch {
-    // 网络异常时使用兜底支付方式
+    // 网络异常：按「站点未开通在线支付」处理，不伪造渠道
   }
-  return FALLBACK_PAY_METHODS
+  return PAYMENT_BACKEND_ENABLED ? [] : [DEMO_PAY_METHOD]
 }
 
 /** 创建订单（模拟后端下单） */
@@ -124,9 +165,6 @@ export async function payServerOrder(
 ): Promise<{ success: boolean; server?: OwnedServer; messageKey?: string }> {
   await delay(1400)
 
-  const plan = getPlan(order.config.plan)
-  const spec =
-    plan.specs.find((s) => s.id === order.config.specId) ?? plan.specs[0]
   const term = getTerm(order.config.term)
   const region = getRegion(order.config.region)
   const expireAt = Math.floor(
@@ -146,8 +184,6 @@ export async function payServerOrder(
     demo: true,
   }
 
-  // spec / region 引用到的字段用于保证配置完整
-  void spec
   return { success: true, server }
 }
 
