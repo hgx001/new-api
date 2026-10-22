@@ -349,11 +349,16 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **改价入口（后台）**：前台 `/pricing` 是只读展示；真正改价在 **「系统设置 → 计费设置 → 模型定价」`/system-settings/billing/model-pricing`**（改 `ModelPrice` / `ModelRatio` JSON），或 **「模型管理」`/models` 的单个模型编辑抽屉**（逐个模型改价格 + 卡片描述）。⚠️ `ModelPrice` 存的是 **USD 等值**（¥价 ÷ 7.3）且**会覆盖代码里的 defaultModelPrice**；改完要**等 ≥70s**（`SYNC_FREQUENCY`=60s）才生效，改价前按「Model Pricing and Catalog Rules」核官方最新价 + 区域 + 币种。
 - **⚠️ 调价 = 改两处，缺一即错价**（2026-10-22 实操）：任务模型的档位价 = `ModelPrice`（480P 基准，USD 等值）× `seconds`（生成 + 参考视频总秒数）× `size`（分辨率倍率）。所以
   1. **`ModelPrice`（DB option + 代码 defaultModelPrice）** = 480P 基准 ¥价 ÷ 7.3。当前 `wan3.0-video-官网` = 0.2/7.3 = **0.0273972602739726**；
-  2. **`resolutionSizeRatio`（`relay/channel/task/wan3/constants.go`）** = 各档 ¥价 ÷ 480P ¥价。当前 **480P 1.0 / 720P 2.25 / 1080P 4.0**（0.45/0.20 = 2.25，**不是**整数倍，不要想当然改回 2）。
+  2. **分辨率倍率（`relay/channel/task/wan3/constants.go`）** = 各档 ¥价 ÷ 480P ¥价，且**按对外模型名分表**：`officialResolutionSizeRatio`（仅 `wan3.0-video-官网`）= **480P 1.0 / 720P 2.25 / 1080P 4.0**（0.45/0.20 = 2.25，**不是**整数倍）；`standardResolutionSizeRatio`（其余模型名）= **1 / 2 / 4**。
   - 只改 DB 不改倍率 → 720P/1080P 仍是旧价；只改倍率不改 DB → 全档同比例错。
   - 顺序遵循「**先发版再跑 SQL**」：倍率在代码里，必须先发版，再改 DB 的 `ModelPrice`。
-  - 回归用例 `TestOfficialPerSecondPriceTable`（六种组合：480P/720P/1080P × 有/无参考视频，断言实收 ¥2.00/¥4.00/¥4.50/¥9.00/¥8.00/¥16.00）+ `TestDefaultModelPriceWan3PerSecond`（断言基准价与三档倍率）。改价必须同步改这两个用例。
+  - 回归用例 `TestOfficialPerSecondPriceTable`（六种组合：480P/720P/1080P × 有/无参考视频，断言实收 ¥2.00/¥4.00/¥4.50/¥9.00/¥8.00/¥16.00）+ `TestDefaultModelPriceWan3PerSecond`（标准版 ¥0.27/¥0.54/¥1.08）+ `TestDefaultModelPriceWan3OfficialPerSecond`（官网 ¥0.20/¥0.45/¥0.80）。改价必须同步改这三个用例。
   - 该 adaptor **只服务 channel 12（DashScope-Wan3 / `wan3.0-video-官网`）**；有赞（type 63）走另一套 adaptor，调倍率不会带偏有赞的 wan3.0-smart / wan2.7-r2v。
+  - **⚠️ 调价授权范围只到「用户点名的那个模型名」**（2026-10-22 用户纠正「只让你改这个模型的价格，别的不动」）。本轮授权的是 `wan3.0-video-官网` **一个**模型名；同批操作曾顺手把 `wan3.0-video`（标准版 ¥0.27/¥0.54/¥1.08）与 `wan3.0-video-prime`（¥0.405/秒）的默认价一并改了 —— 已回退。
+    - **同渠道 / 同上游 / 同 adaptor 的其它对外模型名，不算在授权范围内**。
+    - 倍率表必须**按模型名分表**，不能用一张全局表：共用一张表会把标准版的 720P/1080P 连带带偏（0.27 × 2.25 = ¥0.6075/秒，是一个从未存在过的价）。
+    - 还原 SQL：`scripts/prod-revert-wan3-std-price-20261022.sql`（只还原 `ModelPrice["wan3.0-video"]` → 0.0369863）。
+    - 背景事实：`wan3.0-video` 与 `wan3.0-video-prime` 在生产 abilities 表里**没有绑定任何渠道**（调不通），所以这次调价与回退都不影响任何在跑服务的计费；但口径必须还原干净。
 
 ### Project Governance
 

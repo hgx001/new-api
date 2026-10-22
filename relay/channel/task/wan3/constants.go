@@ -12,14 +12,30 @@ var ModelList = []string{
 	"wan3.0-video",
 }
 
-// resolutionSizeRatio 各分辨率相对于 480P 基准价的倍率。
-// 官网渠道对外单价（2026-10-22 调价）：480P ¥0.20/秒、720P ¥0.45/秒、1080P ¥0.80/秒，
-// 对应倍率 1 : 2.25 : 4（不是整数倍，0.45/0.20 = 2.25）。
-// wan3 模型的 ModelPrice 应配置为 480P 基准单价（USD 计价，默认 0.2/7.3 = 0.0273972602739726），
-// 乘以 seconds × size 即得应收价格；带参考视频时 seconds 含参考视频总秒数，同档单价。
-var resolutionSizeRatio = map[string]float64{
+// OfficialModelName 官网渠道的独立对外模型名（上游仍是标准版 wan3.0-video）。
+const OfficialModelName = "wan3.0-video-官网"
+
+// resolutionSizeRatio 各分辨率相对于 480P 基准价的倍率，**按对外模型名分表**。
+//
+// 官网渠道（OfficialModelName）：2026-10-22 用户拍板调价 → 480P ¥0.20/秒、
+// 720P ¥0.45/秒、1080P ¥0.80/秒，对应倍率 1 : 2.25 : 4（0.45/0.20 = 2.25，
+// 不是整数倍）。其 ModelPrice 配置为 480P 基准单价（USD 等值，0.2/7.3）。
+//
+// 其它模型名（wan3.0-video 标准版等）价格一律不动：
+// 480P ¥0.27/秒、720P ¥0.54/秒、1080P ¥1.08/秒 → 1 : 2 : 4。
+//
+// ⚠️ 必须分表，不能用一张全局倍率表：调价只授权了官网渠道这一个模型名。
+// 若共用一张表，标准版的 720P/1080P 会被连带带偏
+// （0.27 × 2.25 = ¥0.6075/秒，是一个从未存在过的价）。
+var officialResolutionSizeRatio = map[string]float64{
 	"480P":  1.0,
 	"720P":  2.25,
+	"1080P": 4.0,
+}
+
+var standardResolutionSizeRatio = map[string]float64{
+	"480P":  1.0,
+	"720P":  2.0,
 	"1080P": 4.0,
 }
 

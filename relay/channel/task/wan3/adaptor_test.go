@@ -55,10 +55,17 @@ func TestEstimateBillingChargesWan3ResolutionRatio(t *testing.T) {
 		Resolution: "720P",
 	})
 
+	// 标准版模型名走 1/2/4，720P 倍率 2 —— 价格不随官网渠道调价而变动。
+	require.Equal(t, map[string]float64{
+		"seconds": 5,
+		"size":    2.0,
+	}, adaptor.EstimateBilling(context, &relaycommon.RelayInfo{OriginModelName: "wan3.0-video"}))
+
+	// 官网渠道模型名走调价后的 1/2.25/4，720P 倍率 2.25。
 	require.Equal(t, map[string]float64{
 		"seconds": 5,
 		"size":    2.25,
-	}, adaptor.EstimateBilling(context, nil))
+	}, adaptor.EstimateBilling(context, &relaycommon.RelayInfo{OriginModelName: OfficialModelName}))
 }
 
 // 官网渠道对外单价（2026-10-22 调价）：480P ¥0.20/秒、720P ¥0.45/秒、1080P ¥0.80/秒。
@@ -100,7 +107,7 @@ func TestOfficialPerSecondPriceTable(t *testing.T) {
 				context.Set(refVideoSecondsContextKey, tc.refSeconds)
 			}
 
-			ratios := adaptor.EstimateBilling(context, nil)
+			ratios := adaptor.EstimateBilling(context, &relaycommon.RelayInfo{OriginModelName: OfficialModelName})
 			multiplier := 1.0
 			for _, ratio := range ratios {
 				multiplier *= ratio

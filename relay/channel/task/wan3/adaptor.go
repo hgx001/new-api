@@ -422,10 +422,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	resolutionRatio := resolutionSizeRatio[resolveResolution(req)]
-	if resolutionRatio == 0 {
-		resolutionRatio = 1.0
-	}
+	resolutionRatio := resolutionSizeRatioFor(resolveResolution(req), info)
 	seconds := resolveDuration(req)
 	if value, ok := c.Get(refVideoSecondsContextKey); ok {
 		if refSeconds, ok := value.(int); ok && refSeconds > 0 {
@@ -436,6 +433,21 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		"seconds": float64(seconds),
 		"size":    resolutionRatio,
 	}
+}
+
+// resolutionSizeRatioFor 按**对外模型名**选分辨率倍率表：官网渠道用调价后的
+// 1/2.25/4，其余模型名保持 1/2/4 不变。调价只授权了官网渠道这一个模型名，
+// 共用一张表会把标准版的 720P/1080P 连带带偏。
+func resolutionSizeRatioFor(resolution string, info *relaycommon.RelayInfo) float64 {
+	table := standardResolutionSizeRatio
+	if info != nil && info.OriginModelName == OfficialModelName {
+		table = officialResolutionSizeRatio
+	}
+	ratio := table[resolution]
+	if ratio == 0 {
+		ratio = 1.0
+	}
+	return ratio
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {

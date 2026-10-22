@@ -325,7 +325,7 @@ func TestEstimateBillingChargesGenerationPlusReferenceVideo(t *testing.T) {
 	require.Equal(t, map[string]float64{
 		"seconds": 20,
 		"size":    1.0,
-	}, adaptor.EstimateBilling(context, nil))
+	}, adaptor.EstimateBilling(context, &relaycommon.RelayInfo{OriginModelName: OfficialModelName}))
 }
 
 func TestEstimateBillingIgnoresZeroReferenceVideoSeconds(t *testing.T) {
@@ -338,8 +338,13 @@ func TestEstimateBillingIgnoresZeroReferenceVideoSeconds(t *testing.T) {
 	})
 	context.Set(refVideoSecondsContextKey, 0)
 
+	// 官网渠道走调价后的 1/2.25/4（720P = 2.25）；标准版走 1/2/4（720P = 2）。
 	require.Equal(t, map[string]float64{
 		"seconds": 5,
 		"size":    2.25,
-	}, adaptor.EstimateBilling(context, nil))
+	}, adaptor.EstimateBilling(context, &relaycommon.RelayInfo{OriginModelName: OfficialModelName}))
+	require.Equal(t, map[string]float64{
+		"seconds": 5,
+		"size":    2.0,
+	}, adaptor.EstimateBilling(context, &relaycommon.RelayInfo{OriginModelName: "wan3.0-video"}))
 }
