@@ -24,8 +24,8 @@ curl https://api.heibaidao.cn/v1/models \
 
 | 情况 | HTTP 状态 | 响应体 |
 |---|---|---|
-| 没带 key | 401 | `{"error":{"message":"未提供令牌",...}}` |
-| key 不存在 / key 禁用或过期 / key 额度耗尽 | 401 | `{"error":{"message":"无效的令牌",...}}` |
+| 没带 key | 401 | `{"error":{"message":"无效的令牌","type":"new_api_error","code":""}}`（未提供与无效都归为同一文案） |
+| key 不存在 / key 禁用或过期 / key 额度耗尽 | 401 | 同上 |
 | key 配了 IP 白名单且你的 IP 不在其中 | 403 | `{"error":{"message":"您的 IP 不在令牌允许访问的列表中",...}}` |
 | 所属用户被封禁 | 403 | `{"error":{"message":"用户已被封禁",...}}` |
 
