@@ -51,6 +51,24 @@ var megabyaiUpstreamModels = map[string]string{
 	Seedance25TeHuiModel: wan30Model,
 }
 
+// wan30LockedTier 是「固定分辨率 + 固定时长」的档位。
+type wan30LockedTier struct {
+	Resolution string
+	Duration   int
+}
+
+// megabyaiLockedTierModels 是能力被锁死档位的模型。
+//
+//   - seedance2.5-特惠：只出 720p、只出 30 秒一条。
+//
+// ⚠️ 这类模型的能力门控必须 **fail-loud**：客户端要别的档位时明确 400，
+// 不能静默改档 —— 静默把 1080p 降成 720p，用户付了钱却拿不到想要的清晰度；
+// 静默把 5 秒拉成 30 秒，客户端会以为省了钱，结果账单按次一样。
+// 与 MiniMax 通道「能力门控一律 fail-loud」的口径一致。
+var megabyaiLockedTierModels = map[string]wan30LockedTier{
+	Seedance25TeHuiModel: {Resolution: "720p", Duration: 30},
+}
+
 // wan30ResolutionSizeRatio 是 wan-3.0 各分辨率档相对 480p 基准价的倍率。
 //
 // 对外价（每次）：480p ¥2.4 / 720p ¥3.0 / 1080p ¥4.0 → 1 : 1.25 : 1.666667。

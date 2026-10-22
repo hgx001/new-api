@@ -42,23 +42,23 @@ func TestSeedance25TeHuiSharesParameterContractWithWan30(t *testing.T) {
 	}
 }
 
-// 固定价：任意分辨率、任意时长都是同一个价，且不叠加任何倍率。
+// 固定价：只认 720p / 30 秒这一档，且不叠加任何倍率。
 func TestSeedance25TeHuiIsFixedPerCallPrice(t *testing.T) {
-	for _, resolution := range []string{"480p", "720p", "1080p"} {
-		raw := `{"model":"seedance2.5-特惠","prompt":"p","duration":30,"resolution":"` + resolution + `"}`
-		result := runChainWithModel(t, raw, Seedance25TeHuiModel, "")
-		require.Nil(t, result.taskErr)
-		require.Equal(t, resolution, result.body["resolution"], "分辨率仍要原样下发给上游")
-		require.Nil(t, result.ratios, "固定按次价：不得叠加分辨率档倍率")
-	}
+	// 唯一放行的档位：720p / 30 秒，倍率表为空（固定价）
+	allowed := runChainWithModel(t,
+		`{"model":"seedance2.5-特惠","prompt":"p","duration":30,"resolution":"720p"}`, Seedance25TeHuiModel, "")
+	require.Nil(t, allowed.taskErr)
+	require.Equal(t, "720p", allowed.body["resolution"])
+	require.Equal(t, float64(30), allowed.body["duration"])
+	require.Nil(t, allowed.ratios, "固定按次价：不得叠加分辨率档倍率")
 
-	// 时长不参与计价：30 秒与 5 秒同价。
-	short := runChainWithModel(t, `{"model":"seedance2.5-特惠","prompt":"p","duration":5}`, Seedance25TeHuiModel, "")
-	long := runChainWithModel(t, `{"model":"seedance2.5-特惠","prompt":"p","duration":30}`, Seedance25TeHuiModel, "")
-	require.Nil(t, short.taskErr)
-	require.Nil(t, long.taskErr)
-	require.Nil(t, short.ratios)
-	require.Nil(t, long.ratios)
+	// 其余分辨率一律 400（能力门控，不静默改档）
+	for _, resolution := range []string{"480p", "1080p"} {
+		raw := `{"model":"seedance2.5-特惠","prompt":"p","resolution":"` + resolution + `"}`
+		result := runChainWithModel(t, raw, Seedance25TeHuiModel, "")
+		require.NotNil(t, result.taskErr, resolution)
+		require.Equal(t, "invalid_resolution", result.taskErr.Code, resolution)
+	}
 }
 
 // 对外价锁死：¥5.0/条。改价会红：改价要同时改 defaultModelPrice、
@@ -107,4 +107,62 @@ func TestUnifiedContractModelSet(t *testing.T) {
 	// 只有 wan-3.0 按分辨率档计价。
 	require.True(t, megabyaiResolutionTierModels[wan30Model])
 	require.False(t, megabyaiResolutionTierModels[Seedance25TeHuiModel])
+}
+
+// 锁定档位：只出 720p、只出 30 秒。
+//
+// 客户端给别的档位必须 400（fail-loud），不能静默改档：
+// 静默降档 = 用户付了 720p 的钱拿到 480p；静默拉时长 = 客户端以为省了钱。
+func TestSeedance25TeHuiLocksResolutionAndDuration(t *testing.T) {
+	// 没给分辨率 / 时长 → 用锁定档位并**显式下发**给上游
+	defaults := runChainWithModel(t, `{"model":"seedance2.5-特惠","prompt":"p"}`, Seedance25TeHuiModel, "")
+	require.Nil(t, defaults.taskErr)
+	require.Equal(t, "720p", defaults.body["resolution"])
+	require.Equal(t, float64(30), defaults.body["duration"])
+
+	// 正好 720p / 30 秒 → 放行
+	allowed := runChainWithModel(t,
+		`{"model":"seedance2.5-特惠","prompt":"p","resolution":"720p","duration":30}`, Seedance25TeHuiModel, "")
+	require.Nil(t, allowed.taskErr)
+	require.Equal(t, "720p", allowed.body["resolution"])
+	require.Equal(t, float64(30), allowed.body["duration"])
+
+	// 别的分辨率 → 400 invalid_resolution
+	for _, raw := range []string{
+		`{"model":"seedance2.5-特惠","prompt":"p","resolution":"480p"}`,
+		`{"model":"seedance2.5-特惠","prompt":"p","resolution":"1080p"}`,
+		`{"model":"seedance2.5-特惠","prompt":"p","size":"1920x1080"}`,
+		`{"model":"seedance2.5-特惠","prompt":"p","size":"854x480"}`,
+		`{"model":"seedance2.5-特惠","prompt":"p","metadata":{"resolution":"1080p"}}`,
+	} {
+		bad := runChainWithModel(t, raw, Seedance25TeHuiModel, "")
+		require.NotNil(t, bad.taskErr, raw)
+		require.Equal(t, "invalid_resolution", bad.taskErr.Code, raw)
+	}
+
+	// 别的时长 → 400 invalid_duration
+	for _, raw := range []string{
+		`{"model":"seedance2.5-特惠","prompt":"p","duration":5}`,
+		`{"model":"seedance2.5-特惠","prompt":"p","duration":15}`,
+		`{"model":"seedance2.5-特惠","prompt":"p","seconds":"10"}`,
+		`{"model":"seedance2.5-特惠","prompt":"p","duration":30,"seconds":"5"}`,
+	} {
+		bad := runChainWithModel(t, raw, Seedance25TeHuiModel, "")
+		require.NotNil(t, bad.taskErr, raw)
+		require.Equal(t, "invalid_duration", bad.taskErr.Code, raw)
+	}
+}
+
+// 锁定档位只作用于别名模型：wan-3.0 仍然支持三档分辨率与多档时长。
+func TestWan30KeepsUnlockedTiersAndDurations(t *testing.T) {
+	for _, raw := range []string{
+		`{"model":"wan-3.0","prompt":"p","resolution":"480p"}`,
+		`{"model":"wan-3.0","prompt":"p","resolution":"1080p"}`,
+		`{"model":"wan-3.0","prompt":"p","duration":5}`,
+		`{"model":"wan-3.0","prompt":"p","duration":15}`,
+		`{"model":"wan-3.0","prompt":"p","seconds":"10"}`,
+	} {
+		result := runChainWithModel(t, raw, wan30Model, wan30Model)
+		require.Nil(t, result.taskErr, raw)
+	}
 }

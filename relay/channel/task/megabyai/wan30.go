@@ -39,33 +39,59 @@ type wan30Request struct {
 // 客户端完全没给分辨率时返回默认档，并把这个档位**显式下发**给上游，
 // 保证「我们收的价」与「上游收的价」永远是同一档。
 func resolveWan30Resolution(req relaycommon.TaskSubmitReq) (string, error) {
+	resolution, _, err := resolveWan30ResolutionWithSource(req)
+	return resolution, err
+}
+
+// resolveWan30ResolutionWithSource 除了档位，还返回「客户端是否给过分辨率」。
+//
+// 区分「没给」与「给了但不是这一档」是锁定档位模型的前提：
+// 没给就用锁定档位（默认），给了别的档位必须报错而不是静默改档。
+func resolveWan30ResolutionWithSource(req relaycommon.TaskSubmitReq) (string, bool, error) {
 	if raw := strings.TrimSpace(req.Resolution); raw != "" {
 		if normalized := normalizeWan30Resolution(raw); normalized != "" {
-			return normalized, nil
+			return normalized, true, nil
 		}
-		return "", fmt.Errorf("resolution %q is not supported, use one of %s", raw, strings.Join(wan30Resolutions, ", "))
+		return "", true, fmt.Errorf("resolution %q is not supported, use one of %s", raw, strings.Join(wan30Resolutions, ", "))
 	}
 	if req.Metadata != nil {
 		if raw, ok := req.Metadata["resolution"]; ok {
 			text, isString := raw.(string)
 			if !isString {
-				return "", fmt.Errorf("metadata.resolution must be a string")
+				return "", true, fmt.Errorf("metadata.resolution must be a string")
 			}
 			if strings.TrimSpace(text) != "" {
 				if normalized := normalizeWan30Resolution(text); normalized != "" {
-					return normalized, nil
+					return normalized, true, nil
 				}
-				return "", fmt.Errorf("metadata.resolution %q is not supported, use one of %s", text, strings.Join(wan30Resolutions, ", "))
+				return "", true, fmt.Errorf("metadata.resolution %q is not supported, use one of %s", text, strings.Join(wan30Resolutions, ", "))
 			}
 		}
 	}
 	if raw := strings.TrimSpace(req.Size); raw != "" {
 		if resolution, ok := resolutionFromWan30Size(raw); ok {
-			return resolution, nil
+			return resolution, true, nil
 		}
-		return "", fmt.Errorf("size %q is not supported, use WxH (e.g. 1280x720) or one of %s", raw, strings.Join(wan30Resolutions, ", "))
+		return "", true, fmt.Errorf("size %q is not supported, use WxH (e.g. 1280x720) or one of %s", raw, strings.Join(wan30Resolutions, ", "))
 	}
-	return wan30DefaultResolution, nil
+	return wan30DefaultResolution, false, nil
+}
+
+// resolveLockedResolution 处理「档位被锁死」的模型（如 seedance2.5-特惠 只出 720p）。
+//
+// 客户端没给分辨率 → 用锁定档位；给了别的档位 → 报错（fail-loud，不静默降档）。
+func resolveLockedResolution(req relaycommon.TaskSubmitReq, tier wan30LockedTier) (string, error) {
+	resolution, provided, err := resolveWan30ResolutionWithSource(req)
+	if err != nil {
+		return "", err
+	}
+	if !provided {
+		return tier.Resolution, nil
+	}
+	if resolution != tier.Resolution {
+		return "", fmt.Errorf("this model only supports %s, got %s", tier.Resolution, resolution)
+	}
+	return resolution, nil
 }
 
 // normalizeWan30Resolution 把 "480" / "480P" / "480p" 之类的写法统一成上游档位。
@@ -353,4 +379,26 @@ func wan30Duration(req relaycommon.TaskSubmitReq) *int {
 		}
 	}
 	return nil
+}
+
+// wan30LockedDuration 处理「时长被锁死」的模型（如 seedance2.5-特惠 只出 30 秒）。
+//
+// 客户端没给时长 → 用锁定时长并显式下发；给了别的时长 → 报错（fail-loud）。
+// duration 与 seconds 都认，两个字段都校验：给了一致的值没问题，
+// 给了互相矛盾的值（duration=30 + seconds=5）也要报错，不能只看一个字段。
+func wan30LockedDuration(req relaycommon.TaskSubmitReq, tier wan30LockedTier) (*int, error) {
+	if req.Duration != 0 && req.Duration != tier.Duration {
+		return nil, fmt.Errorf("this model only supports %d seconds, got duration=%d", tier.Duration, req.Duration)
+	}
+	if raw := strings.TrimSpace(req.Seconds); raw != "" {
+		seconds, err := strconv.Atoi(raw)
+		if err != nil {
+			return nil, fmt.Errorf("seconds must be an integer")
+		}
+		if seconds != tier.Duration {
+			return nil, fmt.Errorf("this model only supports %d seconds, got seconds=%s", tier.Duration, raw)
+		}
+	}
+	duration := tier.Duration
+	return &duration, nil
 }

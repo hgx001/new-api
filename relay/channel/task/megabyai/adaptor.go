@@ -91,10 +91,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		req = restored
 		relaycommon.StoreTaskRequest(c, info, info.Action, req)
 	}
-	// 分辨率必须在本地归一：wan-3.0 按分辨率档计价，猜错档位就是少收钱。
-	resolution, err := resolveWan30Resolution(req)
+	// 分辨率必须在本地归一：wan-3.0 按分辨率档计价，猜错档位就是少收钱；
+	// 锁定档位的模型（seedance2.5-特惠）只认自己那一档，给别的档位直接 400。
+	tier, locked := megabyaiLockedTierModels[info.OriginModelName]
+	var resolution string
+	if locked {
+		resolution, err = resolveLockedResolution(req, tier)
+	} else {
+		resolution, err = resolveWan30Resolution(req)
+	}
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
+	}
+	// 时长同理：锁定时长只认自己那一档。
+	if locked {
+		if _, err := wan30LockedDuration(req, tier); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
 	}
 	if _, _, _, err := buildWan30Media(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
@@ -161,9 +174,24 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	resolution, err := resolveWan30Resolution(req)
+	tier, locked := megabyaiLockedTierModels[info.OriginModelName]
+	var resolution string
+	if locked {
+		resolution, err = resolveLockedResolution(req, tier)
+	} else {
+		resolution, err = resolveWan30Resolution(req)
+	}
 	if err != nil {
 		return nil, err
+	}
+	var duration *int
+	if locked {
+		duration, err = wan30LockedDuration(req, tier)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		duration = wan30Duration(req)
 	}
 	images, videos, audios, err := buildWan30Media(req)
 	if err != nil {
@@ -173,7 +201,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	body := wan30Request{
 		Model:           modelName,
 		Prompt:          strings.TrimSpace(req.Prompt),
-		Duration:        wan30Duration(req),
+		Duration:        duration,
 		Ratio:           resolveWan30Ratio(rawWan30Ratio(c), req),
 		Resolution:      resolution,
 		Seed:            req.Seed,
