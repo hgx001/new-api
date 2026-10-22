@@ -17,6 +17,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as VpnIndexRouteImport } from './routes/vpn/index'
 import { Route as TutorialsIndexRouteImport } from './routes/tutorials/index'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
+import { Route as ServersIndexRouteImport } from './routes/servers/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as BlogIndexRouteImport } from './routes/blog/index'
@@ -109,6 +110,11 @@ const TutorialsIndexRoute = TutorialsIndexRouteImport.update({
 const SetupIndexRoute = SetupIndexRouteImport.update({
   id: '/setup/',
   path: '/setup/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ServersIndexRoute = ServersIndexRouteImport.update({
+  id: '/servers/',
+  path: '/servers/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RankingsIndexRoute = RankingsIndexRouteImport.update({
@@ -442,6 +448,7 @@ export interface FileRoutesByFullPath {
   '/blog/': typeof BlogIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
+  '/servers/': typeof ServersIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/tutorials/': typeof TutorialsIndexRoute
   '/vpn/': typeof VpnIndexRoute
@@ -504,6 +511,7 @@ export interface FileRoutesByTo {
   '/blog': typeof BlogIndexRoute
   '/pricing': typeof PricingIndexRoute
   '/rankings': typeof RankingsIndexRoute
+  '/servers': typeof ServersIndexRoute
   '/setup': typeof SetupIndexRoute
   '/tutorials': typeof TutorialsIndexRoute
   '/vpn': typeof VpnIndexRoute
@@ -570,6 +578,7 @@ export interface FileRoutesById {
   '/blog/': typeof BlogIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
+  '/servers/': typeof ServersIndexRoute
   '/setup/': typeof SetupIndexRoute
   '/tutorials/': typeof TutorialsIndexRoute
   '/vpn/': typeof VpnIndexRoute
@@ -635,6 +644,7 @@ export interface FileRouteTypes {
     | '/blog/'
     | '/pricing/'
     | '/rankings/'
+    | '/servers/'
     | '/setup/'
     | '/tutorials/'
     | '/vpn/'
@@ -697,6 +707,7 @@ export interface FileRouteTypes {
     | '/blog'
     | '/pricing'
     | '/rankings'
+    | '/servers'
     | '/setup'
     | '/tutorials'
     | '/vpn'
@@ -762,6 +773,7 @@ export interface FileRouteTypes {
     | '/blog/'
     | '/pricing/'
     | '/rankings/'
+    | '/servers/'
     | '/setup/'
     | '/tutorials/'
     | '/vpn/'
@@ -819,6 +831,7 @@ export interface RootRouteChildren {
   BlogIndexRoute: typeof BlogIndexRoute
   PricingIndexRoute: typeof PricingIndexRoute
   RankingsIndexRoute: typeof RankingsIndexRoute
+  ServersIndexRoute: typeof ServersIndexRoute
   SetupIndexRoute: typeof SetupIndexRoute
   TutorialsIndexRoute: typeof TutorialsIndexRoute
   VpnIndexRoute: typeof VpnIndexRoute
@@ -881,6 +894,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup/'
       preLoaderRoute: typeof SetupIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/servers/': {
+      id: '/servers/'
+      path: '/servers'
+      fullPath: '/servers/'
+      preLoaderRoute: typeof ServersIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/rankings/': {
@@ -1421,6 +1441,7 @@ const rootRouteChildren: RootRouteChildren = {
   BlogIndexRoute: BlogIndexRoute,
   PricingIndexRoute: PricingIndexRoute,
   RankingsIndexRoute: RankingsIndexRoute,
+  ServersIndexRoute: ServersIndexRoute,
   SetupIndexRoute: SetupIndexRoute,
   TutorialsIndexRoute: TutorialsIndexRoute,
   VpnIndexRoute: VpnIndexRoute,

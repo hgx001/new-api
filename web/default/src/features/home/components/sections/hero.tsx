@@ -45,7 +45,7 @@ export function Hero(props: HeroProps) {
   })
 
   return (
-    <section className='relative z-10 overflow-hidden bg-[#f5f9f7] px-6 pt-28 pb-16 md:pt-36 md:pb-24'>
+    <section className='relative z-10 overflow-hidden bg-[#f5f9f7] px-6 pt-8 pb-16 md:pt-12 md:pb-24'>
       <div className='mx-auto grid max-w-6xl grid-cols-1 items-center gap-12 lg:grid-cols-2'>
         {/* Left Column */}
         <div>
@@ -57,16 +57,14 @@ export function Hero(props: HeroProps) {
             {t('Enterprise SLA Guarantee')}
           </span>
 
-          <h1 className='mt-6 text-4xl font-extrabold leading-tight text-[#1a4a3f] md:text-5xl'>
+          <h1 className='mt-6 text-4xl leading-tight font-extrabold text-[#1a4a3f] md:text-5xl'>
             {t('Support Listed Enterprises')}
             <br />
             {t('AI Scale Deployment')}
           </h1>
 
           <p className='mt-5 max-w-xl text-base leading-relaxed text-[#5a7a72]'>
-            {t(
-              'heibaidao enterprise gateway description'
-            )}
+            {t('heibaidao enterprise gateway description')}
           </p>
 
           <div className='mt-8 flex flex-wrap gap-3'>
