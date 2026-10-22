@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -55,8 +57,59 @@ func TestEstimateBillingChargesWan3ResolutionRatio(t *testing.T) {
 
 	require.Equal(t, map[string]float64{
 		"seconds": 5,
-		"size":    2.0,
+		"size":    2.25,
 	}, adaptor.EstimateBilling(context, nil))
+}
+
+// 官网渠道对外单价（2026-10-22 调价）：480P ¥0.20/秒、720P ¥0.45/秒、1080P ¥0.80/秒。
+// 带参考视频时，参考视频秒数按**同一档**单价一起计（seconds = 生成 + 参考视频总秒数）。
+// 额度算法与框架一致：quota = int(ModelPrice × QuotaPerUnit)，再 × seconds × size（倍率乘完取整）。
+func TestOfficialPerSecondPriceTable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ratio_setting.InitRatioSettings()
+
+	price, ok := ratio_setting.GetModelPrice("wan3.0-video-官网", false)
+	require.True(t, ok, "wan3.0-video-官网 must have an explicit per-second price")
+	require.InDelta(t, 0.20/ratio_setting.USD2RMB, price, 1e-9, "480P base must equal ¥0.20/sec in USD")
+
+	baseQuota := int(price * common.QuotaPerUnit)
+
+	cases := []struct {
+		name       string
+		resolution string
+		refSeconds int
+		wantCNY    float64
+	}{
+		{"480P 10s", "480P", 0, 2.00},
+		{"480P 10s + 10s reference video", "480P", 10, 4.00},
+		{"720P 10s", "720P", 0, 4.50},
+		{"720P 10s + 10s reference video", "720P", 10, 9.00},
+		{"1080P 10s", "1080P", 0, 8.00},
+		{"1080P 10s + 10s reference video", "1080P", 10, 16.00},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			adaptor := &TaskAdaptor{}
+			context, _ := gin.CreateTestContext(httptest.NewRecorder())
+			context.Set("task_request", relaycommon.TaskSubmitReq{
+				Duration:   10,
+				Resolution: tc.resolution,
+			})
+			if tc.refSeconds > 0 {
+				context.Set(refVideoSecondsContextKey, tc.refSeconds)
+			}
+
+			ratios := adaptor.EstimateBilling(context, nil)
+			multiplier := 1.0
+			for _, ratio := range ratios {
+				multiplier *= ratio
+			}
+			quota := int(float64(baseQuota) * multiplier)
+			cny := float64(quota) / common.QuotaPerUnit * ratio_setting.USD2RMB
+			require.InDelta(t, tc.wantCNY, cny, 0.005, "charged CNY")
+		})
+	}
 }
 
 func TestTaskSubmitReqTreatsTypedMediaAsInput(t *testing.T) {

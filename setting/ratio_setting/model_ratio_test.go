@@ -59,19 +59,23 @@ func TestDefaultModelRatioMiniMaxM31MatchesM3Price(t *testing.T) {
 	require.Equal(t, 0.410959, GetCompletionRatio("MiniMax-M3.1"))
 }
 
-// wan3.0-video 按秒计费：480P 基准 ¥0.27/秒，USD 计价（USD2RMB=7.3）。
-// 0.27/7.3 = 0.0369863；任务链路按 ModelPrice * seconds * size(1/2/4) 扣费。
+// wan3.0-video 按秒计费：480P 基准 ¥0.20/秒，USD 计价（USD2RMB=7.3）。
+// 0.2/7.3 = 0.0273972602739726；任务链路按 ModelPrice * seconds * size(1/2.25/4) 扣费。
 func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
 	InitRatioSettings()
 
 	price, ok := GetModelPrice("wan3.0-video", false)
 	require.True(t, ok, "wan3.0-video must have an explicit per-second price")
-	require.InDelta(t, 0.27/USD2RMB, price, 1e-7, "480P base must equal ¥0.27/sec in USD")
-	require.InDelta(t, 0.0369863, price, 1e-7, "480P base must be ¥0.27/sec in USD")
+	require.InDelta(t, 0.20/USD2RMB, price, 1e-9, "480P base must equal ¥0.20/sec in USD")
+	require.InDelta(t, 0.0273972602739726, price, 1e-9, "480P base must be ¥0.20/sec in USD")
+
+	// 720P ¥0.45/秒、1080P ¥0.80/秒由分辨率倍率给出（2.25 / 4.0），不是整数倍。
+	require.InDelta(t, 0.45/USD2RMB, price*2.25, 1e-9, "720P tier must equal ¥0.45/sec in USD")
+	require.InDelta(t, 0.80/USD2RMB, price*4.0, 1e-9, "1080P tier must equal ¥0.80/sec in USD")
 
 	primePrice, ok := GetModelPrice("wan3.0-video-prime", false)
 	require.True(t, ok, "wan3.0-video-prime must have an explicit per-second price")
-	require.InDelta(t, 0.405/USD2RMB, primePrice, 1e-8, "Prime 480P base must be ¥0.405/sec")
+	require.InDelta(t, 0.30/USD2RMB, primePrice, 1e-8, "Prime 480P base must be ¥0.30/sec")
 	require.InDelta(t, 1.5*price, primePrice, 1e-8, "Prime price must be 1.5x standard")
 }
 

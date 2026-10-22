@@ -340,6 +340,6 @@ func TestEstimateBillingIgnoresZeroReferenceVideoSeconds(t *testing.T) {
 
 	require.Equal(t, map[string]float64{
 		"seconds": 5,
-		"size":    2.0,
+		"size":    2.25,
 	}, adaptor.EstimateBilling(context, nil))
 }

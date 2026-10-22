@@ -338,12 +338,19 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 
 ### wan3.0-video-官网 的参考视频计费与限值（2026-10-22 定稿）
 
-- **参考视频按时长同价计费**：`seconds = 生成时长 + Σ(每个参考视频时长四舍五入)`，再乘分辨率倍率（480P=¥0.27/s、720P=¥0.54/s、1080P=¥1.08/s）。例：10 秒参考视频 + 生成 10 秒 480P = 0.27 × 20 = **¥5.40**（不传参考视频只要 ¥2.70）。
+- **参考视频按时长同价计费**：`seconds = 生成时长 + Σ(每个参考视频时长四舍五入)`，再乘分辨率倍率（480P=¥0.20/s、720P=¥0.45/s、1080P=¥0.80/s，**2026-10-22 调价**）。例：10 秒参考视频 + 生成 10 秒 480P = 0.20 × 20 = **¥4.00**（不传参考视频只要 ¥2.00）。
   - 依据：上游 usage 里 `duration = input_video_duration + output_video_duration`（**上游也这么收**），我们计费用的秒数与上游 `usage.duration` 是同一个数 → 不是凭空加价。
   - 取整口径**四舍五入**（不是向上取整）：2026-10-16 真机实证 DashScope 把 2.02 秒的参考视频记成 `input_video_duration=2`；向上取整会让每个参考视频多收 1 秒（2 秒的片多收 50%）。
   - **探测必须放在 validate 阶段**（`EstimateBilling` 没有错误返回值，解析失败时无法拒单 → 会退化成「只按生成时长收费」= 少收）。解析不出 mvhd → 400 `invalid_input_reference`，不建单不扣费。
 - **本地强制的官方限值**（官方《万相3.0-视频生成API参考》2026-10-22 核对）：参考视频最多 5 段、**单个 [1,15] 秒、总时长 ≤15 秒**；**有视频输入时「输入视频总时长 + 输出视频时长 ≤30 秒」**（这条以前完全没实现 → 会按上游根本不会生成的规格预扣钱，再等上游 400 退款）；参考音频最多 5 段、单个 [1,15] 秒、总时长 ≤15 秒、≤15MB —— **音频时长不在本地校验**（本站不探测音频时长，超限由上游拒）。越限一律 400 `invalid_input_reference`（不建单不扣费）。回归用例：`TestValidateRequestAndSetActionRejectsOversizedReferenceVideo` / `...RejectsTooShortReferenceVideo` / `...RejectsReferenceVideoTotalOverLimit` / `...RejectsTotalDurationOverLimit` / `...AcceptsBoundary`。
 - **改价入口（后台）**：前台 `/pricing` 是只读展示；真正改价在 **「系统设置 → 计费设置 → 模型定价」`/system-settings/billing/model-pricing`**（改 `ModelPrice` / `ModelRatio` JSON），或 **「模型管理」`/models` 的单个模型编辑抽屉**（逐个模型改价格 + 卡片描述）。⚠️ `ModelPrice` 存的是 **USD 等值**（¥价 ÷ 7.3）且**会覆盖代码里的 defaultModelPrice**；改完要**等 ≥70s**（`SYNC_FREQUENCY`=60s）才生效，改价前按「Model Pricing and Catalog Rules」核官方最新价 + 区域 + 币种。
+- **⚠️ 调价 = 改两处，缺一即错价**（2026-10-22 实操）：任务模型的档位价 = `ModelPrice`（480P 基准，USD 等值）× `seconds`（生成 + 参考视频总秒数）× `size`（分辨率倍率）。所以
+  1. **`ModelPrice`（DB option + 代码 defaultModelPrice）** = 480P 基准 ¥价 ÷ 7.3。当前 `wan3.0-video-官网` = 0.2/7.3 = **0.0273972602739726**；
+  2. **`resolutionSizeRatio`（`relay/channel/task/wan3/constants.go`）** = 各档 ¥价 ÷ 480P ¥价。当前 **480P 1.0 / 720P 2.25 / 1080P 4.0**（0.45/0.20 = 2.25，**不是**整数倍，不要想当然改回 2）。
+  - 只改 DB 不改倍率 → 720P/1080P 仍是旧价；只改倍率不改 DB → 全档同比例错。
+  - 顺序遵循「**先发版再跑 SQL**」：倍率在代码里，必须先发版，再改 DB 的 `ModelPrice`。
+  - 回归用例 `TestOfficialPerSecondPriceTable`（六种组合：480P/720P/1080P × 有/无参考视频，断言实收 ¥2.00/¥4.00/¥4.50/¥9.00/¥8.00/¥16.00）+ `TestDefaultModelPriceWan3PerSecond`（断言基准价与三档倍率）。改价必须同步改这两个用例。
+  - 该 adaptor **只服务 channel 12（DashScope-Wan3 / `wan3.0-video-官网`）**；有赞（type 63）走另一套 adaptor，调倍率不会带偏有赞的 wan3.0-smart / wan2.7-r2v。
 
 ### Project Governance
 

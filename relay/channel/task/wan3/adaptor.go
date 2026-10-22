@@ -416,7 +416,7 @@ func validateWan3Media(media []relaycommon.TaskMedia) error {
 
 // EstimateBilling 按秒和分辨率计费：框架用 ModelPrice × seconds × size 计算配额。
 // 有参考视频时 seconds = 生成时长 + 参考视频总秒数（同分辨率单价），
-// 例如 10 秒参考视频生成 10 秒 480P → 0.27 × 20。
+// 例如 10 秒参考视频生成 10 秒 480P → 0.20 × 20 = ¥4.00。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {

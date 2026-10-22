@@ -96,8 +96,8 @@ describe('tutorials model guide content', () => {
       // 索引区与详情区都要写对，且两处必须一致
       '480P ¥0.28/s、720P ¥0.28/s、1080P ¥0.30/s', // wan3.0-smart 索引
       '¥0.28 / ¥0.28 / ¥0.30（480P / 720P / 1080P）', // wan3.0-smart 详情
-      '480P ¥0.27/s、720P ¥0.54/s、1080P ¥1.08/s', // wan3.0-video-官网 索引
-      '¥0.27 / ¥0.54 / ¥1.08（480P / 720P / 1080P）', // wan3.0-video-官网 详情
+      '480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s', // wan3.0-video-官网 索引
+      '¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）', // wan3.0-video-官网 详情
       '480p ¥0.10/s、768p ¥0.12/s（仅此两档）', // autodl H3 索引
       '480p ¥0.10、768p ¥0.12（仅这两档', // autodl H3 详情
     ]
@@ -235,7 +235,7 @@ describe('tutorials model guide content', () => {
       true
     )
     assert.equal(
-      sectionsJson.includes('0.27 × 20 = ¥5.40'),
+      sectionsJson.includes('0.20 × 20 = ¥4.00'),
       true
     )
     assert.equal(
