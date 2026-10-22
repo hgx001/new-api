@@ -159,7 +159,8 @@
 
 ### 生产上线记录（2026-10-22）
 
-- 后端 commit：`f5699fdd`（部署镜像内已验证含 `seedance2.5-特惠` 字面量）
+- 后端 commit：`f5699fdd`（别名模型上线）+ `b93a7986`（档位锁定：只出 720p / 只出 30 秒）
+  （部署镜像内已验证含 `seedance2.5-特惠` 字面量）
 - 渠道 24：`models = wan-3.0,seedance2.5-特惠`、
   `model_mapping = {"seedance2.5-特惠":"wan-3.0"}`、`status=1`、密钥未变
   （len=51 / md5=634b4ecc8476f75d516bd0204116c065）
