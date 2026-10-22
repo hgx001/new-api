@@ -185,6 +185,9 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   - 已在 `deploy/backend-remote.sh` 加固（2026-10-22）：① 发版前磁盘预检（<2048MB 直接 abort）；② 构建日志落盘并识别 `no space left on device`；③ env 快照必须 ≥100 字节且含 `SQL_DSN`/`SESSION_SECRET`/`CRYPTO_SECRET`，否则 abort；④ 健康检查改为「`/api/status` 的 `success:true` **且** `setup:true`」+「容器日志不得出现 `using SQLite as database`」+「新容器 env 必须仍含 `SQL_DSN`」，任一不满足**自动回滚**到旧容器。
   - **排查口诀**：生产 new-api 出现「登录全失败 / 令牌无效 / 模型列表为空 / 后台空白」时，**先看容器日志里的 `using PostgreSQL as database` 还是 `using SQLite as database`**。是 SQLite ⇒ 容器 env 丢了（不是账号/密码问题），按「取旧容器 env → 重建容器」恢复：`docker inspect new-api-prev-<ts> --format '{{range .Config.Env}}{{println .}}{{end}}' > /tmp/restore.env` → 校验含 `SQL_DSN` → `docker run ... --env-file /tmp/restore.env`。
   - **生产真实数据在 PostgreSQL**（容器 `postgres`，库 `new-api`，用户 `root`）；`/data/one-api.db` 只是 env 丢失时的回落空库，**别把生产 SQL 打到它身上**。
+- **生产镜像的 apt 源必须同时覆盖 deb822 格式**（2026-10-22 实测定稿）。`debian:bookworm-slim` 的主源在 `/etc/apt/sources.list.d/debian.sources`（deb822 格式，`URIs: http://deb.debian.org/debian`），**既不在** `/etc/apt/sources.list`、**也不在** `*.list`。因此只 sed `sources.list` + `*.list` 等于**什么都没改**（`Dockerfile.deploy` L28 踩过：apt 仍直连 deb.debian.org，`Fetched 9394 kB in 1min 42s (92.0 kB/s)`，安装阶段又 4min26s；再前两次构建直接 `Ign:1 ... bookworm InRelease` 卡 30.9s）。补上 `*.sources` 后生产机真实 build 实测：同一步 `Fetched 9394 kB in 8s (1126 kB/s)`、安装 `7135 kB in 5s (1394 kB/s)`，整层 6 分钟 → **20.1s**。
+  - **改 apt 源后必须用生产机真实 `docker build` 验构建日志里的 `Get:` URL**（`Fetched ... in Ns` / `Ign:` 行），不要只看 sed 表达式写没写对——本机没有 Docker 时，sed 写对了不代表生效。
+  - 附带教训：用 `docker run --rm <镜像>@<digest>` 验基础镜像内容，**可能拿到与 buildkit 构建时不同的镜像**（本机 mirror 站对同一 digest 给出了 Ubuntu noble 而构建日志是 Debian bookworm）。验基础镜像要用真实 build，别用 `docker run` 代替。
 
 ### Model Pricing and Catalog Rules
 
