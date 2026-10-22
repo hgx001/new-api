@@ -180,6 +180,97 @@ func TestValidateRejectsIllegalRequests(t *testing.T) {
 	}
 }
 
+// ── 丢图事故修复（2026-10-22，真实单 gen-bb57f7f1cd19c75326cf5b78）──
+//
+// 事故链：客户端传了参考图，但字段名不在白名单（只有 input_reference / images）
+// → adaptor 静默丢弃 → 建单载荷里没有 inputs → Worker/官网收到「提示词引用 @图N、
+// 但一张图都没有」→ 官网回「参考资源 图 1（老年）当前不存在」，额度照烧。
+//
+// 三层修复：new-api 入口（别名 + 不静默 + 提示词引用覆盖度）、ArcReel 建单、
+// Worker 提交前。每一层都必须**响亮地拒**，不能把缺图任务放出去。
+
+// 参考图字段别名：客户端用什么字段名都要认，且记录来源字段名（可观测性）。
+func TestValidateAcceptsReferenceImageFieldAliases(t *testing.T) {
+	cases := map[string]string{
+		"input_reference":  `"input_reference":["https://a.example/1.png"]`,
+		"images":           `"images":["https://a.example/1.png"]`,
+		"image":            `"image":"https://a.example/1.png"`,
+		"image_url":        `"image_url":"https://a.example/1.png"`,
+		"image_urls":       `"image_urls":["https://a.example/1.png"]`,
+		"reference_image":  `"reference_image":"https://a.example/1.png"`,
+		"reference_images": `"reference_images":["https://a.example/1.png"]`,
+		"input_images":     `"input_images":["https://a.example/1.png"]`,
+	}
+	for name, field := range cases {
+		c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi",`+field+`}`)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), name)
+		req, err := getNormalizedRequest(c)
+		require.NoError(t, err, name)
+		assert.Equal(t, []string{"https://a.example/1.png"}, req.Images, name)
+		// 来源字段名必须落进规范化请求：new-api 不留存原始请求体，排查丢图时
+		// 唯一的证据就是这一行（事故当时完全查不到客户端传了什么）。
+		assert.Equal(t, name, req.ReferenceSource, name)
+		assert.Equal(t, 1, req.ReferenceCount, name)
+	}
+}
+
+// 解析失败必须报错：旧实现 parseStringList 两种形态都失败就**静默返回 nil**，
+// 于是 ["https://a.png", 123] 这种混合数组会把整组图丢掉，建单变成「无图」。
+func TestValidateRejectsMalformedReferenceImages(t *testing.T) {
+	cases := map[string]string{
+		"mixed array":  `{"model":"seedance-2.0","prompt":"hi","input_reference":["https://a.example/1.png",123]}`,
+		"number":       `{"model":"seedance-2.0","prompt":"hi","input_reference":123}`,
+		"boolean":      `{"model":"seedance-2.0","prompt":"hi","images":true}`,
+		"nested array": `{"model":"seedance-2.0","prompt":"hi","images":[["https://a.example/1.png"]]}`,
+		"object":       `{"model":"seedance-2.0","prompt":"hi","images":{"foo":"bar"}}`,
+	}
+	for name, body := range cases {
+		c, info, a := postVideoCtx(t, body)
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, name)
+		assert.Equal(t, "invalid_input_reference", taskErr.Code, name)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode, name)
+	}
+}
+
+// 提示词引用了参考图（位置式 @图N / @图片N）但一个都没传 → 建单前 400。
+// 不拦就是让官网去报「参考资源 图 1 当前不存在」：额度照烧、用户白等。
+func TestValidateRejectsPromptReferencesWithoutImages(t *testing.T) {
+	cases := map[string]string{
+		"position style": `{"model":"seedance-2-5","prompt":"【人物锁定】严格使用参考图。@图2/@图1/@图3"}`,
+		"official style": `{"model":"seedance-2-5","prompt":"用 @图片1 的人物"}`,
+	}
+	for name, body := range cases {
+		c, info, a := postVideoCtx(t, body)
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, name)
+		assert.Equal(t, "invalid_input_reference", taskErr.Code, name)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode, name)
+	}
+}
+
+// 引用 3 张只带 1 张 → 同样 400（位置绑定：@图3 没有对应素材）。
+func TestValidateRejectsPromptReferencesWithTooFewImages(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2-5","prompt":"用 @图1 @图2 @图3 的构图","input_reference":["https://a.example/1.png"]}`)
+	taskErr := a.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_input_reference", taskErr.Code)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+}
+
+// 不误伤：引用张数 ≤ 实际张数、以及根本没有引用，都必须放行。
+func TestValidateAcceptsPromptReferencesCoveredByImages(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2-5","prompt":"用 @图1 @图2 的构图","input_reference":["https://a.example/1.png","https://a.example/2.png"]}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	c2, info2, a2 := postVideoCtx(t, `{"model":"seedance-2-5","prompt":"一只猫在屋顶奔跑"}`)
+	require.Nil(t, a2.ValidateRequestAndSetAction(c2, info2))
+
+	// @图灵 / @图片（无编号）/ 正文里的「参考图1中的人物」都不是引用标记。
+	c3, info3, a3 := postVideoCtx(t, `{"model":"seedance-2-5","prompt":"致敬 @图灵 的人物，参考图1中的人物"}`)
+	require.Nil(t, a3.ValidateRequestAndSetAction(c3, info3))
+}
+
 // BuildRequestBody 必须映射成 ArcReel 建单载荷：platformId/outputMode/videoParams/inputs/idempotencyKey。
 func TestBuildRequestBodyMapsArcReelPayload(t *testing.T) {
 	c, info, a := postVideoCtx(t, `{

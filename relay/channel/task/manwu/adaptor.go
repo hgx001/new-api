@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -293,11 +295,21 @@ type clientRequest struct {
 	Resolution     string          `json:"resolution"`
 	InputReference json.RawMessage `json:"input_reference"`
 	Images         json.RawMessage `json:"images"`
-	Videos         json.RawMessage `json:"videos"`
-	Video          json.RawMessage `json:"video"`
-	N              json.RawMessage `json:"n"`
-	Count          json.RawMessage `json:"count"`
-	IdempotencyKey string          `json:"idempotency_key"`
+	// 参考图别名字段（2026-10-22 丢图事故）：第三方客户端用的字段名五花八门，
+	// 白名单只认 input_reference / images 时，别名会被**静默丢弃** → 建单不带图
+	// → 官网回「参考资源 图 1（老年）当前不存在」，额度照烧。
+	// 这里把常见别名一并承接（见 referenceImageFields）。
+	Image           json.RawMessage `json:"image"`
+	ImageURL        json.RawMessage `json:"image_url"`
+	ImageURLs       json.RawMessage `json:"image_urls"`
+	ReferenceImage  json.RawMessage `json:"reference_image"`
+	ReferenceImages json.RawMessage `json:"reference_images"`
+	InputImages     json.RawMessage `json:"input_images"`
+	Videos          json.RawMessage `json:"videos"`
+	Video           json.RawMessage `json:"video"`
+	N               json.RawMessage `json:"n"`
+	Count           json.RawMessage `json:"count"`
+	IdempotencyKey  string          `json:"idempotency_key"`
 }
 
 // normalizedRequest 是校验通过后缓存在 gin.Context 中的规范化请求，
@@ -313,6 +325,14 @@ type normalizedRequest struct {
 	Images         []string
 	Videos         []string
 	IdempotencyKey string
+	// ReferenceSource 记录参考图来自哪个请求字段（可观测性）。
+	//
+	// 2026-10-22 丢图事故排查时最大的盲区就是「客户端到底传了什么字段名」：
+	// new-api 不留存原始请求体（logs.other 只有 request_path/model_price），
+	// 现场无法证明 threeFatAi 传的是 images 还是别的名字。这一行是补盲区的锚点。
+	ReferenceSource string
+	// ReferenceCount 是实际解析出的参考图张数（与 ReferenceSource 一起进日志）。
+	ReferenceCount int
 }
 
 // submitRequest 是 ArcReel 建单载荷。视频走 videoParams、图片走 imageParams、
@@ -476,11 +496,24 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		norm.Ratio = ratio
 	}
 
-	images, err := resolveReferenceImages(req)
+	images, referenceSource, err := resolveReferenceImages(req)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
 	norm.Images = images
+	norm.ReferenceSource = referenceSource
+	norm.ReferenceCount = len(images)
+	// 参考图来源必须进日志：new-api 不留存原始请求体，丢图事故排查时
+	// 「客户端到底传了什么字段名」是唯一的证据（2026-10-22 事故的盲区）。
+	logger.LogInfo(c, fmt.Sprintf("manwu 参考图解析：model=%s source=%s count=%d",
+		norm.Model, firstNonEmpty(referenceSource, "<none>"), len(images)))
+
+	// 提示词引用了参考图、实际却没带够 → 建单前拒（2026-10-22 丢图事故）。
+	// 不拒的话，这一单会一路跑到官网，官网回「参考资源 图 1（老年）当前不存在」，
+	// 额度照烧、用户白等 —— 入口拒是最便宜的一刀。
+	if err := assertPromptReferenceCoverage(norm.Prompt, images); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
+	}
 
 	switch spec.Kind {
 	case kindDolaVideo:
@@ -755,8 +788,16 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 订单号对账（2026-10-14 用户要求）：公开单号 task_xxx 与 ArcReel 上游单号
 	// gen-xxx 一起落系统日志，排查时在 newapi / ArcReel / App 三方 Ctrl-F 同一个
 	// id 即可对上同一笔订单，不再靠时间+提示词猜配对。
-	logger.LogInfo(c, fmt.Sprintf("manwu 任务已提交 task_id=%s upstream_job_id=%s model=%s",
-		info.PublicTaskID, taskID, info.OriginModelName))
+	//
+	// 参考图来源字段名与张数一并落日志（2026-10-22 丢图事故的排查盲区：
+	// new-api 不留存原始请求体，这一行是「客户端到底传了什么字段名」的唯一定位点）。
+	referenceSource, referenceCount := "<none>", 0
+	if norm, err := getNormalizedRequest(c); err == nil && norm != nil {
+		referenceSource = firstNonEmpty(norm.ReferenceSource, "<none>")
+		referenceCount = norm.ReferenceCount
+	}
+	logger.LogInfo(c, fmt.Sprintf("manwu 任务已提交 task_id=%s upstream_job_id=%s model=%s ref_source=%s ref_count=%d",
+		info.PublicTaskID, taskID, info.OriginModelName, referenceSource, referenceCount))
 	return taskID, responseBody, nil
 }
 
@@ -987,7 +1028,9 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 		if strings.TrimSpace(req.Resolution) != "" {
 			return fmt.Errorf("%s does not support resolution", modelName)
 		}
-		if len(parseStringList(req.Images)) > 0 {
+		// 反解只收一个参考视频：任何形态的参考图字段都不该出现（别名也算，
+		// 否则客户端用 image_urls 传图会被静默忽略，任务照跑、图全丢）。
+		if hasAnyReferenceImage(req) {
 			return fmt.Errorf("%s accepts exactly one reference video, not images", modelName)
 		}
 	case kindWanI2VVideo, kindWanEditVideo:
@@ -1159,46 +1202,205 @@ func resolveRatio(req clientRequest) (string, error) {
 	return candidate, nil
 }
 
-// resolveReferenceImages 解析参考图：input_reference（首选）→ images。
+// referenceImageField 描述一个「参考图候选字段」：名字 + 取值函数。
+type referenceImageField struct {
+	Name string
+	Raw  func(req clientRequest) json.RawMessage
+}
+
+// referenceImageFields 是参考图字段候选名，按优先级排列（第一个有值的字段胜出）。
+//
+// 2026-10-22 丢图事故：旧白名单只有 input_reference / images，第三方客户端用了
+// 别的字段名 → 字段被**静默丢弃** → 建单载荷没有 inputs → 官网回
+// 「参考资源 图 1（老年）当前不存在」，额度照烧。
+//
+// 为什么不「多字段合并」而是「第一个有值的胜出」：合并会把同一张图重复传两次
+// （客户端同时传 images 和 image_urls 时），反而制造新的错位。
+var referenceImageFields = []referenceImageField{
+	{"input_reference", func(r clientRequest) json.RawMessage { return r.InputReference }},
+	{"images", func(r clientRequest) json.RawMessage { return r.Images }},
+	{"image", func(r clientRequest) json.RawMessage { return r.Image }},
+	{"image_url", func(r clientRequest) json.RawMessage { return r.ImageURL }},
+	{"image_urls", func(r clientRequest) json.RawMessage { return r.ImageURLs }},
+	{"reference_image", func(r clientRequest) json.RawMessage { return r.ReferenceImage }},
+	{"reference_images", func(r clientRequest) json.RawMessage { return r.ReferenceImages }},
+	{"input_images", func(r clientRequest) json.RawMessage { return r.InputImages }},
+}
+
+// resolveReferenceImages 解析参考图：按 referenceImageFields 的优先级取第一个有值的字段。
 // 每张必须是 http(s) URL（ArcReel 不接受 multipart/data URI）。
-func resolveReferenceImages(req clientRequest) ([]string, error) {
-	images := parseStringList(req.InputReference)
-	if len(images) == 0 {
-		images = parseStringList(req.Images)
+//
+// 解析失败**必须报错**：旧实现两种形态都解析不了就静默返回 nil，等于把客户端
+// 传来的图悄悄丢掉（2026-10-22 丢图事故的放大器之一）。
+//
+// 返回值里的 source 是命中的字段名，用于日志与规范化请求（可观测性）。
+func resolveReferenceImages(req clientRequest) ([]string, string, error) {
+	for _, field := range referenceImageFields {
+		raw := field.Raw(req)
+		if !hasValue(raw) {
+			continue
+		}
+		images, err := parseStringList(raw)
+		if err != nil {
+			return nil, field.Name, fmt.Errorf("%s: %w", field.Name, err)
+		}
+		if len(images) == 0 {
+			continue
+		}
+		if len(images) > maxReferenceImages {
+			return nil, field.Name, fmt.Errorf("manwu accepts at most %d reference images, got %d", maxReferenceImages, len(images))
+		}
+		for _, image := range images {
+			if err := assertHTTPURL(image, "reference image"); err != nil {
+				return nil, field.Name, err
+			}
+		}
+		return images, field.Name, nil
 	}
-	if len(images) > maxReferenceImages {
-		return nil, fmt.Errorf("manwu accepts at most %d reference images, got %d", maxReferenceImages, len(images))
-	}
-	for _, image := range images {
-		if err := assertHTTPURL(image, "reference image"); err != nil {
-			return nil, err
+	return nil, "", nil
+}
+
+// hasAnyReferenceImage 判断请求里是否带了任何形态的**参考图**字段（只看「有没有带」），
+// 用于反解链路拒绝「图片 + 视频」混传。
+//
+// 注意 input_reference 不算图片：反解链路里 input_reference 装的是**参考视频**
+// （resolveVideos 复用同一字段），把它算成图片会把所有反解请求都毙掉。
+func hasAnyReferenceImage(req clientRequest) bool {
+	for _, field := range referenceImageFields {
+		if field.Name == "input_reference" {
+			continue
+		}
+		if hasValue(field.Raw(req)) {
+			return true
 		}
 	}
-	return images, nil
+	return false
+}
+
+// ── 提示词里的参考图引用（2026-10-22 丢图事故）──
+//
+// 事故 prompt（真实单 gen-bb57f7f1cd19c75326cf5b78）：
+// 「【人物锁定】严格使用参考图，男受访者 = 参考图1中的人物。@图2/@图1/@图3」
+// —— 引用了三张图，但派单素材是空的。
+//
+// 判据：
+// - 位置式引用只认中文形式 `@图片N` / `@图N`（豆包官网与漫屋工作流的写法）；
+// - 期望张数 = **最大编号**（`@图片3` → 3 张），位置绑定语义；
+// - `@imageNN` 是别的系统的**素材名 token**，不能当位置序号判（撞号会把合法任务拦死），
+//   只用于「提示词引用了图、实际一张都没带」的零图兜底。
+
+var (
+	// promptPositionRefRe 匹配位置式引用：@图片N / @图N。
+	promptPositionRefRe = regexp.MustCompile(`@(图片|图)(\d+)`)
+	// promptImageTokenRe 匹配全部图片引用 token（含英文素材名式 @imageNN）。
+	promptImageTokenRe = regexp.MustCompile(`(?i)@(图片|图|image)(\d+)`)
+	// promptRefIndexRe 从标签里取编号。
+	promptRefIndexRe = regexp.MustCompile(`\d+`)
+)
+
+// findPromptRefs 找出提示词里的引用标签，并按「@ 前不能是字母/下划线」的边界规则过滤：
+// mail@图片1 不是引用；而 @图1@图2 这种紧挨着的两个标签都要认出来。
+func findPromptRefs(prompt string, re *regexp.Regexp) []string {
+	if prompt == "" {
+		return nil
+	}
+	matches := re.FindAllStringSubmatchIndex(prompt, -1)
+	tags := make([]string, 0, len(matches))
+	seen := make(map[string]bool, len(matches))
+	for _, match := range matches {
+		start := match[0]
+		if start > 0 {
+			previous, size := utf8.DecodeLastRuneInString(prompt[:start])
+			if size > 0 && (previous == '_' || isASCIILetter(previous)) {
+				continue
+			}
+		}
+		tag := prompt[match[0]:match[1]]
+		if seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		tags = append(tags, tag)
+	}
+	return tags
+}
+
+func isASCIILetter(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
+// promptReferenceExpectation 返回提示词暗示的参考图张数（= 位置引用的最大编号）
+// 与命中的标签。没有位置式引用时返回 0。
+func promptReferenceExpectation(prompt string) (int, []string) {
+	tags := findPromptRefs(prompt, promptPositionRefRe)
+	expected := 0
+	for _, tag := range tags {
+		index, err := strconv.Atoi(promptRefIndexRe.FindString(tag))
+		if err == nil && index > expected {
+			expected = index
+		}
+	}
+	return expected, tags
+}
+
+// assertPromptReferenceCoverage 校验「提示词引用的参考图数」与「实际带上的张数」。
+//
+// 两条规则：
+//   - 位置绑定：引用里的最大编号是需要的张数，实际张数不足 → 拒（@图片3 指向第 3 张，
+//     只有 1 张图时第 3 张根本不存在）；
+//   - 零图兜底：提示词里出现任何图片引用 token，而实际一张图都没带 → 拒。
+//
+// 实际张数**多于**引用数不拦（多带图不算错位）。
+func assertPromptReferenceCoverage(prompt string, images []string) error {
+	actual := len(images)
+	expected, tags := promptReferenceExpectation(prompt)
+	if expected > 0 {
+		if actual < expected {
+			return fmt.Errorf("prompt references %d reference image(s) (%s) but only %d were provided",
+				expected, strings.Join(tags, ", "), actual)
+		}
+		return nil
+	}
+	if actual == 0 {
+		if tokens := findPromptRefs(prompt, promptImageTokenRe); len(tokens) > 0 {
+			return fmt.Errorf("prompt references reference image(s) (%s) but no reference image was provided",
+				strings.Join(tokens, ", "))
+		}
+	}
+	return nil
 }
 
 // resolveVideos 解析反解的视频地址：input_reference（首选）→ videos → video。
 // 上限恰好 1 个（ArcReel 硬约束）。
 func resolveVideos(req clientRequest) ([]string, error) {
-	videos := parseStringList(req.InputReference)
-	if len(videos) == 0 {
-		videos = parseStringList(req.Videos)
+	fields := []referenceImageField{
+		{"input_reference", func(r clientRequest) json.RawMessage { return r.InputReference }},
+		{"videos", func(r clientRequest) json.RawMessage { return r.Videos }},
+		{"video", func(r clientRequest) json.RawMessage { return r.Video }},
 	}
-	if len(videos) == 0 {
-		videos = parseStringList(req.Video)
-	}
-	if len(videos) == 0 {
-		return nil, fmt.Errorf("video reference is required: pass a public http(s) video URL via input_reference")
-	}
-	if len(videos) > maxReferenceVideos {
-		return nil, fmt.Errorf("video reverse accepts exactly %d reference video, got %d", maxReferenceVideos, len(videos))
-	}
-	for _, video := range videos {
-		if err := assertHTTPURL(video, "reference video"); err != nil {
-			return nil, err
+	for _, field := range fields {
+		raw := field.Raw(req)
+		if !hasValue(raw) {
+			continue
 		}
+		videos, err := parseStringList(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", field.Name, err)
+		}
+		if len(videos) == 0 {
+			continue
+		}
+		if len(videos) > maxReferenceVideos {
+			return nil, fmt.Errorf("video reverse accepts exactly %d reference video, got %d", maxReferenceVideos, len(videos))
+		}
+		for _, video := range videos {
+			if err := assertHTTPURL(video, "reference video"); err != nil {
+				return nil, err
+			}
+		}
+		return videos, nil
 	}
-	return videos, nil
+	return nil, fmt.Errorf("video reference is required: pass a public http(s) video URL via input_reference")
 }
 
 // resolveImageCount 解析出图张数：n（首选）→ count → 缺省 1，上限 10（与 ArcReel
@@ -1255,19 +1457,70 @@ func parseFlexibleInt(raw json.RawMessage) (value int, found bool, err error) {
 
 // parseStringList 兼容字符串与字符串数组两种 JSON 形态
 // （与 relaycommon 对 input_reference/images 的宽容解析一致）。
-func parseStringList(raw json.RawMessage) []string {
+//
+// 2026-10-22 丢图事故：旧实现两种形态都解析不了就**静默返回 nil**，
+// 于是 ["https://a.png", 123] 这种混合数组会把整组图丢掉 —— 建单变成「无图」，
+// 任务照发、额度照烧。现在解析失败一律报错（fail-loud），由调用方转成 400。
+//
+// 数组逐元素解析：单个元素坏掉时整组报错，而不是丢掉坏元素后用剩下的部分
+// 继续（那样同样会造成「张数不对」的错位）。
+func parseStringList(raw json.RawMessage) ([]string, error) {
 	if !hasValue(raw) {
-		return nil
+		return nil, nil
 	}
-	var values []string
-	if err := common.Unmarshal(raw, &values); err == nil {
-		return values
+	trimmed := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(trimmed, "[") {
+		var elements []json.RawMessage
+		if err := common.Unmarshal(raw, &elements); err != nil {
+			return nil, fmt.Errorf("must be a string or an array of strings")
+		}
+		values := make([]string, 0, len(elements))
+		for index, element := range elements {
+			value, err := parseStringElement(element)
+			if err != nil {
+				return nil, fmt.Errorf("element %d: %w", index, err)
+			}
+			if value != "" {
+				values = append(values, value)
+			}
+		}
+		return values, nil
 	}
 	var value string
-	if err := common.Unmarshal(raw, &value); err == nil && value != "" {
-		return []string{value}
+	if err := common.Unmarshal(raw, &value); err == nil {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, nil
+		}
+		return []string{value}, nil
 	}
-	return nil
+	// 对象形态 {"url": "https://..."}：部分客户端用这种带一层包装的写法。
+	var object struct {
+		URL string `json:"url"`
+	}
+	if err := common.Unmarshal(raw, &object); err == nil {
+		if url := strings.TrimSpace(object.URL); url != "" {
+			return []string{url}, nil
+		}
+	}
+	return nil, fmt.Errorf("must be a string or an array of strings")
+}
+
+// parseStringElement 解析数组里的单个元素：字符串，或带 url 字段的对象。
+func parseStringElement(element json.RawMessage) (string, error) {
+	var value string
+	if err := common.Unmarshal(element, &value); err == nil {
+		return strings.TrimSpace(value), nil
+	}
+	var object struct {
+		URL string `json:"url"`
+	}
+	if err := common.Unmarshal(element, &object); err == nil {
+		if url := strings.TrimSpace(object.URL); url != "" {
+			return url, nil
+		}
+	}
+	return "", fmt.Errorf("must be a string URL")
 }
 
 // hasValue 判断 JSON 字段是否「真的带了值」：缺省 / null / 空串 / 空数组都算未指定。
