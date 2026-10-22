@@ -174,7 +174,7 @@
 
 真机只覆盖了文生视频（prompt / duration / ratio / resolution / seed 五个字段），
 所以另外按「客户端原始 JSON → 本站解析 → 上游提交体」整条链做了一次代码级审查
-（`relay/channel/task/megabyai/wan30_params_test.go`，21 个用例，全程本地计算、
+（`relay/channel/task/megabyai/wan30_params_test.go`，22 个参数用例，全程本地计算、
 不发上游请求、不产生计费）。
 
 **结论：主链路正常。** 18 个参数映射用例全绿，且真机实测与之一致：
