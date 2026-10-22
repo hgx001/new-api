@@ -22,7 +22,11 @@ RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$
 
 FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
 
-RUN apt-get update \
+# 生产服务器直连 deb.debian.org **不通**（2026-10-22 实测 curl 超时，构建卡在
+# apt-get update 90 分钟；而 mirrors.aliyun.com 0.1s 返回）。与上面 GOPROXY=goproxy.cn
+# 同一思路：apt 源换成国内阿里云镜像，并加超时/重试，避免在慢源上空转。
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true \
+    && apt-get -o Acquire::http::Timeout=20 -o Acquire::Retries=3 update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata libasan8 wget \
     && rm -rf /var/lib/apt/lists/* \
     && update-ca-certificates
