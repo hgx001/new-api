@@ -260,6 +260,15 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **结果解析必须容错**：成片地址可能在 `video_url`/`url`/`result_url`/`data.url`/`data.video_url`/`output.video_url` 等多处；错误字段可能是对象 / 字符串 / `fail_reason`；状态可能返回 `succeeded`。**严格解析一失败，任务就永远停在非终态**（既看不到失败原因，也永远退不了款）。认不出的非空状态按「还在跑」处理（误判失败=用户白等一次生成，误判成功=把没出的片子当成功交付）。
 - **交付链路**（`controller/video_proxy.go` 的 `ChannelTypeMegaAI` 分支）：轮询响应带成片直链 → 透传且**不带渠道密钥**；没有直链 → 回源上游 `{base}/v1/videos/{upstream_task_id}/content`（带密钥）。⚠️ 必须用 `isSelfProxyPath` 排除站内代理地址，否则代理自我递归。
 - 接入细节与真机验证结论见 `docs/channel/megabyai-wan3-integration.md`。
+- ⚠️ **渠道密钥里混进 BOM 会连锁触发 AutoBan**（2026-10-22 实测）：写密钥文件时带了
+  UTF-8 BOM → 渠道里存的是带 BOM 的 key → 上游 401「无效的令牌」→ **渠道被自动禁用**
+  → 后续请求报「分组 default 下模型 wan-3.0 的可用渠道不存在」。现象离根因很远，
+  排查时先核对渠道 key 的长度/md5；恢复用 `scripts/restore-channel.sh <id>`
+  （`channels.status` 与 `abilities.enabled` 必须一起改，只改 status 会让模型全 503）。
+  `scripts/create-megabyai-channel.sh` 已加防呆：密钥含非 ASCII 可见字符直接拒绝。
+- ⚠️ 上游任务回执带 `billing_amount` / `billing_currency` / `billing_quota` /
+  `billing_status`，是**核对上游实扣口径的第一手凭据**（比价目表可靠）。
+  上游任务 id 形如 `task_<32位>`，直查时**必须带 `task_` 前缀**，否则 `task_not_exist`。
 
 ### 生产运维硬约束（血泪教训）
 

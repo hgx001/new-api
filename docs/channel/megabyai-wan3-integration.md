@@ -20,6 +20,8 @@
 | 价目表单位是**元**不是美元 | `GET /api/status`：`usd_exchange_rate=1`、`quota_display_type=CNY` |
 | 时长 5/10/15/30 秒，参考图 ≤10、参考视频 ≤5、参考音频 ≤5，全比例，提示词 ≤5000 字符 | 上游价目表 `description` |
 | 上游已不再提供无后缀的 `sd-2.5` | `GET /v1/models` 只剩 `sd-2.5-720p` 等带档位后缀的型号 |
+| 上游任务回执带计费字段：`billing_amount` / `billing_currency` / `billing_quota` / `billing_status`，以及 `metadata.upstream_task_id` | `GET /v1/videos/{task_id}` 实测回执 |
+| 上游任务 id 形如 `task_<32位>`，且**只有带 `task_` 前缀才查得到** | 直查无前缀会返回 `task_not_exist` |
 
 ⚠️ **「按次」与时长的关系**：上游价目表的单位是 `call`（不是 `second`），
 所以 30 秒和 5 秒同价。这一条是定价的地基，**2026-10-22 用 1 个 30 秒 720p 真机任务
@@ -121,3 +123,10 @@
   参考素材会被静默丢弃。首个带参考图的任务要人工核对成片。
 - `sd-2.5` 上游已无同名型号，生产渠道只挂 `wan-3.0`；代码里保留 `sd-2.5`
   是不破坏既有路径（youkou 渠道的按次计费覆盖也复用这个包）。
+- ⚠️ **渠道密钥里混进 BOM 会连锁触发 AutoBan**（2026-10-22 实测）：
+  用 PowerShell 管道把密钥写进服务器文件时会带 UTF-8 BOM → 渠道里存的是
+  带 BOM 的 key → 上游返回 401「无效的令牌」→ **渠道被自动禁用** →
+  后续请求报「分组 default 下模型 wan-3.0 的可用渠道不存在」。
+  现象离根因很远，排查时先核对渠道 key 的 md5/长度；
+  恢复用 `scripts/restore-channel.sh <id>`（status 与 abilities.enabled 必须一起改）。
+  `scripts/create-megabyai-channel.sh` 现在会直接拒绝含非 ASCII 字符的密钥文件。
