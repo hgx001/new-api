@@ -102,17 +102,38 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapper(err, "invalid_input_reference", http.StatusBadRequest)
 	}
 	total := 0
+	totalReal := 0.0
+	videoCount := 0
 	for _, item := range media {
 		if item.Type != "reference_video" {
 			continue
 		}
-		seconds, err := probeReferenceVideoSeconds(item.URL)
+		probed, err := probeReferenceVideoSeconds(item.URL)
 		if err != nil {
 			return service.TaskErrorWrapper(errors.Wrap(err, "probe reference video duration failed"), "invalid_input_reference", http.StatusBadRequest)
 		}
-		total += seconds
+		total += probed.seconds
+		totalReal += probed.realSeconds
+		videoCount++
 	}
-	if total > 0 {
+	if videoCount > 0 {
+		// 官方《万相3.0-视频生成API参考》：参考视频最多 5 段、总时长不大于 15 秒。
+		if totalReal > maxReferenceVideoTotalSeconds+durationEpsilon {
+			return service.TaskErrorWrapper(
+				errors.Errorf("wan3 reference videos total %.2fs exceeds the %ds limit", totalReal, maxReferenceVideoTotalSeconds),
+				"invalid_input_reference", http.StatusBadRequest)
+		}
+		// 官方同一条文档：有视频输入时，**输入视频总时长 + 输出视频时长不超过 30 秒**。
+		// 本站计费秒数 = 生成时长 + 参考视频总秒数 = 上游 usage.duration（同一个数），
+		// 所以这条约束顺带把预扣额度也锁在 30 秒内；不本地拦就会按上游根本不会
+		// 生成的规格预扣了钱，再等上游 400 退款。
+		generation := resolveDuration(req)
+		if totalReal+float64(generation) > maxTotalDurationWithVideo+durationEpsilon {
+			return service.TaskErrorWrapper(
+				errors.Errorf("wan3 reference video total %.2fs + generation %ds exceeds the %ds limit",
+					totalReal, generation, maxTotalDurationWithVideo),
+				"invalid_input_reference", http.StatusBadRequest)
+		}
 		c.Set(refVideoSecondsContextKey, total)
 	}
 	return nil

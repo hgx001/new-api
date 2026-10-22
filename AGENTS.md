@@ -332,6 +332,15 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - ⚠️ **「上游模型自动同步」job 只增不删**（`controller/channel_upstream_update.go`）：它只在 `UpstreamModelUpdateAutoSyncEnabled` 打开时**自动新增**上游新模型，且只写 `channels.models`、**不碰 `abilities`**；`ChannelTypeSanyuan` 不在白名单里，渠道 23 的 models 不会被它改写。
 - **验证手段**：不跑真实任务（上游真金白银扣费）。用**必然被本地 400 拦下**的非法入参探针（如带 `media.type=reference_video` → sanyuan 适配器在 `validateMedia` 阶段就拒，不下载素材、不建单、不扣费），断言返回 400 且文案是 sanyuan 的，即证明路由已切到渠道 23。
 
+### wan3.0-video-官网 的参考视频计费与限值（2026-10-22 定稿）
+
+- **参考视频按时长同价计费**：`seconds = 生成时长 + Σ(每个参考视频时长四舍五入)`，再乘分辨率倍率（480P=¥0.27/s、720P=¥0.54/s、1080P=¥1.08/s）。例：10 秒参考视频 + 生成 10 秒 480P = 0.27 × 20 = **¥5.40**（不传参考视频只要 ¥2.70）。
+  - 依据：上游 usage 里 `duration = input_video_duration + output_video_duration`（**上游也这么收**），我们计费用的秒数与上游 `usage.duration` 是同一个数 → 不是凭空加价。
+  - 取整口径**四舍五入**（不是向上取整）：2026-10-16 真机实证 DashScope 把 2.02 秒的参考视频记成 `input_video_duration=2`；向上取整会让每个参考视频多收 1 秒（2 秒的片多收 50%）。
+  - **探测必须放在 validate 阶段**（`EstimateBilling` 没有错误返回值，解析失败时无法拒单 → 会退化成「只按生成时长收费」= 少收）。解析不出 mvhd → 400 `invalid_input_reference`，不建单不扣费。
+- **本地强制的官方限值**（官方《万相3.0-视频生成API参考》2026-10-22 核对）：参考视频最多 5 段、**单个 [1,15] 秒、总时长 ≤15 秒**；**有视频输入时「输入视频总时长 + 输出视频时长 ≤30 秒」**（这条以前完全没实现 → 会按上游根本不会生成的规格预扣钱，再等上游 400 退款）；参考音频最多 5 段、单个 [1,15] 秒、总时长 ≤15 秒、≤15MB —— **音频时长不在本地校验**（本站不探测音频时长，超限由上游拒）。越限一律 400 `invalid_input_reference`（不建单不扣费）。回归用例：`TestValidateRequestAndSetActionRejectsOversizedReferenceVideo` / `...RejectsTooShortReferenceVideo` / `...RejectsReferenceVideoTotalOverLimit` / `...RejectsTotalDurationOverLimit` / `...AcceptsBoundary`。
+- **改价入口（后台）**：前台 `/pricing` 是只读展示；真正改价在 **「系统设置 → 计费设置 → 模型定价」`/system-settings/billing/model-pricing`**（改 `ModelPrice` / `ModelRatio` JSON），或 **「模型管理」`/models` 的单个模型编辑抽屉**（逐个模型改价格 + 卡片描述）。⚠️ `ModelPrice` 存的是 **USD 等值**（¥价 ÷ 7.3）且**会覆盖代码里的 defaultModelPrice**；改完要**等 ≥70s**（`SYNC_FREQUENCY`=60s）才生效，改价前按「Model Pricing and Catalog Rules」核官方最新价 + 区域 + 币种。
+
 ### Project Governance
 
 **Required attribution:** The footer must always include a line crediting the original project:

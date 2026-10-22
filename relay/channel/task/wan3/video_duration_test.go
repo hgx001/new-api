@@ -119,17 +119,18 @@ func disableSSRF(t *testing.T) {
 }
 
 func TestProbeReferenceVideoSecondsFromDataURL(t *testing.T) {
-	seconds, err := probeReferenceVideoSeconds(buildDataURLVideo(7.3))
+	probed, err := probeReferenceVideoSeconds(buildDataURLVideo(7.3))
 	require.NoError(t, err)
-	require.Equal(t, 7, seconds) // 7.3 → 四舍五入
+	require.Equal(t, 7, probed.seconds) // 7.3 → 四舍五入
+	require.InDelta(t, 7.3, probed.realSeconds, 0.0001)
 
-	seconds, err = probeReferenceVideoSeconds(buildDataURLVideo(10))
+	probed, err = probeReferenceVideoSeconds(buildDataURLVideo(10))
 	require.NoError(t, err)
-	require.Equal(t, 10, seconds)
+	require.Equal(t, 10, probed.seconds)
 
-	seconds, err = probeReferenceVideoSeconds(buildDataURLVideo(4.6))
+	probed, err = probeReferenceVideoSeconds(buildDataURLVideo(4.6))
 	require.NoError(t, err)
-	require.Equal(t, 5, seconds) // 4.6 → 四舍五入进位
+	require.Equal(t, 5, probed.seconds) // 4.6 → 四舍五入进位
 }
 
 // 回归守卫（2026-10-16 真机实证）：DashScope 生成的「2 秒」成片，mvhd 实测
@@ -137,9 +138,10 @@ func TestProbeReferenceVideoSecondsFromDataURL(t *testing.T) {
 // input_video_duration=2。若这里用向上取整会得到 3 秒，比上游多收 1 秒
 // （2 秒参考视频多收 50%），故必须四舍五入。
 func TestProbeReferenceVideoSecondsRoundsDashScopeTwoSecondClip(t *testing.T) {
-	seconds, err := probeReferenceVideoSeconds("data:video/mp4;base64," + base64.StdEncoding.EncodeToString(buildMP4(buildMvhd(0, 1000, 2020))))
+	probed, err := probeReferenceVideoSeconds("data:video/mp4;base64," + base64.StdEncoding.EncodeToString(buildMP4(buildMvhd(0, 1000, 2020))))
 	require.NoError(t, err)
-	require.Equal(t, 2, seconds)
+	require.Equal(t, 2, probed.seconds)
+	require.InDelta(t, 2.02, probed.realSeconds, 0.0001)
 }
 
 func TestProbeReferenceVideoSecondsFromHTTP(t *testing.T) {
@@ -149,9 +151,9 @@ func TestProbeReferenceVideoSecondsFromHTTP(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	seconds, err := probeReferenceVideoSeconds(srv.URL)
+	probed, err := probeReferenceVideoSeconds(srv.URL)
 	require.NoError(t, err)
-	require.Equal(t, 12, seconds) // 12.4 → 四舍五入
+	require.Equal(t, 12, probed.seconds) // 12.4 → 四舍五入
 }
 
 func TestProbeReferenceVideoSecondsRejectsBadSources(t *testing.T) {
@@ -213,6 +215,74 @@ func TestValidateRequestAndSetActionSetsReferenceVideoSeconds(t *testing.T) {
 	require.Nil(t, taskErr)
 	// 7.3(→7) + 4 = 11
 	require.Equal(t, 11, c.MustGet(refVideoSecondsContextKey))
+}
+
+// 官方《万相3.0-视频生成API参考》限制：参考视频单个 [1,15] 秒、总时长 ≤15 秒；
+// 有视频输入时「输入视频总时长 + 输出视频时长 ≤30 秒」。越限必须在本地 400
+// （不建单不扣费），否则会按上游根本不会生成的规格预扣了钱。
+func TestValidateRequestAndSetActionRejectsOversizedReferenceVideo(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	c, info := newTaskContext(t, fmt.Sprintf(
+		`{"model":"wan3.0-video-官网","prompt":"参考动作","media":[{"type":"reference_video","url":%q}]}`,
+		buildDataURLVideo(16),
+	))
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_input_reference", taskErr.Code)
+	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+}
+
+func TestValidateRequestAndSetActionRejectsTooShortReferenceVideo(t *testing.T) {
+	// 0.5 秒低于官方下限 1 秒：本地直接拒，不让请求走到上游再被拒。
+	adaptor := &TaskAdaptor{}
+	c, info := newTaskContext(t, fmt.Sprintf(
+		`{"model":"wan3.0-video-官网","prompt":"参考动作","media":[{"type":"reference_video","url":%q}]}`,
+		buildDataURLVideo(0.5),
+	))
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_input_reference", taskErr.Code)
+}
+
+func TestValidateRequestAndSetActionRejectsReferenceVideoTotalOverLimit(t *testing.T) {
+	// 两个 8 秒视频 → 合计 16 秒，超过 15 秒总上限。
+	adaptor := &TaskAdaptor{}
+	c, info := newTaskContext(t, fmt.Sprintf(
+		`{"model":"wan3.0-video-官网","prompt":"参考动作","media":[{"type":"reference_video","url":%q},{"type":"reference_video","url":%q}]}`,
+		buildDataURLVideo(8), buildDataURLVideo(8),
+	))
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_input_reference", taskErr.Code)
+}
+
+func TestValidateRequestAndSetActionRejectsTotalDurationOverLimit(t *testing.T) {
+	// 15 秒参考视频 + 生成 16 秒 = 31 秒，超过「输入 + 输出 ≤ 30 秒」。
+	adaptor := &TaskAdaptor{}
+	c, info := newTaskContext(t, fmt.Sprintf(
+		`{"model":"wan3.0-video-官网","prompt":"参考动作","duration":16,"media":[{"type":"reference_video","url":%q}]}`,
+		buildDataURLVideo(15),
+	))
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, "invalid_input_reference", taskErr.Code)
+}
+
+func TestValidateRequestAndSetActionAcceptsBoundary(t *testing.T) {
+	// 15 秒参考视频 + 生成 15 秒 = 30 秒，正好在上限内，必须放行。
+	adaptor := &TaskAdaptor{}
+	c, info := newTaskContext(t, fmt.Sprintf(
+		`{"model":"wan3.0-video-官网","prompt":"参考动作","duration":15,"media":[{"type":"reference_video","url":%q}]}`,
+		buildDataURLVideo(15),
+	))
+
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	require.Nil(t, taskErr)
+	require.Equal(t, 15, c.MustGet(refVideoSecondsContextKey))
 }
 
 func TestValidateRequestAndSetActionRejectsUndeterminableVideo(t *testing.T) {

@@ -95,39 +95,60 @@ func parseMvhd(payload []byte) (float64, bool) {
 	return float64(duration) / float64(timescale), true
 }
 
-// probeReferenceVideoSeconds 探测单个参考视频的时长并取整为整秒（四舍五入，与上游
-// input_video_duration 口径一致，见 probedSeconds）。
+// probedVideo 是一次参考视频探测的结果。
+type probedVideo struct {
+	// seconds 是计费口径：四舍五入后的整秒（与上游 input_video_duration 对齐）。
+	seconds int
+	// realSeconds 是真实时长，用于官方范围校验（单个 [1,15] 秒、总计 ≤15 秒）。
+	realSeconds float64
+}
+
+// probeReferenceVideoSeconds 探测单个参考视频的时长。
 // 支持 data URL 与公网 http(s) URL；解析不出时长时返回错误（fail-loud，防少收）。
-func probeReferenceVideoSeconds(rawURL string) (int, error) {
+//
+// 单个时长必须落在官方区间 [1, 15] 秒 —— 超限或过短都在本地拒：
+// 上游会拒，但那时本站已经按超限秒数预扣了钱。
+func probeReferenceVideoSeconds(rawURL string) (probedVideo, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	lower := strings.ToLower(rawURL)
 	switch {
 	case strings.HasPrefix(lower, "data:"):
 		data, err := decodeDataURLPrefix(rawURL)
 		if err != nil {
-			return 0, errors.Wrap(err, "decode reference video data URL failed")
+			return probedVideo{}, errors.Wrap(err, "decode reference video data URL failed")
 		}
 		return probedSeconds(data)
 	case strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://"):
 		data, err := downloadReferenceVideoPrefix(rawURL)
 		if err != nil {
-			return 0, err
+			return probedVideo{}, err
 		}
 		return probedSeconds(data)
 	default:
-		return 0, errors.New("wan3 reference video url must be http(s) or data URL")
+		return probedVideo{}, errors.New("wan3 reference video url must be http(s) or data URL")
 	}
 }
 
-func probedSeconds(data []byte) (int, error) {
+// durationEpsilon 是浮点比较容差：mvhd 的 duration/timescale 除法可能让
+// 恰好 15 秒的片子算出 15.000000000000002，用严格大于会误拒合法请求。
+const durationEpsilon = 1e-6
+
+func probedSeconds(data []byte) (probedVideo, error) {
 	seconds, ok := mp4Seconds(data)
 	if !ok {
-		return 0, errors.New("reference video duration unavailable: no mvhd box found (MP4/MOV only)")
+		return probedVideo{}, errors.New("reference video duration unavailable: no mvhd box found (MP4/MOV only)")
+	}
+	// 官方《万相3.0-视频生成API参考》：参考视频单个时长 [1, 15] 秒。
+	if seconds < 1-durationEpsilon {
+		return probedVideo{}, errors.Errorf("reference video duration %.2fs is below the 1s minimum", seconds)
+	}
+	if seconds > maxReferenceVideoTotalSeconds+durationEpsilon {
+		return probedVideo{}, errors.Errorf("reference video duration %.2fs exceeds the %ds per-video limit", seconds, maxReferenceVideoTotalSeconds)
 	}
 	// 与上游取整口径对齐：DashScope 自己的 usage 把 2.02 秒的参考视频记为
 	// input_video_duration=2（2026-10-16 真机实证），所以这里四舍五入而非向上取整——
 	// 上游生成的成片天然带约 20ms 尾巴，向上取整会让每个参考视频都多收 1 秒。
-	return int(math.Round(seconds)), nil
+	return probedVideo{seconds: int(math.Round(seconds)), realSeconds: seconds}, nil
 }
 
 // decodeDataURLPrefix 解码 data URL 的 base64 部分。数据本就随请求体驻留内存，全量解码不增加额外开销。
