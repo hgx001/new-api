@@ -58,6 +58,19 @@ if grep -q "no space left on device" "$BUILD_LOG"; then
 fi
 tail -1 "$BUILD_LOG"
 
+# 构建缓存是可再生的，但吃盘很凶（2026-10-22 磁盘 99% 就是它撑爆的，
+# 紧接着 env 快照写空 → 容器丢 SQL_DSN → 回落空 SQLite）。
+# 构建完先看一眼剩余空间，不够就先把构建缓存回收掉再往下走。
+free_after=$(df -Pm / | awk 'NR==2 {print $4}')
+if [ "$free_after" -lt "$MIN_FREE_MB" ]; then
+  echo "[deploy] 构建后磁盘仅剩 ${free_after}MB，回收 docker 构建缓存"
+  docker builder prune -af >/dev/null 2>&1 || true
+  free_after=$(df -Pm / | awk 'NR==2 {print $4}')
+  echo "[deploy] 回收后剩余 ${free_after}MB"
+fi
+[[ "$free_after" =~ ^[0-9]+$ ]] || die "无法读取磁盘剩余空间"
+[ "$free_after" -ge 1024 ] || die "构建后磁盘只剩 ${free_after}MB，中止发版（先人工清理）"
+
 # ---------------------------------------------------------------------------
 # 1. 环境变量快照：容器必须拿到 SQL_DSN / SESSION_SECRET / CRYPTO_SECRET，
 #    否则 new-api 会静默回落到 SQLite。快照为空或缺关键项 → 立刻中止。
