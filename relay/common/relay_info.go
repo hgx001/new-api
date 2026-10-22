@@ -732,6 +732,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata       json.RawMessage `json:"metadata,omitempty"`
 		Duration       json.RawMessage `json:"duration,omitempty"`
+		Seconds        json.RawMessage `json:"seconds,omitempty"`
 		Seed           json.RawMessage `json:"seed,omitempty"`
 		InputReference json.RawMessage `json:"input_reference,omitempty"`
 		Images         json.RawMessage `json:"images,omitempty"`
@@ -833,6 +834,26 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 					t.Duration = v
 				}
 			}
+		}
+	}
+
+	// seconds 兼容数字与字符串两种写法。
+	//
+	// 为什么要兼容数字：Sora 协议里 seconds 是字符串（"4"/"8"），但大量第三方客户端
+	// 直接传数字（{"seconds": 15}）。以前这里会整包反序列化失败 → 客户端收到
+	// 400 invalid_json（"cannot unmarshal number into ... of type string"），
+	// 表现为「参数根本没传进去」，而不是「参数写错了」。
+	// 字符串仍是标准写法，这里只是把数字也接住，行为对字符串完全不变。
+	if len(aux.Seconds) > 0 && string(aux.Seconds) != "null" {
+		var secondsStr string
+		if err := common.Unmarshal(aux.Seconds, &secondsStr); err == nil {
+			t.Seconds = strings.TrimSpace(secondsStr)
+		} else {
+			var secondsInt int
+			if err := common.Unmarshal(aux.Seconds, &secondsInt); err != nil {
+				return fmt.Errorf("seconds must be an integer")
+			}
+			t.Seconds = strconv.Itoa(secondsInt)
 		}
 	}
 

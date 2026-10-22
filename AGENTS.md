@@ -257,6 +257,9 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **分辨率必须归一到三档，认不出来一律 400**（`invalid_resolution`）：猜错档位 = 直接少收钱。客户端没给时默认 480p 且**显式下发**给上游——上游按次计价，不显式下发就可能「我们按 480p 收钱、上游按别的档收」。
   - 计费档位在 `ValidateRequestAndSetAction` 阶段解析好写进 context（`megabyai_wan30_resolution`），`EstimateBilling` 复用同一个值 → 不会出现「计费档位 ≠ 下发档位」。
 - **入参必须翻译成上游「统一参数」**（`wan30.go`）：`duration` / `ratio` / `resolution` / `referenceImages` / `referenceVideos` / `referenceAudios`。上游文档明确**不要与 `seconds`/`size`/`image`/`input_reference` 混用**，所以 `wan-3.0` **不透传原始 JSON**。素材上限（图 ≤10 / 视频 ≤5 / 音频 ≤5）本地 400。
+- **参考素材必须是公网 http(s) URL**（上游要自己去抓）：`data:` / `blob:` / 相对路径 / 无 host 的地址上游不可达 → 本地 400（与 manwu / wan3 的既有约定一致）。别为了「宽松」把 data: URI 透传上去——那会变成「跑完一轮才失败」。
+- ⚠️ **平台的 Sora 语义会让 `input_reference` 覆盖整个 `images` 数组**（`relay/common/relay_utils.go` 的 `validateMultipartDirect`：`input_reference` 是单图字段，存在就替换 `images`）。wan-3.0 支持 10 张参考图，两者并存时**必须合并**（适配器从原始 body 把 `images` 找回来），否则用户付了 ¥3 却丢了自己的参考图。
+- ⚠️ **数字型 `seconds` 必须能收**（2026-10-22 修）：`TaskSubmitReq.Seconds` 是 `string`，客户端传 `{"seconds": 15}` 以前会让整包反序列化失败 → `400 invalid_json`，表现为「参数根本没传进去」而不是「参数写错了」。`relay/common/relay_info.go` 的 `UnmarshalJSON` 已按 `duration`/`seed` 的同款口径兼容数字与字符串（**全局改动，影响所有任务渠道**；字符串写法行为不变）。
 - **结果解析必须容错**：成片地址可能在 `video_url`/`url`/`result_url`/`data.url`/`data.video_url`/`output.video_url` 等多处；错误字段可能是对象 / 字符串 / `fail_reason`；状态可能返回 `succeeded`。**严格解析一失败，任务就永远停在非终态**（既看不到失败原因，也永远退不了款）。认不出的非空状态按「还在跑」处理（误判失败=用户白等一次生成，误判成功=把没出的片子当成功交付）。
 - **交付链路**（`controller/video_proxy.go` 的 `ChannelTypeMegaAI` 分支）：轮询响应带成片直链 → 透传且**不带渠道密钥**；没有直链 → 回源上游 `{base}/v1/videos/{upstream_task_id}/content`（带密钥）。⚠️ 必须用 `isSelfProxyPath` 排除站内代理地址，否则代理自我递归。
 - ⚠️ **上游成片是 Cloudflare R2 签名直链，`X-Amz-Expires=86400`（签发后 24 小时过期）**，本站把直链存进 `private_data.result_url` 且**不缓存视频字节** → 用户须在 24 小时内下载，过期后 `/content` 取不到片（要长期留存得另做转存）。

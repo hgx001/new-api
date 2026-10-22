@@ -1,13 +1,17 @@
 package megabyai
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+
+	"github.com/gin-gonic/gin"
 )
 
 // wan30Request 是上游「统一参数」契约的提交体。
@@ -184,6 +188,9 @@ func buildWan30Media(req relaycommon.TaskSubmitReq) ([]string, []string, []strin
 		if raw == "" {
 			return nil
 		}
+		if err := validateWan30MaterialURL(kind, raw); err != nil {
+			return err
+		}
 		switch strings.TrimSpace(kind) {
 		case "reference_image", "first_frame", "last_frame", "image":
 			images = append(images, raw)
@@ -238,6 +245,74 @@ func buildWan30Media(req relaycommon.TaskSubmitReq) ([]string, []string, []strin
 		return nil, nil, nil, fmt.Errorf("wan-3.0 accepts at most %d reference audios", wan30MaxReferenceAudios)
 	}
 	return images, videos, audios, nil
+}
+
+// validateWan30MaterialURL 参考素材必须是上游能自己抓取的公网 http(s) URL。
+//
+// 上游文档写的是「参考图 URL / 参考视频 URL / 参考音频 URL」——上游要自己去拉这些地址，
+// data: / blob: / 相对路径 / 没有 host 的地址对它都不可达，提交上去必然失败：
+// 用户付了钱、任务跑完才报「素材取不到」，是最差的一种失败。
+// 与 manwu / wan3 通道的既有约定保持一致：非 http(s) 一律本地 400。
+func validateWan30MaterialURL(kind, raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s must be a public http(s) URL, got %q", kind, raw)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("%s must be a public http(s) URL, got %q", kind, raw)
+	}
+	return nil
+}
+
+// wan30RestoreImages 把被平台语义覆盖掉的 images 数组找回来。
+//
+// 平台的 Sora 语义规定：input_reference 是「单图字段」，一旦存在就把整个 images 数组
+// 替换成它自己（见 relay/common/relay_utils.go 的 validateMultipartDirect）。
+// wan-3.0 支持多参考图（图 ≤10），两者并存时静默丢图 = 用户付了 ¥3 却没带参考图，
+// 成片里什么也没有。所以这里从原始请求体里把 images 取回来，与 input_reference 合并。
+//
+// 只在「input_reference 是字符串（触发覆盖）」且「原始 body 里确有 images」时生效；
+// 拿不到原始 body 时保持平台原样（宁可少合也不要凭空编素材）。
+func wan30RestoreImages(c *gin.Context, req relaycommon.TaskSubmitReq) (relaycommon.TaskSubmitReq, bool) {
+	if strings.TrimSpace(req.InputReference) == "" {
+		return req, false
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return req, false
+	}
+	raw, err := storage.Bytes()
+	if err != nil || len(raw) == 0 {
+		return req, false
+	}
+	var body struct {
+		Images json.RawMessage `json:"images"`
+	}
+	if err := common.Unmarshal(raw, &body); err != nil || len(body.Images) == 0 {
+		return req, false
+	}
+	images, err := parseWan30URLList(body.Images)
+	if err != nil || len(images) == 0 {
+		return req, false
+	}
+	restored := make([]string, 0, len(images)+1)
+	restored = append(restored, images...)
+	restored = append(restored, strings.TrimSpace(req.InputReference))
+	req.Images = restored
+	return req, true
+}
+
+// parseWan30URLList 解析「字符串或字符串数组」两种写法（与平台解析 images 的口径一致）。
+func parseWan30URLList(raw json.RawMessage) ([]string, error) {
+	var list []string
+	if err := common.Unmarshal(raw, &list); err == nil {
+		return list, nil
+	}
+	var single string
+	if err := common.Unmarshal(raw, &single); err == nil {
+		return []string{single}, nil
+	}
+	return nil, fmt.Errorf("images must be a string or an array of strings")
 }
 
 // wan30MetadataMedia 兼容把素材放在 metadata.media 里的客户端。

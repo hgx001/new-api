@@ -75,15 +75,16 @@
 | 本站 | 上游 |
 |---|---|
 | `prompt` | `prompt` |
-| `duration` / `seconds` | `duration`（整数） |
+| `duration` / `seconds` | `duration`（整数；`seconds` 数字与字符串两种写法都收） |
 | `resolution` / `metadata.resolution` / `size`(WxH) | `resolution`（`480p`/`720p`/`1080p`） |
 | 原始请求体 `ratio` / `metadata.ratio` / `metadata.aspect_ratio` / `size` 推断 | `ratio` |
 | `images` / `image` / `input_reference` / `media[type=reference_image\|first_frame\|last_frame]` | `referenceImages` |
 | `media[type=reference_video]` | `referenceVideos` |
 | `audios` / `audio` / `media[type=reference_audio]` | `referenceAudios` |
-| `seed` | `seed` |
+| `seed` | `seed`（省略时不下发，上游自己随机） |
 
-素材数量超上游上限（图 ≤10 / 视频 ≤5 / 音频 ≤5）本地 400。
+素材数量超上游上限（图 ≤10 / 视频 ≤5 / 音频 ≤5）本地 400；
+素材地址必须是**公网 http(s) URL**（上游要自己去抓），`data:` / `blob:` / 本地路径本地 400。
 
 ### 3. 定价与白名单
 
@@ -168,3 +169,46 @@
 
 台账：生产 `logs` type=6 / id=8033（`OPERATOR-COST-ACCOUNTING`），
 记录客户侧 205478 quota（¥3.00）与上游侧 ¥1.8 settled 两个口径。
+
+## 参数传递审查（2026-10-22，纯静态 + 单元测试，未生成任何视频）
+
+真机只覆盖了文生视频（prompt / duration / ratio / resolution / seed 五个字段），
+所以另外按「客户端原始 JSON → 本站解析 → 上游提交体」整条链做了一次代码级审查
+（`relay/channel/task/megabyai/wan30_params_test.go`，21 个用例，全程本地计算、
+不发上游请求、不产生计费）。
+
+**结论：主链路正常。** 18 个参数映射用例全绿，且真机实测与之一致：
+
+| 客户端写法 | 上游收到 | 证据 |
+|---|---|---|
+| `duration: 30` / `duration: "30"` / `seconds: "15"` | `duration: 30 / 15` | 单测 + 真机成片 30.02s |
+| `resolution: "720p"` | `resolution: "720p"` | 单测 + 真机成片 1280×720 |
+| `size: "1920x1080"` | `resolution: 1080p` + `ratio: 16:9` | 单测 |
+| 顶层 `ratio: "16:9"` | `ratio: "16:9"` | 单测 + 真机 16:9 |
+| `metadata.resolution` / `metadata.ratio` | 同名字段 | 单测 |
+| `images` / `media[...]` / `audios` | `referenceImages` / `referenceVideos` / `referenceAudios` | 单测 |
+| `seed` 数字与字符串 | `seed: 42` | 单测 |
+
+审查中查出并修掉 3 个问题：
+
+1. **数字型 `seconds` 直接 400**（全局，影响所有任务渠道）。`TaskSubmitReq.Seconds`
+   是 `string`，客户端传 `{"seconds": 15}` 会让整包反序列化失败 →
+   客户端收到 `400 invalid_json`（"cannot unmarshal number into ... of type string"），
+   表现为「参数根本没传进去」而不是「参数写错了」，极难定位。
+   修法：`relay/common/relay_info.go` 的 `UnmarshalJSON` 按 `duration`/`seed` 的同款口径
+   兼容数字与字符串；字符串写法行为完全不变。
+2. **`input_reference` 会覆盖整个 `images` 数组**（静默丢参考图）。平台是 Sora 语义
+   （`input_reference` 是单图字段，存在就替换 `images`，见
+   `relay/common/relay_utils.go` 的 `validateMultipartDirect`）。
+   wan-3.0 支持 10 张参考图，两者并存时丢图 = 用户付了 ¥3 却没带参考图。
+   修法：`megabyai` 适配器在 `ValidateRequestAndSetAction` 里从原始 body 把 `images`
+   找回来与 `input_reference` 合并（只在本渠道生效，不动平台语义）。
+3. **非 http(s) 素材地址直接透传给上游**。上游文档写的是「参考图 URL」，
+   它要自己去抓；`data:` / `blob:` / 本地路径对它不可达 →
+   任务跑完才失败（用户付了钱还等了一轮生成）。
+   修法：素材地址必须是公网 http(s) URL，否则本地 400
+   （与 manwu / wan3 通道的既有约定一致）。
+
+⚠️ **仍未被任何验证覆盖的**：`referenceImages` / `referenceVideos` / `referenceAudios`
+这三个字段名是否被上游真正识别（上游文档如此写，但没跑过带参考素材的真机任务），
+以及 `seed` 是否原样生效。首个带参考图的任务仍需人工核对成片。

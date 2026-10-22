@@ -65,6 +65,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
+	// 平台 Sora 语义会让 input_reference 覆盖整个 images 数组；wan-3.0 支持多参考图，
+	// 两者并存时必须把 images 合并回来，否则用户付了钱却丢了自己的参考图。
+	if restored, ok := wan30RestoreImages(c, req); ok {
+		req = restored
+		relaycommon.StoreTaskRequest(c, info, info.Action, req)
+	}
 	// 分辨率必须在本地归一：wan-3.0 按分辨率档计价，猜错档位就是少收钱。
 	resolution, err := resolveWan30Resolution(req)
 	if err != nil {
