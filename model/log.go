@@ -125,6 +125,15 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "audit_info")
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
+			if logs[i].Type == LogTypeError {
+				// 渠道名只对管理员可见：普通用户的错误日志里不该出现渠道名。
+				// 管理员走 GetAllLogs，不经过这里，排查时仍能看到原名。
+				delete(otherMap, "channel_name")
+			}
+		}
+		if logs[i].Type == LogTypeError {
+			// 对外别名模型：错误日志里不能出现上游/供应商字样，否则等于告诉用户真实货源。
+			logs[i].Content = RedactUpstreamIdentity(logs[i].Content, logs[i].ModelName)
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 	}
