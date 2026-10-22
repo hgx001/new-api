@@ -2,27 +2,84 @@
 
 DO NOT send optional commentary
 
-## 三项目关系链路（2026-10-08）
+## 三项目关系链路（2026-10-08，2026-10-23 补归属与排查落点）
 
-本业务由三个紧密耦合的项目组成，排查问题前先分清归属（三份 AGENTS.md 各有一份相同章节，改链路时三处同步更新）：
+**这三个仓库都是我们自己的**（同一产品、同一团队维护的三个项目），不是三方 SDK、不是外部开源上游。
+排查线上问题时按下面这条链路定位落点，别把它们当成互不相关的外部依赖
+（三份 AGENTS.md 各有一份同文章节，改链路时三处同步更新）：
 
-| 项目 | 位置 | 角色 |
-|---|---|---|
-| 燃境 Ai App | `C:/work/即梦网站/cron_video_brach`（Electron） | **Worker 执行体**：DOM 自动化跑各平台官网，以 Worker 身份连 ArcReel 的 WSS 接单执行 |
-| ArcReel（漫屋） | `C:/work/即梦网站/ArcReel`（`manwu-agent` 是其 gitee 镜像） | **服务端 + 前端**：建单、`assign_job` 派单（按 `<platform>.dom` 能力匹配）、钱包计费、产物托管 |
-| new-api（本仓库） | `C:/work/new-api-src`（维护目录 `C:/work/维护newapi`） | **对外 API 网关**：漫屋渠道把任务转发给 ArcReel，对终端用户卖 OpenAI 兼容 API |
+| 项目 | 位置 | 角色 | 生产地址 |
+|---|---|---|---|
+| 燃境 Ai App | `C:/work/即梦网站/cron_video_brach`（Electron） | **Worker 执行体**：DOM 自动化跑各平台官网，以 Worker 身份连 ArcReel 的 WSS 接单执行 | — |
+| ArcReel（漫屋） | `C:/work/即梦网站/ArcReel`（`manwu-agent` 是其 gitee 镜像） | **服务端 + 前端**：建单、`assign_job` 派单（按 `<platform>.dom` 能力匹配）、钱包计费、产物托管 | `https://arcreel.heibaidao.cn` |
+| new-api（本仓库） | `C:/work/new-api-src`（维护目录 `C:/work/维护newapi`） | **对外 API 网关**：漫屋渠道把任务转发给 ArcReel，对终端用户卖 OpenAI 兼容 API | `https://api.heibaidao.cn` |
+
+> ⚠️ **「漫屋」是我们内部对 ArcReel 远端生成服务的叫法，不是第三方服务商。**
+> 本仓库里那个名为「漫屋ArcReel」的渠道（`channels.id = 20`）base_url 就是
+> `https://arcreel.heibaidao.cn` —— **指回 ArcReel 自己**。真正的外部服务只有最后一跳：
+> 豆包 / dola 官网（由 Worker 用账号驱动）。排查时别把「漫屋渠道」当成外部上游。
 
 ### 端到端调用链
 
 ```
-终端用户（new-api 令牌）→ POST /v1/video/generations
-  → 本仓库漫屋渠道（relay/channel/task/manwu/adaptor.go，参数白名单校验）
+终端用户 / 第三方客户端（new-api 令牌）
+  → POST /v1/videos              ← OpenAI 形态（第三方客户端走这条，如 threefat-video-client）
+  或 POST /v1/video/generations  ← ranjing-ai 工作台走那条（electron/api/newapiVideoClient.ts）
+  → 本仓库漫屋渠道（relay/channel/task/manwu/adaptor.go，参数白名单校验 + 参考图覆盖度闸门）
   → ArcReel POST /api/v1/remote-generation/jobs（REMOTE_OPENAPI_SERVICE_TOKEN 鉴权）
   → ArcReel assign_job（按 <platform>.dom 能力匹配在线 Worker）
   → Worker App（WSS 长连接）DOM 自动化执行
   → Worker 下载→delogo→上传产物 → ArcReel 托管（projects/remote_outputs/）
-  → 本仓库轮询 GET /api/v1/remote-generation/jobs/{id} → 代理产物字节回给用户
+  → 本仓库轮询 GET /v1/videos/{id} → 代理产物字节回给用户
 ```
+
+> ⚠️ **两个提交端点别混**：`/v1/videos`（OpenAI 形态，第三方客户端）与
+> `/v1/video/generations`（ranjing-ai 工作台）都汇到渠道 20，但 `request_path` 不同 ——
+> 排查「这单是谁发的」以 `logs.other.request_path` 为准。
+> `/v1/video/generations` **不能**用于轮询（`relay/relay_task.go` 的 `isOpenAIVideoAPI`
+> 只认 `/v1/videos/` 前缀走 OpenAI 转换）。
+
+### 排查落点（按层取证，别跳层猜）
+
+| 层 | 落点 | 看什么 |
+|---|---|---|
+| 网关（本层） | 容器日志 / `logs` 表 | `manwu 参考图解析：model=… source=… count=…`（source=命中的请求字段名，count=实际解析张数）；`logs.other.request_path` = 提交端点 |
+| 建单 | ArcReel `remote_generation_jobs` 表 | `inputs_json`（实际带的素材）、`prompt`（引用形态）、`worker_id`（谁领的单）、`idempotency_key`（`manwu-` 前缀 = 经本层建单） |
+| 派单执行 | ranjing-ai Worker 日志 / `executionTraceLog` | 提交前护栏、附件卡计数、官网回包 |
+| 官网 | 豆包 / dola 官网 | 「参考资源 图 N 当前不存在」= 图没到位，**不是账号问题** |
+
+> ⚠️ 本层**不存原始请求体**（`logs.other` 只有 request_path / model_price 等，
+> `tasks.properties` 里也只有 `input` 文本）。「客户端到底传了什么字段名」这个盲区
+> 只能靠 adaptor 的 `manwu 参考图解析：… source=…` 这行日志补 —— 改 adaptor 时别删它。
+
+### 三端同口径：参考图覆盖度判定（改任一端必须同步另两端）
+
+同一份提示词会在三层各算一次「期望张数」，任一层口径不同就会「一层拦、一层放行」，闸门形同虚设：
+
+| 层 | 实现文件 |
+|---|---|
+| 网关入口（本层） | `relay/channel/task/manwu/adaptor.go`：`findPromptRefs` / `promptReferenceExpectation` / `assertPromptReferenceCoverage` |
+| 建单 | ArcReel `server/routers/remote_generation.py`：`_prompt_reference_tags` / `_prompt_reference_expectation` / `_assert_prompt_reference_coverage` |
+| Worker 提交前 | ranjing-ai `electron/remote/remoteReferenceGuard.ts`：`detectRemoteReferenceTags` / `checkRemoteReferenceCoverage` |
+
+口径（三端必须一致）：
+- 位置式引用只认 `@图片N` / `@图N`，期望张数 = **最大编号**（`@图片3` → 3 张），不是引用次数；
+- `@imageNN` 是 ranjing-ai 的**素材名 token**，不参与位置判定（撞号会把合法任务拦死），只做「引用了图却 0 张」的零图兜底；
+- 边界：`@` 前是 ASCII 字母或下划线才不算引用（`mail@图片1` 不是引用），**数字要放行**（`@图1@图2` 两个标签都要认出来）；
+- 实际张数**多于**引用数不拦（多带图不算错位）。
+
+### 参考图字段别名（2026-10-22/23 两次补齐，漏一个就是静默丢图）
+
+`clientRequest` 白名单必须覆盖客户端可能用的**所有**命名空间，漏掉的名字会被**静默丢弃**
+→ 建单无图 → 官网回「参考资源 图 N 当前不存在」→ 额度照烧：
+
+- snake_case：`input_reference` / `images` / `image` / `image_url` / `image_urls` /
+  `reference_image` / `reference_images` / `input_images`
+- camelCase：`inputReference` / `imageUrl` / `imageUrls` / `referenceImage` /
+  `referenceImages` / `inputImages`
+
+⚠️ Go 的 `encoding/json` 匹配 json tag 时**忽略大小写但不忽略下划线** ——
+`referenceImages` 匹配不上 tag `reference_images`，所以 camelCase 必须**单列字段**。
 
 ### 模型 → 平台映射（漫屋渠道，adaptor.go modelSpecs 路由表）
 

@@ -1299,6 +1299,13 @@ func hasAnyReferenceImage(req clientRequest) bool {
 // 「【人物锁定】严格使用参考图，男受访者 = 参考图1中的人物。@图2/@图1/@图3」
 // —— 引用了三张图，但派单素材是空的。
 //
+// ⚠️ **三层各有一道同口径的闸**：网关入口（本文件）→ ArcReel 建单
+// （server/routers/remote_generation.py 的 _assert_prompt_reference_coverage）
+// → Worker 提交前（ranjing-ai electron/remote/remoteReferenceGuard.ts 的
+// checkRemoteReferenceCoverage）。**三个仓库都是我们自己的**（同一产品的三个项目，
+// 详见各仓 AGENTS.md 的「三项目关系链路」），改任一端的判据必须同步另两端 ——
+// 口径不同就会出现「一层拦、一层放行」，闸门形同虚设。
+//
 // 判据：
 // - 位置式引用只认中文形式 `@图片N` / `@图N`（豆包官网与漫屋工作流的写法）；
 // - 期望张数 = **最大编号**（`@图片3` → 3 张），位置绑定语义；
