@@ -161,11 +161,11 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     name: CHANNEL_TYPES[64],
     icon: 'openai',
     defaultBaseUrl: 'https://newapi.megabyai.cc',
-    supportedModels: ['wan-3.0', 'sd-2.5'],
+    supportedModels: ['wan-3.0', 'seedance2.5-特惠', 'sd-2.5'],
     hints: {
       baseUrl: 'Default: https://newapi.megabyai.cc',
       key: 'MegaAI API Key',
-      models: 'wan-3.0, sd-2.5',
+      models: 'wan-3.0, seedance2.5-特惠, sd-2.5',
     },
   },
 }

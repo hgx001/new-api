@@ -430,6 +430,10 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan-3.0" {
 		return true
 	}
+	// MegaAI 渠道 wan-3.0 的对外别名：固定 ¥5.0/条
+	if name == "seedance2.5-特惠" {
+		return true
+	}
 	if strings.HasPrefix(name, "xuan:") {
 		return true
 	}

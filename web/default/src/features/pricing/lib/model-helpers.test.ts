@@ -167,6 +167,7 @@ describe('AutoDL H3 resolution tier note', () => {
       'seedance-2.5', // dola 2.5 按次（已下架）
       'wan3.0-video-prime-1080p', // 满血 30s 档按次
       'wan-3.0', // MegaAI 渠道：按次 + 分辨率档（无 seconds 倍率）
+      'seedance2.5-特惠', // MegaAI 渠道：固定 ¥5.0/条（无 seconds 倍率、无分辨率档）
     ]
 
     for (const name of perSecond) {

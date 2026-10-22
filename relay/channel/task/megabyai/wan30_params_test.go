@@ -27,7 +27,13 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// runWan30Chain 复刻生产真实链路：
+// runWan30Chain 复刻生产真实链路（对外模型名固定为 wan-3.0）。
+func runWan30Chain(t *testing.T, raw string) wan30ChainResult {
+	t.Helper()
+	return runChainWithModel(t, raw, wan30Model, wan30Model)
+}
+
+// runChainWithModel 复刻生产真实链路，可指定对外模型名与渠道映射后的上游模型名：
 //
 //	原始 JSON body → Sora 的 ValidateMultipartDirect（解析 + 落 context）
 //	              → megabyai 的 ValidateRequestAndSetAction（分辨率归一 + 素材校验）
@@ -35,7 +41,8 @@ func init() {
 //	              → EstimateBilling（计费倍率）
 //
 // 全部是本地计算，不发任何上游请求、不产生任何计费。
-func runWan30Chain(t *testing.T, raw string) wan30ChainResult {
+// upstreamModel 为空表示渠道没配 model_mapping（靠代码兜底表）。
+func runChainWithModel(t *testing.T, raw, originModel, upstreamModel string) wan30ChainResult {
 	t.Helper()
 
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -44,8 +51,8 @@ func runWan30Chain(t *testing.T, raw string) wan30ChainResult {
 	c.Set(common.KeyRequestBody, []byte(raw))
 
 	info := &relaycommon.RelayInfo{
-		OriginModelName: wan30Model,
-		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: wan30Model},
+		OriginModelName: originModel,
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: upstreamModel},
 		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
 	}
 

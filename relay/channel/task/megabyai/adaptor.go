@@ -48,14 +48,34 @@ func (a *TaskAdaptor) ensureSub() {
 	a.sub = &tasksora.TaskAdaptor{}
 }
 
-// isWan30 判断本次请求是不是走统一参数契约的 wan-3.0。
-func isWan30(info *relaycommon.RelayInfo) bool {
-	return info != nil && info.OriginModelName == wan30Model
+// usesUnifiedContract 判断本次请求是不是走上游「统一参数」契约的模型。
+//
+// wan-3.0 与它的对外别名 seedance2.5-特惠 都走这套契约：入参翻译成
+// duration / ratio / resolution / referenceImages ...，不透传原始 JSON。
+//
+// ⚠️ 用**精确集合**判断而不是前缀：站内相近的 seedance 模型名很多，
+// 前缀匹配会误命中别家渠道的枚举表。
+func usesUnifiedContract(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	return megabyaiUnifiedContractModels[info.OriginModelName]
+}
+
+// isResolutionTiered 判断本次请求是不是**按分辨率档计价**。
+//
+// wan-3.0 是按次 + 分辨率档（480p ¥2.4 / 720p ¥3.0 / 1080p ¥4.0）；
+// seedance2.5-特惠 是固定 ¥5.0/条，与分辨率、时长都无关。
+func isResolutionTiered(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	return megabyaiResolutionTierModels[info.OriginModelName]
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	a.ensureSub()
-	if !isWan30(info) {
+	if !usesUnifiedContract(info) {
 		return a.sub.ValidateRequestAndSetAction(c, info)
 	}
 	if taskErr := a.sub.ValidateRequestAndSetAction(c, info); taskErr != nil {
@@ -89,8 +109,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 //
 //   - sd-2.5：固定按次价 → nil（禁止带入 seconds/size，否则会按秒多扣费）。
 //   - wan-3.0：上游按次计价（时长不参与），只有分辨率档参与 → 只给 size 倍率。
+//   - seedance2.5-特惠：固定 ¥5.0/条 → nil（不按分辨率分档，也不乘时长）。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	if !isWan30(info) {
+	if !isResolutionTiered(info) {
 		return nil
 	}
 	resolution := ""
@@ -133,7 +154,7 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 // 其余模型沿用 Sora 适配器的透传行为。
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 	a.ensureSub()
-	if !isWan30(info) {
+	if !usesUnifiedContract(info) {
 		return a.sub.BuildRequestBody(c, info)
 	}
 	req, err := relaycommon.GetTaskRequest(c)
@@ -148,10 +169,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	modelName := wan30Model
-	if info != nil && info.ChannelMeta != nil && strings.TrimSpace(info.UpstreamModelName) != "" {
-		modelName = strings.TrimSpace(info.UpstreamModelName)
-	}
+	modelName := resolveMegabyaiUpstreamModel(info)
 	body := wan30Request{
 		Model:           modelName,
 		Prompt:          strings.TrimSpace(req.Prompt),
@@ -168,6 +186,33 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	return bytes.NewReader(encoded), nil
+}
+
+// resolveMegabyaiUpstreamModel 决定下发给上游的 model 名。
+//
+// 顺序：
+//  1. 渠道 model_mapping 生效时以它为准（管理员可以改上游指向）；
+//  2. 没有映射、或映射回自己时用兜底表 —— **别名模型绝不能把对外名原样发给上游**
+//     （上游不认识「seedance2.5-特惠」，会直接 400）；
+//  3. 兜底到 wan-3.0。
+func resolveMegabyaiUpstreamModel(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return wan30Model
+	}
+	upstream := ""
+	if info.ChannelMeta != nil {
+		upstream = strings.TrimSpace(info.UpstreamModelName)
+	}
+	if upstream != "" && upstream != info.OriginModelName {
+		return upstream
+	}
+	if mapped, ok := megabyaiUpstreamModels[info.OriginModelName]; ok {
+		return mapped
+	}
+	if upstream != "" {
+		return upstream
+	}
+	return wan30Model
 }
 
 // rawWan30Ratio 从原始请求体里取 ratio（本站通用入参里没有 ratio 字段，

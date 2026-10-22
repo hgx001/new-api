@@ -73,6 +73,11 @@ func TestIsAllowedPricingModelMegaAIWan30(t *testing.T) {
 	require.True(t, isAllowedPricingModel("wan-3.0"), "wan-3.0 must show in pricing square")
 }
 
+// MegaAI 渠道 wan-3.0 的对外别名 seedance2.5-特惠 上广场：固定 ¥5.0/条。
+func TestIsAllowedPricingModelMegaAISeedance25TeHui(t *testing.T) {
+	require.True(t, isAllowedPricingModel("seedance2.5-特惠"), "seedance2.5-特惠 must show in pricing square")
+}
+
 // 漫屋新增两个模型上广场；视频反解在价格核定前**不**上（占位价不得对外发布）。
 func TestIsAllowedPricingModelManwuRemote(t *testing.T) {
 	for _, name := range []string{"gemini-web-video", "Nano Banana Pro"} {
