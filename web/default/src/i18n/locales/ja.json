@@ -5197,7 +5197,12 @@
     "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "プラン・仕様・帯域を変更すると、残り期間は按分精算されます。",
     "Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.": "計算最適化インスタンス。バッチ処理、モデル推論、データ処理に適しています。高クロック速度の vCPU を搭載。",
     "Shanghai": "上海",
-    "Talk to the engineers who run the platform instead of a generic ticket queue.": "汎用チケットの待ち行列ではなく、プラットフォームを運用するエンジニアと直接話せます。"
+    "Talk to the engineers who run the platform instead of a generic ticket queue.": "汎用チケットの待ち行列ではなく、プラットフォームを運用するエンジニアと直接話せます。",
+    "Click to enlarge": "クリックして拡大",
+    "Enlarge QR code": "QRコードを拡大",
+    "Save QR code": "QRコードを保存",
+    "Save it to your album and scan later": "アルバムに保存して後からスキャン",
+    "WeChat ID": "WeChatのアカウントID"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",

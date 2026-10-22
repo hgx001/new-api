@@ -5197,7 +5197,12 @@
     "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Khi đổi gói, cấu hình hoặc băng thông, thời gian còn lại được tính theo tỷ lệ.",
     "Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.": "Máy chủ tối ưu cho tính toán: xử lý hàng loạt, suy luận mô hình và xử lý dữ liệu. vCPU tần số cao.",
     "Shanghai": "Thượng Hải",
-    "Talk to the engineers who run the platform instead of a generic ticket queue.": "Nói chuyện trực tiếp với các kỹ sư vận hành nền tảng thay vì xếp hàng trong hàng đợi ticket chung."
+    "Talk to the engineers who run the platform instead of a generic ticket queue.": "Nói chuyện trực tiếp với các kỹ sư vận hành nền tảng thay vì xếp hàng trong hàng đợi ticket chung.",
+    "Click to enlarge": "Nhấn để phóng to",
+    "Enlarge QR code": "Phóng to mã QR",
+    "Save QR code": "Lưu mã QR",
+    "Save it to your album and scan later": "Lưu vào thư viện rồi quét sau",
+    "WeChat ID": "Tài khoản WeChat"
   },
   "Integration Tutorial": "Hướng dẫn tích hợp",
   "Claude Code Installation": "Cài đặt Claude Code",

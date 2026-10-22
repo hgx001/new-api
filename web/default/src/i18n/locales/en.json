@@ -5197,7 +5197,12 @@
     "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.",
     "Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.": "Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.",
     "Shanghai": "Shanghai",
-    "Talk to the engineers who run the platform instead of a generic ticket queue.": "Talk to the engineers who run the platform instead of a generic ticket queue."
+    "Talk to the engineers who run the platform instead of a generic ticket queue.": "Talk to the engineers who run the platform instead of a generic ticket queue.",
+    "Click to enlarge": "Click to enlarge",
+    "Enlarge QR code": "Enlarge QR code",
+    "Save QR code": "Save QR code",
+    "Save it to your album and scan later": "Save it to your album and scan later",
+    "WeChat ID": "WeChat ID"
   },
   "Integration Tutorial": "Integration Tutorial",
   "Claude Code Installation": "Claude Code Installation",

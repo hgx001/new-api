@@ -176,6 +176,12 @@ const newKeys = {
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       'Talk to the engineers who run the platform instead of a generic ticket queue.',
     '{{days}} days left': '{{days}} days left',
+    'Click to enlarge': 'Click to enlarge',
+    'Enlarge QR code': 'Enlarge QR code',
+    'Save QR code': 'Save QR code',
+    'Save it to your album and scan later':
+      'Save it to your album and scan later',
+    'WeChat ID': 'WeChat ID',
   },
   zh: {
     '+{{price}} / month': '+{{price}} / 月',
@@ -322,6 +328,11 @@ const newKeys = {
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       '直接和运营平台的工程师沟通，而不是在通用工单队列里排队。',
     '{{days}} days left': '剩余 {{days}} 天',
+    'Click to enlarge': '点击放大',
+    'Enlarge QR code': '放大二维码',
+    'Save QR code': '保存二维码',
+    'Save it to your album and scan later': '保存到相册后再扫码',
+    'WeChat ID': '微信号',
   },
   fr: {
     '+{{price}} / month': '+{{price}} / mois',
@@ -479,6 +490,12 @@ const newKeys = {
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       'Échangez avec les ingénieurs qui exploitent la plateforme au lieu d’attendre dans une file de tickets générique.',
     '{{days}} days left': '{{days}} jours restants',
+    'Click to enlarge': 'Cliquez pour agrandir',
+    'Enlarge QR code': 'Agrandir le code QR',
+    'Save QR code': 'Enregistrer le code QR',
+    'Save it to your album and scan later':
+      'Enregistrez-le dans vos photos pour le scanner plus tard',
+    'WeChat ID': 'Identifiant WeChat',
   },
   ja: {
     '+{{price}} / month': '+{{price}} / 月',
@@ -635,6 +652,12 @@ const newKeys = {
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       '汎用チケットの待ち行列ではなく、プラットフォームを運用するエンジニアと直接話せます。',
     '{{days}} days left': '残り {{days}} 日',
+    'Click to enlarge': 'クリックして拡大',
+    'Enlarge QR code': 'QRコードを拡大',
+    'Save QR code': 'QRコードを保存',
+    'Save it to your album and scan later':
+      'アルバムに保存して後からスキャン',
+    'WeChat ID': 'WeChatのアカウントID',
   },
   ru: {
     '+{{price}} / month': '+{{price}} / мес.',
@@ -790,6 +813,12 @@ const newKeys = {
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       'Общайтесь напрямую с инженерами, которые ведут платформу, а не в общей очереди тикетов.',
     '{{days}} days left': 'Осталось {{days}} дн.',
+    'Click to enlarge': 'Нажмите, чтобы увеличить',
+    'Enlarge QR code': 'Увеличить QR-код',
+    'Save QR code': 'Сохранить QR-код',
+    'Save it to your album and scan later':
+      'Сохраните в галерею, чтобы отсканировать позже',
+    'WeChat ID': 'Идентификатор WeChat',
   },
   vi: {
     '+{{price}} / month': '+{{price}} / tháng',
@@ -944,6 +973,12 @@ const newKeys = {
     'Talk to the engineers who run the platform instead of a generic ticket queue.':
       'Nói chuyện trực tiếp với các kỹ sư vận hành nền tảng thay vì xếp hàng trong hàng đợi ticket chung.',
     '{{days}} days left': 'Còn {{days}} ngày',
+    'Click to enlarge': 'Nhấn để phóng to',
+    'Enlarge QR code': 'Phóng to mã QR',
+    'Save QR code': 'Lưu mã QR',
+    'Save it to your album and scan later':
+      'Lưu vào thư viện rồi quét sau',
+    'WeChat ID': 'Tài khoản WeChat',
   },
 }
 

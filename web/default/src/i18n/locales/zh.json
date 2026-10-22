@@ -5197,7 +5197,12 @@
     "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "变更型号、配置或带宽后，剩余周期按比例折算补差价。",
     "Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.": "计算优化实例，适合批处理任务、模型推理与数据处理，配备高主频 vCPU。",
     "Shanghai": "上海",
-    "Talk to the engineers who run the platform instead of a generic ticket queue.": "直接和运营平台的工程师沟通，而不是在通用工单队列里排队。"
+    "Talk to the engineers who run the platform instead of a generic ticket queue.": "直接和运营平台的工程师沟通，而不是在通用工单队列里排队。",
+    "Click to enlarge": "点击放大",
+    "Enlarge QR code": "放大二维码",
+    "Save QR code": "保存二维码",
+    "Save it to your album and scan later": "保存到相册后再扫码",
+    "WeChat ID": "微信号"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",

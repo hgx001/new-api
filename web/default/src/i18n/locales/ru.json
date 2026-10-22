@@ -5197,7 +5197,12 @@
     "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "При смене тарифа, конфигурации или полосы пропорционально оплачивается остаток периода.",
     "Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.": "Инстансы, оптимизированные для вычислений: пакетные задачи, инференс моделей и обработка данных. Высокочастотные vCPU.",
     "Shanghai": "Шанхай",
-    "Talk to the engineers who run the platform instead of a generic ticket queue.": "Общайтесь напрямую с инженерами, которые ведут платформу, а не в общей очереди тикетов."
+    "Talk to the engineers who run the platform instead of a generic ticket queue.": "Общайтесь напрямую с инженерами, которые ведут платформу, а не в общей очереди тикетов.",
+    "Click to enlarge": "Нажмите, чтобы увеличить",
+    "Enlarge QR code": "Увеличить QR-код",
+    "Save QR code": "Сохранить QR-код",
+    "Save it to your album and scan later": "Сохраните в галерею, чтобы отсканировать позже",
+    "WeChat ID": "Идентификатор WeChat"
   },
   "Integration Tutorial": "Руководство по интеграции",
   "Claude Code Installation": "Установка Claude Code",
