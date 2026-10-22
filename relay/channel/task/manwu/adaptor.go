@@ -74,6 +74,16 @@ const (
 	defaultDuration = 15
 
 	// 参考图上限按 dola 官网真机口径取 10（与 ArcReel openai 后端 manwu 分支同口径）。
+	//
+	// ⚠️ **豆包侧同样到 10，不要按平台分档**（2026-10-23 生产数据取证）：
+	// ArcReel 生产库 `remote_generation_jobs` 里 platform_id=doubao 的任务实测带图张数
+	// 分布为 0/1/2/3/4/5/6/7/9/10 张 —— 9 张有 3 条走到 `ready`（已提交官网），
+	// 10 张有 2 条，其失败原因分别是「参考图上传失败：第 1/10 张 upload-error:no-accept-signal」
+	// 与「豆包模型设置失败（模型核验不一致）」——**都与张数无关**；
+	// 全库**没有任何一条因「参考图张数超限」失败的记录**。
+	// 换言之：豆包侧放行到 10 张没有证据反对，凭猜收紧只会把合法任务拦死。
+	// （另有一条不同维度的限制：豆包官网对「多参考图 + 大量角色锁定」有内容难度门槛，
+	// 那由 ranjing-ai 侧 contentDifficulty.ts 识别并换号，与张数上限无关。）
 	maxReferenceImages = 10
 	// maxReferenceVideos 反解只认 1 个视频：ArcReel create_job 硬约束「视频反解
 	// 任务必须且只能携带 1 个参考视频」，多传会被上游 400。
@@ -314,11 +324,11 @@ type clientRequest struct {
 	ReferenceImageCamelCase  json.RawMessage `json:"referenceImage"`
 	ReferenceImagesCamelCase json.RawMessage `json:"referenceImages"`
 	InputImagesCamelCase     json.RawMessage `json:"inputImages"`
-	Videos          json.RawMessage `json:"videos"`
-	Video           json.RawMessage `json:"video"`
-	N               json.RawMessage `json:"n"`
-	Count           json.RawMessage `json:"count"`
-	IdempotencyKey  string          `json:"idempotency_key"`
+	Videos                   json.RawMessage `json:"videos"`
+	Video                    json.RawMessage `json:"video"`
+	N                        json.RawMessage `json:"n"`
+	Count                    json.RawMessage `json:"count"`
+	IdempotencyKey           string          `json:"idempotency_key"`
 }
 
 // normalizedRequest 是校验通过后缓存在 gin.Context 中的规范化请求，
@@ -507,7 +517,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 	images, referenceSource, err := resolveReferenceImages(req)
 	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
+		return rejectReferenceRequest(c, req.Model, err)
 	}
 	norm.Images = images
 	norm.ReferenceSource = referenceSource
@@ -521,7 +531,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	// 不拒的话，这一单会一路跑到官网，官网回「参考资源 图 1（老年）当前不存在」，
 	// 额度照烧、用户白等 —— 入口拒是最便宜的一刀。
 	if err := assertPromptReferenceCoverage(norm.Prompt, images); err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
+		return rejectReferenceRequest(c, norm.Model,
+			newReferenceRejection(referenceReasonCoverage, err))
 	}
 
 	switch spec.Kind {
@@ -1242,6 +1253,64 @@ var referenceImageFields = []referenceImageField{
 	{"inputImages", func(r clientRequest) json.RawMessage { return r.InputImagesCamelCase }},
 }
 
+// ── 参考图拒绝原因（机器可读，2026-10-23）──
+//
+// 过去「参考图相关的失败」全叫 `invalid_input_reference`：张数超上限、非 http URL、
+// 字段形态解析失败、提示词引用数不足 —— 四件完全不同的事共用一个错误码，
+// 排查时只能去翻 message 文本猜「是图太多」还是「是图丢了」。
+//
+// 现在 message 追加稳定的 reason 标识（**错误码本身不变**：客户端可能按 code
+// 分支处理，改码是破坏性变更；原文案前缀也不动，客户端按前缀匹配仍能命中）。
+const (
+	referenceReasonTooMany     = "reference_images_too_many"
+	referenceReasonNotHTTPURL  = "reference_image_not_http_url"
+	referenceReasonParseFailed = "reference_image_parse_failed"
+	referenceReasonCoverage    = "prompt_reference_coverage_mismatch"
+)
+
+// referenceRejectionError 是「参考图被拒」的带原因错误。
+type referenceRejectionError struct {
+	Reason string
+	Err    error
+}
+
+func (e *referenceRejectionError) Error() string { return e.Err.Error() }
+func (e *referenceRejectionError) Unwrap() error { return e.Err }
+
+// newReferenceRejection 给错误打上机器可读的拒绝原因。
+func newReferenceRejection(reason string, err error) error {
+	return &referenceRejectionError{Reason: reason, Err: err}
+}
+
+// referenceRejectionReason 从错误里取拒绝原因；不是参考图拒绝时返回空串。
+func referenceRejectionReason(err error) string {
+	var rejection *referenceRejectionError
+	if errors.As(err, &rejection) {
+		return rejection.Reason
+	}
+	return ""
+}
+
+// rejectReferenceRequest 是参考图相关拒绝的**统一出口**：
+//   - 打一行结构化日志（reason + model + 原文案）→ 排查时不用翻 message 文本；
+//   - message 末尾追加稳定的 reason 标识，客户端也能机器可读地分辨
+//     「是图太多」还是「是图丢了」。
+//
+// ⚠️ 错误码保持 `invalid_input_reference` 不变（客户端可能按 code 分支处理）；
+// 原文案前缀也不动（客户端按前缀匹配仍能命中）。
+func rejectReferenceRequest(c *gin.Context, model string, err error) *dto.TaskError {
+	reason := referenceRejectionReason(err)
+	if reason == "" {
+		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
+	}
+	logger.LogWarn(c, fmt.Sprintf("manwu 参考图拒绝：reason=%s model=%s detail=%s",
+		reason, model, err.Error()))
+	return service.TaskErrorWrapperLocal(
+		fmt.Errorf("%w（reason=%s）", err, reason),
+		"invalid_input_reference", http.StatusBadRequest,
+	)
+}
+
 // resolveReferenceImages 解析参考图：按 referenceImageFields 的优先级取第一个有值的字段。
 // 每张必须是 http(s) URL（ArcReel 不接受 multipart/data URI）。
 //
@@ -1257,17 +1326,19 @@ func resolveReferenceImages(req clientRequest) ([]string, string, error) {
 		}
 		images, err := parseStringList(raw)
 		if err != nil {
-			return nil, field.Name, fmt.Errorf("%s: %w", field.Name, err)
+			return nil, field.Name, newReferenceRejection(referenceReasonParseFailed,
+				fmt.Errorf("%s: %w", field.Name, err))
 		}
 		if len(images) == 0 {
 			continue
 		}
 		if len(images) > maxReferenceImages {
-			return nil, field.Name, fmt.Errorf("manwu accepts at most %d reference images, got %d", maxReferenceImages, len(images))
+			return nil, field.Name, newReferenceRejection(referenceReasonTooMany,
+				fmt.Errorf("manwu accepts at most %d reference images, got %d", maxReferenceImages, len(images)))
 		}
 		for _, image := range images {
 			if err := assertHTTPURL(image, "reference image"); err != nil {
-				return nil, field.Name, err
+				return nil, field.Name, newReferenceRejection(referenceReasonNotHTTPURL, err)
 			}
 		}
 		return images, field.Name, nil

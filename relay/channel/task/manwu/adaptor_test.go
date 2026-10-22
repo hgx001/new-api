@@ -259,6 +259,65 @@ func TestValidateRejectsMalformedReferenceImages(t *testing.T) {
 	}
 }
 
+// ── 拒绝原因必须可区分（2026-10-23）──
+//
+// 「参考图相关的失败」过去全叫 `invalid_input_reference`：张数超上限、非 http URL、
+// 字段形态解析失败、提示词引用数不足 —— 四件完全不同的事共用一个错误码，
+// 排查时只能去翻 message 文本猜。现在 message 里必须带稳定的 reason 标识，
+// 客户端与日志都能机器可读地分辨「是图太多」还是「是图丢了」。
+//
+// ⚠️ 错误码本身**保持不变**（invalid_input_reference）：客户端可能按 code 分支处理，
+// 改码是破坏性变更。reason 追加在 message 末尾，原文案前缀不动。
+
+func TestValidateRejectsWithDistinguishableReason(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		reason string
+	}{
+		{
+			name:   "too many images",
+			body:   `{"model":"seedance-2.0","prompt":"hi","input_reference":` + manyImages(11) + `}`,
+			reason: "reference_images_too_many",
+		},
+		{
+			name:   "not http url",
+			body:   `{"model":"seedance-2.0","prompt":"hi","input_reference":["ftp://a.example/1.png"]}`,
+			reason: "reference_image_not_http_url",
+		},
+		{
+			name:   "malformed field",
+			body:   `{"model":"seedance-2.0","prompt":"hi","input_reference":["https://a.example/1.png",123]}`,
+			reason: "reference_image_parse_failed",
+		},
+		{
+			name:   "prompt references more than provided",
+			body:   `{"model":"seedance-2-5","prompt":"用 @图片1 @图片2 的构图","input_reference":["https://a.example/1.png"]}`,
+			reason: "prompt_reference_coverage_mismatch",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info, a := postVideoCtx(t, tc.body)
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr, tc.name)
+			// 旧码不变：客户端按 code 分支的逻辑不能被打断。
+			assert.Equal(t, "invalid_input_reference", taskErr.Code, tc.name)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode, tc.name)
+			// reason 必须能被机器读到。
+			assert.Contains(t, taskErr.Message, "reason="+tc.reason, tc.name)
+		})
+	}
+}
+
+func manyImages(n int) string {
+	items := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		items = append(items, `"https://a.example/`+strconv.Itoa(i)+`.png"`)
+	}
+	return "[" + strings.Join(items, ",") + "]"
+}
+
 // 提示词引用了参考图（位置式 @图N / @图片N）但一个都没传 → 建单前 400。
 // 不拦就是让官网去报「参考资源 图 1 当前不存在」：额度照烧、用户白等。
 func TestValidateRejectsPromptReferencesWithoutImages(t *testing.T) {
@@ -797,7 +856,8 @@ func TestReverseAcceptsCamelCaseVideoField(t *testing.T) {
 }
 
 // 反解的 prompt 可选（ArcReel 建单允许空 prompt），带 prompt 则当附加指令透传。
-func TestReversePromptIsOptional(t *testing.T) {	c, info, a := postVideoCtx(t, `{"model":"jimeng-video-reverse","input_reference":"https://cdn.example/c.mp4","prompt":"突出镜头运动"}`)
+func TestReversePromptIsOptional(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"jimeng-video-reverse","input_reference":"https://cdn.example/c.mp4","prompt":"突出镜头运动"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	reader, err := a.BuildRequestBody(c, info)
 	require.NoError(t, err)
