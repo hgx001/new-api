@@ -83,6 +83,22 @@ docker rename new-api "new-api-prev-$TS"
 OLD_NAME="new-api-prev-$TS"
 echo "OLD_KEPT: $OLD_NAME"
 
+# 兜底：脚本以任何非零码退出（含被 kill / 断线 SIGHUP）时，
+# 如果 new-api 容器没起来，就把旧容器恢复成 new-api 并拉起，
+# 避免留下「旧容器已改名、新容器未起」的空窗（= 站点停机）。
+on_exit_guard() {
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ -n "${OLD_NAME:-}" ] \
+     && ! docker ps --filter name='^/new-api$' --format '{{.Status}}' | grep -q 'Up'; then
+    echo "[deploy] 脚本异常退出（rc=$rc），回滚 $OLD_NAME -> new-api" >&2
+    docker rm -f new-api >/dev/null 2>&1 || true
+    docker rename "$OLD_NAME" new-api >/dev/null 2>&1 || true
+    docker start new-api >/dev/null 2>&1 || true
+    echo "[deploy] 已回滚并拉起旧容器" >&2
+  fi
+}
+trap on_exit_guard EXIT
+
 docker run -d --name new-api --restart always -p 127.0.0.1:3000:3000 \
   -v /home/ubuntu/new-api/data:/data -v /home/ubuntu/new-api/logs:/app/logs \
   --network new-api_new-api-network --env-file "$ENVFILE" \
