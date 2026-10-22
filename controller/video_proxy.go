@@ -129,6 +129,20 @@ func VideoProxy(c *gin.Context) {
 		// net/http 跨 host 剥离，与二春同口径，无需额外处理。
 		videoURL = fmt.Sprintf("%s/v1/video/file/%s", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
+	case constant.ChannelTypeMegaAI:
+		// MegaAI：轮询响应里带成片直链时直接透传（不带凭证，避免把渠道密钥发给第三方 CDN）；
+		// 没有直链时回源上游 {base}/v1/videos/{upstream_task_id}/content（必须带渠道密钥）。
+		// ⚠️ 必须排除「站内代理地址」：轮询拿不到地址时 ResultURL 落成
+		// 本站 /v1/videos/{task}/content，直接用会自我递归。
+		stored := strings.TrimSpace(task.GetResultURL())
+		lowered := strings.ToLower(stored)
+		isAbsolute := strings.HasPrefix(lowered, "http://") || strings.HasPrefix(lowered, "https://")
+		if isAbsolute && !isSelfProxyPath(stored) {
+			videoURL = stored
+		} else {
+			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+			req.Header.Set("Authorization", "Bearer "+channel.Key)
+		}
 	case constant.ChannelTypeManwu:
 		// 漫屋（ArcReel）：Worker 上传到本站托管目录的产物（Gemini 图片 blob、Veo 的
 		// data: mp4）在 ArcReel 侧存的是**相对路径**且需要渠道密钥，不是公网地址，

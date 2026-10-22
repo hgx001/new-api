@@ -247,6 +247,20 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - 计费：v2 按时长计价，`EstimateBilling` 返回 `{"seconds": D, "size": 分辨率倍率}`（与 wan3 同范式）；基础价定义在**最低分辨率档**（H3=768P、H3-Max=480P），倍率表在 `V2ModelSpec.ResolutionRatios`。`Context-IR` 不按时长计费（回落按次）。单价放 `defaultModelPrice`（本部署所有视频模型的约定，见「Model Pricing and Catalog Rules」）。
 - ⚠️ v2 校验**必须**调 `relaycommon.StoreTaskRequest` 把请求写回 context：`BuildRequestBody` 与 `EstimateBilling` 都从该 key 读取。漏掉的第二个症状是**静默**的——计费拿不到 duration 就按 1 秒收。
 
+### MegaAI 通道维护约束（`ChannelTypeMegaAI = 64`，`relay/channel/task/megabyai/`）
+
+- 上游是第三方 new-api 实例（`https://newapi.megabyai.cc`），视频走 **openai-video 协议**：`POST {base}/v1/videos` 提交、`GET {base}/v1/videos/{id}` 轮询、`GET {base}/v1/videos/{id}/content` 下载。 adaptor 是「facade 包 Sora 适配器」，只覆盖计费、请求构造、结果解析三处。
+- **对外模型名 `wan-3.0`**（2026-10-22 新增）。与官网渠道的 `wan3.0-video` / `wan3.0-video-官网` 是不同模型名，不重名、不互相覆盖。上游已无无后缀的 `sd-2.5`（只剩 `sd-2.5-720p` 等），生产渠道只挂 `wan-3.0`。
+- **计价 = 按次 + 分辨率档，时长不参与**：上游价目 480p ¥1.6 / 720p ¥1.8 / 1080p ¥2.0，单位是 `call` 不是 `second`；对外价 480p ¥2.4 / 720p ¥3.0 / 1080p ¥4.0（1.5 倍）。实现：`defaultModelPrice["wan-3.0"] = 2.4/7.3`（480p 基准，USD 等值存储）+ `wan30ResolutionSizeRatio = {480p:1, 720p:1.25, 1080p:1.666667}`。
+  - `EstimateBilling` 对 `wan-3.0` **只给 `size` 倍率、绝不给 `seconds`**（上游按次计费，给了 seconds 就是按秒多收）。`sd-2.5` 仍返回 `nil`（固定按次价）。
+  - ⚠️ **改价要同时改三处**：`setting/ratio_setting/model_ratio.go` 的默认值、生产 `ModelPrice` option、`megabyai` 包里的倍率/期望值测试。只改代码默认值线上不变（option 覆盖）。
+- **分辨率必须归一到三档，认不出来一律 400**（`invalid_resolution`）：猜错档位 = 直接少收钱。客户端没给时默认 480p 且**显式下发**给上游——上游按次计价，不显式下发就可能「我们按 480p 收钱、上游按别的档收」。
+  - 计费档位在 `ValidateRequestAndSetAction` 阶段解析好写进 context（`megabyai_wan30_resolution`），`EstimateBilling` 复用同一个值 → 不会出现「计费档位 ≠ 下发档位」。
+- **入参必须翻译成上游「统一参数」**（`wan30.go`）：`duration` / `ratio` / `resolution` / `referenceImages` / `referenceVideos` / `referenceAudios`。上游文档明确**不要与 `seconds`/`size`/`image`/`input_reference` 混用**，所以 `wan-3.0` **不透传原始 JSON**。素材上限（图 ≤10 / 视频 ≤5 / 音频 ≤5）本地 400。
+- **结果解析必须容错**：成片地址可能在 `video_url`/`url`/`result_url`/`data.url`/`data.video_url`/`output.video_url` 等多处；错误字段可能是对象 / 字符串 / `fail_reason`；状态可能返回 `succeeded`。**严格解析一失败，任务就永远停在非终态**（既看不到失败原因，也永远退不了款）。认不出的非空状态按「还在跑」处理（误判失败=用户白等一次生成，误判成功=把没出的片子当成功交付）。
+- **交付链路**（`controller/video_proxy.go` 的 `ChannelTypeMegaAI` 分支）：轮询响应带成片直链 → 透传且**不带渠道密钥**；没有直链 → 回源上游 `{base}/v1/videos/{upstream_task_id}/content`（带密钥）。⚠️ 必须用 `isSelfProxyPath` 排除站内代理地址，否则代理自我递归。
+- 接入细节与真机验证结论见 `docs/plans/2026-10-22-megabyai-wan3-integration.md`。
+
 ### 生产运维硬约束（血泪教训）
 
 - **🔥 未经用户明确允许，禁止跑任何真实视频任务（2026-10-06 用户明令，凌驾于下文一切「真实任务」规则之上）**。视频任务上游按次/按秒真金白银扣费（有赞 prime ≈450 积分/单、smart ≈90 积分/单、seedance ¥0.8–1.0/单），且部分上游 402 预检拒绝后任务**仍可能照跑扣费**（2026-10-06 实测：prime 提交被 402 拒，450 积分照扣、成片照出）。诊断类需求一律走替代手段，按优先级：① 单元测试（`go test` 可确定性复现的绝不真打）；② 历史任务产物验证（不新建单）；③ 必然被本地 400 拦下的非法入参探针（断言 quota 差值为 0、`tasks` 无新增）；④ 通道被禁用等纯路由问题查日志/DB 即可。**只有用户明确说「可以跑一单」之后才允许提交真实任务**；「真实任务上限 1 个」等旧规则均以本条为前提。

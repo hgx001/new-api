@@ -426,6 +426,10 @@ func isAllowedPricingModel(name string) bool {
 	if name == "sd-2.5" {
 		return true
 	}
+	// MegaAI 渠道的 wan-3.0（上游按次 + 分辨率档计价，与官网 wan3.0-video 区分开）
+	if name == "wan-3.0" {
+		return true
+	}
 	if strings.HasPrefix(name, "xuan:") {
 		return true
 	}
