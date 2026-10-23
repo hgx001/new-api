@@ -564,8 +564,21 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 	}
 }
 
+// TaskModel2Dto 面向下游客户端：别名模型必须遮住真实上游。
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
-	out := &dto.TaskDto{
+	out := buildTaskDto(task)
+	redactAliasTaskUpstream(out, task)
+	return out
+}
+
+// TaskModel2DtoForAdmin 面向管理员界面：保留上游原文，方便排查真实货源。
+// 管理员手里的原文来自数据库与 GetAllLogs，这里不用遮。
+func TaskModel2DtoForAdmin(task *model.Task) *dto.TaskDto {
+	return buildTaskDto(task)
+}
+
+func buildTaskDto(task *model.Task) *dto.TaskDto {
+	return &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
 		UpdatedAt:  task.UpdatedAt,
@@ -588,8 +601,6 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
-	redactAliasTaskUpstream(out, task)
-	return out
 }
 
 // redactAliasTaskUpstream 把「上游别名模型」的真实上游从下游可见字段里抹掉。

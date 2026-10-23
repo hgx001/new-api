@@ -140,6 +140,26 @@ func TestTaskModel2DtoAliasModelHidesUpstream(t *testing.T) {
 		"成片直链改一个字就下载不了，必须原样保留")
 }
 
+// 管理员界面保留上游原文：管理员要能一眼看到真实货源（下游用户看不到）。
+func TestTaskModel2DtoForAdminKeepsUpstream(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_alias_admin",
+		Properties: model.Properties{
+			UpstreamModelName: "wan-3.0",
+			OriginModelName:   "seedance2.5-特惠",
+		},
+		FailReason: "model aliyun:wan-3.0 does not support",
+		Data:       json.RawMessage(`{"billing_amount":1.8}`),
+	}
+
+	out := TaskModel2DtoForAdmin(task)
+	props, ok := out.Properties.(model.Properties)
+	require.True(t, ok)
+	assert.Equal(t, "wan-3.0", props.UpstreamModelName, "管理员要能看到真实上游")
+	assert.Contains(t, out.FailReason, "aliyun")
+	assert.NotNil(t, out.Data, "上游回执留给管理员")
+}
+
 // 非别名模型：一切照旧，遮字样只会让报错更难读。
 func TestTaskModel2DtoNonAliasModelKeepsEverything(t *testing.T) {
 	task := &model.Task{

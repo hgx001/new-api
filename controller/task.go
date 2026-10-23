@@ -36,6 +36,7 @@ func GetAllTask(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+// GetUserTask 返回的是**下游用户自己的**任务列表：别名模型要遮住真实上游。
 func GetUserTask(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 
@@ -60,9 +61,12 @@ func GetUserTask(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
-func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
+// tasksToDto 统一构造任务 DTO。
+// forAdmin=true（管理员列表）保留上游原文，管理员要能一眼看到真实货源；
+// forAdmin=false（用户自己的列表）必须遮住上游 —— 别名模型的存在意义就是不让下游看出真实模型。
+func tasksToDto(tasks []*model.Task, forAdmin bool) []*dto.TaskDto {
 	var userIdMap map[int]*model.UserBase
-	if fillUser {
+	if forAdmin {
 		userIdMap = make(map[int]*model.UserBase)
 		userIds := types.NewSet[int]()
 		for _, task := range tasks {
@@ -77,12 +81,14 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 	}
 	result := make([]*dto.TaskDto, len(tasks))
 	for i, task := range tasks {
-		if fillUser {
+		if forAdmin {
 			if user, ok := userIdMap[task.UserId]; ok {
 				task.Username = user.Username
 			}
+			result[i] = relay.TaskModel2DtoForAdmin(task)
+		} else {
+			result[i] = relay.TaskModel2Dto(task)
 		}
-		result[i] = relay.TaskModel2Dto(task)
 	}
 	return result
 }
