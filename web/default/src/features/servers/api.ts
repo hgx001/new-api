@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { api } from '@/lib/api'
 
-import { getRegion, getTerm } from './constants'
-import { resolveBilling, resolveHours } from './lib/pricing'
+import { getDuration, getRegion } from './constants'
+import { resolveDurationId } from './lib/pricing'
 import type { OwnedServer, PayMethod, ServerConfig, ServerOrder } from './types'
 
 /**
@@ -166,14 +166,14 @@ export async function payServerOrder(
 ): Promise<{ success: boolean; server?: OwnedServer; messageKey?: string }> {
   await delay(1400)
 
-  const term = getTerm(order.config.term)
   const region = getRegion(order.config.region)
-  // 到期时间跟着计费方式走：
-  // 按小时 = 买的 N 小时用完就释放；包月 = months × 30 天
+  const duration = getDuration(resolveDurationId(order.config))
+  // 到期时间跟着选中的时长档走：
+  // 按量档（小时/天）= 买的小时数之后释放；包月档 = 月数 × 30 天
   const durationMs =
-    resolveBilling(order.config) === 'hourly'
-      ? resolveHours(order.config) * 3600 * 1000
-      : term.months * 30 * 24 * 3600 * 1000
+    duration.pricing === 'hourly'
+      ? duration.amount * 3600 * 1000
+      : duration.amount * 30 * 24 * 3600 * 1000
   const expireAt = Math.floor((Date.now() + durationMs) / 1000)
 
   const server: OwnedServer = {

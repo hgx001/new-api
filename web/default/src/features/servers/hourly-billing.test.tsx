@@ -23,28 +23,34 @@ import { payServerOrder } from './api'
 import { BillingPanel } from './components/billing-panel'
 import { ConfigSection } from './components/config-section'
 import { MyServers } from './components/my-servers'
-import { HOURLY_DURATIONS } from './constants'
+import { DURATIONS, getDuration } from './constants'
 import {
   computePrice,
   resolveBilling,
-  resolveHours,
+  resolveDurationId,
   roundMoney,
 } from './lib/pricing'
 import { countOccurrences, renderWithI18n } from './test-render'
 import type { ServerConfig } from './types'
 
 /**
- * 服务器租赁「按小时按量」计费的契约。
+ * 服务器租赁「租用时长」维度的契约。
  *
- * 背景：原来只有包月预付（半年 / 一年 / 三年），GPU 算力的真实场景里
- * 「只想跑几个小时」是高频需求（临时训练、一次性推理），
- * 只给包月等于把这类用户挡在门外。
+ * 背景：页面原本是「计费方式（按小时按量 / 包月预付）+ 购买周期（半年 / 一年 /
+ * 三年）」两层选择器。「包月」只是后面那组档位的统称，把它单列成一个开关，
+ * 用户要先想口径再想周期，右侧凭空多一层 —— 用户明确指出这不合理。
+ * 现在合成唯一的时间维度：从 1 小时排到 3 年，选中即决定用哪套计价模型。
  *
- * 这里锁住三件事：
- *   1. 计价：小时单价 × 时长 × 时长折扣，规格/带宽/地区系数都要参与
- *   2. 兼容：旧数据（本地已存的订单，没有 billing 字段）仍按包月处理
- *   3. 语义：按小时买的实例，到期时间是「小时数之后」而不是「月数之后」
+ * 锁住三件事：
+ *   1. 计价：小时档按小时单价 × 小时数，月档按月价 × 月数，各自带阶梯折扣
+ *   2. 兼容：旧数据（只有 term/billing/hours）映射到最接近的新档位
+ *   3. 语义：到期时间跟着选中的档位走（小时档按小时，月档按 30 天/月）
  */
+
+/** GPU 基准档 + 20Mbps + 广州 = ¥2.56/小时（2.50 机型 + 0.06 带宽） */
+const GPU_HOURLY_PRICE = 2.56
+/** GPU 基准档 + 20Mbps + 广州 = ¥1,325.00/月（1280 机型 + 45 带宽） */
+const GPU_MONTHLY_PRICE = 1325
 
 function configFor(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
@@ -52,19 +58,45 @@ function configFor(overrides: Partial<ServerConfig> = {}): ServerConfig {
     plan: 'gpu',
     specId: 'gpu-16c32g',
     mbps: 20,
-    term: 'year',
-    billing: 'prepaid',
-    hours: 1,
+    durationId: '1y',
     ...overrides,
   }
 }
 
-/** GPU 基准档 + 20Mbps + 广州 = ¥2.56/小时（2.50 机型 + 0.06 带宽） */
-const GPU_HOURLY_PRICE = 2.56
+describe('servers: 租用时长档位', () => {
+  test('从 1 小时排到 3 年，是唯一的时间维度', () => {
+    assert.deepEqual(
+      DURATIONS.map((d) => d.id),
+      ['1h', '6h', '12h', '24h', '3d', '7d', '1mo', '3mo', '6mo', '1y', '3y']
+    )
+  })
 
-describe('servers: 按小时计费的报价模型', () => {
+  test('按量档记小时数、包月档记月数', () => {
+    assert.equal(getDuration('24h').pricing, 'hourly')
+    assert.equal(getDuration('24h').amount, 24)
+    assert.equal(getDuration('3d').pricing, 'hourly')
+    assert.equal(getDuration('3d').amount, 72)
+    assert.equal(getDuration('1y').pricing, 'prepaid')
+    assert.equal(getDuration('1y').amount, 12)
+  })
+
+  test('长档位折扣更高（按量 3 天 -5%、7 天 -10%；包月 1 年 -15%、3 年 -28%）', () => {
+    assert.equal(getDuration('3d').discount, 0.95)
+    assert.equal(getDuration('7d').discount, 0.9)
+    assert.equal(getDuration('1y').discount, 0.85)
+    assert.equal(getDuration('3y').discount, 0.72)
+  })
+
+  test('未知档位回落到默认档，不能算出 0 时长或负数总价', () => {
+    const price = computePrice(configFor({ durationId: 'nope' }))
+    assert.ok(price.total > 0)
+    assert.equal(price.units, 12)
+  })
+})
+
+describe('servers: 按量（小时/天）档的报价', () => {
   test('小时单价 = 机型小时价 + 带宽小时加价（带宽按月加价折算）', () => {
-    const price = computePrice(configFor({ billing: 'hourly', hours: 1 }))
+    const price = computePrice(configFor({ durationId: '1h' }))
     assert.equal(price.billing, 'hourly')
     assert.equal(price.unit, 'hour')
     assert.equal(price.units, 1)
@@ -73,49 +105,116 @@ describe('servers: 按小时计费的报价模型', () => {
   })
 
   test('总价 = 小时单价 × 时长', () => {
-    const price = computePrice(configFor({ billing: 'hourly', hours: 24 }))
+    const price = computePrice(configFor({ durationId: '24h' }))
     assert.equal(price.total, roundMoney(GPU_HOURLY_PRICE * 24))
-    assert.equal(price.units, 24)
   })
 
-  test('时长越长折扣越高，优惠金额单列出来', () => {
-    const week = computePrice(configFor({ billing: 'hourly', hours: 168 }))
-    assert.equal(week.discount, 0.9)
-    assert.equal(week.listTotal, roundMoney(GPU_HOURLY_PRICE * 168))
-    assert.equal(week.total, roundMoney(week.listTotal * 0.9))
-    assert.equal(week.saved, roundMoney(week.listTotal - week.total))
-    assert.ok(week.saved > 0)
+  test('天档折成小时计价（3 天 = 72 小时）并带阶梯折扣', () => {
+    const price = computePrice(configFor({ durationId: '3d' }))
+    assert.equal(price.units, 72)
+    assert.equal(price.listTotal, roundMoney(GPU_HOURLY_PRICE * 72))
+    assert.equal(price.total, roundMoney(price.listTotal * 0.95))
+    assert.equal(price.saved, roundMoney(price.listTotal - price.total))
   })
 
   test('规格系数参与小时单价（双卡档 = 基准 × 1.7）', () => {
     const price = computePrice(
-      configFor({ billing: 'hourly', hours: 1, specId: 'gpu-24c48g' })
+      configFor({ durationId: '1h', specId: 'gpu-24c48g' })
     )
     assert.equal(price.unitPrice, 4.31)
   })
 
   test('地区系数参与小时单价（上海 1.08）', () => {
     const price = computePrice(
-      configFor({ billing: 'hourly', hours: 1, region: 'shanghai' })
+      configFor({ durationId: '1h', region: 'shanghai' })
     )
     assert.equal(price.unitPrice, roundMoney(GPU_HOURLY_PRICE * 1.08))
   })
 
   test('折合每月用于和包月价对比（730 小时/月）', () => {
-    const price = computePrice(configFor({ billing: 'hourly', hours: 24 }))
+    const price = computePrice(configFor({ durationId: '24h' }))
     assert.equal(price.monthlyEquivalent, roundMoney((price.total / 24) * 730))
   })
+})
 
-  test('包月口径不受影响：总价 = 月价 × 月数 × 周期折扣', () => {
-    const price = computePrice(configFor({ billing: 'prepaid' }))
+describe('servers: 包月档的报价', () => {
+  test('总价 = 月价 × 月数 × 时长折扣', () => {
+    const price = computePrice(configFor({ durationId: '1y' }))
     assert.equal(price.billing, 'prepaid')
     assert.equal(price.unit, 'month')
     assert.equal(price.units, 12)
-    assert.equal(price.discount, 0.85)
-    assert.equal(price.total, roundMoney(price.unitPrice * 12 * 0.85))
+    assert.equal(price.unitPrice, GPU_MONTHLY_PRICE)
+    assert.equal(price.listTotal, roundMoney(GPU_MONTHLY_PRICE * 12))
+    assert.equal(price.total, roundMoney(price.listTotal * 0.85))
+    assert.equal(price.saved, roundMoney(price.listTotal - price.total))
   })
 
-  test('旧数据没有 billing 字段时按包月处理（本地已存的订单）', () => {
+  test('半年档不打折（与改造前一致）', () => {
+    const price = computePrice(configFor({ durationId: '6mo' }))
+    assert.equal(price.units, 6)
+    assert.equal(price.discount, 1)
+    assert.equal(price.total, roundMoney(GPU_MONTHLY_PRICE * 6))
+  })
+
+  test('三年档 -28%', () => {
+    const price = computePrice(configFor({ durationId: '3y' }))
+    assert.equal(price.units, 36)
+    assert.equal(price.total, roundMoney(price.listTotal * 0.72))
+  })
+})
+
+describe('servers: 旧数据兼容', () => {
+  test('旧数据只有 term 时映射到对应的新档位', () => {
+    assert.equal(
+      resolveDurationId({
+        region: 'guangzhou',
+        plan: 'gpu',
+        specId: 'gpu-16c32g',
+        mbps: 20,
+        term: 'year',
+      }),
+      '1y'
+    )
+    assert.equal(
+      resolveDurationId({
+        region: 'guangzhou',
+        plan: 'gpu',
+        specId: 'gpu-16c32g',
+        mbps: 20,
+        term: 'half',
+      }),
+      '6mo'
+    )
+    assert.equal(
+      resolveDurationId({
+        region: 'guangzhou',
+        plan: 'gpu',
+        specId: 'gpu-16c32g',
+        mbps: 20,
+        term: 'triple',
+      }),
+      '3y'
+    )
+  })
+
+  test('旧数据只有 billing + hours 时映射到按量档', () => {
+    const legacy: ServerConfig = {
+      region: 'guangzhou',
+      plan: 'gpu',
+      specId: 'gpu-16c32g',
+      mbps: 20,
+      term: 'year',
+      billing: 'hourly',
+      hours: 24,
+    }
+    assert.equal(resolveDurationId(legacy), '24h')
+    assert.equal(resolveBilling(legacy), 'hourly')
+    const price = computePrice(legacy)
+    assert.equal(price.units, 24)
+    assert.equal(price.total, roundMoney(GPU_HOURLY_PRICE * 24))
+  })
+
+  test('旧数据没有 durationId 时按包月处理（本地已存的订单）', () => {
     const legacy: ServerConfig = {
       region: 'guangzhou',
       plan: 'gpu',
@@ -124,33 +223,18 @@ describe('servers: 按小时计费的报价模型', () => {
       term: 'year',
     }
     assert.equal(resolveBilling(legacy), 'prepaid')
-    assert.equal(resolveHours(legacy), 1)
     const price = computePrice(legacy)
     assert.equal(price.billing, 'prepaid')
     assert.equal(price.units, 12)
   })
-
-  test('时长档从 1 小时到 7 天，且时长递增', () => {
-    const hours = HOURLY_DURATIONS.map((d) => d.hours)
-    assert.deepEqual(hours, [1, 6, 12, 24, 72, 168])
-    for (let i = 1; i < hours.length; i++) {
-      assert.ok(hours[i] > hours[i - 1])
-    }
-  })
-
-  test('未知时长退回最短档，不能算出 0 小时或负数总价', () => {
-    const price = computePrice(configFor({ billing: 'hourly', hours: 999 }))
-    assert.equal(price.units, 1)
-    assert.ok(price.total > 0)
-  })
 })
 
-describe('servers: 按小时实例的到期时间', () => {
-  test('到期时间是「购买的小时数之后」，不是按月折算', async () => {
+describe('servers: 实例到期时间', () => {
+  test('按量档到期 = 买的小时数之后', async () => {
     const order = {
       id: 'srv_test',
       tradeNo: 'HBDTEST',
-      config: configFor({ billing: 'hourly', hours: 24 }),
+      config: configFor({ durationId: '24h' }),
       amount: GPU_HOURLY_PRICE * 24,
       paymentMethod: 'demo',
       status: 'pending' as const,
@@ -174,11 +258,11 @@ describe('servers: 按小时实例的到期时间', () => {
     )
   })
 
-  test('包月实例的到期时间仍是 months × 30 天', async () => {
+  test('包月档到期 = 月数 × 30 天', async () => {
     const order = {
       id: 'srv_test2',
       tradeNo: 'HBDTEST2',
-      config: configFor({ billing: 'prepaid', term: 'year' }),
+      config: configFor({ durationId: '1y' }),
       amount: 100,
       paymentMethod: 'demo',
       status: 'pending' as const,
@@ -194,21 +278,32 @@ describe('servers: 按小时实例的到期时间', () => {
   })
 })
 
-describe('servers: 按小时计费的页面展示', () => {
-  test('购买面板出现计费方式切换与租用时长选择器', async () => {
+describe('servers: 租用时长的页面展示', () => {
+  test('只有一个「租用时长」选择器，没有独立的「计费方式」开关', async () => {
     const html = await renderWithI18n(
       <BillingPanel
-        config={configFor({ billing: 'hourly', hours: 24 })}
+        config={configFor({ durationId: '24h' })}
         onChange={() => {}}
         onCheckout={() => {}}
         requiresLogin={false}
       />
     )
-    assert.ok(html.includes('Billing method'), '缺少计费方式切换')
-    assert.ok(html.includes('Pay as you go (hourly)'))
-    assert.ok(html.includes('Prepaid monthly'))
-    assert.ok(html.includes('Rental duration'), '缺少租用时长选择器')
-    // 时长档：1/6/12/24/72/168 小时
+    assert.ok(html.includes('Rental duration'))
+    assert.ok(
+      !html.includes('Billing method'),
+      '不应再有独立的「计费方式」选择器'
+    )
+  })
+
+  test('全部时长档平铺可见（1 小时 → 3 年）', async () => {
+    const html = await renderWithI18n(
+      <BillingPanel
+        config={configFor({ durationId: '24h' })}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
     for (const label of [
       '1 hour',
       '6 hours',
@@ -216,72 +311,107 @@ describe('servers: 按小时计费的页面展示', () => {
       '24 hours',
       '3 days',
       '7 days',
+      '1 month',
+      '3 months',
+      '6 months',
+      '1 year',
+      '3 years',
     ]) {
       assert.ok(html.includes(label), `时长档缺失: ${label}`)
     }
   })
 
-  test('按小时时价格区显示单价与总时长，并说明到期自动释放', async () => {
-    const html = await renderWithI18n(
-      <BillingPanel
-        config={configFor({ billing: 'hourly', hours: 24 })}
-        onChange={() => {}}
-        onCheckout={() => {}}
-        requiresLogin={false}
-      />
-    )
-    assert.ok(html.includes('≈ ¥2.56 / hour'), '缺少每小时单价')
-    assert.ok(html.includes('24 hours'), '缺少总时长')
-    assert.ok(
-      html.includes(
-        'The instance is released automatically when the purchased hours run out'
-      ),
-      '缺少「到期自动释放」说明'
-    )
-  })
-
-  test('包月模式显示购买周期，不出现租用时长', async () => {
-    const html = await renderWithI18n(
-      <BillingPanel
-        config={configFor({ billing: 'prepaid' })}
-        onChange={() => {}}
-        onCheckout={() => {}}
-        requiresLogin={false}
-      />
-    )
-    assert.ok(html.includes('Term'))
-    assert.ok(!html.includes('Rental duration'))
-    assert.ok(!html.includes('7 days'))
-  })
-
-  test('套餐卡的起步价跟着计费方式走', async () => {
+  test('按量档显示「到期自动释放」说明，包月档显示「整段周期可用」', async () => {
     const hourly = await renderWithI18n(
-      <ConfigSection
-        config={configFor({ billing: 'hourly', hours: 1 })}
+      <BillingPanel
+        config={configFor({ durationId: '24h' })}
         onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
       />
     )
-    assert.ok(hourly.includes('From ¥2.50 / hour'), 'GPU 套餐卡缺少小时价')
-    assert.ok(!hourly.includes('From ¥1,280.00 / month'))
+    assert.ok(hourly.includes('Pay-as-you-go billing'))
 
     const prepaid = await renderWithI18n(
+      <BillingPanel
+        config={configFor({ durationId: '1y' })}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(prepaid.includes('Prepaid billing'))
+  })
+
+  test('价格区按口径显示单价与时长', async () => {
+    const hourly = await renderWithI18n(
+      <BillingPanel
+        config={configFor({ durationId: '24h' })}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(hourly.includes('≈ ¥2.56 / hour'), '缺少每小时单价')
+    assert.ok(hourly.includes('24 hours'), '缺少总时长')
+    assert.ok(hourly.includes('≈ ¥1,868.80 / month'), '缺少折合每月的对比价')
+
+    const prepaid = await renderWithI18n(
+      <BillingPanel
+        config={configFor({ durationId: '1y' })}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    // 1 年档折合每月 = 1325 × 0.85 = 1126.25（折扣后的实付月均价）
+    assert.ok(prepaid.includes('≈ ¥1,126.25 / month'))
+    assert.ok(prepaid.includes('1 year'))
+  })
+
+  test('时长用档位自己的名字，不能拼出「1 hours」「1 months」这种量词错误', async () => {
+    const hourly = await renderWithI18n(
+      <BillingPanel
+        config={configFor({ durationId: '1h' })}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(hourly.includes('1 hour'))
+    assert.ok(!hourly.includes('1 hours'), '出现了「1 hours」这种量词错误')
+
+    const prepaid = await renderWithI18n(
+      <BillingPanel
+        config={configFor({ durationId: '1mo' })}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(prepaid.includes('1 month'))
+    assert.ok(!prepaid.includes('1 months'), '出现了「1 months」这种量词错误')
+  })
+
+  test('套餐卡给出双口径起步价（按月 + 按小时）', async () => {
+    const html = await renderWithI18n(
       <ConfigSection
-        config={configFor({ billing: 'prepaid' })}
+        config={configFor({ durationId: '1y' })}
         onChange={() => {}}
       />
     )
-    assert.ok(prepaid.includes('From ¥1,280.00 / month'))
-    assert.ok(!prepaid.includes('From ¥2.50 / hour'))
+    assert.ok(html.includes('From ¥1,280.00 / month'))
+    assert.ok(html.includes('From ¥2.50 / hour'))
   })
 
-  test('我的服务器卡片标出计费方式，按小时实例按小时报剩余时间', async () => {
+  test('我的服务器卡片标出租用时长，按量实例按小时报剩余时间', async () => {
     const html = await renderWithI18n(
       <MyServers
         servers={[
           {
             id: 'srv-1',
             orderId: 'order-1',
-            config: configFor({ billing: 'hourly', hours: 24 }),
+            config: configFor({ durationId: '24h' }),
             ip: '203.0.113.10',
             username: 'root',
             password: 'secret',
@@ -295,19 +425,19 @@ describe('servers: 按小时计费的页面展示', () => {
         onBrowse={() => {}}
       />
     )
-    assert.ok(html.includes('Pay as you go (hourly)'))
+    assert.ok(html.includes('24 hours'))
     assert.ok(html.includes('hours left'))
     assert.ok(!html.includes('days left'))
   })
 
-  test('非按小时实例仍是「还剩 N 天」', async () => {
+  test('包月实例仍是「还剩 N 天」', async () => {
     const html = await renderWithI18n(
       <MyServers
         servers={[
           {
             id: 'srv-2',
             orderId: 'order-2',
-            config: configFor({ billing: 'prepaid' }),
+            config: configFor({ durationId: '1y' }),
             ip: '203.0.113.11',
             username: 'root',
             password: 'secret',
@@ -321,38 +451,49 @@ describe('servers: 按小时计费的页面展示', () => {
         onBrowse={() => {}}
       />
     )
-    assert.ok(html.includes('Prepaid monthly'))
+    assert.ok(html.includes('1 year'))
     assert.ok(html.includes('days left'))
     assert.equal(countOccurrences(html, 'hours left'), 0)
   })
 })
 
-describe('servers: 按小时相关文案的 i18n 覆盖', () => {
-  const HOURLY_KEYS = [
-    'Billing method',
-    'Pay as you go (hourly)',
-    'Prepaid monthly',
+describe('servers: 租用时长相关文案的 i18n 覆盖', () => {
+  const DURATION_KEYS = [
     'Rental duration',
-    'From {{price}} / hour',
-    '≈ {{amount}} / hour',
-    '{{hours}} hours left',
+    'Pay-as-you-go',
+    'Prepaid',
+    'Pay-as-you-go billing: the instance is released automatically when the purchased time runs out. Unused time is not refundable.',
+    'Prepaid billing: the instance stays available for the whole period you paid for.',
     '1 hour',
     '6 hours',
     '12 hours',
     '24 hours',
     '3 days',
     '7 days',
+    '1 month',
+    '3 months',
+    '6 months',
+    '1 year',
+    '3 years',
+    'From {{price}} / hour',
+    'From {{price}} / month',
+    '≈ {{amount}} / hour',
+    '≈ {{amount}} / month',
+    '{{hours}} hours left',
+    '{{days}} days left',
     'Can I pay by the hour?',
+    'Pick a region, a plan, the specs and the bandwidth you need. Choose how long to rent — from a single hour up to three years — and get your server credentials right after the payment succeeds.',
+    'Yes. The rental duration list runs from a single hour all the way to three years, so you can take one hour for a quick job or a prepaid term for a long-running service. Durations of a day or more get a small discount, and a pay-as-you-go instance is released automatically when the purchased time runs out.',
   ]
 
   for (const locale of ['en', 'zh', 'fr', 'ja', 'ru', 'vi'] as const) {
-    test(`${locale}: 按小时相关 key 都存在且已翻译`, async () => {
+    test(`${locale}: 租用时长相关 key 都存在且已翻译`, async () => {
       const table = (
         await import(`../../i18n/locales/${locale}.json`, {
           with: { type: 'json' },
         })
       ).default.translation as Record<string, string>
-      for (const key of HOURLY_KEYS) {
+      for (const key of DURATION_KEYS) {
         const value = table[key]
         assert.ok(
           typeof value === 'string' && value.length > 0,

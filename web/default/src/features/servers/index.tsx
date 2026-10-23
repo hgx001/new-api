@@ -47,10 +47,10 @@ import { MyServers } from './components/my-servers'
 import { PasswordDialog } from './components/password-dialog'
 import { ServerHero } from './components/server-hero'
 import {
+  DEFAULT_DURATION_ID,
   DEFAULT_MBPS,
   DEFAULT_PLAN,
   DEFAULT_REGION,
-  DEFAULT_TERM,
 } from './constants'
 import { computePrice, defaultConfigFor } from './lib/pricing'
 import { useOwnedServers, useServerStore } from './store'
@@ -106,7 +106,7 @@ const FAQS = [
   },
   {
     q: 'Can I pay by the hour?',
-    a: 'Yes. Switch the billing method to pay as you go and pick how many hours you need, from one hour up to seven days. The instance is released automatically when the purchased time runs out, so hourly billing suits short training jobs or ad-hoc inference. Long-running services are cheaper on prepaid terms, and the order summary always shows both numbers so you can compare before paying.',
+    a: 'Yes. The rental duration list runs from a single hour all the way to three years, so you can take one hour for a quick job or a prepaid term for a long-running service. Durations of a day or more get a small discount, and a pay-as-you-go instance is released automatically when the purchased time runs out.',
   },
 ] as const
 
@@ -125,7 +125,7 @@ export function ServersContent({
     defaultConfigFor(DEFAULT_PLAN, {
       region: DEFAULT_REGION,
       mbps: DEFAULT_MBPS,
-      term: DEFAULT_TERM,
+      durationId: DEFAULT_DURATION_ID,
     })
   )
   const [activeView, setActiveView] = useState<'configure' | 'owned'>(

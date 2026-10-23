@@ -18,13 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import {
-  DEFAULT_BILLING,
-  DEFAULT_HOURS,
+  DEFAULT_DURATION_ID,
+  DURATIONS,
+  TERMS,
   getBandwidth,
-  getHourlyDuration,
+  getDuration,
   getPlan,
   getRegion,
-  getTerm,
 } from '../constants'
 import type { BillingMode, PriceBreakdown, ServerConfig } from '../types'
 
@@ -55,17 +55,39 @@ export function formatAmount(value: number): string {
 }
 
 /**
- * 取计费方式。旧数据（本地已存的订单/实例）没有这个字段，按包月处理。
+ * 取配置对应的租用时长档 id。
+ *
+ * 新配置直接带 `durationId`；本地已存的旧订单/实例是「计费方式 + 周期」
+ * 时代的产物，只有 term/billing/hours，这里映射到最接近的新档位，
+ * 保证老数据打开页面时算得出价、显示得出剩余时间。
  */
-export function resolveBilling(config: ServerConfig): BillingMode {
-  return config.billing ?? DEFAULT_BILLING
+export function resolveDurationId(config: ServerConfig): string {
+  if (config.durationId) return config.durationId
+
+  if (config.billing === 'hourly') {
+    const hours = config.hours ?? 1
+    const matched = DURATIONS.find(
+      (d) => d.pricing === 'hourly' && d.amount === hours
+    )
+    return matched?.id ?? DEFAULT_DURATION_ID
+  }
+
+  const months =
+    TERMS.find((t) => t.id === (config.term ?? 'year'))?.months ?? 12
+  const matched = DURATIONS.find(
+    (d) => d.pricing === 'prepaid' && d.amount === months
+  )
+  return matched?.id ?? DEFAULT_DURATION_ID
 }
 
 /**
- * 取按小时计费的租用时长（小时）。旧数据没有这个字段，退回最短档。
+ * 取计费口径（按量 / 包月预付）。
+ *
+ * 由选中的时长档决定 —— 页面上不再有独立的「计费方式」开关，
+ * 口径是时长的属性，不是另一个维度。
  */
-export function resolveHours(config: ServerConfig): number {
-  return config.hours ?? DEFAULT_HOURS
+export function resolveBilling(config: ServerConfig): BillingMode {
+  return getDuration(resolveDurationId(config)).pricing
 }
 
 /**
@@ -73,73 +95,74 @@ export function resolveHours(config: ServerConfig): number {
  *
  * 报价公式（占位价格模型，后端接入后由服务端报价覆盖）：
  *
- * 包月预付：
- *   型号基准月价 × 规格系数 = 机型月价
- *   机型月价 + 带宽加价     = 月价小计
- *   月价小计 × 地区系数     = 折算月价
- *   折算月价 × 月数 × 周期折扣 = 实付总价
- *   原价 = 折算月价 × 月数
- *
- * 按小时按量：
+ * 按量（小时 / 天）：
  *   型号基准小时价 × 规格系数 = 机型小时价
  *   机型小时价 + 带宽小时加价 = 小时单价小计
  *   小时单价小计 × 地区系数   = 折算小时价
  *   折算小时价 × 小时数 × 时长折扣 = 实付总价
  *   原价 = 折算小时价 × 小时数
+ *
+ * 包月预付：
+ *   型号基准月价 × 规格系数 = 机型月价
+ *   机型月价 + 带宽加价     = 月价小计
+ *   月价小计 × 地区系数     = 折算月价
+ *   折算月价 × 月数 × 时长折扣 = 实付总价
+ *   原价 = 折算月价 × 月数
  */
 export function computePrice(config: ServerConfig): PriceBreakdown {
   const plan = getPlan(config.plan)
   const spec = plan.specs.find((s) => s.id === config.specId) ?? plan.specs[0]
   const bandwidth = getBandwidth(config.mbps)
   const region = getRegion(config.region)
+  const duration = getDuration(resolveDurationId(config))
 
-  if (resolveBilling(config) === 'hourly') {
-    const duration = getHourlyDuration(resolveHours(config))
+  if (duration.pricing === 'hourly') {
     const baseHourly = roundMoney(plan.basePricePerHour * spec.multiplier)
-    // 带宽在按小时口径下同样按小时计价：用月加价折算成小时值
+    // 带宽在按量口径下同样按小时计价：用月加价折算成小时值
     const bandwidthHourly = roundMoney(
       bandwidth.pricePerMonth / HOURS_PER_MONTH
     )
     const unitPrice = roundMoney(
       (baseHourly + bandwidthHourly) * region.priceFactor
     )
-    const listTotal = roundMoney(unitPrice * duration.hours)
+    const listTotal = roundMoney(unitPrice * duration.amount)
     const total = roundMoney(listTotal * duration.discount)
 
     return {
       billing: 'hourly',
       unit: 'hour',
-      units: duration.hours,
+      units: duration.amount,
       unitPrice,
       discount: duration.discount,
       listTotal,
       total,
       saved: roundMoney(listTotal - total),
       // 折合每月：让用户能直接和包月价比，判断「按量租一周」贵不贵
-      monthlyEquivalent: roundMoney((total / duration.hours) * HOURS_PER_MONTH),
+      monthlyEquivalent: roundMoney(
+        (total / duration.amount) * HOURS_PER_MONTH
+      ),
     }
   }
 
-  const term = getTerm(config.term)
   const baseMonthly = roundMoney(plan.basePricePerMonth * spec.multiplier)
   const bandwidthMonthly = roundMoney(bandwidth.pricePerMonth)
   const monthly = roundMoney(
     (baseMonthly + bandwidthMonthly) * region.priceFactor
   )
 
-  const listTotal = roundMoney(monthly * term.months)
-  const total = roundMoney(listTotal * term.discount)
+  const listTotal = roundMoney(monthly * duration.amount)
+  const total = roundMoney(listTotal * duration.discount)
 
   return {
     billing: 'prepaid',
     unit: 'month',
-    units: term.months,
+    units: duration.amount,
     unitPrice: monthly,
-    discount: term.discount,
+    discount: duration.discount,
     listTotal,
     total,
     saved: roundMoney(listTotal - total),
-    monthlyEquivalent: roundMoney(total / term.months),
+    monthlyEquivalent: roundMoney(total / duration.amount),
   }
 }
 
@@ -159,9 +182,7 @@ export function defaultConfigFor(
     plan: plan.id,
     specId: plan.specs[0].id,
     mbps: 20,
-    term: 'year',
-    billing: DEFAULT_BILLING,
-    hours: DEFAULT_HOURS,
+    durationId: DEFAULT_DURATION_ID,
     ...overrides,
   }
 }

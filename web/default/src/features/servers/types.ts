@@ -24,15 +24,12 @@ export type PlanId = 'lite' | 'general' | 'compute' | 'memory' | 'gpu'
 export type TermId = 'half' | 'year' | 'triple'
 
 /**
- * 计费方式。
+ * 计费口径。
  *
- * - `prepaid`：包月预付（半年 / 一年 / 三年），一次付清，到期前一直可用
- * - `hourly`：按小时按量（预付 N 小时），买的时长用完实例自动释放
- *
- * 为什么要两种：GPU 算力的真实选型场景里，临时跑一次训练/推理用按小时，
- * 长期服务才用包月。只给包月会把「试一下」的用户挡在门外。
+ * - `hourly`：按量（预付 N 小时/天），时长用完实例自动释放
+ * - `prepaid`：包月预付（一次付清若干个月），整个周期内一直可用
  */
-export type BillingMode = 'prepaid' | 'hourly'
+export type BillingMode = 'hourly' | 'prepaid'
 
 export type ServerStatus = 'running' | 'pending' | 'expired'
 
@@ -125,16 +122,27 @@ export interface TermOption {
 }
 
 /**
- * 按小时计费时可购买的时长档。
+ * 可购买的租用时长档。
  *
- * 阶梯折扣的理由与 AutoDL 一致：租得越久单价越低（同一台机器长期占用
- * 对平台是更稳定的需求），所以时长越长给一点折扣，而不是全都一个价。
+ * 设计要点：**时长是唯一的时间维度**。
+ * 之前做成「计费方式（按小时按量 / 包月预付）+ 购买周期（半年 / 一年 / 三年）」
+ * 两层选择器是冗余的 —— 「包月」只是后面那组档位的统称，把它单列成一个
+ * 开关，用户要先想口径、再想周期，页面右侧也凭空多出一层。
+ * 现在按 AutoDL 的口径合成一份平铺列表：从 1 小时到 3 年，选中即决定
+ * 用哪套计价模型。
  */
-export interface HourlyDuration {
+export interface DurationOption {
   id: string
-  /** 租用小时数 */
-  hours: number
-  /** i18n key: 时长展示名，例如「24 小时」 */
+  /** 计价口径：按量（小时/天）还是包月预付 */
+  pricing: BillingMode
+  /**
+   * 时长量。
+   *
+   * `pricing='hourly'` 时是**小时数**（3 天档记 72 小时）；
+   * `pricing='prepaid'` 时是**月数**。
+   */
+  amount: number
+  /** i18n key: 时长展示名，例如「24 小时」「1 年」 */
   nameKey: string
   /** 时长折扣，1 表示不打折 */
   discount: number
@@ -147,15 +155,20 @@ export interface ServerConfig {
   plan: PlanId
   specId: string
   mbps: number
-  term: TermId
   /**
-   * 计费方式（缺省按 `prepaid` 处理）。
+   * 选中的租用时长档 id（唯一的时间维度）。
    *
-   * 做成可选是为了兼容本地已存的旧订单/实例记录 —— 那是包月时代写下的，
-   * 没有这个字段，读出来时补默认值即可。
+   * 新建配置一定会有；旧数据（本地已存的订单/实例）没有这个字段，
+   * 读出来时由 `resolveDurationId` 按旧的 term/billing/hours 映射到
+   * 最接近的档位。所以类型上必须是可选的 —— 同一个 `ServerConfig`
+   * 同时描述「新建的配置」和「历史记录」，写成必填会让旧数据无法通过类型检查。
    */
+  durationId?: string
+  /** @deprecated 旧数据兼容：包月周期 */
+  term?: TermId
+  /** @deprecated 旧数据兼容：计费方式 */
   billing?: BillingMode
-  /** 按小时时的租用时长（小时，缺省取最短档） */
+  /** @deprecated 旧数据兼容：小时数 */
   hours?: number
 }
 

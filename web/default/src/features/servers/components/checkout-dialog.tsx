@@ -35,13 +35,18 @@ import { cn } from '@/lib/utils'
 
 import {
   getBandwidth,
+  getDuration,
   getPlan,
   getRegion,
-  getTerm,
   formatGpu,
   formatSpec,
 } from '../constants'
-import { computePrice, formatAmount, resolveBilling } from '../lib/pricing'
+import {
+  computePrice,
+  formatAmount,
+  resolveBilling,
+  resolveDurationId,
+} from '../lib/pricing'
 import type { PayMethod, ServerConfig } from '../types'
 
 interface CheckoutDialogProps {
@@ -76,7 +81,7 @@ export function CheckoutDialog({
   const spec = plan.specs.find((s) => s.id === config.specId) ?? plan.specs[0]
   const region = getRegion(config.region)
   const bandwidth = getBandwidth(config.mbps)
-  const term = getTerm(config.term)
+  const duration = getDuration(resolveDurationId(config))
   const price = computePrice(config)
   const isHourly = resolveBilling(config) === 'hourly'
 
@@ -106,18 +111,12 @@ export function CheckoutDialog({
       : []),
     { label: t('Bandwidth'), value: `${bandwidth.mbps} Mbps` },
     {
-      label: t('Billing method'),
-      value: isHourly ? t('Pay as you go (hourly)') : t('Prepaid monthly'),
+      // 订单里只有一行时间维度：选了多久 + 按什么口径计价
+      label: t('Rental duration'),
+      value: `${t(duration.nameKey)} · ${
+        isHourly ? t('Pay-as-you-go') : t('Prepaid')
+      }`,
     },
-    isHourly
-      ? {
-          label: t('Rental duration'),
-          value: `${price.units} ${t('hours')}`,
-        }
-      : {
-          label: t('Term'),
-          value: `${t(term.nameKey)} (${price.units} ${t('months')})`,
-        },
   ]
 
   return (

@@ -58,7 +58,7 @@ function configFor(planId: PlanId, specId?: string): ServerConfig {
     plan: plan.id,
     specId: specId ?? plan.specs[0].id,
     mbps: 20,
-    term: 'year',
+    durationId: '1y',
   }
 }
 

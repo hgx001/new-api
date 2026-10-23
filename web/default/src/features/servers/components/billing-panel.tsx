@@ -26,21 +26,15 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
 import {
-  BILLING_MODES,
-  HOURLY_DURATIONS,
-  TERMS,
+  DURATIONS,
   getBandwidth,
+  getDuration,
   getPlan,
   getRegion,
   formatGpu,
   formatSpec,
 } from '../constants'
-import {
-  computePrice,
-  formatAmount,
-  resolveBilling,
-  resolveHours,
-} from '../lib/pricing'
+import { computePrice, formatAmount, resolveDurationId } from '../lib/pricing'
 import type { ServerConfig } from '../types'
 
 interface BillingPanelProps {
@@ -63,29 +57,19 @@ export function BillingPanel({
   const region = getRegion(config.region)
   const bandwidth = getBandwidth(config.mbps)
   const price = computePrice(config)
-  const billing = resolveBilling(config)
-  const isHourly = billing === 'hourly'
-  const hours = resolveHours(config)
-  const activeMode =
-    BILLING_MODES.find((mode) => mode.id === billing) ?? BILLING_MODES[0]
+  const durationId = resolveDurationId(config)
+  const duration = getDuration(durationId)
+  const isHourly = duration.pricing === 'hourly'
 
-  // 两种计费方式的选择器形状一样（名称 + 可选优惠角标 + 选中态），
-  // 归一成一份再渲染，避免两套几乎相同的 JSX 各自漂移。
-  const durationOptions = isHourly
-    ? HOURLY_DURATIONS.map((item) => ({
-        id: item.id,
-        label: t(item.nameKey),
-        badge: item.badgeKey ? t(item.badgeKey) : undefined,
-        active: hours === item.hours,
-        onSelect: () => onChange({ hours: item.hours }),
-      }))
-    : TERMS.map((item) => ({
-        id: item.id,
-        label: t(item.nameKey),
-        badge: item.badgeKey ? t(item.badgeKey) : undefined,
-        active: config.term === item.id,
-        onSelect: () => onChange({ term: item.id }),
-      }))
+  // 租用时长是唯一的时间维度：一份从 1 小时排到 3 年的平铺列表，
+  // 选中哪一档就决定了用哪套计价模型（不再另设「计费方式」开关）。
+  const durationOptions = DURATIONS.map((item) => ({
+    id: item.id,
+    label: t(item.nameKey),
+    badge: item.badgeKey ? t(item.badgeKey) : undefined,
+    active: durationId === item.id,
+    onSelect: () => onChange({ durationId: item.id }),
+  }))
 
   const summaryRows = [
     { label: t('Region'), value: t(region.nameKey) },
@@ -104,40 +88,10 @@ export function BillingPanel({
   return (
     <div className='border-border/70 bg-card rounded-2xl border shadow-sm'>
       <div className='space-y-5 p-5 md:p-6'>
-        {/* 计费方式 */}
+        {/* 租用时长：唯一的时间维度 */}
         <div>
           <div className='mb-2.5 text-sm font-semibold'>
-            {t('Billing method')}
-          </div>
-          <div className='bg-muted grid grid-cols-2 gap-1.5 rounded-xl p-1'>
-            {BILLING_MODES.map((mode) => {
-              const active = billing === mode.id
-              return (
-                <button
-                  key={mode.id}
-                  type='button'
-                  onClick={() => onChange({ billing: mode.id })}
-                  className={cn(
-                    'relative rounded-lg px-2 py-2 text-xs font-medium transition-all',
-                    active
-                      ? 'bg-background text-[#1a4a3f] shadow-sm'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  {t(mode.nameKey)}
-                </button>
-              )
-            })}
-          </div>
-          <p className='text-muted-foreground mt-2 text-[11px] leading-relaxed'>
-            {t(activeMode.descriptionKey)}
-          </p>
-        </div>
-
-        {/* 周期 / 租用时长 */}
-        <div>
-          <div className='mb-2.5 text-sm font-semibold'>
-            {isHourly ? t('Rental duration') : t('Term')}
+            {t('Rental duration')}
           </div>
           <div className='bg-muted grid grid-cols-3 gap-1.5 rounded-xl p-1'>
             {durationOptions.map((option) => (
@@ -161,6 +115,15 @@ export function BillingPanel({
               </button>
             ))}
           </div>
+          <p className='text-muted-foreground mt-2 text-[11px] leading-relaxed'>
+            {isHourly
+              ? t(
+                  'Pay-as-you-go billing: the instance is released automatically when the purchased time runs out. Unused time is not refundable.'
+                )
+              : t(
+                  'Prepaid billing: the instance stays available for the whole period you paid for.'
+                )}
+          </p>
         </div>
 
         <Separator />
@@ -220,9 +183,9 @@ export function BillingPanel({
                     amount: formatAmount(price.unitPrice),
                   })}
                 </span>
-                <span>
-                  · {price.units} {t('hours')}
-                </span>
+                {/* 时长直接用档位自己的名字（1 hour / 3 days），
+                    不拼「N + hours」—— 拼出来会出现「1 hours」这种量词错误 */}
+                <span>· {t(duration.nameKey)}</span>
                 {/* 折合每月：让用户直接和包月价对比，判断按量租一周贵不贵 */}
                 <span>
                   ·{' '}
@@ -238,20 +201,10 @@ export function BillingPanel({
                     amount: formatAmount(price.monthlyEquivalent),
                   })}
                 </span>
-                <span>
-                  · {price.units} {t('months')}
-                </span>
+                <span>· {t(duration.nameKey)}</span>
               </>
             )}
           </div>
-
-          {isHourly && (
-            <p className='text-muted-foreground text-[11px] leading-relaxed'>
-              {t(
-                'The instance is released automatically when the purchased hours run out. Unused time is not refundable.'
-              )}
-            </p>
-          )}
         </div>
 
         {/* 支付 */}

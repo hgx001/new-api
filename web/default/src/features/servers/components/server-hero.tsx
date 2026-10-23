@@ -88,10 +88,7 @@ export function ServerHero({
 
           <p className='mt-5 max-w-2xl text-base leading-relaxed text-white/70 md:text-lg'>
             {t(
-              'Pick a region, a plan, the specs and the bandwidth you need. Pay for 6 months, 1 year or 3 years, and get your server credentials right after the payment succeeds.'
-            )}{' '}
-            {t(
-              'Need the machine for a few hours only? Switch to hourly billing and pick how many hours you need.'
+              'Pick a region, a plan, the specs and the bandwidth you need. Choose how long to rent — from a single hour up to three years — and get your server credentials right after the payment succeeds.'
             )}
           </p>
 

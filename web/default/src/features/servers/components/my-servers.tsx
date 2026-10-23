@@ -45,12 +45,13 @@ import { cn } from '@/lib/utils'
 
 import {
   getBandwidth,
+  getDuration,
   getPlan,
   getRegion,
   formatGpu,
   formatSpec,
 } from '../constants'
-import { resolveBilling } from '../lib/pricing'
+import { resolveDurationId } from '../lib/pricing'
 import type { OwnedServer } from '../types'
 
 interface MyServersProps {
@@ -193,7 +194,8 @@ export function MyServers({
         const expired =
           server.status === 'expired' || server.expireAt * 1000 <= Date.now()
         // 按小时的实例到期很快，「还剩 N 天」对它没有意义，要按小时说
-        const isHourly = resolveBilling(server.config) === 'hourly'
+        const duration = getDuration(resolveDurationId(server.config))
+        const isHourly = duration.pricing === 'hourly'
 
         return (
           <Card
@@ -225,9 +227,7 @@ export function MyServers({
                     <span>{bandwidth.mbps} Mbps</span>
                     <span className='inline-flex items-center gap-1 font-medium text-[#3a8f7a]'>
                       <Clock className='size-3' />
-                      {isHourly
-                        ? t('Pay as you go (hourly)')
-                        : t('Prepaid monthly')}
+                      {t(duration.nameKey)}
                     </span>
                   </CardDescription>
                 </div>

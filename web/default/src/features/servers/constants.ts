@@ -19,8 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import type {
   BandwidthOption,
-  BillingMode,
-  HourlyDuration,
+  DurationOption,
   Region,
   RegionId,
   ServerGpu,
@@ -165,7 +164,12 @@ export const BANDWIDTHS: BandwidthOption[] = [
   { mbps: 100, pricePerMonth: 260, descriptionKey: '100 Mbps dedicated' },
 ]
 
-/** 可选购买周期 */
+/**
+ * 旧的包月周期表。
+ *
+ * @deprecated 只用于把本地已存的旧订单/实例（只有 term，没有 durationId）
+ * 映射到新的时长档，不再用于新配置。新配置一律用 `DURATIONS`。
+ */
 export const TERMS: TermOption[] = [
   { id: 'half', nameKey: '6 months', months: 6, discount: 1 },
   {
@@ -185,73 +189,91 @@ export const TERMS: TermOption[] = [
 ]
 
 /**
- * 按小时计费时可购买的时长档。
+ * 可购买的租用时长档 —— 页面上**唯一**的时间维度。
  *
- * 最短 1 小时（不足 1 小时按 1 小时算），往上到 7 天。
- * 时长越长折扣越高：长期占用对平台是更稳定的需求（与 AutoDL 的阶梯口径一致）。
+ * 为什么是一份平铺列表而不是「计费方式 + 周期」两层：
+ * 「包月预付」只是「半年 / 一年 / 三年」那组档位的统称，把它单列成一个
+ * 开关，用户要先选口径再选周期，右侧凭空多一层。按 AutoDL 的口径，
+ * 时长从 1 小时排到 3 年，选中哪一档就决定了用哪套计价模型。
+ *
+ * 阶梯折扣的理由与 AutoDL 一致：租得越久对平台是更稳定的需求，
+ * 所以长档位给一点折扣，而不是全都一个价。
  */
-export const HOURLY_DURATIONS: HourlyDuration[] = [
-  { id: '1h', hours: 1, nameKey: '1 hour', discount: 1 },
-  { id: '6h', hours: 6, nameKey: '6 hours', discount: 1 },
-  { id: '12h', hours: 12, nameKey: '12 hours', discount: 1 },
+export const DURATIONS: DurationOption[] = [
+  // 按量：小时
+  { id: '1h', pricing: 'hourly', amount: 1, nameKey: '1 hour', discount: 1 },
+  { id: '6h', pricing: 'hourly', amount: 6, nameKey: '6 hours', discount: 1 },
+  {
+    id: '12h',
+    pricing: 'hourly',
+    amount: 12,
+    nameKey: '12 hours',
+    discount: 1,
+  },
   {
     id: '24h',
-    hours: 24,
+    pricing: 'hourly',
+    amount: 24,
     nameKey: '24 hours',
     discount: 1,
     badgeKey: 'Most popular',
   },
+  // 按量：天（折成小时计价，amount 记小时数）
   {
-    id: '72h',
-    hours: 72,
+    id: '3d',
+    pricing: 'hourly',
+    amount: 72,
     nameKey: '3 days',
     discount: 0.95,
     badgeKey: 'Save 5%',
   },
   {
-    id: '168h',
-    hours: 168,
+    id: '7d',
+    pricing: 'hourly',
+    amount: 168,
     nameKey: '7 days',
     discount: 0.9,
     badgeKey: 'Save 10%',
   },
-]
-
-/**
- * 计费方式选项。
- *
- * 两种口径的用户场景不同，所以都要给一句话说明，让用户在按下单前
- * 就知道自己买的是「用完就释放」还是「整段周期都留着」。
- */
-export const BILLING_MODES: {
-  id: BillingMode
-  /** i18n key: 计费方式名 */
-  nameKey: string
-  /** i18n key: 一句话说明 */
-  descriptionKey: string
-}[] = [
+  // 包月预付：月
+  { id: '1mo', pricing: 'prepaid', amount: 1, nameKey: '1 month', discount: 1 },
   {
-    id: 'hourly',
-    nameKey: 'Pay as you go (hourly)',
-    descriptionKey:
-      'Pay only for the hours you use. The instance is released automatically when the purchased time runs out.',
+    id: '3mo',
+    pricing: 'prepaid',
+    amount: 3,
+    nameKey: '3 months',
+    discount: 1,
   },
   {
-    id: 'prepaid',
-    nameKey: 'Prepaid monthly',
-    descriptionKey:
-      'Pay once for a fixed period and keep the instance for the whole term.',
+    id: '6mo',
+    pricing: 'prepaid',
+    amount: 6,
+    nameKey: '6 months',
+    discount: 1,
+  },
+  {
+    id: '1y',
+    pricing: 'prepaid',
+    amount: 12,
+    nameKey: '1 year',
+    discount: 0.85,
+    badgeKey: 'Save 15%',
+  },
+  {
+    id: '3y',
+    pricing: 'prepaid',
+    amount: 36,
+    nameKey: '3 years',
+    discount: 0.72,
+    badgeKey: 'Save 28%',
   },
 ]
 
 export const DEFAULT_REGION: RegionId = 'guangzhou'
 export const DEFAULT_PLAN = 'general'
 export const DEFAULT_MBPS = 20
-export const DEFAULT_TERM = 'year'
-/** 默认按包月预付；按小时是另一个入口，用户主动切过去 */
-export const DEFAULT_BILLING: BillingMode = 'prepaid'
-/** 默认 1 小时起步，用户可往上选 */
-export const DEFAULT_HOURS = 1
+/** 默认包月一年（与改造前的默认购买周期一致） */
+export const DEFAULT_DURATION_ID = '1y'
 
 export function getRegion(id: RegionId): Region {
   return REGIONS.find((r) => r.id === id) ?? REGIONS[0]
@@ -265,18 +287,19 @@ export function getBandwidth(mbps: number): BandwidthOption {
   return BANDWIDTHS.find((b) => b.mbps === mbps) ?? BANDWIDTHS[0]
 }
 
-export function getTerm(id: string): TermOption {
-  return TERMS.find((t) => t.id === id) ?? TERMS[0]
-}
-
 /**
- * 取按小时计费的时长档。
+ * 取租用时长档。
  *
- * 传入未知时长（老数据 / 手改配置）时退回最短档，
- * 不能让它算出 0 小时或负数总价。
+ * 传入未知 id（老数据 / 手改配置）时退回**默认档**（DEFAULT_DURATION_ID），
+ * 不能退回列表第一项 —— 第一项是 1 小时，落到它等于把老订单
+ * 悄悄改成按量 1 小时，价格和到期时间全错。
  */
-export function getHourlyDuration(hours: number): HourlyDuration {
-  return HOURLY_DURATIONS.find((d) => d.hours === hours) ?? HOURLY_DURATIONS[0]
+export function getDuration(id: string): DurationOption {
+  return (
+    DURATIONS.find((d) => d.id === id) ??
+    DURATIONS.find((d) => d.id === DEFAULT_DURATION_ID) ??
+    DURATIONS[0]
+  )
 }
 
 /**
