@@ -31,6 +31,7 @@ import {
   formatSpec,
   planGpuSummary,
 } from '../constants'
+import { formatAmount, resolveBilling } from '../lib/pricing'
 import type { ServerConfig } from '../types'
 
 interface ConfigSectionProps {
@@ -63,6 +64,9 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
 
   const plan = PLANS.find((p) => p.id === config.plan) ?? PLANS[0]
   const spec = plan.specs.find((s) => s.id === config.specId) ?? plan.specs[0]
+  // 套餐卡的起步价跟着计费方式走：按小时时标 ¥/小时，
+  // 否则会出现「卡片写 ¥1280/月、右侧按 ¥2.50/小时算」的口径打架
+  const isHourly = resolveBilling(config) === 'hourly'
 
   return (
     <div className='space-y-8'>
@@ -168,9 +172,13 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                   </div>
                 )}
                 <div className='mt-3 text-sm font-medium text-[#1a4a3f]'>
-                  {t('From {{price}} / month', {
-                    price: `¥${item.basePricePerMonth}`,
-                  })}
+                  {isHourly
+                    ? t('From {{price}} / hour', {
+                        price: formatAmount(item.basePricePerHour),
+                      })
+                    : t('From {{price}} / month', {
+                        price: formatAmount(item.basePricePerMonth),
+                      })}
                 </div>
               </button>
             )

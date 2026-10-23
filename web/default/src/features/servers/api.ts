@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 import { getRegion, getTerm } from './constants'
+import { resolveBilling, resolveHours } from './lib/pricing'
 import type { OwnedServer, PayMethod, ServerConfig, ServerOrder } from './types'
 
 /**
@@ -167,9 +168,13 @@ export async function payServerOrder(
 
   const term = getTerm(order.config.term)
   const region = getRegion(order.config.region)
-  const expireAt = Math.floor(
-    (Date.now() + term.months * 30 * 24 * 3600 * 1000) / 1000
-  )
+  // 到期时间跟着计费方式走：
+  // 按小时 = 买的 N 小时用完就释放；包月 = months × 30 天
+  const durationMs =
+    resolveBilling(order.config) === 'hourly'
+      ? resolveHours(order.config) * 3600 * 1000
+      : term.months * 30 * 24 * 3600 * 1000
+  const expireAt = Math.floor((Date.now() + durationMs) / 1000)
 
   const server: OwnedServer = {
     id: randomId('node'),

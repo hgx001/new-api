@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 
 import type {
   BandwidthOption,
+  BillingMode,
+  HourlyDuration,
   Region,
   RegionId,
   ServerGpu,
@@ -64,6 +66,9 @@ export const PLANS: ServerPlan[] = [
     descriptionKey:
       'Entry-level instances for websites, blogs and small services. Instant provisioning with a public IPv4 address.',
     basePricePerMonth: 38,
+    // 按小时口径：约合 ¥65.7/月（包月 ¥38/月 的 1.7 倍），
+    // 按量要为闲置/停机时段付费，所以比包月折算价贵
+    basePricePerHour: 0.09,
     specs: [
       { id: 'lite-2c2g', cpu: 2, memory: 2, disk: 40, multiplier: 1 },
       { id: 'lite-2c4g', cpu: 2, memory: 4, disk: 60, multiplier: 1.25 },
@@ -77,6 +82,8 @@ export const PLANS: ServerPlan[] = [
     descriptionKey:
       'General purpose instances for APIs, CI runners and container hosts. SSD storage and private networking included.',
     basePricePerMonth: 88,
+    // ≈ ¥153/月（包月 ¥88/月 的 1.7 倍）
+    basePricePerHour: 0.21,
     badgeKey: 'Most popular',
     specs: [
       { id: 'general-4c8g', cpu: 4, memory: 8, disk: 100, multiplier: 1 },
@@ -90,6 +97,8 @@ export const PLANS: ServerPlan[] = [
     descriptionKey:
       'Compute optimized instances for batch jobs, model inference and data processing. High clock speed vCPUs.',
     basePricePerMonth: 228,
+    // ≈ ¥402/月（包月 ¥228/月 的 1.75 倍）
+    basePricePerHour: 0.55,
     specs: [
       { id: 'compute-8c16g', cpu: 8, memory: 16, disk: 200, multiplier: 1 },
       {
@@ -108,6 +117,8 @@ export const PLANS: ServerPlan[] = [
     descriptionKey:
       'Memory optimized instances for MySQL, PostgreSQL, Elasticsearch and in-memory caches. Large NVMe volumes.',
     basePricePerMonth: 368,
+    // ≈ ¥642/月（包月 ¥368/月 的 1.75 倍）
+    basePricePerHour: 0.88,
     specs: [
       { id: 'memory-8c32g', cpu: 8, memory: 32, disk: 200, multiplier: 1 },
       { id: 'memory-16c64g', cpu: 16, memory: 64, disk: 400, multiplier: 1.9 },
@@ -120,6 +131,9 @@ export const PLANS: ServerPlan[] = [
     descriptionKey:
       'GPU accelerated instances with dedicated graphics cards for model inference, rendering and video processing.',
     basePricePerMonth: 1280,
+    // ≈ ¥1825/月（包月 ¥1280/月 的 1.43 倍）
+    // 单卡 4090 的量级参照 AutoDL 同档卡型（¥1.8~2.6/小时）
+    basePricePerHour: 2.5,
     badgeKey: 'New',
     specs: [
       {
@@ -170,10 +184,74 @@ export const TERMS: TermOption[] = [
   },
 ]
 
+/**
+ * 按小时计费时可购买的时长档。
+ *
+ * 最短 1 小时（不足 1 小时按 1 小时算），往上到 7 天。
+ * 时长越长折扣越高：长期占用对平台是更稳定的需求（与 AutoDL 的阶梯口径一致）。
+ */
+export const HOURLY_DURATIONS: HourlyDuration[] = [
+  { id: '1h', hours: 1, nameKey: '1 hour', discount: 1 },
+  { id: '6h', hours: 6, nameKey: '6 hours', discount: 1 },
+  { id: '12h', hours: 12, nameKey: '12 hours', discount: 1 },
+  {
+    id: '24h',
+    hours: 24,
+    nameKey: '24 hours',
+    discount: 1,
+    badgeKey: 'Most popular',
+  },
+  {
+    id: '72h',
+    hours: 72,
+    nameKey: '3 days',
+    discount: 0.95,
+    badgeKey: 'Save 5%',
+  },
+  {
+    id: '168h',
+    hours: 168,
+    nameKey: '7 days',
+    discount: 0.9,
+    badgeKey: 'Save 10%',
+  },
+]
+
+/**
+ * 计费方式选项。
+ *
+ * 两种口径的用户场景不同，所以都要给一句话说明，让用户在按下单前
+ * 就知道自己买的是「用完就释放」还是「整段周期都留着」。
+ */
+export const BILLING_MODES: {
+  id: BillingMode
+  /** i18n key: 计费方式名 */
+  nameKey: string
+  /** i18n key: 一句话说明 */
+  descriptionKey: string
+}[] = [
+  {
+    id: 'hourly',
+    nameKey: 'Pay as you go (hourly)',
+    descriptionKey:
+      'Pay only for the hours you use. The instance is released automatically when the purchased time runs out.',
+  },
+  {
+    id: 'prepaid',
+    nameKey: 'Prepaid monthly',
+    descriptionKey:
+      'Pay once for a fixed period and keep the instance for the whole term.',
+  },
+]
+
 export const DEFAULT_REGION: RegionId = 'guangzhou'
 export const DEFAULT_PLAN = 'general'
 export const DEFAULT_MBPS = 20
 export const DEFAULT_TERM = 'year'
+/** 默认按包月预付；按小时是另一个入口，用户主动切过去 */
+export const DEFAULT_BILLING: BillingMode = 'prepaid'
+/** 默认 1 小时起步，用户可往上选 */
+export const DEFAULT_HOURS = 1
 
 export function getRegion(id: RegionId): Region {
   return REGIONS.find((r) => r.id === id) ?? REGIONS[0]
@@ -189,6 +267,16 @@ export function getBandwidth(mbps: number): BandwidthOption {
 
 export function getTerm(id: string): TermOption {
   return TERMS.find((t) => t.id === id) ?? TERMS[0]
+}
+
+/**
+ * 取按小时计费的时长档。
+ *
+ * 传入未知时长（老数据 / 手改配置）时退回最短档，
+ * 不能让它算出 0 小时或负数总价。
+ */
+export function getHourlyDuration(hours: number): HourlyDuration {
+  return HOURLY_DURATIONS.find((d) => d.hours === hours) ?? HOURLY_DURATIONS[0]
 }
 
 /**

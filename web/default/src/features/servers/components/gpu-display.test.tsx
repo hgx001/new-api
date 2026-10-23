@@ -19,10 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { createInstance } from 'i18next'
-import { renderToStaticMarkup } from 'react-dom/server'
-import { I18nextProvider, initReactI18next } from 'react-i18next'
-
 import en from '../../../i18n/locales/en.json'
 import fr from '../../../i18n/locales/fr.json'
 import ja from '../../../i18n/locales/ja.json'
@@ -30,6 +26,7 @@ import ru from '../../../i18n/locales/ru.json'
 import vi from '../../../i18n/locales/vi.json'
 import zh from '../../../i18n/locales/zh.json'
 import { PLANS, formatGpu, formatSpec, planGpuSummary } from '../constants'
+import { countOccurrences, renderWithI18n } from '../test-render'
 import type { OwnedServer, PlanId, ServerConfig, ServerPlan } from '../types'
 import { BillingPanel } from './billing-panel'
 import { ConfigSection } from './config-section'
@@ -47,30 +44,6 @@ import { MyServers } from './my-servers'
  */
 
 const locales = { en, zh, fr, ja, ru, vi }
-
-async function renderWithI18n(
-  node: React.ReactNode,
-  locale: 'en' | 'zh' = 'en'
-) {
-  const i18n = createInstance()
-  await i18n.use(initReactI18next).init({
-    lng: locale,
-    fallbackLng: 'en',
-    resources: {
-      en: { translation: en.translation },
-      zh: { translation: zh.translation },
-    },
-    interpolation: { escapeValue: false },
-  })
-  return renderToStaticMarkup(
-    <I18nextProvider i18n={i18n}>{node}</I18nextProvider>
-  )
-}
-
-/** 统计子串在 HTML 中出现的次数（用于区分「套餐卡徽标」与「规格按钮/摘要行」） */
-function countOccurrences(html: string, needle: string): number {
-  return html.split(needle).length - 1
-}
 
 function planById(id: PlanId): ServerPlan {
   const plan = PLANS.find((p) => p.id === id)

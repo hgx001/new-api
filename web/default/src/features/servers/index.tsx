@@ -104,6 +104,10 @@ const FAQS = [
     q: 'Which GPU should I choose for my workload?',
     a: 'Match the card memory to your model first. A 24 GB card is enough for 7B-class inference and video generation, while fine-tuning a 13B model or serving several models at once needs a larger card or two cards. Card memory decides whether the model fits at all, so choose it before the CPU and memory.',
   },
+  {
+    q: 'Can I pay by the hour?',
+    a: 'Yes. Switch the billing method to pay as you go and pick how many hours you need, from one hour up to seven days. The instance is released automatically when the purchased time runs out, so hourly billing suits short training jobs or ad-hoc inference. Long-running services are cheaper on prepaid terms, and the order summary always shows both numbers so you can compare before paying.',
+  },
 ] as const
 
 export function ServersContent({

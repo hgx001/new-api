@@ -1,5 +1,6 @@
 import {
   Check,
+  Clock,
   Copy,
   Eye,
   EyeOff,
@@ -49,6 +50,7 @@ import {
   formatGpu,
   formatSpec,
 } from '../constants'
+import { resolveBilling } from '../lib/pricing'
 import type { OwnedServer } from '../types'
 
 interface MyServersProps {
@@ -67,6 +69,11 @@ function formatDate(ts: number) {
 
 function daysLeft(ts: number) {
   return Math.max(0, Math.ceil((ts * 1000 - Date.now()) / 86400000))
+}
+
+/** 按小时计费的实例剩余小时数（向上取整，不足 1 小时算 1 小时） */
+function hoursLeft(ts: number) {
+  return Math.max(0, Math.ceil((ts * 1000 - Date.now()) / 3600000))
 }
 
 function CredentialField({
@@ -185,6 +192,8 @@ export function MyServers({
         // 不会随时间翻转，只看 status 会一直显示「运行中」。
         const expired =
           server.status === 'expired' || server.expireAt * 1000 <= Date.now()
+        // 按小时的实例到期很快，「还剩 N 天」对它没有意义，要按小时说
+        const isHourly = resolveBilling(server.config) === 'hourly'
 
         return (
           <Card
@@ -214,6 +223,12 @@ export function MyServers({
                       </span>
                     )}
                     <span>{bandwidth.mbps} Mbps</span>
+                    <span className='inline-flex items-center gap-1 font-medium text-[#3a8f7a]'>
+                      <Clock className='size-3' />
+                      {isHourly
+                        ? t('Pay as you go (hourly)')
+                        : t('Prepaid monthly')}
+                    </span>
                   </CardDescription>
                 </div>
                 <Badge
@@ -255,9 +270,13 @@ export function MyServers({
                     {formatDate(server.expireAt)}
                   </div>
                   <div className='text-muted-foreground mt-0.5 text-[11px]'>
-                    {t('{{days}} days left', {
-                      days: daysLeft(server.expireAt),
-                    })}
+                    {isHourly
+                      ? t('{{hours}} hours left', {
+                          hours: hoursLeft(server.expireAt),
+                        })
+                      : t('{{days}} days left', {
+                          days: daysLeft(server.expireAt),
+                        })}
                   </div>
                 </div>
               </div>

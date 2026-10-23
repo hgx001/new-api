@@ -41,7 +41,7 @@ import {
   formatGpu,
   formatSpec,
 } from '../constants'
-import { computePrice } from '../lib/pricing'
+import { computePrice, formatAmount, resolveBilling } from '../lib/pricing'
 import type { PayMethod, ServerConfig } from '../types'
 
 interface CheckoutDialogProps {
@@ -55,13 +55,6 @@ interface CheckoutDialogProps {
   paid: boolean
   onPay: () => void
   onDone: () => void
-}
-
-function formatPrice(value: number) {
-  return `¥${value.toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
 }
 
 export function CheckoutDialog({
@@ -85,6 +78,7 @@ export function CheckoutDialog({
   const bandwidth = getBandwidth(config.mbps)
   const term = getTerm(config.term)
   const price = computePrice(config)
+  const isHourly = resolveBilling(config) === 'hourly'
 
   // 后端下发的 min_topup 是「美元单位」，本页价格是人民币，
   // 与钱包页保持一致：按站点汇率换算后再比较门槛。
@@ -112,9 +106,18 @@ export function CheckoutDialog({
       : []),
     { label: t('Bandwidth'), value: `${bandwidth.mbps} Mbps` },
     {
-      label: t('Term'),
-      value: `${t(term.nameKey)} (${price.months} ${t('months')})`,
+      label: t('Billing method'),
+      value: isHourly ? t('Pay as you go (hourly)') : t('Prepaid monthly'),
     },
+    isHourly
+      ? {
+          label: t('Rental duration'),
+          value: `${price.units} ${t('hours')}`,
+        }
+      : {
+          label: t('Term'),
+          value: `${t(term.nameKey)} (${price.units} ${t('months')})`,
+        },
   ]
 
   return (
@@ -202,7 +205,7 @@ export function CheckoutDialog({
                             title={
                               belowMin
                                 ? t('Minimum topup amount: {{amount}}', {
-                                    amount: formatPrice(minTopupCny),
+                                    amount: formatAmount(minTopupCny),
                                   })
                                 : undefined
                             }
@@ -248,17 +251,17 @@ export function CheckoutDialog({
                       {t('You pay')}
                     </div>
                     <div className='text-2xl font-bold text-[#1a4a3f]'>
-                      {formatPrice(price.total)}
+                      {formatAmount(price.total)}
                     </div>
                   </div>
                   {price.saved > 0 && (
                     <div className='text-muted-foreground text-right text-xs'>
                       <div className='line-through'>
-                        {formatPrice(price.listTotal)}
+                        {formatAmount(price.listTotal)}
                       </div>
                       <div className='font-medium text-[#3a8f7a]'>
                         {t('Save {{amount}}', {
-                          amount: formatPrice(price.saved),
+                          amount: formatAmount(price.saved),
                         })}
                       </div>
                     </div>
@@ -295,7 +298,7 @@ export function CheckoutDialog({
                   ) : (
                     <>
                       {t('Pay {{amount}}', {
-                        amount: formatPrice(price.total),
+                        amount: formatAmount(price.total),
                       })}
                     </>
                   )}

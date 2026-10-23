@@ -26,14 +26,21 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
 import {
+  BILLING_MODES,
+  HOURLY_DURATIONS,
+  TERMS,
   getBandwidth,
   getPlan,
   getRegion,
-  TERMS,
   formatGpu,
   formatSpec,
 } from '../constants'
-import { computePrice } from '../lib/pricing'
+import {
+  computePrice,
+  formatAmount,
+  resolveBilling,
+  resolveHours,
+} from '../lib/pricing'
 import type { ServerConfig } from '../types'
 
 interface BillingPanelProps {
@@ -41,13 +48,6 @@ interface BillingPanelProps {
   onChange: (patch: Partial<ServerConfig>) => void
   onCheckout: () => void
   requiresLogin: boolean
-}
-
-function formatPrice(value: number) {
-  return `¥${value.toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
 }
 
 export function BillingPanel({
@@ -63,6 +63,29 @@ export function BillingPanel({
   const region = getRegion(config.region)
   const bandwidth = getBandwidth(config.mbps)
   const price = computePrice(config)
+  const billing = resolveBilling(config)
+  const isHourly = billing === 'hourly'
+  const hours = resolveHours(config)
+  const activeMode =
+    BILLING_MODES.find((mode) => mode.id === billing) ?? BILLING_MODES[0]
+
+  // 两种计费方式的选择器形状一样（名称 + 可选优惠角标 + 选中态），
+  // 归一成一份再渲染，避免两套几乎相同的 JSX 各自漂移。
+  const durationOptions = isHourly
+    ? HOURLY_DURATIONS.map((item) => ({
+        id: item.id,
+        label: t(item.nameKey),
+        badge: item.badgeKey ? t(item.badgeKey) : undefined,
+        active: hours === item.hours,
+        onSelect: () => onChange({ hours: item.hours }),
+      }))
+    : TERMS.map((item) => ({
+        id: item.id,
+        label: t(item.nameKey),
+        badge: item.badgeKey ? t(item.badgeKey) : undefined,
+        active: config.term === item.id,
+        onSelect: () => onChange({ term: item.id }),
+      }))
 
   const summaryRows = [
     { label: t('Region'), value: t(region.nameKey) },
@@ -81,17 +104,19 @@ export function BillingPanel({
   return (
     <div className='border-border/70 bg-card rounded-2xl border shadow-sm'>
       <div className='space-y-5 p-5 md:p-6'>
-        {/* 周期 */}
+        {/* 计费方式 */}
         <div>
-          <div className='mb-2.5 text-sm font-semibold'>{t('Term')}</div>
-          <div className='bg-muted grid grid-cols-3 gap-1.5 rounded-xl p-1'>
-            {TERMS.map((item) => {
-              const active = config.term === item.id
+          <div className='mb-2.5 text-sm font-semibold'>
+            {t('Billing method')}
+          </div>
+          <div className='bg-muted grid grid-cols-2 gap-1.5 rounded-xl p-1'>
+            {BILLING_MODES.map((mode) => {
+              const active = billing === mode.id
               return (
                 <button
-                  key={item.id}
+                  key={mode.id}
                   type='button'
-                  onClick={() => onChange({ term: item.id })}
+                  onClick={() => onChange({ billing: mode.id })}
                   className={cn(
                     'relative rounded-lg px-2 py-2 text-xs font-medium transition-all',
                     active
@@ -99,15 +124,42 @@ export function BillingPanel({
                       : 'text-muted-foreground hover:text-foreground'
                   )}
                 >
-                  {t(item.nameKey)}
-                  {item.badgeKey && (
-                    <span className='mt-0.5 block text-[10px] font-semibold text-[#3a8f7a]'>
-                      {t(item.badgeKey)}
-                    </span>
-                  )}
+                  {t(mode.nameKey)}
                 </button>
               )
             })}
+          </div>
+          <p className='text-muted-foreground mt-2 text-[11px] leading-relaxed'>
+            {t(activeMode.descriptionKey)}
+          </p>
+        </div>
+
+        {/* 周期 / 租用时长 */}
+        <div>
+          <div className='mb-2.5 text-sm font-semibold'>
+            {isHourly ? t('Rental duration') : t('Term')}
+          </div>
+          <div className='bg-muted grid grid-cols-3 gap-1.5 rounded-xl p-1'>
+            {durationOptions.map((option) => (
+              <button
+                key={option.id}
+                type='button'
+                onClick={option.onSelect}
+                className={cn(
+                  'relative rounded-lg px-2 py-2 text-xs font-medium transition-all',
+                  option.active
+                    ? 'bg-background text-[#1a4a3f] shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                {option.label}
+                {option.badge && (
+                  <span className='mt-0.5 block text-[10px] font-semibold text-[#3a8f7a]'>
+                    {option.badge}
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
         </div>
 
@@ -144,13 +196,13 @@ export function BillingPanel({
                 transition={{ duration: 0.2 }}
                 className='text-3xl font-extrabold tracking-tight text-[#1a4a3f]'
               >
-                {formatPrice(price.total)}
+                {formatAmount(price.total)}
               </motion.div>
             </div>
             {price.saved > 0 && (
               <Badge className='mb-1 gap-1 bg-[#e8f4f0] text-[#3a8f7a]'>
                 <Sparkles className='size-3' />
-                {t('Save {{amount}}', { amount: formatPrice(price.saved) })}
+                {t('Save {{amount}}', { amount: formatAmount(price.saved) })}
               </Badge>
             )}
           </div>
@@ -158,18 +210,48 @@ export function BillingPanel({
           <div className='text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs'>
             {price.saved > 0 && (
               <span className='line-through'>
-                {formatPrice(price.listTotal)}
+                {formatAmount(price.listTotal)}
               </span>
             )}
-            <span>
-              {t('≈ {{amount}} / month', {
-                amount: formatPrice(price.monthlyEquivalent),
-              })}
-            </span>
-            <span>
-              · {price.months} {t('months')}
-            </span>
+            {isHourly ? (
+              <>
+                <span>
+                  {t('≈ {{amount}} / hour', {
+                    amount: formatAmount(price.unitPrice),
+                  })}
+                </span>
+                <span>
+                  · {price.units} {t('hours')}
+                </span>
+                {/* 折合每月：让用户直接和包月价对比，判断按量租一周贵不贵 */}
+                <span>
+                  ·{' '}
+                  {t('≈ {{amount}} / month', {
+                    amount: formatAmount(price.monthlyEquivalent),
+                  })}
+                </span>
+              </>
+            ) : (
+              <>
+                <span>
+                  {t('≈ {{amount}} / month', {
+                    amount: formatAmount(price.monthlyEquivalent),
+                  })}
+                </span>
+                <span>
+                  · {price.units} {t('months')}
+                </span>
+              </>
+            )}
           </div>
+
+          {isHourly && (
+            <p className='text-muted-foreground text-[11px] leading-relaxed'>
+              {t(
+                'The instance is released automatically when the purchased hours run out. Unused time is not refundable.'
+              )}
+            </p>
+          )}
         </div>
 
         {/* 支付 */}
@@ -185,7 +267,7 @@ export function BillingPanel({
               <>
                 <Lock className='mr-2 size-4' />
                 {t('Buy now · {{amount}}', {
-                  amount: formatPrice(price.total),
+                  amount: formatAmount(price.total),
                 })}
               </>
             )}

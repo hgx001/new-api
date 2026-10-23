@@ -23,6 +23,17 @@ export type PlanId = 'lite' | 'general' | 'compute' | 'memory' | 'gpu'
 
 export type TermId = 'half' | 'year' | 'triple'
 
+/**
+ * 计费方式。
+ *
+ * - `prepaid`：包月预付（半年 / 一年 / 三年），一次付清，到期前一直可用
+ * - `hourly`：按小时按量（预付 N 小时），买的时长用完实例自动释放
+ *
+ * 为什么要两种：GPU 算力的真实选型场景里，临时跑一次训练/推理用按小时，
+ * 长期服务才用包月。只给包月会把「试一下」的用户挡在门外。
+ */
+export type BillingMode = 'prepaid' | 'hourly'
+
 export type ServerStatus = 'running' | 'pending' | 'expired'
 
 export interface Region {
@@ -78,6 +89,14 @@ export interface ServerPlan {
   descriptionKey: string
   /** 型号基准月价（¥/月，含 5M 带宽，不含地区系数与周期折扣） */
   basePricePerMonth: number
+  /**
+   * 型号基准小时价（¥/小时，含 5M 带宽，不含地区系数与时长折扣）。
+   *
+   * 为什么单独配而不从月价反推：按量与包月是两种计价口径 —— 包月含长期
+   * 折扣与摊薄的固定成本，按量要为停机/闲置付费。反推会把包月的优惠
+   * 错误地摊进按小时单价。
+   */
+  basePricePerHour: number
   /** 可选规格 */
   specs: ServerSpec[]
   /** 角标标签 i18n key（可为空） */
@@ -105,24 +124,51 @@ export interface TermOption {
   badgeKey?: string
 }
 
+/**
+ * 按小时计费时可购买的时长档。
+ *
+ * 阶梯折扣的理由与 AutoDL 一致：租得越久单价越低（同一台机器长期占用
+ * 对平台是更稳定的需求），所以时长越长给一点折扣，而不是全都一个价。
+ */
+export interface HourlyDuration {
+  id: string
+  /** 租用小时数 */
+  hours: number
+  /** i18n key: 时长展示名，例如「24 小时」 */
+  nameKey: string
+  /** 时长折扣，1 表示不打折 */
+  discount: number
+  /** 优惠角标 i18n key（可为空） */
+  badgeKey?: string
+}
+
 export interface ServerConfig {
   region: RegionId
   plan: PlanId
   specId: string
   mbps: number
   term: TermId
+  /**
+   * 计费方式（缺省按 `prepaid` 处理）。
+   *
+   * 做成可选是为了兼容本地已存的旧订单/实例记录 —— 那是包月时代写下的，
+   * 没有这个字段，读出来时补默认值即可。
+   */
+  billing?: BillingMode
+  /** 按小时时的租用时长（小时，缺省取最短档） */
+  hours?: number
 }
 
 export interface PriceBreakdown {
-  /** 型号 + 规格的月价 */
-  baseMonthly: number
-  /** 带宽加价月值 */
-  bandwidthMonthly: number
-  /** 地区系数之后的月价合计 */
-  monthly: number
-  /** 购买月数 */
-  months: number
-  /** 周期折扣 */
+  /** 计费方式 */
+  billing: BillingMode
+  /** 计费单位：包月=month，按小时=hour */
+  unit: 'month' | 'hour'
+  /** 数量：包月是月数，按小时是小时数 */
+  units: number
+  /** 单价（¥/月 或 ¥/小时，已含规格系数、带宽与地区系数） */
+  unitPrice: number
+  /** 折扣 */
   discount: number
   /** 不打折的总价 */
   listTotal: number
@@ -130,7 +176,7 @@ export interface PriceBreakdown {
   total: number
   /** 优惠金额 */
   saved: number
-  /** 折合每月 */
+  /** 折合每月（按小时模式下按 730 小时/月折算，便于与包月价对比） */
   monthlyEquivalent: number
 }
 
