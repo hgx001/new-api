@@ -70,6 +70,15 @@
   - **状态/选项的 label**：在常量中统一用 **labelKey**（字符串，即 i18n 键），组件中通过 `t(config.labelKey)` 渲染；或约定用 `label` 存与 en 一致的 key 字符串，组件用 `t(config.label)`。同一 feature 内只采用一种方式，避免混用。
   - **新增此类常量时**：同步在 `src/i18n/static-keys.ts` 中登记对应 key（若项目用其做提取），或确保文案以 `t('...')` 字面量形式出现以便扫描，避免遗漏翻译。
 
+- **语言包文件（`src/i18n/locales/*.json`）只能逐行文本增删，禁止整文件回写**  
+  禁止 `JSON.parse` → `JSON.stringify(obj, null, 2)` → 写回整个文件：语言包里存在手写转义
+  （`footer.newapi.projectAttributionSuffix` 的字母 `a` 在文件里是六位 Unicode 转义，不是字面 `a`），
+  round-trip 会把它还原成字面 `a`，结果是**全文件噪声 diff**，真实改动被淹没。
+  正确做法：定位 `translation` 对象边界 → 逐行插入/删除 → **行与行之间要带逗号、最后一条不带**
+  → 回写后用 `JSON.parse` 校验 → 再跑 `bun run i18n:sync` 确认 6 个语言包 missing=0 / extras=0。  
+  校验 JSON 用 `bun -e`；PowerShell 的 `ConvertFrom-Json` 会在含 `1 hour` / `1 Hour` 这类
+  大小写重复键的文件上报**假错**（不是真错误）。
+
 ### 3.2 代码风格与类型
 
 - **表达式**：禁止 2 层及以上嵌套三元表达式；改用 `if-else`、提前返回或抽取函数。单层三元可保留，但需简洁。
