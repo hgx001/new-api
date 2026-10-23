@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
@@ -72,9 +71,13 @@ var upstreamIdentityPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bwan[\s\-_]?3(\.0)?\b`),
 }
 
-// upstreamURLPattern 用于标记「不能动」的 URL 区段。
-// 交付链接（成片直链）就在里面：改一个字链接就废了，所以只遮 URL 之外的文案。
+// upstreamURLPattern 用于识别文案里的地址。
+// 上游成片直链（R2 域名 + hailuo-video 货源目录）本身就是"真实上游是谁"的证据，
+// 别名模型的下游文案里要**整个摘掉**（见 RedactUpstreamText）。
 var upstreamURLPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>\\]+`)
+
+// upstreamURLPlaceholder 是被摘掉的上游地址的占位符。
+const upstreamURLPlaceholder = "[地址已隐藏]"
 
 type identityToken struct {
 	literal string
@@ -114,75 +117,34 @@ func RedactUpstreamIdentity(content string, modelName string) string {
 	if content == "" || !IsUpstreamAliasModel(modelName) {
 		return content
 	}
-	return redactUpstreamIdentityText(content, false)
+	return redactUpstreamIdentityText(content)
 }
 
-// RedactUpstreamIdentityKeepURL 与 RedactUpstreamIdentity 相同，但 URL 区段内的字样不动。
-// 用于可能夹带交付链接的字段（成片地址被改一个字链接就废了）。
-func RedactUpstreamIdentityKeepURL(content string, modelName string) string {
+// RedactUpstreamText 把下游可见文案里的「上游地址」与「上游身份字样」一起清掉。
+//
+// 为什么地址也要清：上游的成片直链（R2 域名 + hailuo-video 货源目录）本身就是
+// "真实上游是谁"的证据。交付地址已经改走本站 /content 代理，错误文案里再留一个
+// 上游地址没有任何用途 —— 留着就等于把货源写在脸上。
+//
+// 只对"对外别名模型"生效（见 upstreamAliasModels），其它模型原样返回。
+func RedactUpstreamText(content string, modelName string) string {
 	if content == "" || !IsUpstreamAliasModel(modelName) {
 		return content
 	}
-	return redactUpstreamIdentityText(content, true)
+	// 先摘地址：脱敏字样会把 URL 里的 wan3.0 换成「上游」，地址反正要删，
+	// 不必再费劲保护 URL 区段。
+	text := upstreamURLPattern.ReplaceAllString(content, upstreamURLPlaceholder)
+	return RedactUpstreamIdentity(text, modelName)
 }
 
-// RedactUpstreamIdentityJSON 对 JSON 文本做脱敏（URL 区段不动）。
-// 直接在 JSON 文本上替换，替换词不含引号/反斜杠，替换后仍是合法 JSON。
-func RedactUpstreamIdentityJSON(raw []byte, modelName string) []byte {
-	if len(raw) == 0 || !IsUpstreamAliasModel(modelName) {
-		return raw
-	}
-	redacted := redactUpstreamIdentityText(string(raw), true)
-	if !json.Valid([]byte(redacted)) {
-		// 兜底：脱敏后不是合法 JSON 就原样返回，绝不把下游的响应体搞坏
-		return raw
-	}
-	return []byte(redacted)
-}
-
-func redactUpstreamIdentityText(text string, protectURLs bool) string {
-	var protected [][2]int
-	if protectURLs {
-		for _, loc := range upstreamURLPattern.FindAllStringIndex(text, -1) {
-			protected = append(protected, [2]int{loc[0], loc[1]})
-		}
-	}
+func redactUpstreamIdentityText(text string) string {
 	for _, token := range upstreamIdentityTokens {
-		text = replaceAllSkippingRanges(text, token.re, protected)
+		text = token.re.ReplaceAllString(text, upstreamNeutralWord)
 	}
 	for _, re := range upstreamIdentityPatterns {
-		text = replaceAllSkippingRanges(text, re, protected)
+		text = re.ReplaceAllString(text, upstreamNeutralWord)
 	}
 	// 连续替换可能产生 "上游 上游"，收敛成一个
 	text = strings.ReplaceAll(text, upstreamNeutralWord+" "+upstreamNeutralWord, upstreamNeutralWord)
 	return text
-}
-
-// replaceAllSkippingRanges 把 re 命中的片段替换成中性词，但跳过落在受保护区段内的命中。
-func replaceAllSkippingRanges(text string, re *regexp.Regexp, protected [][2]int) string {
-	matches := re.FindAllStringIndex(text, -1)
-	if len(matches) == 0 {
-		return text
-	}
-	var sb strings.Builder
-	pos := 0
-	for _, m := range matches {
-		if overlapsAny(m[0], m[1], protected) {
-			continue
-		}
-		sb.WriteString(text[pos:m[0]])
-		sb.WriteString(upstreamNeutralWord)
-		pos = m[1]
-	}
-	sb.WriteString(text[pos:])
-	return sb.String()
-}
-
-func overlapsAny(start, end int, ranges [][2]int) bool {
-	for _, r := range ranges {
-		if start < r[1] && r[0] < end {
-			return true
-		}
-	}
-	return false
 }

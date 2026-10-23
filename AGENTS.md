@@ -315,16 +315,17 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
   | 下游可见面 | 原始内容 | 处理位置 |
   |---|---|---|
   | 提交响应体 `model` 字段 | `"wan-3.0"` | `relay/channel/task/sora/adaptor.go` 的 DoResponse 换成对外别名 |
-  | 提交失败错误体 | 上游原文（`model aliyun:wan-3.0 ...`） | `controller/relay.go` 的 `respondTaskError` 出口脱敏 |
+  | 提交失败错误体 | 上游原文（`model aliyun:wan-3.0 ...`）+ 可能夹带的上游地址 | `controller/relay.go` 的 `respondTaskError` 出口脱敏（`RedactUpstreamText`：字样换中性词 + 地址整体摘掉） |
   | 任务 DTO `properties.upstream_model_name` | `"wan-3.0"` | `relay/relay_task.go` 的 `TaskModel2Dto` 换成对外别名 |
   | 任务 DTO `data`（上游回执） | 上游任务号 + 上游成本 `billing_amount` + 上游地址 | 别名模型整体置 nil |
-  | 任务 DTO `fail_reason` | 上游失败文案 | 文本脱敏（URL 区段不动） |
+  | 任务 DTO `fail_reason` | 上游失败文案（可能夹带上游地址） | `RedactUpstreamText`：字样换中性词 + 地址整体摘掉 |
+  | 任务 DTO `result_url`（成片直链） | R2 域名 + `hailuo-video` 货源目录 | 别名模型改指向本站 `/v1/videos/{task_id}/content` 代理（`TaskModel2Dto`）；未完成/失败任务置空 |
+  | OpenAI Video 取任务响应体（`GET /v1/videos/{task_id}`） | **上游原始回执**：`"model":"wan-3.0"` + `url`/`metadata.final_video_url`（上游直链）+ `billing_amount` | 别名模型按对外口径**重建**响应体（`relay/relay_task.go` 的 `redactAliasOpenAIVideo`）：对外模型名 + 本站代理地址，无上游成本/任务号/直链 |
   | 消费日志 `other.upstream_model_name` | `"wan-3.0"`（前端「实际模型」面板直接显示给用户） | `model/log.go` 的 `formatUserLogs` 抹掉 |
-  | 错误日志 `content` / `other.channel_name` | 上游原文 / 渠道名 | `model/upstream_redact.go` + `formatUserLogs` |
-  | 成片直链 `result_url` | R2 域名 + `hailuo-video` 路径 | **不动**：改一个字链接就废了（直链 24 小时过期；改走本站 `/content` 代理是另一件事，会多一跳带宽） |
+  | 错误日志 `content` / `other.channel_name` | 上游原文 / 上游地址 / 渠道名 | `model/upstream_redact.go` + `formatUserLogs` |
   - 脱敏只在**出口层**做（DTO / HTTP 响应 / 用户日志出口），**数据库保留原文**：管理员走 `GetAllLogs` / `GetAllTask` 仍看得到真实上游与渠道名，排查不受影响。
   - ⚠️ **绝不能做在 `service.TaskErrorWrapper` 或写入层**：`shouldRetryTaskRelay` → `IsUpstreamAccountBalanceError` 靠 message 关键词决定换渠道重试，`LocalError` 语义也依赖原值；改写写入层则管理员永远看不到原文、也拿不到历史原始文案。
-  - 词表与规则见 `model/upstream_redact.go`：`upstreamAliasModels`（哪些对外名算别名）+ `upstreamIdentityLiterals`（要遮的字样）。字面量按长度倒序，保证 `aliyun:wan-3.0` 整体替换、不留 `上游:上游` 碎片；`ali` 必须带词边界，否则 `validate` / `invalid` 会被误伤；**URL 区段受保护**（`RedactUpstreamIdentityKeepURL` / `RedactUpstreamIdentityJSON`），交付链接一个字都不能改。
+  - 词表与规则见 `model/upstream_redact.go`：`upstreamAliasModels`（哪些对外名算别名）+ `upstreamIdentityLiterals`（要遮的字样）。字面量按长度倒序，保证 `aliyun:wan-3.0` 整体替换、不留 `上游:上游` 碎片；`ali` 必须带词边界，否则 `validate` / `invalid` 会被误伤。`RedactUpstreamText` = **字样换中性词 + 上游地址整体摘掉**（换 `[地址已隐藏]`）：上游地址本身就是货源证据（R2 域名 + `hailuo-video` 目录），交付地址已改走本站代理，错误文案里再留上游地址没有用途。⚠️ **不要再引入「URL 区段受保护」的脱敏口径** —— 那会留下 `https://newapi.上游.cc/...` 这种半遮半露的地址。
   - 只对**别名模型**生效，其它模型原样返回：它们的模型名本来对外公开，遮了只会让报错更难读。验收走「往 `logs` / `tasks` 插合成行 → 比对普通用户出口与管理员出口」，**不要为了验证去烧上游额度**。
 - **计价 = 按次 + 分辨率档，时长不参与**：上游价目 480p ¥1.6 / 720p ¥1.8 / 1080p ¥2.0，单位是 `call` 不是 `second`；对外价 480p ¥3.0 / 720p ¥3.5 / 1080p ¥4.0（2026-10-22 由 ¥2.4/3.0/4.0 上调）。实现：`defaultModelPrice["wan-3.0"] = 3.0/7.3`（480p 基准，USD 等值存储）+ `wan30ResolutionSizeRatio = {480p:1, 720p:3.5/3.0, 1080p:4.0/3.0}`（倍率写成「档位价÷基准价」而非魔数，改基准价时一眼能看出该改成多少）。
   - `EstimateBilling` 对 `wan-3.0` **只给 `size` 倍率、绝不给 `seconds`**（上游按次计费，给了 seconds 就是按秒多收）。`sd-2.5` 仍返回 `nil`（固定按次价）。
@@ -336,7 +337,7 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - ⚠️ **平台的 Sora 语义会让 `input_reference` 覆盖整个 `images` 数组**（`relay/common/relay_utils.go` 的 `validateMultipartDirect`：`input_reference` 是单图字段，存在就替换 `images`）。wan-3.0 支持 10 张参考图，两者并存时**必须合并**（适配器从原始 body 把 `images` 找回来），否则用户付了 ¥3 却丢了自己的参考图。
 - ⚠️ **数字型 `seconds` 必须能收**（2026-10-22 修）：`TaskSubmitReq.Seconds` 是 `string`，客户端传 `{"seconds": 15}` 以前会让整包反序列化失败 → `400 invalid_json`，表现为「参数根本没传进去」而不是「参数写错了」。`relay/common/relay_info.go` 的 `UnmarshalJSON` 已按 `duration`/`seed` 的同款口径兼容数字与字符串（**全局改动，影响所有任务渠道**；字符串写法行为不变）。
 - **结果解析必须容错**：成片地址可能在 `video_url`/`url`/`result_url`/`data.url`/`data.video_url`/`output.video_url` 等多处；错误字段可能是对象 / 字符串 / `fail_reason`；状态可能返回 `succeeded`。**严格解析一失败，任务就永远停在非终态**（既看不到失败原因，也永远退不了款）。认不出的非空状态按「还在跑」处理（误判失败=用户白等一次生成，误判成功=把没出的片子当成功交付）。
-- **交付链路**（`controller/video_proxy.go` 的 `ChannelTypeMegaAI` 分支）：轮询响应带成片直链 → 透传且**不带渠道密钥**；没有直链 → 回源上游 `{base}/v1/videos/{upstream_task_id}/content`（带密钥）。⚠️ 必须用 `isSelfProxyPath` 排除站内代理地址，否则代理自我递归。
+  - **交付链路**（`controller/video_proxy.go` 的 `ChannelTypeMegaAI` 分支）：轮询响应带成片直链 → 透传且**不带渠道密钥**；没有直链 → 回源上游 `{base}/v1/videos/{upstream_task_id}/content`（带密钥）。⚠️ 必须用 `isSelfProxyPath` 排除站内代理地址，否则代理自我递归。**别名模型的成片地址改走本站代理**：库里仍存上游直链（管理员看得见），但下游拿到的 `result_url` / `metadata.url` 是本站 `/v1/videos/{task_id}/content`（代理读库回源，交付行为不变），代价是本站多一跳出网带宽（32MB/条量级，¥0.02/条量级）。
 - ⚠️ **上游成片是 Cloudflare R2 签名直链，`X-Amz-Expires=86400`（签发后 24 小时过期）**，本站把直链存进 `private_data.result_url` 且**不缓存视频字节** → 用户须在 24 小时内下载，过期后 `/content` 取不到片（要长期留存得另做转存）。
 - ✅ **「按次、时长不参与」已被真机证实**（2026-10-22，1 个授权任务）：30 秒 720p 的上游回执 `billing_amount=1.8 CNY` / `billing_status=settled`，与价目表 720p 单价分毫不差；本站侧 `other_ratios` 只有 `size:1.25`、无 `seconds`。上游改价口径时这条要重新验。
 - 接入细节与真机验证结论见 `docs/channel/megabyai-wan3-integration.md`。

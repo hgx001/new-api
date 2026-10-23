@@ -426,7 +426,9 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 				taskResp = service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
 				return
 			}
-			respBody = openAIVideoData
+			// 别名模型：converter 返回的是上游原始回执（上游模型名 + 上游成片直链 +
+			// 上游成本），必须换成对外口径，别名才不会被反推出真实上游。
+			respBody = redactAliasOpenAIVideo(originTask, openAIVideoData)
 			return
 		}
 		taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
@@ -609,12 +611,10 @@ func buildTaskDto(task *model.Task) *dto.TaskDto {
 //   - properties.upstream_model_name = 上游模型名（wan-3.0）
 //   - data = 上游原始回执（上游任务号、上游成本 billing_amount、上游成片地址）
 //   - fail_reason = 上游失败文案
+//   - result_url = 成片直链（上游存储域名 + hailuo-video 货源目录）
 //
 // 只在出口层（DTO 构造）做：数据库里保留原文，管理员排障仍能看到真实上游；
 // 换渠道重试与 AutoBan 判定读的是上游原文，不受影响。
-//
-// ⚠️ result_url 不动：成片直链改一个字就下载不了（直链还有 24 小时有效期），
-// 真要隐藏成片地址只能改走本站 /content 代理，那是另一件事（会多一跳带宽）。
 func redactAliasTaskUpstream(out *dto.TaskDto, task *model.Task) {
 	origin := task.Properties.OriginModelName
 	if !model.IsUpstreamAliasModel(origin) {
@@ -624,11 +624,68 @@ func redactAliasTaskUpstream(out *dto.TaskDto, task *model.Task) {
 	props := task.Properties
 	props.UpstreamModelName = origin
 	out.Properties = props
-	// fail_reason：上游失败文案脱敏（可能夹带历史交付地址，URL 区段不动）
-	out.FailReason = model.RedactUpstreamIdentityKeepURL(task.FailReason, origin)
+	// fail_reason：上游失败文案脱敏 —— 字样换成中性词，上游地址整个摘掉。
+	// 交付地址已改走本站代理，文案里再留一个上游地址没有任何用途。
+	out.FailReason = model.RedactUpstreamText(task.FailReason, origin)
 	// data：上游原始回执整体不给下游 —— 里面有上游任务号、上游成本和上游地址，
 	// 都不是下游该知道的；前端只用 data 渲染 Suno 音频片段，视频任务不依赖它。
 	out.Data = nil
+	// result_url：这个字段只放「下载地址」。
+	//   - 成功任务：成片直链改指向本站 /content 代理。直链里带着上游存储域名与
+	//     货源目录（R2 域名 + hailuo-video 路径），原样给下游等于直接报出真实上游
+	//     是谁；代理回源的是库里的原始地址，交付行为不变（管理员仍看得到原始直链），
+	//     只是多一跳本站带宽。
+	//   - 未完成 / 失败任务：置空。GetResultURL() 在没有产物时会回退到 FailReason，
+	//     而失败文案里带的是上游原文（"model aliyun:wan-3.0 ..."）—— 留在
+	//     「下载地址」字段里等于换个字段继续报出真实上游。失败原因由 fail_reason 承载。
+	if task.Status == model.TaskStatusSuccess && out.ResultURL != "" && task.TaskID != "" {
+		out.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+	} else if task.Status != model.TaskStatusSuccess {
+		out.ResultURL = ""
+	}
+}
+
+// redactAliasOpenAIVideo 把别名模型的 OpenAI Video 响应体换成对外口径。
+//
+// 为什么必须换（不能只脱敏字样）：OpenAI Video API 的取任务响应
+// （GET /v1/videos/{task_id}）走各渠道的 ConvertToOpenAIVideo，megabyai 那里返回的
+// 是**上游原始回执**，里面同时有：
+//
+//   - "model": "wan-3.0" → 直接点名真实上游
+//   - "url" / "metadata.final_video_url" → 上游成片直链（上游存储域名 + 货源目录）
+//   - "billing_amount" / "billing_quota" → 上游成本
+//
+// 任何一项漏出去，别名就白起了。所以这里按对外口径**重建**响应体：
+// 成片地址给本站 /content 代理（代理回源上游，行为不变）。
+//
+// 非别名模型逐字返回原响应体：它们的回执本来就是对外的，遮了只会让客户端拿不到信息。
+func redactAliasOpenAIVideo(task *model.Task, raw []byte) []byte {
+	origin := task.Properties.OriginModelName
+	if !model.IsUpstreamAliasModel(origin) {
+		return raw
+	}
+	video := task.ToOpenAIVideo()
+	// 兼容字段 task_id：上游回执里放的是**上游任务号**，必须换成对外任务号。
+	video.TaskID = task.TaskID
+	// ToOpenAIVideo() 预置的 url 取的是原始直链（非成功任务还会回退到 FailReason），
+	// 先删掉再按对外口径重设。
+	delete(video.Metadata, "url")
+	if task.Status == model.TaskStatusSuccess && strings.TrimSpace(task.GetResultURL()) != "" && task.TaskID != "" {
+		video.SetMetadata("url", taskcommon.BuildProxyURL(task.TaskID))
+	}
+	if task.Status == model.TaskStatusFailure {
+		// 上游回执里只有提交时的快照（真正的原因在 fail_reason），失败原因在这里补上，
+		// 否则客户端只会看到一个永远停在 queued 的任务。
+		video.Error = &dto.OpenAIVideoError{
+			Message: model.RedactUpstreamText(task.FailReason, origin),
+		}
+	}
+	encoded, err := common.Marshal(video)
+	if err != nil {
+		// 兜底：编不出来就退回原文，绝不把下游的响应体搞坏
+		return raw
+	}
+	return encoded
 }
 
 // applyTaskOtherRatios 把时长/分辨率等附加倍率乘到任务预扣额度上。

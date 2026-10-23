@@ -611,8 +611,9 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
 	// 别名模型：上游原文（"model aliyun:wan-3.0 does not support ..."）不能直接回给客户端，
-	// 否则等于告诉用户真实上游是谁。只在出口层改写，重试与 AutoBan 判定读到的仍是原文。
-	taskErr.Message = model.RedactUpstreamIdentity(taskErr.Message, c.GetString("original_model"))
+	// 否则等于告诉用户真实上游是谁；上游地址（渠道域名 / 存储域名）同样不能给。
+	// 只在出口层改写，重试与 AutoBan 判定读到的仍是原文。
+	taskErr.Message = model.RedactUpstreamText(taskErr.Message, c.GetString("original_model"))
 	c.JSON(taskErr.StatusCode, taskErr)
 }
 

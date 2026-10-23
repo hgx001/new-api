@@ -174,6 +174,38 @@
   `supportedModels` 在前端没有任何消费方（死配置），且线上旧前端的按秒判定
   对本模型名不匹配 → 广场本就显示为按次。
 
+## 别名模型的「遮上游」交付链路（2026-10-23）
+
+别名模型 `seedance2.5-特惠` 的存在意义是「下游看不出真实上游是 `wan-3.0`」。
+上线后逐面核对，发现**成片直链是最后一个残留面**，本轮用 TDD 做掉。
+
+上游回执（`task.Data`，实测自任务 619）里同时带着三样东西：
+
+```json
+{"model":"wan-3.0","url":"https://d4c280ea2c37b44805c584296cb271a0.r2.cloudflarestorage.com/hailuo-video/aggregate/videos/vid_xxx.m4v?X-Amz-Signature=...",
+ "metadata":{"final_video_url":"https://...r2.../hailuo-video/...","video_url":"https://...r2.../hailuo-video/..."},
+ "billing_amount":1.8,"billing_currency":"CNY","billing_status":"settled"}
+```
+
+- R2 域名 + `hailuo-video` 货源目录 → 直接暴露上游存储与货源链；
+- `"model":"wan-3.0"` → 直接点名真实上游；
+- `billing_amount` → 暴露上游成本。
+
+本轮的处理（**只在出口层做，数据库保留原文**）：
+
+| 下游可见面 | 处理 |
+|---|---|
+| 任务 DTO `result_url` | 改指向本站 `/v1/videos/{task_id}/content` 代理；未完成/失败任务置空（失败文案会回退进 `result_url`，那也是上游原文） |
+| OpenAI Video 取任务响应体 `GET /v1/videos/{task_id}` | 别名模型按对外口径**重建**（`relay/relay_task.go` 的 `redactAliasOpenAIVideo`）：对外模型名 + 本站代理地址，无上游直链/成本/任务号 |
+| 任务 DTO `fail_reason` / 提交失败错误体 / 错误日志 `content` | `RedactUpstreamText`：上游字样换中性词 + **上游地址整体摘掉**（换 `[地址已隐藏]`） |
+
+**代价**：成片改走本站代理 = 本站多一跳出网带宽（32MB/条量级，¥0.02/条量级），
+且 `/content` 需要鉴权（会话或 token 都行，`middleware.TokenOrUserAuth`）。
+`wan-3.0` 本尊（对外原名）**不受影响**，仍然直链透传。
+
+代理行为本身没变：`controller/video_proxy.go` 的 `ChannelTypeMegaAI` 分支读的是
+**库里的原始直链**（管理员在 `/api/task/` 仍看得到），回源逻辑照旧。
+
 ## 风险与注意
 
 - ⚠️ **上游实际扣费以「每次固定价」为准**。若上游改成按时长计价（当前价目表是

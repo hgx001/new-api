@@ -141,8 +141,9 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			}
 		}
 		if logs[i].Type == LogTypeError {
-			// 对外别名模型：错误日志里不能出现上游/供应商字样，否则等于告诉用户真实货源。
-			logs[i].Content = RedactUpstreamIdentity(logs[i].Content, logs[i].ModelName)
+			// 对外别名模型：错误日志里不能出现上游/供应商字样，更不能出现上游地址
+			//（R2 域名 / 渠道域名本身就是货源证据），否则等于告诉用户真实货源。
+			logs[i].Content = RedactUpstreamText(logs[i].Content, logs[i].ModelName)
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 	}

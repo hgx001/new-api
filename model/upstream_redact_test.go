@@ -1,11 +1,9 @@
 package model
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestRedactUpstreamIdentity_AliasModel(t *testing.T) {
@@ -85,30 +83,25 @@ func TestRedactUpstreamIdentity_空内容(t *testing.T) {
 	assert.Equal(t, "", RedactUpstreamIdentity("", "seedance2.5-特惠"))
 }
 
-func TestRedactUpstreamIdentityKeepURL_URL区段不能动(t *testing.T) {
-	raw := `成片地址 https://cdn.example.com/wan3.0-720p/final.mp4 拉取失败：model aliyun:wan-3.0 rejected`
-	got := RedactUpstreamIdentityKeepURL(raw, "seedance2.5-特惠")
-	assert.Contains(t, got, "https://cdn.example.com/wan3.0-720p/final.mp4",
-		"交付链接改一个字就下载不了，URL 区段必须原样保留")
+// RedactUpstreamText 把「上游地址」和「上游身份字样」一起清掉。
+//
+// 为什么地址也要清：上游的成片直链（R2 域名 + hailuo-video 货源目录）本身就是
+// "真实上游是谁"的证据。交付地址已改走本站 /content 代理，错误文案里再留一个
+// 上游地址没有任何用途 —— 留着就等于把货源写在脸上。
+func TestRedactUpstreamText_摘掉上游地址并脱敏身份(t *testing.T) {
+	raw := `成片地址 https://d4c280ea2c37b44805c584296cb271a0.r2.cloudflarestorage.com/hailuo-video/vid_x.m4v 拉取失败：model aliyun:wan-3.0 rejected`
+	got := RedactUpstreamText(raw, "seedance2.5-特惠")
+	assert.NotContains(t, got, "r2.cloudflarestorage.com", "上游存储域名不能留在下游文案里")
+	assert.NotContains(t, got, "hailuo-video", "上游货源目录不能留在下游文案里")
 	assert.NotContains(t, got, "aliyun")
 	assert.Contains(t, got, "上游")
+	assert.Contains(t, got, "拉取失败", "失败原因本身要保留，只清上游信息")
 }
 
-func TestRedactUpstreamIdentityJSON_保持合法JSON且遮掉模型名(t *testing.T) {
-	raw := []byte(`{"id":"task_36be6a9c56a14eebbeb1573c43abbf7e","model":"wan-3.0","metadata":{"final_video_url":"https://x.r2.cloudflarestorage.com/hailuo-video/v.mp4"}}`)
-	got := RedactUpstreamIdentityJSON(raw, "seedance2.5-特惠")
-	require.True(t, json.Valid(got), "脱敏后必须仍是合法 JSON")
-	assert.NotContains(t, string(got), "wan-3.0")
-	assert.Contains(t, string(got), "https://x.r2.cloudflarestorage.com/hailuo-video/v.mp4")
-}
-
-func TestRedactUpstreamIdentityJSON_非别名模型与非法JSON原样返回(t *testing.T) {
-	raw := []byte(`{"model":"wan-3.0"}`)
-	assert.Equal(t, raw, RedactUpstreamIdentityJSON(raw, "wan-3.0"))
-
-	broken := []byte(`{"model":`)
-	assert.Equal(t, broken, RedactUpstreamIdentityJSON(broken, "seedance2.5-特惠"),
-		"脱敏后不是合法 JSON 就原样返回，绝不能把下游响应体搞坏")
+func TestRedactUpstreamText_非别名模型与空内容原样返回(t *testing.T) {
+	raw := `成片地址 https://cdn.example.com/wan3.0-720p/final.mp4 拉取失败：model aliyun:wan-3.0 rejected`
+	assert.Equal(t, raw, RedactUpstreamText(raw, "wan-3.0"), "非别名模型逐字不变")
+	assert.Equal(t, "", RedactUpstreamText("", "seedance2.5-特惠"))
 }
 
 func TestFormatUserLogs_错误日志对普通用户隐藏渠道名与上游字样(t *testing.T) {
@@ -147,6 +140,24 @@ func TestFormatUserLogs_错误日志对普通用户隐藏渠道名与上游字�
 
 	// 非错误日志：正文不在脱敏范围
 	assert.Equal(t, "aliyun:wan-3.0", logs[2].Content)
+}
+
+// 别名模型的错误日志正文里不能出现上游地址：上游站点域名（R2 域名 / 渠道域名）
+// 本身就是货源证据，错误文案里留着等于把货源写在脸上。
+func TestFormatUserLogs_别名模型的错误日志不暴露上游地址(t *testing.T) {
+	logs := []*Log{
+		{
+			Type:      LogTypeError,
+			ModelName: "seedance2.5-特惠",
+			Content:   `status_code=401, upstream https://newapi.megabyai.cc/v1/videos: invalid token`,
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	assert.NotContains(t, logs[0].Content, "newapi.megabyai.cc", "上游站点域名不能给普通用户看")
+	assert.NotContains(t, logs[0].Content, "https://", "上游地址整体摘掉")
+	assert.Contains(t, logs[0].Content, "invalid token", "错误原因本身要保留")
 }
 
 func TestFormatUserLogs_别名模型的消费日志不暴露上游模型名(t *testing.T) {
