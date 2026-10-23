@@ -3,6 +3,7 @@ import {
   Copy,
   Eye,
   EyeOff,
+  Gpu,
   KeyRound,
   MapPin,
   Server as ServerIcon,
@@ -41,7 +42,13 @@ import {
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { cn } from '@/lib/utils'
 
-import { getBandwidth, getPlan, getRegion } from '../constants'
+import {
+  getBandwidth,
+  getPlan,
+  getRegion,
+  formatGpu,
+  formatSpec,
+} from '../constants'
 import type { OwnedServer } from '../types'
 
 interface MyServersProps {
@@ -199,9 +206,13 @@ export function MyServers({
                       <MapPin className='size-3' />
                       {t(region.nameKey)}
                     </span>
-                    <span>
-                      {spec.cpu} vCPU · {spec.memory} GB · {spec.disk} GB
-                    </span>
+                    <span>{formatSpec(spec)}</span>
+                    {spec.gpu && (
+                      <span className='inline-flex items-center gap-1 font-medium text-[#3a8f7a]'>
+                        <Gpu className='size-3' />
+                        {formatGpu(spec.gpu)}
+                      </span>
+                    )}
                     <span>{bandwidth.mbps} Mbps</span>
                   </CardDescription>
                 </div>

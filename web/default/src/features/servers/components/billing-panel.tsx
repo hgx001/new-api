@@ -25,7 +25,14 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 
-import { getBandwidth, getPlan, getRegion, TERMS } from '../constants'
+import {
+  getBandwidth,
+  getPlan,
+  getRegion,
+  TERMS,
+  formatGpu,
+  formatSpec,
+} from '../constants'
 import { computePrice } from '../lib/pricing'
 import type { ServerConfig } from '../types'
 
@@ -62,8 +69,12 @@ export function BillingPanel({
     { label: t('Plan'), value: t(plan.nameKey) },
     {
       label: t('Specifications'),
-      value: `${spec.cpu} vCPU · ${spec.memory} GB · ${spec.disk} GB`,
+      value: formatSpec(spec),
     },
+    // 显卡单列一行：下单前必须看得见卡型与显存（能不能装下模型全看它）
+    ...(spec.gpu
+      ? [{ label: t('Graphics card'), value: formatGpu(spec.gpu) }]
+      : []),
     { label: t('Bandwidth'), value: `${bandwidth.mbps} Mbps` },
   ]
 

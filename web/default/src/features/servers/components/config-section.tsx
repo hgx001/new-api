@@ -1,4 +1,4 @@
-import { Cpu, HardDrive, MapPin, MemoryStick, Network } from 'lucide-react'
+import { Cpu, Gpu, HardDrive, MapPin, MemoryStick, Network } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -23,7 +23,14 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
-import { BANDWIDTHS, PLANS, REGIONS } from '../constants'
+import {
+  BANDWIDTHS,
+  PLANS,
+  REGIONS,
+  formatGpu,
+  formatSpec,
+  planGpuSummary,
+} from '../constants'
 import type { ServerConfig } from '../types'
 
 interface ConfigSectionProps {
@@ -154,6 +161,12 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                 <div className='text-muted-foreground mt-1 text-xs'>
                   {t(item.taglineKey)}
                 </div>
+                {planGpuSummary(item) && (
+                  <div className='mt-2 inline-flex items-center gap-1.5 rounded-md bg-[#e8f4f0] px-2 py-1 text-[11px] font-semibold text-[#1a4a3f]'>
+                    <Gpu className='size-3.5' />
+                    {planGpuSummary(item)}
+                  </div>
+                )}
                 <div className='mt-3 text-sm font-medium text-[#1a4a3f]'>
                   {t('From {{price}} / month', {
                     price: `¥${item.basePricePerMonth}`,
@@ -170,7 +183,11 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
         <StepHeading
           index={3}
           title={t('Specifications')}
-          hint={t('vCPU, memory and system disk')}
+          hint={
+            spec.gpu
+              ? t('vCPU, memory, system disk and graphics card')
+              : t('vCPU, memory and system disk')
+          }
         />
         <div className='flex flex-wrap gap-2.5'>
           {plan.specs.map((item) => {
@@ -187,7 +204,12 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                     : 'border-border bg-background hover:border-[#7dd3c0]/60'
                 )}
               >
-                {item.cpu} vCPU · {item.memory} GB · {item.disk} GB
+                <span className='block'>{formatSpec(item)}</span>
+                {item.gpu && (
+                  <span className='mt-1 block text-[11px] font-semibold text-[#3a8f7a]'>
+                    {formatGpu(item.gpu)}
+                  </span>
+                )}
               </button>
             )
           })}
@@ -202,6 +224,11 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
           <span className='inline-flex items-center gap-1.5'>
             <HardDrive className='size-3.5' /> {spec.disk} GB NVMe
           </span>
+          {spec.gpu && (
+            <span className='inline-flex items-center gap-1.5 font-semibold text-[#3a8f7a]'>
+              <Gpu className='size-3.5' /> {formatGpu(spec.gpu)}
+            </span>
+          )}
         </div>
       </section>
 

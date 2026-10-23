@@ -21,7 +21,9 @@ import type {
   BandwidthOption,
   Region,
   RegionId,
+  ServerGpu,
   ServerPlan,
+  ServerSpec,
   TermOption,
 } from './types'
 
@@ -126,6 +128,7 @@ export const PLANS: ServerPlan[] = [
         memory: 32,
         disk: 500,
         multiplier: 1,
+        gpu: { model: 'RTX 4090', vram: 24, count: 1 },
       },
       {
         id: 'gpu-24c48g',
@@ -133,6 +136,7 @@ export const PLANS: ServerPlan[] = [
         memory: 48,
         disk: 1000,
         multiplier: 1.7,
+        gpu: { model: 'RTX 4090', vram: 24, count: 2 },
       },
     ],
   },
@@ -185,4 +189,26 @@ export function getBandwidth(mbps: number): BandwidthOption {
 
 export function getTerm(id: string): TermOption {
   return TERMS.find((t) => t.id === id) ?? TERMS[0]
+}
+
+/**
+ * 显卡展示文案，例如「1× RTX 4090 24GB」。
+ *
+ * 显存必须和卡型一起出现：用户判断「我的模型装不装得下」只认显存
+ * （24GB 能跑 7B 推理，13B 全参微调就得 40GB+），
+ * 只给卡型等于把选型责任推回给用户。
+ */
+export function formatGpu(gpu?: ServerGpu): string {
+  if (!gpu) return ''
+  return `${gpu.count}× ${gpu.model} ${gpu.vram}GB`
+}
+
+/** 规格的 CPU / 内存 / 磁盘摘要（不含显卡，显卡单独一行） */
+export function formatSpec(spec: ServerSpec): string {
+  return `${spec.cpu} vCPU · ${spec.memory} GB · ${spec.disk} GB`
+}
+
+/** 套餐卡的显卡概要（取基准档的显卡）；非 GPU 机型返回空串 */
+export function planGpuSummary(plan: ServerPlan): string {
+  return formatGpu(plan.specs[0]?.gpu)
 }

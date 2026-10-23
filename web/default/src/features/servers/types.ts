@@ -39,6 +39,15 @@ export interface Region {
   priceFactor: number
 }
 
+export interface ServerGpu {
+  /** 显卡型号，例如 RTX 4090 */
+  model: string
+  /** 单卡显存（GB） */
+  vram: number
+  /** 卡数 */
+  count: number
+}
+
 export interface ServerSpec {
   id: string
   /** vCPU 核数 */
@@ -49,6 +58,14 @@ export interface ServerSpec {
   disk: number
   /** 规格价格系数（相对该型号基准档） */
   multiplier: number
+  /**
+   * 显卡配置（只有 GPU 型套餐才有）。
+   *
+   * 为什么必须有：显卡型号 + 显存是 GPU 算力选型的**第一决策依据**
+   * （显存决定模型装不装得下），没有它用户只能看到 vCPU/内存/硬盘，
+   * 选了 GPU 型也不知道拿到的是什么卡。
+   */
+  gpu?: ServerGpu
 }
 
 export interface ServerPlan {

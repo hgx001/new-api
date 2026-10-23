@@ -100,6 +100,10 @@ const FAQS = [
     q: 'Can I switch between Guangzhou and Shanghai?',
     a: 'Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.',
   },
+  {
+    q: 'Which GPU should I choose for my workload?',
+    a: 'Match the card memory to your model first. A 24 GB card is enough for 7B-class inference and video generation, while fine-tuning a 13B model or serving several models at once needs a larger card or two cards. Card memory decides whether the model fits at all, so choose it before the CPU and memory.',
+  },
 ] as const
 
 export function ServersContent({

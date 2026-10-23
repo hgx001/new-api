@@ -5205,7 +5205,11 @@
     "WeChat ID": "WeChat ID",
     "Demo payment (no real charge)": "Demo payment (no real charge)",
     "Demo mode: the payment is simulated and no real money is charged.": "Demo mode: the payment is simulated and no real money is charged.",
-    "Online payment is not available yet, please contact the administrator": "Online payment is not available yet, please contact the administrator"
+    "Online payment is not available yet, please contact the administrator": "Online payment is not available yet, please contact the administrator",
+    "Graphics card": "Graphics card",
+    "vCPU, memory, system disk and graphics card": "vCPU, memory, system disk and graphics card",
+    "Which GPU should I choose for my workload?": "Which GPU should I choose for my workload?",
+    "Match the card memory to your model first. A 24 GB card is enough for 7B-class inference and video generation, while fine-tuning a 13B model or serving several models at once needs a larger card or two cards. Card memory decides whether the model fits at all, so choose it before the CPU and memory.": "Match the card memory to your model first. A 24 GB card is enough for 7B-class inference and video generation, while fine-tuning a 13B model or serving several models at once needs a larger card or two cards. Card memory decides whether the model fits at all, so choose it before the CPU and memory."
   },
   "Integration Tutorial": "Integration Tutorial",
   "Claude Code Installation": "Claude Code Installation",

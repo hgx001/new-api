@@ -5205,7 +5205,11 @@
     "WeChat ID": "微信号",
     "Demo payment (no real charge)": "演示支付（不会真实扣费）",
     "Demo mode: the payment is simulated and no real money is charged.": "演示模式：支付流程为模拟，不会产生真实扣费。",
-    "Online payment is not available yet, please contact the administrator": "在线支付暂未开通，请联系管理员"
+    "Online payment is not available yet, please contact the administrator": "在线支付暂未开通，请联系管理员",
+    "Graphics card": "显卡",
+    "vCPU, memory, system disk and graphics card": "vCPU、内存、系统盘与显卡",
+    "Which GPU should I choose for my workload?": "我的任务该选哪款显卡？",
+    "Match the card memory to your model first. A 24 GB card is enough for 7B-class inference and video generation, while fine-tuning a 13B model or serving several models at once needs a larger card or two cards. Card memory decides whether the model fits at all, so choose it before the CPU and memory.": "先按模型大小选显存：24GB 卡足够跑 7B 级推理与视频生成，微调 13B 模型或同时服务多个模型则需要更大显存的卡或双卡。显存决定模型装不装得下，所以先定显卡，再看 CPU 与内存。"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",

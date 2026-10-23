@@ -5205,7 +5205,11 @@
     "WeChat ID": "Identifiant WeChat",
     "Demo payment (no real charge)": "Paiement de démonstration (aucun débit réel)",
     "Demo mode: the payment is simulated and no real money is charged.": "Mode démonstration : le paiement est simulé, aucun montant réel n’est débité.",
-    "Online payment is not available yet, please contact the administrator": "Le paiement en ligne n’est pas encore disponible, veuillez contacter l’administrateur"
+    "Online payment is not available yet, please contact the administrator": "Le paiement en ligne n’est pas encore disponible, veuillez contacter l’administrateur",
+    "Graphics card": "Carte graphique",
+    "vCPU, memory, system disk and graphics card": "vCPU, mémoire, disque système et carte graphique",
+    "Which GPU should I choose for my workload?": "Quel GPU choisir pour ma charge de travail ?",
+    "Match the card memory to your model first. A 24 GB card is enough for 7B-class inference and video generation, while fine-tuning a 13B model or serving several models at once needs a larger card or two cards. Card memory decides whether the model fits at all, so choose it before the CPU and memory.": "Adaptez d'abord la mémoire vidéo à votre modèle : une carte de 24 GB suffit pour l'inférence de modèles 7B et la génération vidéo, tandis que le fine-tuning d'un modèle 13B ou le service simultané de plusieurs modèles exige une carte plus grande ou deux cartes. La mémoire vidéo détermine si le modèle tient : choisissez-la avant le CPU et la mémoire."
   },
   "Integration Tutorial": "Tutoriel d'intégration",
   "Claude Code Installation": "Installation de Claude Code",

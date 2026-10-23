@@ -5205,7 +5205,11 @@
     "WeChat ID": "WeChatのアカウントID",
     "Demo payment (no real charge)": "デモ決済（実際の請求は発生しません）",
     "Demo mode: the payment is simulated and no real money is charged.": "デモモード：決済はシミュレーションであり、実際の請求は発生しません。",
-    "Online payment is not available yet, please contact the administrator": "オンライン決済はまだ利用できません。管理者までお問い合わせください。"
+    "Online payment is not available yet, please contact the administrator": "オンライン決済はまだ利用できません。管理者までお問い合わせください。",
+    "Graphics card": "グラフィックスカード",
+    "vCPU, memory, system disk and graphics card": "vCPU、メモリ、システムディスク、グラフィックスカード",
+    "Which GPU should I choose for my workload?": "ワークロードに合った GPU はどれを選びますか？",
+    "Match the card memory to your model first. A 24 GB card is enough for 7B-class inference and video generation, while fine-tuning a 13B model or serving several models at once needs a larger card or two cards. Card memory decides whether the model fits at all, so choose it before the CPU and memory.": "まずモデルのサイズに合わせてビデオメモリを決めてください。24GB のカードは 7B 規模の推論や動画生成には十分ですが、13B モデルのファインチューニングや複数モデルの同時推論にはより大きなカードまたは 2 枚が必要です。モデルが収まるかどうかはビデオメモリで決まるので、CPU やメモリより先にカードを選んでください。"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",

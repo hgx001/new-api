@@ -5205,7 +5205,11 @@
     "WeChat ID": "Tài khoản WeChat",
     "Demo payment (no real charge)": "Thanh toán thử nghiệm (không bị trừ tiền thật)",
     "Demo mode: the payment is simulated and no real money is charged.": "Chế độ thử nghiệm: thanh toán được mô phỏng, không có khoản tiền nào bị trừ thật.",
-    "Online payment is not available yet, please contact the administrator": "Thanh toán trực tuyến chưa mở, vui lòng liên hệ quản trị viên"
+    "Online payment is not available yet, please contact the administrator": "Thanh toán trực tuyến chưa mở, vui lòng liên hệ quản trị viên",
+    "Graphics card": "Card đồ họa",
+    "vCPU, memory, system disk and graphics card": "vCPU, bộ nhớ, đĩa hệ thống và card đồ họa",
+    "Which GPU should I choose for my workload?": "Tôi nên chọn GPU nào cho workload của mình?",
+    "Match the card memory to your model first. A 24 GB card is enough for 7B-class inference and video generation, while fine-tuning a 13B model or serving several models at once needs a larger card or two cards. Card memory decides whether the model fits at all, so choose it before the CPU and memory.": "Hãy chọn dung lượng VRAM theo model trước: card 24 GB đủ cho suy luận 7B và tạo video, còn fine-tune model 13B hoặc phục vụ nhiều model cùng lúc thì cần card lớn hơn hoặc hai card. Dung lượng VRAM quyết định model có vừa hay không, nên hãy chọn card trước CPU và RAM."
   },
   "Integration Tutorial": "Hướng dẫn tích hợp",
   "Claude Code Installation": "Cài đặt Claude Code",

@@ -33,7 +33,14 @@ import { Separator } from '@/components/ui/separator'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
 
-import { getBandwidth, getPlan, getRegion, getTerm } from '../constants'
+import {
+  getBandwidth,
+  getPlan,
+  getRegion,
+  getTerm,
+  formatGpu,
+  formatSpec,
+} from '../constants'
 import { computePrice } from '../lib/pricing'
 import type { PayMethod, ServerConfig } from '../types'
 
@@ -97,8 +104,12 @@ export function CheckoutDialog({
     { label: t('Plan'), value: t(plan.nameKey) },
     {
       label: t('Specifications'),
-      value: `${spec.cpu} vCPU · ${spec.memory} GB · ${spec.disk} GB`,
+      value: formatSpec(spec),
     },
+    // 显卡单列一行：确认订单时也要看得见卡型与显存
+    ...(spec.gpu
+      ? [{ label: t('Graphics card'), value: formatGpu(spec.gpu) }]
+      : []),
     { label: t('Bandwidth'), value: `${bandwidth.mbps} Mbps` },
     {
       label: t('Term'),
