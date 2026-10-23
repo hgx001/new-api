@@ -261,14 +261,17 @@ func buildWan30Media(req relaycommon.TaskSubmitReq) ([]string, []string, []strin
 		return nil, nil, nil, err
 	}
 
+	// 报错文案不能点名上游模型：别名模型（seedance2.5-特惠）走的是同一段校验，
+	// 写死 "wan-3.0" 等于把真实上游告诉下游；脱敏层也会把它变成误导性的「上游 accepts...」。
+	// 「this model」对两个对外名都成立，也和锁定档位的文案口径一致。
 	if len(images) > wan30MaxReferenceImages {
-		return nil, nil, nil, fmt.Errorf("wan-3.0 accepts at most %d reference images", wan30MaxReferenceImages)
+		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference images", wan30MaxReferenceImages)
 	}
 	if len(videos) > wan30MaxReferenceVideos {
-		return nil, nil, nil, fmt.Errorf("wan-3.0 accepts at most %d reference videos", wan30MaxReferenceVideos)
+		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference videos", wan30MaxReferenceVideos)
 	}
 	if len(audios) > wan30MaxReferenceAudios {
-		return nil, nil, nil, fmt.Errorf("wan-3.0 accepts at most %d reference audios", wan30MaxReferenceAudios)
+		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference audios", wan30MaxReferenceAudios)
 	}
 	return images, videos, audios, nil
 }

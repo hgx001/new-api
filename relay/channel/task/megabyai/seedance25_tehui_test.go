@@ -42,6 +42,36 @@ func TestSeedance25TeHuiSharesParameterContractWithWan30(t *testing.T) {
 	}
 }
 
+// 别名模型的**本地报错**不能点名上游：文案写死 "wan-3.0" 等于把真实上游
+// 告诉下游（脱敏层只能把整句换成误导性的「上游 accepts...」）。
+// 这类上限是本站的限制，说 "this model" 对两个对外名都成立。
+func TestSeedance25TeHuiErrorMessagesNeverNameUpstream(t *testing.T) {
+	tooManyImages := `{"model":"seedance2.5-特惠","prompt":"p","images":[` +
+		`"https://e.com/1.png","https://e.com/2.png","https://e.com/3.png","https://e.com/4.png","https://e.com/5.png",` +
+		`"https://e.com/6.png","https://e.com/7.png","https://e.com/8.png","https://e.com/9.png","https://e.com/10.png",` +
+		`"https://e.com/11.png"]}`
+
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"参考图超上限", tooManyImages},
+		{"非 720p", `{"model":"seedance2.5-特惠","prompt":"p","resolution":"1080p"}`},
+		{"非 30 秒", `{"model":"seedance2.5-特惠","prompt":"p","duration":5}`},
+		{"data URI 素材", `{"model":"seedance2.5-特惠","prompt":"p","images":["data:image/png;base64,AAAA"]}`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := runChainWithModel(t, tc.raw, Seedance25TeHuiModel, "")
+			require.NotNil(t, result.taskErr)
+			require.NotContains(t, result.taskErr.Message, "wan-3.0", "别名模型的报错不得点名上游模型")
+			require.NotContains(t, result.taskErr.Message, "wan3")
+			require.NotEmpty(t, result.taskErr.Message, "报错文案要能指导用户怎么改")
+		})
+	}
+}
+
 // 固定价：只认 720p / 30 秒这一档，且不叠加任何倍率。
 func TestSeedance25TeHuiIsFixedPerCallPrice(t *testing.T) {
 	// 唯一放行的档位：720p / 30 秒，倍率表为空（固定价）
