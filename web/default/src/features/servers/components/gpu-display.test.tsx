@@ -25,7 +25,13 @@ import ja from '../../../i18n/locales/ja.json'
 import ru from '../../../i18n/locales/ru.json'
 import vi from '../../../i18n/locales/vi.json'
 import zh from '../../../i18n/locales/zh.json'
-import { PLANS, formatGpu, formatSpec, planGpuSummary } from '../constants'
+import {
+  PLANS,
+  formatGpu,
+  formatSpec,
+  getSpec,
+  planGpuSummary,
+} from '../constants'
 import { countOccurrences, renderWithI18n } from '../test-render'
 import type { OwnedServer, PlanId, ServerConfig, ServerPlan } from '../types'
 import { BillingPanel } from './billing-panel'
@@ -110,8 +116,8 @@ describe('servers: GPU 套餐在配置步骤的展示', () => {
     const html = await renderWithI18n(
       <ConfigSection config={configFor('gpu')} onChange={() => {}} />
     )
-    assert.ok(html.includes('16 vCPU · 32 GB · 500 GB'))
-    assert.ok(html.includes('24 vCPU · 48 GB · 1000 GB'))
+    assert.ok(html.includes('16 vCPU · 64 GB · 500 GB'))
+    assert.ok(html.includes('24 vCPU · 96 GB · 1000 GB'))
     // 单卡文案出现 3 次：套餐卡徽标 + 基准档规格按钮 + 规格摘要行
     assert.equal(countOccurrences(html, '1× RTX 4090 24GB'), 3)
     // 双卡文案出现 1 次：只有双卡规格按钮
@@ -159,7 +165,7 @@ describe('servers: 购买摘要的显卡行', () => {
   test('切换到双卡规格后，购买摘要同步显示双卡', async () => {
     const html = await renderWithI18n(
       <BillingPanel
-        config={configFor('gpu', 'gpu-24c48g')}
+        config={configFor('gpu', 'gpu-24c96g')}
         onChange={() => {}}
         onCheckout={() => {}}
         requiresLogin={false}
@@ -220,6 +226,62 @@ describe('servers: 我的服务器卡片上的显卡', () => {
     )
     assert.ok(!html.includes('RTX 4090'))
     assert.ok(!html.includes('lucide-gpu'))
+  })
+})
+
+describe('servers: 规格 id 的旧数据兼容', () => {
+  // GPU 内存翻倍后规格 id 跟着变（gpu-16c32g → gpu-16c64g），
+  // 但 localStorage 里的老订单/实例还带旧 id。没有兼容映射的话
+  // `specs.find(...)` 会落空并回落到 specs[0]，把「双卡」老实例
+  // 显示成「单卡」——卡数、内存、倍率全错且不报错。
+  test('旧 id 映射到对应的新档位，不回落成第一档', () => {
+    const gpu = planById('gpu')
+    assert.equal(getSpec(gpu, 'gpu-16c32g').id, 'gpu-16c64g')
+    assert.equal(getSpec(gpu, 'gpu-24c48g').id, 'gpu-24c96g')
+    assert.equal(getSpec(gpu, 'gpu-24c48g').gpu?.count, 2)
+  })
+
+  test('完全未知的 id 回落到该机型第一档', () => {
+    assert.equal(getSpec(planById('gpu'), 'nope').id, 'gpu-16c64g')
+  })
+
+  test('老订单的购买摘要仍是双卡 + 96 GB，不会串档', async () => {
+    const html = await renderWithI18n(
+      <BillingPanel
+        config={configFor('gpu', 'gpu-24c48g')}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(html.includes('2× RTX 4090 24GB'))
+    assert.ok(html.includes('24 vCPU · 96 GB · 1000 GB'))
+    assert.ok(!html.includes('1× RTX 4090 24GB'))
+  })
+
+  test('老实例卡片仍是双卡 + 96 GB', async () => {
+    const html = await renderWithI18n(
+      <MyServers
+        servers={[
+          {
+            id: 'server-legacy-gpu',
+            orderId: 'order-legacy-gpu',
+            config: configFor('gpu', 'gpu-24c48g'),
+            ip: '203.0.113.12',
+            username: 'root',
+            password: 'secret',
+            status: 'running',
+            expireAt: 4102444800,
+            createdAt: 1790000000,
+            demo: false,
+          },
+        ]}
+        onChangePassword={() => {}}
+        onBrowse={() => {}}
+      />
+    )
+    assert.ok(html.includes('2× RTX 4090 24GB'))
+    assert.ok(html.includes('24 vCPU · 96 GB · 1000 GB'))
   })
 })
 

@@ -25,6 +25,7 @@ import {
   getDuration,
   getPlan,
   getRegion,
+  getSpec,
 } from '../constants'
 import type { BillingMode, PriceBreakdown, ServerConfig } from '../types'
 
@@ -111,7 +112,7 @@ export function resolveBilling(config: ServerConfig): BillingMode {
  */
 export function computePrice(config: ServerConfig): PriceBreakdown {
   const plan = getPlan(config.plan)
-  const spec = plan.specs.find((s) => s.id === config.specId) ?? plan.specs[0]
+  const spec = getSpec(plan, config.specId)
   const bandwidth = getBandwidth(config.mbps)
   const region = getRegion(config.region)
   const duration = getDuration(resolveDurationId(config))

@@ -136,17 +136,17 @@ export const PLANS: ServerPlan[] = [
     badgeKey: 'New',
     specs: [
       {
-        id: 'gpu-16c32g',
+        id: 'gpu-16c64g',
         cpu: 16,
-        memory: 32,
+        memory: 64,
         disk: 500,
         multiplier: 1,
         gpu: { model: 'RTX 4090', vram: 24, count: 1 },
       },
       {
-        id: 'gpu-24c48g',
+        id: 'gpu-24c96g',
         cpu: 24,
-        memory: 48,
+        memory: 96,
         disk: 1000,
         multiplier: 1.7,
         gpu: { model: 'RTX 4090', vram: 24, count: 2 },
@@ -154,6 +154,20 @@ export const PLANS: ServerPlan[] = [
     ],
   },
 ]
+
+/**
+ * 旧规格 id → 新规格 id 的兼容映射。
+ *
+ * 规格 id 里编码了规格本身（`gpu-16c64g` = 16 vCPU / 64 GB），
+ * 内存翻倍后 id 跟着变。演示态的订单与实例存在浏览器 localStorage 里，
+ * 老记录仍带旧 id；没有这张映射的话 `specs.find(...)` 会落空并回落到
+ * `specs[0]`，把「双卡 96 GB」的老实例显示成「单卡 64 GB」——
+ * 卡数、内存、倍率全错，而且没有任何报错。
+ */
+const LEGACY_SPEC_IDS: Record<string, string> = {
+  'gpu-16c32g': 'gpu-16c64g',
+  'gpu-24c48g': 'gpu-24c96g',
+}
 
 /** 可选带宽（独立于型号，价格按月加价） */
 export const BANDWIDTHS: BandwidthOption[] = [
@@ -285,6 +299,22 @@ export function getPlan(id: string): ServerPlan {
 
 export function getBandwidth(mbps: number): BandwidthOption {
   return BANDWIDTHS.find((b) => b.mbps === mbps) ?? BANDWIDTHS[0]
+}
+
+/**
+ * 取规格。
+ *
+ * 三级回落：直接命中 → 旧 id 兼容映射 → 该机型第一档。
+ * 中间那级不能省：规格 id 里带内存，内存翻倍后 id 变了，
+ * localStorage 里的老订单/实例还带旧 id，直接回落第一档会把双卡老实例
+ * 显示成单卡（卡数、内存、倍率全错且不报错）。
+ */
+export function getSpec(plan: ServerPlan, specId: string): ServerSpec {
+  const direct = plan.specs.find((s) => s.id === specId)
+  if (direct) return direct
+  const alias = LEGACY_SPEC_IDS[specId]
+  const mapped = alias ? plan.specs.find((s) => s.id === alias) : undefined
+  return mapped ?? plan.specs[0]
 }
 
 /**

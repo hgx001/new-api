@@ -31,6 +31,7 @@ import {
   getDuration,
   getPlan,
   getRegion,
+  getSpec,
   formatGpu,
   formatSpec,
 } from '../constants'
@@ -53,7 +54,7 @@ export function BillingPanel({
   const { t } = useTranslation()
 
   const plan = getPlan(config.plan)
-  const spec = plan.specs.find((s) => s.id === config.specId) ?? plan.specs[0]
+  const spec = getSpec(plan, config.specId)
   const region = getRegion(config.region)
   const bandwidth = getBandwidth(config.mbps)
   const price = computePrice(config)

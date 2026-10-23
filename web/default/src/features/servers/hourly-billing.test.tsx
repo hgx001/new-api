@@ -56,7 +56,7 @@ function configFor(overrides: Partial<ServerConfig> = {}): ServerConfig {
   return {
     region: 'guangzhou',
     plan: 'gpu',
-    specId: 'gpu-16c32g',
+    specId: 'gpu-16c64g',
     mbps: 20,
     durationId: '1y',
     ...overrides,
@@ -119,7 +119,7 @@ describe('servers: 按量（小时/天）档的报价', () => {
 
   test('规格系数参与小时单价（双卡档 = 基准 × 1.7）', () => {
     const price = computePrice(
-      configFor({ durationId: '1h', specId: 'gpu-24c48g' })
+      configFor({ durationId: '1h', specId: 'gpu-24c96g' })
     )
     assert.equal(price.unitPrice, 4.31)
   })
@@ -169,7 +169,7 @@ describe('servers: 旧数据兼容', () => {
       resolveDurationId({
         region: 'guangzhou',
         plan: 'gpu',
-        specId: 'gpu-16c32g',
+        specId: 'gpu-16c64g',
         mbps: 20,
         term: 'year',
       }),
@@ -179,7 +179,7 @@ describe('servers: 旧数据兼容', () => {
       resolveDurationId({
         region: 'guangzhou',
         plan: 'gpu',
-        specId: 'gpu-16c32g',
+        specId: 'gpu-16c64g',
         mbps: 20,
         term: 'half',
       }),
@@ -189,7 +189,7 @@ describe('servers: 旧数据兼容', () => {
       resolveDurationId({
         region: 'guangzhou',
         plan: 'gpu',
-        specId: 'gpu-16c32g',
+        specId: 'gpu-16c64g',
         mbps: 20,
         term: 'triple',
       }),
@@ -201,7 +201,7 @@ describe('servers: 旧数据兼容', () => {
     const legacy: ServerConfig = {
       region: 'guangzhou',
       plan: 'gpu',
-      specId: 'gpu-16c32g',
+      specId: 'gpu-16c64g',
       mbps: 20,
       term: 'year',
       billing: 'hourly',
@@ -218,7 +218,7 @@ describe('servers: 旧数据兼容', () => {
     const legacy: ServerConfig = {
       region: 'guangzhou',
       plan: 'gpu',
-      specId: 'gpu-16c32g',
+      specId: 'gpu-16c64g',
       mbps: 20,
       term: 'year',
     }

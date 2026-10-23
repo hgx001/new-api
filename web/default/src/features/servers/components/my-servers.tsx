@@ -48,6 +48,7 @@ import {
   getDuration,
   getPlan,
   getRegion,
+  getSpec,
   formatGpu,
   formatSpec,
 } from '../constants'
@@ -185,8 +186,7 @@ export function MyServers({
     <div className='grid gap-4 lg:grid-cols-2'>
       {servers.map((server) => {
         const plan = getPlan(server.config.plan)
-        const spec =
-          plan.specs.find((s) => s.id === server.config.specId) ?? plan.specs[0]
+        const spec = getSpec(plan, server.config.specId)
         const region = getRegion(server.config.region)
         const bandwidth = getBandwidth(server.config.mbps)
         // 到期时间到了同样算过期：演示态的 status 只在开通时写成 running，

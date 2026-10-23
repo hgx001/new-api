@@ -29,6 +29,7 @@ import {
   REGIONS,
   formatGpu,
   formatSpec,
+  getSpec,
   planGpuSummary,
 } from '../constants'
 import { formatAmount } from '../lib/pricing'
@@ -63,7 +64,7 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
   const { t } = useTranslation()
 
   const plan = PLANS.find((p) => p.id === config.plan) ?? PLANS[0]
-  const spec = plan.specs.find((s) => s.id === config.specId) ?? plan.specs[0]
+  const spec = getSpec(plan, config.specId)
 
   return (
     <div className='space-y-8'>
