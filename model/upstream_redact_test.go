@@ -1,9 +1,11 @@
 package model
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedactUpstreamIdentity_AliasModel(t *testing.T) {
@@ -75,12 +77,38 @@ func TestRedactUpstreamIdentity_历史旧名同样生效(t *testing.T) {
 func TestRedactUpstreamIdentity_非别名模型原样返回(t *testing.T) {
 	raw := `status_code=400, {"error":{"message":"model aliyun:wan-3.0 does not support"}}`
 	for _, modelName := range []string{"wan-3.0", "wan3.0-smart", "gpt-6-luna", "seedance-2.5", ""} {
-		assert.Equal(t, raw, RedactUpstreamIdentity(raw, modelName), "模型 %s 的错误日志不该被改写", modelName)
+		assert.Equal(t, raw, RedactUpstreamIdentity(raw, modelName), "模型 %s 的文案不该被改写", modelName)
 	}
 }
 
 func TestRedactUpstreamIdentity_空内容(t *testing.T) {
 	assert.Equal(t, "", RedactUpstreamIdentity("", "seedance2.5-特惠"))
+}
+
+func TestRedactUpstreamIdentityKeepURL_URL区段不能动(t *testing.T) {
+	raw := `成片地址 https://cdn.example.com/wan3.0-720p/final.mp4 拉取失败：model aliyun:wan-3.0 rejected`
+	got := RedactUpstreamIdentityKeepURL(raw, "seedance2.5-特惠")
+	assert.Contains(t, got, "https://cdn.example.com/wan3.0-720p/final.mp4",
+		"交付链接改一个字就下载不了，URL 区段必须原样保留")
+	assert.NotContains(t, got, "aliyun")
+	assert.Contains(t, got, "上游")
+}
+
+func TestRedactUpstreamIdentityJSON_保持合法JSON且遮掉模型名(t *testing.T) {
+	raw := []byte(`{"id":"task_36be6a9c56a14eebbeb1573c43abbf7e","model":"wan-3.0","metadata":{"final_video_url":"https://x.r2.cloudflarestorage.com/hailuo-video/v.mp4"}}`)
+	got := RedactUpstreamIdentityJSON(raw, "seedance2.5-特惠")
+	require.True(t, json.Valid(got), "脱敏后必须仍是合法 JSON")
+	assert.NotContains(t, string(got), "wan-3.0")
+	assert.Contains(t, string(got), "https://x.r2.cloudflarestorage.com/hailuo-video/v.mp4")
+}
+
+func TestRedactUpstreamIdentityJSON_非别名模型与非法JSON原样返回(t *testing.T) {
+	raw := []byte(`{"model":"wan-3.0"}`)
+	assert.Equal(t, raw, RedactUpstreamIdentityJSON(raw, "wan-3.0"))
+
+	broken := []byte(`{"model":`)
+	assert.Equal(t, broken, RedactUpstreamIdentityJSON(broken, "seedance2.5-特惠"),
+		"脱敏后不是合法 JSON 就原样返回，绝不能把下游响应体搞坏")
 }
 
 func TestFormatUserLogs_错误日志对普通用户隐藏渠道名与上游字样(t *testing.T) {
@@ -117,6 +145,32 @@ func TestFormatUserLogs_错误日志对普通用户隐藏渠道名与上游字�
 	assert.Contains(t, logs[1].Content, "aliyun")
 	assert.NotContains(t, logs[1].Other, "channel_name")
 
-	// 非错误日志：不在本次范围内，正文不动
+	// 非错误日志：正文不在脱敏范围
 	assert.Equal(t, "aliyun:wan-3.0", logs[2].Content)
+}
+
+func TestFormatUserLogs_别名模型的消费日志不暴露上游模型名(t *testing.T) {
+	logs := []*Log{
+		{
+			Type:      LogTypeConsume,
+			ModelName: "seedance2.5-特惠",
+			Content:   "模型倍率 1",
+			Other:     `{"is_model_mapped":true,"upstream_model_name":"wan-3.0","channel_id":24}`,
+		},
+		{
+			Type:      LogTypeConsume,
+			ModelName: "gpt-5.6-luna",
+			Content:   "模型倍率 1",
+			Other:     `{"is_model_mapped":true,"upstream_model_name":"gpt-6-luna"}`,
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	// 别名模型：前端的 Model Mapping 面板会把 upstream_model_name 显示给用户，必须抹掉
+	assert.NotContains(t, logs[0].Other, "upstream_model_name")
+	assert.NotContains(t, logs[0].Other, "is_model_mapped")
+
+	// 其它模型：映射信息照常展示（本来就对外公开）
+	assert.Contains(t, logs[1].Other, "upstream_model_name")
 }

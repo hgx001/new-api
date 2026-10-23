@@ -311,11 +311,21 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - **别名模型 `seedance2.5-特惠`**（2026-10-22 新增，同一渠道）：`wan-3.0` 的对外别名，**上游仍是 `wan-3.0`**，参数传递与 wan-3.0 完全一致，但**固定 ¥5.0/条**（不分分辨率档、不乘时长；`EstimateBilling` 返回 nil）。实现上把「走统一参数契约」与「按分辨率档计价」拆成两个**精确集合**（`megabyaiUnifiedContractModels` / `megabyaiResolutionTierModels`）——⚠️ 站内相近的 seedance 模型名很多，**不能用前缀匹配**。`megabyaiUpstreamModels` 是对外名→上游名的兜底表：渠道 `model_mapping` 生效时以渠道为准，漏配时靠兜底表，**别名绝不原样发给上游**（上游不认识中文别名会 400）。
 - ⚠️ **别名模型的计费取「对外名」**：`relay/relay_task.go` 在算价前会显式把 `info.OriginModelName` 重置为**客户端请求里的对外名**（只有 `UpstreamModelName` 被 `model_mapping` 改写）。所以 `ModelPrice` option 里必须用**对外名**配价（`seedance2.5-特惠` 用 ¥5.00，而不是 `wan-3.0` 的 ¥3.0 基准），否则会静默按上游名收费少收钱。
 - ⚠️ **`seedance2.5-特惠` 的档位被锁死：只出 720p、只出 30 秒一条**（`megabyaiLockedTierModels`）。客户端要别的分辨率/时长必须 **fail-loud 400**（`invalid_resolution` / `invalid_duration`），**不能静默改档** —— 静默降分辨率 = 用户付费拿不到想要的清晰度，静默拉时长 = 客户端以为省了钱。门控在 `ValidateRequestAndSetAction` 与 `BuildRequestBody` 共用同一套判定（`resolveLockedResolution` / `wan30LockedDuration`），改一处必须同步另一处。**只作用于别名模型**，wan-3.0 的三档分辨率与多档时长不受影响。
-- ⚠️ **别名模型的错误日志要遮掉上游字样**（2026-10-23）：`seedance2.5-特惠` 对外是别名（上游是 `wan-3.0`），错误日志里一旦出现 `wan3` / `aliyun:wan-3.0` / 有赞 / 腾讯云 这类字样，用户就能反推真实货源，别名就白起了。实现放在**出口层**（`model/log.go` 的 `formatUserLogs`，只对 `logs` type=5 生效）：
-  - `model/log_redact.go` 的 `RedactUpstreamIdentity(content, modelName)`：**只对 `upstreamAliasModels` 里的别名模型生效**，其它模型原样返回（它们的模型名本来对外公开，遮了只会让报错更难读）。字面量表按长度倒序，保证 `aliyun:wan-3.0` 这类组合词整体替换、不留 `上游:上游` 碎片；`ali` 必须带词边界，否则 `validate` / `invalid` 会被误伤。
-  - 同一出口顺带删掉 `other.channel_name`：**渠道名只对管理员可见**（管理员走 `GetAllLogs`，不经过 `formatUserLogs`，排查时仍看得到原名）。
-  - ⚠️ **脱敏只能做在出口层，绝不能做在 `service.TaskErrorWrapper`**：它有 30+ 调用方，`shouldRetryTaskRelay` → `IsUpstreamAccountBalanceError` 靠 message 关键词决定换渠道重试、`LocalError` 语义也依赖原值，提前脱敏会打坏重试判定与 AutoBan。同理不要改写写入层（`RecordErrorLog`），否则管理员永远看不到原文、也拿不到历史原始文案。
-  - 验收走「往 `logs` 插一条合成行 → 比对普通用户出口（脱敏）与管理员出口（原文）」，**不要为了验证去烧上游额度**。
+- ⚠️ **别名模型的所有下游可见面都要遮上游**（2026-10-23）：`seedance2.5-特惠` 对外是别名（上游是 `wan-3.0`），**下游只要能从任何字段看出真实上游，别名就白起了**。逐面清单（原始内容 → 处理位置）：
+  | 下游可见面 | 原始内容 | 处理位置 |
+  |---|---|---|
+  | 提交响应体 `model` 字段 | `"wan-3.0"` | `relay/channel/task/sora/adaptor.go` 的 DoResponse 换成对外别名 |
+  | 提交失败错误体 | 上游原文（`model aliyun:wan-3.0 ...`） | `controller/relay.go` 的 `respondTaskError` 出口脱敏 |
+  | 任务 DTO `properties.upstream_model_name` | `"wan-3.0"` | `relay/relay_task.go` 的 `TaskModel2Dto` 换成对外别名 |
+  | 任务 DTO `data`（上游回执） | 上游任务号 + 上游成本 `billing_amount` + 上游地址 | 别名模型整体置 nil |
+  | 任务 DTO `fail_reason` | 上游失败文案 | 文本脱敏（URL 区段不动） |
+  | 消费日志 `other.upstream_model_name` | `"wan-3.0"`（前端「实际模型」面板直接显示给用户） | `model/log.go` 的 `formatUserLogs` 抹掉 |
+  | 错误日志 `content` / `other.channel_name` | 上游原文 / 渠道名 | `model/upstream_redact.go` + `formatUserLogs` |
+  | 成片直链 `result_url` | R2 域名 + `hailuo-video` 路径 | **不动**：改一个字链接就废了（直链 24 小时过期；改走本站 `/content` 代理是另一件事，会多一跳带宽） |
+  - 脱敏只在**出口层**做（DTO / HTTP 响应 / 用户日志出口），**数据库保留原文**：管理员走 `GetAllLogs` / `GetAllTask` 仍看得到真实上游与渠道名，排查不受影响。
+  - ⚠️ **绝不能做在 `service.TaskErrorWrapper` 或写入层**：`shouldRetryTaskRelay` → `IsUpstreamAccountBalanceError` 靠 message 关键词决定换渠道重试，`LocalError` 语义也依赖原值；改写写入层则管理员永远看不到原文、也拿不到历史原始文案。
+  - 词表与规则见 `model/upstream_redact.go`：`upstreamAliasModels`（哪些对外名算别名）+ `upstreamIdentityLiterals`（要遮的字样）。字面量按长度倒序，保证 `aliyun:wan-3.0` 整体替换、不留 `上游:上游` 碎片；`ali` 必须带词边界，否则 `validate` / `invalid` 会被误伤；**URL 区段受保护**（`RedactUpstreamIdentityKeepURL` / `RedactUpstreamIdentityJSON`），交付链接一个字都不能改。
+  - 只对**别名模型**生效，其它模型原样返回：它们的模型名本来对外公开，遮了只会让报错更难读。验收走「往 `logs` / `tasks` 插合成行 → 比对普通用户出口与管理员出口」，**不要为了验证去烧上游额度**。
 - **计价 = 按次 + 分辨率档，时长不参与**：上游价目 480p ¥1.6 / 720p ¥1.8 / 1080p ¥2.0，单位是 `call` 不是 `second`；对外价 480p ¥3.0 / 720p ¥3.5 / 1080p ¥4.0（2026-10-22 由 ¥2.4/3.0/4.0 上调）。实现：`defaultModelPrice["wan-3.0"] = 3.0/7.3`（480p 基准，USD 等值存储）+ `wan30ResolutionSizeRatio = {480p:1, 720p:3.5/3.0, 1080p:4.0/3.0}`（倍率写成「档位价÷基准价」而非魔数，改基准价时一眼能看出该改成多少）。
   - `EstimateBilling` 对 `wan-3.0` **只给 `size` 倍率、绝不给 `seconds`**（上游按次计费，给了 seconds 就是按秒多收）。`sd-2.5` 仍返回 `nil`（固定按次价）。
   - ⚠️ **改价要同时改三处**：`setting/ratio_setting/model_ratio.go` 的默认值、生产 `ModelPrice` option、`megabyai` 包里的倍率/期望值测试。只改代码默认值线上不变（option 覆盖）。

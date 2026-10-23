@@ -130,6 +130,15 @@ func formatUserLogs(logs []*Log, startIdx int) {
 				// 管理员走 GetAllLogs，不经过这里，排查时仍能看到原名。
 				delete(otherMap, "channel_name")
 			}
+			if IsUpstreamAliasModel(logs[i].ModelName) {
+				// 别名模型：消费日志的 Model Mapping 面板会把 upstream_model_name
+				// 直接显示给用户（"实际模型"），等于告诉用户真实上游是谁 —— 抹掉。
+				// 管理员走 GetAllLogs，仍能看到真实上游名。
+				if _, ok := otherMap["upstream_model_name"]; ok {
+					delete(otherMap, "upstream_model_name")
+					delete(otherMap, "is_model_mapped")
+				}
+			}
 		}
 		if logs[i].Type == LogTypeError {
 			// 对外别名模型：错误日志里不能出现上游/供应商字样，否则等于告诉用户真实货源。

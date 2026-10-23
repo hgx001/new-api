@@ -565,7 +565,7 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
-	return &dto.TaskDto{
+	out := &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
 		UpdatedAt:  task.UpdatedAt,
@@ -588,6 +588,36 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
+	redactAliasTaskUpstream(out, task)
+	return out
+}
+
+// redactAliasTaskUpstream 把「上游别名模型」的真实上游从下游可见字段里抹掉。
+//
+// 为什么要抹：别名模型对外是 seedance2.5-特惠，但下游能从这些字段反推真实货源：
+//   - properties.upstream_model_name = 上游模型名（wan-3.0）
+//   - data = 上游原始回执（上游任务号、上游成本 billing_amount、上游成片地址）
+//   - fail_reason = 上游失败文案
+//
+// 只在出口层（DTO 构造）做：数据库里保留原文，管理员排障仍能看到真实上游；
+// 换渠道重试与 AutoBan 判定读的是上游原文，不受影响。
+//
+// ⚠️ result_url 不动：成片直链改一个字就下载不了（直链还有 24 小时有效期），
+// 真要隐藏成片地址只能改走本站 /content 代理，那是另一件事（会多一跳带宽）。
+func redactAliasTaskUpstream(out *dto.TaskDto, task *model.Task) {
+	origin := task.Properties.OriginModelName
+	if !model.IsUpstreamAliasModel(origin) {
+		return
+	}
+	// properties：上游模型名直接换成对外名，字段结构保持不变
+	props := task.Properties
+	props.UpstreamModelName = origin
+	out.Properties = props
+	// fail_reason：上游失败文案脱敏（可能夹带历史交付地址，URL 区段不动）
+	out.FailReason = model.RedactUpstreamIdentityKeepURL(task.FailReason, origin)
+	// data：上游原始回执整体不给下游 —— 里面有上游任务号、上游成本和上游地址，
+	// 都不是下游该知道的；前端只用 data 渲染 Suno 音频片段，视频任务不依赖它。
+	out.Data = nil
 }
 
 // applyTaskOtherRatios 把时长/分辨率等附加倍率乘到任务预扣额度上。

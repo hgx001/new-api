@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
@@ -9,7 +10,7 @@ import (
 // upstreamAliasModels 列出「对外用别名售卖、上游却另有其模型/供应商」的对外模型名。
 //
 // 为什么只针对这几个模型：这类模型对外展示的是别名（例如 seedance2.5-特惠），
-// 错误日志里一旦出现上游或供应商的字样（wan3 / aliyun / 有赞 …），
+// 一旦任何下游可见的字段里出现上游或供应商的字样（wan3 / aliyun / 有赞 …），
 // 用户就能直接反推出真实货源，别名就白起了。其它模型本来就是原样对外，
 // 遮它们的字样只会让报错更难读，还可能把用户自己买的东西的名字也打散。
 var upstreamAliasModels = map[string]bool{
@@ -20,7 +21,7 @@ var upstreamAliasModels = map[string]bool{
 // upstreamNeutralWord 是替换后的中性词：既点明"来自上游"，又不暴露是谁。
 const upstreamNeutralWord = "上游"
 
-// upstreamIdentityLiterals 需要从错误日志里抹掉的上游/供应商字样。
+// upstreamIdentityLiterals 需要从下游可见文案里抹掉的上游/供应商字样。
 //
 // 顺序敏感：长词必须排在前面，保证 "aliyun:wan-3.0"、"wan3.0-video-prime-1080p"
 // 这类组合词被整体替换，而不是先命中短词、留下 "上游:上游" 这种碎片。
@@ -71,6 +72,10 @@ var upstreamIdentityPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bwan[\s\-_]?3(\.0)?\b`),
 }
 
+// upstreamURLPattern 用于标记「不能动」的 URL 区段。
+// 交付链接（成片直链）就在里面：改一个字链接就废了，所以只遮 URL 之外的文案。
+var upstreamURLPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>\\]+`)
+
 type identityToken struct {
 	literal string
 	re      *regexp.Regexp
@@ -95,25 +100,89 @@ func buildIdentityTokens() []identityToken {
 	return tokens
 }
 
-// RedactUpstreamIdentity 把错误日志里暴露上游/供应商身份的字样替换成中性词。
-//
-// 只对"对外别名模型"的错误日志生效（见 upstreamAliasModels），
-// 其它模型原样返回：它们的名字本来就是对外公开的，遮掉只会让报错更难读。
-func RedactUpstreamIdentity(content string, modelName string) string {
-	if content == "" || !upstreamAliasModels[modelName] {
-		return content
-	}
-	return redactUpstreamIdentityText(content)
+// IsUpstreamAliasModel 判断对外模型名是不是「上游别名模型」。
+// 只有别名模型需要向下游隐藏真实上游。
+func IsUpstreamAliasModel(modelName string) bool {
+	return upstreamAliasModels[modelName]
 }
 
-func redactUpstreamIdentityText(text string) string {
+// RedactUpstreamIdentity 把文案里暴露上游/供应商身份的字样替换成中性词。
+//
+// 只对"对外别名模型"生效（见 upstreamAliasModels），
+// 其它模型原样返回：它们的名字本来就是对外公开的，遮掉只会让报错更难读。
+func RedactUpstreamIdentity(content string, modelName string) string {
+	if content == "" || !IsUpstreamAliasModel(modelName) {
+		return content
+	}
+	return redactUpstreamIdentityText(content, false)
+}
+
+// RedactUpstreamIdentityKeepURL 与 RedactUpstreamIdentity 相同，但 URL 区段内的字样不动。
+// 用于可能夹带交付链接的字段（成片地址被改一个字链接就废了）。
+func RedactUpstreamIdentityKeepURL(content string, modelName string) string {
+	if content == "" || !IsUpstreamAliasModel(modelName) {
+		return content
+	}
+	return redactUpstreamIdentityText(content, true)
+}
+
+// RedactUpstreamIdentityJSON 对 JSON 文本做脱敏（URL 区段不动）。
+// 直接在 JSON 文本上替换，替换词不含引号/反斜杠，替换后仍是合法 JSON。
+func RedactUpstreamIdentityJSON(raw []byte, modelName string) []byte {
+	if len(raw) == 0 || !IsUpstreamAliasModel(modelName) {
+		return raw
+	}
+	redacted := redactUpstreamIdentityText(string(raw), true)
+	if !json.Valid([]byte(redacted)) {
+		// 兜底：脱敏后不是合法 JSON 就原样返回，绝不把下游的响应体搞坏
+		return raw
+	}
+	return []byte(redacted)
+}
+
+func redactUpstreamIdentityText(text string, protectURLs bool) string {
+	var protected [][2]int
+	if protectURLs {
+		for _, loc := range upstreamURLPattern.FindAllStringIndex(text, -1) {
+			protected = append(protected, [2]int{loc[0], loc[1]})
+		}
+	}
 	for _, token := range upstreamIdentityTokens {
-		text = token.re.ReplaceAllString(text, upstreamNeutralWord)
+		text = replaceAllSkippingRanges(text, token.re, protected)
 	}
 	for _, re := range upstreamIdentityPatterns {
-		text = re.ReplaceAllString(text, upstreamNeutralWord)
+		text = replaceAllSkippingRanges(text, re, protected)
 	}
 	// 连续替换可能产生 "上游 上游"，收敛成一个
 	text = strings.ReplaceAll(text, upstreamNeutralWord+" "+upstreamNeutralWord, upstreamNeutralWord)
 	return text
+}
+
+// replaceAllSkippingRanges 把 re 命中的片段替换成中性词，但跳过落在受保护区段内的命中。
+func replaceAllSkippingRanges(text string, re *regexp.Regexp, protected [][2]int) string {
+	matches := re.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+	var sb strings.Builder
+	pos := 0
+	for _, m := range matches {
+		if overlapsAny(m[0], m[1], protected) {
+			continue
+		}
+		sb.WriteString(text[pos:m[0]])
+		sb.WriteString(upstreamNeutralWord)
+		pos = m[1]
+	}
+	sb.WriteString(text[pos:])
+	return sb.String()
+}
+
+func overlapsAny(start, end int, ranges [][2]int) bool {
+	for _, r := range ranges {
+		if start < r[1] && r[0] < end {
+			return true
+		}
+	}
+	return false
 }

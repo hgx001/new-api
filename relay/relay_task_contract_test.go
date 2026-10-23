@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
@@ -100,3 +101,61 @@ func TestDetectVideoFormatFallsBackToMP4(t *testing.T) {
 }
 
 var _ = dto.TaskDto{}
+
+// 别名模型（对外 seedance2.5-特惠、上游 wan-3.0）的任务 DTO 不得暴露真实上游：
+// properties.upstream_model_name / data（上游回执）/ fail_reason 三处都要抹。
+// 成片直链 result_url 不能动 —— 改一个字链接就废了。
+func TestTaskModel2DtoAliasModelHidesUpstream(t *testing.T) {
+	task := &model.Task{
+		ID:     619,
+		TaskID: "task_W6qbKbmn4LuExWRTapnwnvS08ukY9uDx",
+		Status: model.TaskStatusSuccess,
+		Properties: model.Properties{
+			UpstreamModelName: "wan-3.0",
+			OriginModelName:   "seedance2.5-特惠",
+		},
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://d4c280ea2c37b44805c584296cb271a0.r2.cloudflarestorage.com/hailuo-video/vid_1.m4v",
+		},
+		FailReason: "任务失败：model aliyun:wan-3.0 does not support the requested output combination",
+		Data:       json.RawMessage(`{"id":"task_36be6a9c56a14eebbeb1573c43abbf7e","billing_amount":1.8,"model":"wan-3.0"}`),
+	}
+
+	out := TaskModel2Dto(task)
+	require.NotNil(t, out)
+
+	props, ok := out.Properties.(model.Properties)
+	require.True(t, ok, "properties 结构不能变")
+	assert.Equal(t, "seedance2.5-特惠", props.UpstreamModelName,
+		"上游模型名必须换成对外别名，否则下游一眼看出真实上游")
+	assert.Equal(t, "seedance2.5-特惠", props.OriginModelName)
+
+	assert.NotContains(t, out.FailReason, "aliyun")
+	assert.NotContains(t, out.FailReason, "wan-3.0")
+	assert.Contains(t, out.FailReason, "上游")
+
+	assert.Nil(t, out.Data, "上游原始回执（含上游任务号与上游成本）不给下游")
+
+	assert.Equal(t, task.PrivateData.ResultURL, out.ResultURL,
+		"成片直链改一个字就下载不了，必须原样保留")
+}
+
+// 非别名模型：一切照旧，遮字样只会让报错更难读。
+func TestTaskModel2DtoNonAliasModelKeepsEverything(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_wan30",
+		Properties: model.Properties{
+			UpstreamModelName: "wan-3.0",
+			OriginModelName:   "wan-3.0",
+		},
+		FailReason: "model aliyun:wan-3.0 does not support",
+		Data:       json.RawMessage(`{"billing_amount":1.8}`),
+	}
+
+	out := TaskModel2Dto(task)
+	props, ok := out.Properties.(model.Properties)
+	require.True(t, ok)
+	assert.Equal(t, "wan-3.0", props.UpstreamModelName)
+	assert.Contains(t, out.FailReason, "aliyun")
+	assert.NotNil(t, out.Data)
+}

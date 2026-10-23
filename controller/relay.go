@@ -610,6 +610,9 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
+	// 别名模型：上游原文（"model aliyun:wan-3.0 does not support ..."）不能直接回给客户端，
+	// 否则等于告诉用户真实上游是谁。只在出口层改写，重试与 AutoBan 判定读到的仍是原文。
+	taskErr.Message = model.RedactUpstreamIdentity(taskErr.Message, c.GetString("original_model"))
 	c.JSON(taskErr.StatusCode, taskErr)
 }
 
