@@ -13,7 +13,7 @@ import (
 // seedance2.5-特惠 是 wan-3.0 的对外别名（2026-10-22 新增）：
 //
 //   - 参数传递**完全一致**（同一套上游统一参数契约）
-//   - 计价是**固定 ¥5.0/条**（不分分辨率档、不乘时长）
+//   - 计价是**固定 ¥3.0/条**（不分分辨率档、不乘时长）
 //   - 上游 model 名恒为 wan-3.0（别名绝不能原样发给上游）
 
 // 别名与 wan-3.0 的上游载荷必须逐字段一致，只有 model 名不同。
@@ -91,14 +91,14 @@ func TestSeedance25TeHuiIsFixedPerCallPrice(t *testing.T) {
 	}
 }
 
-// 对外价锁死：¥5.0/条。改价会红：改价要同时改 defaultModelPrice、
+// 对外价锁死：¥3.0/条（2026-10-23 由 ¥5.0 下调）。改价会红：改价要同时改 defaultModelPrice、
 // 本测试的期望值和生产 ModelPrice option。
 func TestSeedance25TeHuiPrice(t *testing.T) {
 	basePrice, ok := ratio_setting.GetDefaultModelPriceMap()[Seedance25TeHuiModel]
 	require.True(t, ok, "seedance2.5-特惠 必须配置按次单价")
 	quota := int(basePrice * common.QuotaPerUnit)
 	actualCny := float64(quota) / common.QuotaPerUnit * ratio_setting.USD2RMB
-	require.InDelta(t, 5.0, actualCny, 0.0001)
+	require.InDelta(t, 3.0, actualCny, 0.0001)
 }
 
 // 上游 model 名的解析顺序：渠道 mapping 优先，其次兜底表，最后 wan-3.0。

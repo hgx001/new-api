@@ -65,7 +65,7 @@ func usesUnifiedContract(info *relaycommon.RelayInfo) bool {
 // isResolutionTiered 判断本次请求是不是**按分辨率档计价**。
 //
 // wan-3.0 是按次 + 分辨率档（480p ¥2.4 / 720p ¥3.0 / 1080p ¥4.0）；
-// seedance2.5-特惠 是固定 ¥5.0/条，与分辨率、时长都无关。
+// seedance2.5-特惠 是固定 ¥3.0/条，与分辨率、时长都无关。
 func isResolutionTiered(info *relaycommon.RelayInfo) bool {
 	if info == nil {
 		return false
@@ -122,7 +122,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 //
 //   - sd-2.5：固定按次价 → nil（禁止带入 seconds/size，否则会按秒多扣费）。
 //   - wan-3.0：上游按次计价（时长不参与），只有分辨率档参与 → 只给 size 倍率。
-//   - seedance2.5-特惠：固定 ¥5.0/条 → nil（不按分辨率分档，也不乘时长）。
+//   - seedance2.5-特惠：固定 ¥3.0/条 → nil（不按分辨率分档，也不乘时长）。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	if !isResolutionTiered(info) {
 		return nil
