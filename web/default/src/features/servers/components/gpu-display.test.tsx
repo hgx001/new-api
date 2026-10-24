@@ -148,6 +148,68 @@ describe('servers: GPU 套餐在配置步骤的展示', () => {
   })
 })
 
+describe('servers: GPU 套餐新增 RTX 5090 档', () => {
+  // 用户要求在 GPU 型的配置档位里加一档 5090（¥3.50/小时）。
+  // 这里锁住三件事：按钮里看得见卡型与显存、选中后摘要同步、
+  // 新增档位不改变既有 4090 档的展示位数量。
+  test('规格按钮里出现 5090 显卡行，且不影响既有 4090 的展示位', async () => {
+    const html = await renderWithI18n(
+      <ConfigSection config={configFor('gpu')} onChange={() => {}} />
+    )
+    // 5090 档此时未被选中，只出现在它自己的规格按钮里
+    assert.ok(html.includes('1× RTX 5090 32GB'), '规格按钮缺少 5090 显卡行')
+    assert.equal(countOccurrences(html, '1× RTX 5090 32GB'), 1)
+    // 单卡 4090 仍是 3 次（套餐卡徽标 + 基准档按钮 + 规格摘要行）
+    assert.equal(countOccurrences(html, '1× RTX 4090 24GB'), 3)
+    assert.equal(countOccurrences(html, '2× RTX 4090 24GB'), 1)
+  })
+
+  test('选中 5090 档后，购买摘要与规格摘要同步显示 5090', async () => {
+    const cfg = configFor('gpu', 'gpu-16c64g-rtx5090')
+    const panel = await renderWithI18n(
+      <BillingPanel
+        config={cfg}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(panel.includes('Graphics card'), '购买摘要缺少显卡行')
+    assert.ok(panel.includes('1× RTX 5090 32GB'))
+    assert.ok(!panel.includes('1× RTX 4090 24GB'))
+
+    const section = await renderWithI18n(
+      <ConfigSection config={cfg} onChange={() => {}} />
+    )
+    // 规格摘要行也跟着切到 5090
+    assert.ok(section.includes('1× RTX 5090 32GB'))
+  })
+
+  test('已购 5090 实例的卡片显示 5090', async () => {
+    const html = await renderWithI18n(
+      <MyServers
+        servers={[
+          {
+            id: 'server-gpu-5090',
+            orderId: 'order-gpu-5090',
+            config: configFor('gpu', 'gpu-16c64g-rtx5090'),
+            ip: '203.0.113.13',
+            username: 'root',
+            password: 'secret',
+            status: 'running',
+            expireAt: 4102444800,
+            createdAt: 1790000000,
+            demo: false,
+          },
+        ]}
+        onChangePassword={() => {}}
+        onBrowse={() => {}}
+      />
+    )
+    assert.ok(html.includes('1× RTX 5090 32GB'))
+  })
+})
+
 describe('servers: 购买摘要的显卡行', () => {
   test('GPU 套餐的购买摘要单列一行显卡（型号 + 显存）', async () => {
     const html = await renderWithI18n(

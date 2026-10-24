@@ -134,6 +134,7 @@ export const PLANS: ServerPlan[] = [
     // 单卡 4090 的量级参照 AutoDL 同档卡型（¥1.8~2.6/小时）
     basePricePerHour: 2.5,
     badgeKey: 'New',
+    // 按价格从低到高排：单卡 4090 → 单卡 5090 → 双卡 4090
     specs: [
       {
         id: 'gpu-16c64g',
@@ -142,6 +143,26 @@ export const PLANS: ServerPlan[] = [
         disk: 500,
         multiplier: 1,
         gpu: { model: 'RTX 4090', vram: 24, count: 1 },
+      },
+      {
+        /**
+         * RTX 5090 档：¥3.50/小时。
+         *
+         * 价格只由一个系数决定 —— ¥3.50 ÷ 基准时价 ¥2.50 = 1.4，
+         * 包月价由同一个系数同步算出（¥1,280 × 1.4 = ¥1,792/月）。
+         * 这样两个口径永远同源：¥3.50 × 730 = ¥2,555，
+         * ¥2,555 ÷ ¥1,792 = 1.426，与基准档的 1.426 完全一致，
+         * 不会出现「按量按 4090 的比价、包月按另一个比价」的口径漂移。
+         *
+         * 主机配置沿用单卡 4090 档（同机型换卡）；要改成更大的内存/盘，
+         * 只需改这一条 + multiplier（规格 id 也要跟着改，见下）。
+         */
+        id: 'gpu-16c64g-rtx5090',
+        cpu: 16,
+        memory: 64,
+        disk: 500,
+        multiplier: 1.4,
+        gpu: { model: 'RTX 5090', vram: 32, count: 1 },
       },
       {
         id: 'gpu-24c96g',
@@ -158,7 +179,8 @@ export const PLANS: ServerPlan[] = [
 /**
  * 旧规格 id → 新规格 id 的兼容映射。
  *
- * 规格 id 里编码了规格本身（`gpu-16c64g` = 16 vCPU / 64 GB），
+ * 规格 id 里编码了规格本身（`gpu-16c64g` = 16 vCPU / 64 GB，
+ * 带卡的档位还会在后缀里带上卡型，如 `gpu-16c64g-rtx5090`），
  * 内存翻倍后 id 跟着变。演示态的订单与实例存在浏览器 localStorage 里，
  * 老记录仍带旧 id；没有这张映射的话 `specs.find(...)` 会落空并回落到
  * `specs[0]`，把「双卡 96 GB」的老实例显示成「单卡 64 GB」——

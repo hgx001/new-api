@@ -624,6 +624,78 @@ describe('servers: 价格逐项可核对', () => {
   })
 })
 
+describe('servers: RTX 5090 档的定价与左右对账', () => {
+  // 用户要求 GPU 型新增一档 RTX 5090，定价 ¥3.50/小时。
+  //
+  // 关键约束：**两个口径必须同源**。规格只带一个 multiplier，
+  // ¥3.50 ÷ 基准时价 ¥2.50 = 1.4，包月价由同一个系数算出
+  // （¥1,280 × 1.4 = ¥1,792/月）。所以按量/包月的比值仍锁定在
+  // 该机型的 1.43 倍，不会出现「按量按一个比价、包月按另一个比价」。
+  const SPEC_ID = 'gpu-16c64g-rtx5090'
+
+  test('按量口径：机型价 ¥3.50/小时，规格加价 ¥1.00，各行相加 = 单价', () => {
+    const price = computePrice(configFor({ durationId: '1h', specId: SPEC_ID }))
+    assert.equal(price.planPrice, 2.5)
+    assert.equal(price.specPrice, 1)
+    assert.equal(price.bandwidthPrice, 0.06)
+    assert.equal(price.unitPrice, 3.56)
+    assert.equal(price.total, 3.56)
+  })
+
+  test('包月口径与按量同源：¥1,792/月，按量/包月比值仍是 1.43 倍', () => {
+    const price = computePrice(
+      configFor({ durationId: '1mo', specId: SPEC_ID })
+    )
+    assert.equal(price.planPrice, 1280)
+    assert.equal(price.specPrice, 512)
+    assert.equal(price.bandwidthPrice, 45)
+    assert.equal(price.unitPrice, 1837)
+    // ¥3.50 × 730 = ¥2,555；¥2,555 ÷ ¥1,792 ≈ 1.43
+    // 与基准档（¥2.50 × 730 ÷ ¥1,280 ≈ 1.43）完全一致
+    assert.equal(roundMoney((3.5 * 730) / 1792), roundMoney((2.5 * 730) / 1280))
+  })
+
+  test('左侧规格按钮标的价 = 右侧摘要的「套餐」行 + 「配置」行（按量）', async () => {
+    const cfg = configFor({ durationId: '1h', specId: SPEC_ID })
+    const card = await renderWithI18n(
+      <ConfigSection config={cfg} onChange={() => {}} />
+    )
+    assert.ok(card.includes('¥3.50 / hour'), '规格按钮没标 ¥3.50/小时')
+
+    const panel = await renderWithI18n(
+      <BillingPanel
+        config={cfg}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(panel.includes('¥2.50 / hour'), '缺少套餐行的裸机型时价')
+    assert.ok(panel.includes('+¥1.00 / hour'), '缺少规格加价行')
+    assert.ok(panel.includes('¥3.56 / hour'), '小时单价与各行之和对不上')
+  })
+
+  test('左侧规格按钮标的价 = 右侧摘要的「套餐」行 + 「配置」行（包月）', async () => {
+    const cfg = configFor({ durationId: '1mo', specId: SPEC_ID })
+    const card = await renderWithI18n(
+      <ConfigSection config={cfg} onChange={() => {}} />
+    )
+    assert.ok(card.includes('¥1,792.00 / month'), '规格按钮没标 ¥1,792.00/月')
+
+    const panel = await renderWithI18n(
+      <BillingPanel
+        config={cfg}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(panel.includes('¥1,280.00 / month'), '缺少套餐行的裸机型月价')
+    assert.ok(panel.includes('+¥512.00 / month'), '缺少规格加价行')
+    assert.ok(panel.includes('¥1,837.00 / month'), '月单价与各行之和对不上')
+  })
+})
+
 describe('servers: 租用时长相关文案的 i18n 覆盖', () => {
   const DURATION_KEYS = [
     'Rental duration',
