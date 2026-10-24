@@ -29,11 +29,17 @@ import {
   REGIONS,
   formatGpu,
   formatSpec,
+  getDuration,
   getSpec,
   planGpuSummary,
 } from '../constants'
-import { formatAmount } from '../lib/pricing'
-import type { ServerConfig } from '../types'
+import {
+  formatAmount,
+  HOURS_PER_MONTH,
+  resolveDurationId,
+  specMachinePrice,
+} from '../lib/pricing'
+import type { ServerConfig, ServerSpec } from '../types'
 
 interface ConfigSectionProps {
   config: ServerConfig
@@ -65,6 +71,16 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
 
   const plan = PLANS.find((p) => p.id === config.plan) ?? PLANS[0]
   const spec = getSpec(plan, config.specId)
+  // 左侧所有价格一律用「当前选中时长档」的口径显示：
+  // 规格按钮标的价 = 右侧摘要的「套餐」行 + 「配置」行，两边同口径才对得上。
+  const billing = getDuration(resolveDurationId(config)).pricing
+
+  const specPriceText = (item: ServerSpec) => {
+    const value = formatAmount(specMachinePrice(plan, item, billing))
+    return billing === 'hourly'
+      ? t('{{price}} / hour', { price: value })
+      : t('{{price}} / month', { price: value })
+  }
 
   return (
     <div className='space-y-8'>
@@ -170,7 +186,8 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                   </div>
                 )}
                 {/* 双口径起步价：右侧的时长选择器同时含按量与包月档，
-                    卡片只标一个口径会让用户没法横向比机型，所以两个都给出 */}
+                    卡片只标一个口径会让用户没法横向比机型，所以两个都给出。
+                    这两个数是「裸机型基准价」—— 与右侧摘要的「套餐」行同值 */}
                 <div className='mt-3 text-sm font-medium text-[#1a4a3f]'>
                   {t('From {{price}} / month', {
                     price: formatAmount(item.basePricePerMonth),
@@ -185,6 +202,13 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
             )
           })}
         </div>
+        {/* 口径说明：卡片上的价是裸机型基准价，右侧总价还含规格、带宽与地区。
+            不写清楚，读者只会看到「卡片 38、右侧 83」而不知道差在哪 */}
+        <p className='text-muted-foreground mt-2 text-[11px]'>
+          {t(
+            'Plan prices are for the base spec and exclude bandwidth and regional pricing.'
+          )}
+        </p>
       </section>
 
       {/* 规格 */}
@@ -214,6 +238,11 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                 )}
               >
                 <span className='block'>{formatSpec(item)}</span>
+                {/* 规格价：选之前就能横向比价，选中后右侧摘要的
+                    「套餐」行 + 「配置」行也正好等于这个数 */}
+                <span className='text-muted-foreground mt-0.5 block text-[11px]'>
+                  {specPriceText(item)}
+                </span>
                 {item.gpu && (
                   <span className='mt-1 block text-[11px] font-semibold text-[#3a8f7a]'>
                     {formatGpu(item.gpu)}
@@ -246,7 +275,7 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
         <StepHeading
           index={4}
           title={t('Bandwidth')}
-          hint={t('Dedicated inbound and outbound bandwidth')}
+          hint={t('Dedicated inbound and outbound bandwidth, charged monthly')}
         />
         <div className='grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5'>
           {BANDWIDTHS.map((item) => {
@@ -280,6 +309,15 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                         price: `¥${item.pricePerMonth}`,
                       })}
                 </div>
+                {/* 带宽按月定价；按量租用时它会折算成小时价，
+                    两个口径都摆出来，右侧摘要里的小时加价才追得到 */}
+                {item.pricePerMonth > 0 && (
+                  <div className='text-muted-foreground mt-0.5 text-[11px]'>
+                    {t('≈ +{{price}} / hour', {
+                      price: formatAmount(item.pricePerMonth / HOURS_PER_MONTH),
+                    })}
+                  </div>
+                )}
               </motion.button>
             )
           })}

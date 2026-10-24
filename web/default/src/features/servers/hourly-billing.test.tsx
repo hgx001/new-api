@@ -352,8 +352,10 @@ describe('servers: 租用时长的页面展示', () => {
         requiresLogin={false}
       />
     )
-    assert.ok(hourly.includes('≈ ¥2.56 / hour'), '缺少每小时单价')
+    // 小时单价是精确值（就是摘要各行相加的结果），不标「约」
+    assert.ok(hourly.includes('¥2.56 / hour'), '缺少每小时单价')
     assert.ok(hourly.includes('24 hours'), '缺少总时长')
+    // 折合每月是按 730 小时/月摊出来的折算值，才标「约」
     assert.ok(hourly.includes('≈ ¥1,868.80 / month'), '缺少折合每月的对比价')
 
     const prepaid = await renderWithI18n(
@@ -364,8 +366,9 @@ describe('servers: 租用时长的页面展示', () => {
         requiresLogin={false}
       />
     )
-    // 1 年档折合每月 = 1325 × 0.85 = 1126.25（折扣后的实付月均价）
-    assert.ok(prepaid.includes('≈ ¥1,126.25 / month'))
+    // 包月档的月单价是精确值（未打折，= 摘要各行相加），不标「约」；
+    // 折扣由时长行的「省 15%」和总价区的划线价体现
+    assert.ok(prepaid.includes('¥1,325.00 / month'))
     assert.ok(prepaid.includes('1 year'))
   })
 
@@ -457,6 +460,170 @@ describe('servers: 租用时长的页面展示', () => {
   })
 })
 
+describe('servers: 价格逐项可核对', () => {
+  // 用户原话：「你标的左右两边的价格都对不上，太不严谨了」。
+  // 这里把「对得上」写成硬契约：
+  //   ① 单价 = 裸机型价 + 规格加价 + 带宽加价，再乘地区系数
+  //   ② 总价 = 单价 × 租用时长 × 时长折扣
+  //   ③ 右侧摘要的「套餐」行 = 左侧套餐卡上标的机型价（同一个数）
+  //   ④ 右侧摘要各行相加 = 右侧显示的单价
+  const lite = (overrides: Partial<ServerConfig> = {}) =>
+    configFor({
+      plan: 'lite',
+      specId: 'lite-2c2g',
+      mbps: 20,
+      region: 'guangzhou',
+      durationId: '1mo',
+      ...overrides,
+    })
+
+  test('单价 = 裸机型价 + 规格加价 + 带宽加价，再乘地区系数', () => {
+    const price = computePrice(lite())
+    assert.equal(price.planPrice, 38)
+    assert.equal(price.specPrice, 0)
+    assert.equal(price.bandwidthPrice, 45)
+    assert.equal(price.regionFactor, 1)
+    assert.equal(price.unitPrice, 83)
+    assert.equal(
+      roundMoney(
+        (price.planPrice + price.specPrice + price.bandwidthPrice) *
+          price.regionFactor
+      ),
+      price.unitPrice
+    )
+  })
+
+  test('总价 = 单价 × 时长 × 折扣', () => {
+    for (const durationId of ['1h', '24h', '3d', '1mo', '1y', '3y']) {
+      const price = computePrice(lite({ durationId }))
+      assert.equal(
+        price.total,
+        roundMoney(price.unitPrice * price.units * price.discount),
+        `${durationId} 的总价与单价×时长×折扣对不上`
+      )
+    }
+  })
+
+  test('摘要逐行给出分项，各行相加正好是显示的单价', async () => {
+    const html = await renderWithI18n(
+      <BillingPanel
+        config={lite()}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    // 套餐行 = 裸机型价（与左侧套餐卡同一个数）
+    assert.ok(html.includes('¥38.00 / month'), '缺少套餐行的机型价')
+    // 基准规格没有规格加价
+    assert.ok(html.includes('Base spec'), '基准规格未标明')
+    // 带宽行
+    assert.ok(html.includes('¥45.00 / month'), '缺少带宽行的加价')
+    // 单价行 = 38 + 0 + 45
+    assert.ok(html.includes('¥83.00 / month'), '缺少单价行')
+    // 总价
+    assert.ok(html.includes('¥83.00'), '缺少总价')
+  })
+
+  test('左侧套餐卡的价格与右侧「套餐」行是同一个数', async () => {
+    const card = await renderWithI18n(
+      <ConfigSection config={lite()} onChange={() => {}} />
+    )
+    const cardPrice = card.match(/From (¥[\d,.]+) \/ month/)?.[1]
+    assert.ok(cardPrice, '套餐卡上没有解析到机型价')
+
+    const panel = await renderWithI18n(
+      <BillingPanel
+        config={lite()}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(
+      panel.includes(cardPrice),
+      `右侧摘要里没有出现左侧卡片上的机型价 ${cardPrice}`
+    )
+  })
+
+  test('规格按钮标出该档机型价，且 = 套餐行 + 规格加价', async () => {
+    const cfg = lite({ specId: 'lite-4c4g' })
+    const card = await renderWithI18n(
+      <ConfigSection config={cfg} onChange={() => {}} />
+    )
+    const panel = await renderWithI18n(
+      <BillingPanel
+        config={cfg}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    // lite-4c4g 系数 1.7 → 38 × 1.7 = 64.60
+    assert.ok(card.includes('¥64.60 / month'), '规格按钮没标该档机型价')
+    assert.ok(panel.includes('¥38.00 / month'), '缺少套餐行的裸机型价')
+    assert.ok(panel.includes('+¥26.60 / month'), '缺少规格加价')
+    assert.ok(panel.includes('¥109.60 / month'), '单价与各行之和对不上')
+  })
+
+  test('地区系数单列显示，乘完正好是单价', async () => {
+    const cfg = lite({ region: 'shanghai' })
+    const price = computePrice(cfg)
+    assert.equal(price.regionFactor, 1.08)
+    assert.equal(price.unitPrice, 89.64)
+
+    const html = await renderWithI18n(
+      <BillingPanel
+        config={cfg}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(html.includes('×1.08'), '地区系数没有显示')
+    assert.ok(html.includes('¥89.64 / month'), '乘完地区系数后单价对不上')
+  })
+
+  test('时长折扣单列显示，折完正好是总价', async () => {
+    const cfg = lite({ durationId: '1y' })
+    const price = computePrice(cfg)
+    assert.equal(price.discount, 0.85)
+    assert.equal(price.total, roundMoney(price.unitPrice * 12 * 0.85))
+
+    const html = await renderWithI18n(
+      <BillingPanel
+        config={cfg}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(html.includes('Save 15%'), '时长折扣没有显示')
+    // 83 × 12 × 0.85 = 846.60
+    assert.ok(html.includes('¥846.60'), '折后总价对不上')
+  })
+
+  test('按量档：小时单价 = 裸机型时价 + 带宽时价，各行相加一致', async () => {
+    const cfg = lite({ durationId: '24h' })
+    const price = computePrice(cfg)
+    assert.equal(price.planPrice, 0.09)
+    assert.equal(price.bandwidthPrice, 0.06)
+    assert.equal(price.unitPrice, 0.15)
+
+    const html = await renderWithI18n(
+      <BillingPanel
+        config={cfg}
+        onChange={() => {}}
+        onCheckout={() => {}}
+        requiresLogin={false}
+      />
+    )
+    assert.ok(html.includes('¥0.09 / hour'), '缺少套餐行的小时价')
+    assert.ok(html.includes('+¥0.06 / hour'), '缺少带宽行的小时加价')
+    assert.ok(html.includes('¥0.15 / hour'), '小时单价与各行之和对不上')
+  })
+})
+
 describe('servers: 租用时长相关文案的 i18n 覆盖', () => {
   const DURATION_KEYS = [
     'Rental duration',
@@ -477,8 +644,16 @@ describe('servers: 租用时长相关文案的 i18n 覆盖', () => {
     '3 years',
     'From {{price}} / hour',
     'From {{price}} / month',
-    '≈ {{amount}} / hour',
+    '{{price}} / hour',
+    '{{price}} / month',
+    '+{{price}} / hour',
+    '≈ +{{price}} / hour',
     '≈ {{amount}} / month',
+    'Base spec',
+    'Save {{percent}}%',
+    'Plan prices are for the base spec and exclude bandwidth and regional pricing.',
+    'Dedicated inbound and outbound bandwidth, charged monthly',
+    'The rows above add up to the unit price; the unit price times the rental duration is the total.',
     '{{hours}} hours left',
     '{{days}} days left',
     'Can I pay by the hour?',

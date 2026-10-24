@@ -191,6 +191,19 @@ export interface PriceBreakdown {
   saved: number
   /** 折合每月（按小时模式下按 730 小时/月折算，便于与包月价对比） */
   monthlyEquivalent: number
+  /**
+   * 裸机型基准价（当前口径）：机型基准价 × 1，不含规格系数、不含带宽、不含地区。
+   *
+   * 这一项必须与左侧套餐卡上标的数字**完全一致**，否则读者无法把
+   * 「左边标的价格」和「右边的总价」对上。
+   */
+  planPrice: number
+  /** 规格加价（当前口径）：机型 × 规格系数 − 裸机型基准价；基准规格为 0 */
+  specPrice: number
+  /** 带宽加价（当前口径）：包月档是月加价，按量档是折算后的小时加价 */
+  bandwidthPrice: number
+  /** 地区系数（上海 1.08，广州 1） */
+  regionFactor: number
 }
 
 export interface ServerOrder {

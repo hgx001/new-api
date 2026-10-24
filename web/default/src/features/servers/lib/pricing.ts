@@ -27,7 +27,13 @@ import {
   getRegion,
   getSpec,
 } from '../constants'
-import type { BillingMode, PriceBreakdown, ServerConfig } from '../types'
+import type {
+  BillingMode,
+  PriceBreakdown,
+  ServerConfig,
+  ServerPlan,
+  ServerSpec,
+} from '../types'
 
 /**
  * 一个月的折算小时数。
@@ -53,6 +59,47 @@ export function formatAmount(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`
+}
+
+/**
+ * 机型的裸基准价（不含规格系数、不含带宽、不含地区），按当前口径。
+ *
+ * 这个数就是左侧套餐卡上标的数字 —— 右侧摘要的「套餐」行也用它，
+ * 两边必须是同一个值，否则读者对不上账。
+ */
+export function planBasePrice(plan: ServerPlan, billing: BillingMode): number {
+  return billing === 'hourly'
+    ? roundMoney(plan.basePricePerHour)
+    : roundMoney(plan.basePricePerMonth)
+}
+
+/**
+ * 某个规格的机型价（不含带宽、不含地区），按当前口径。
+ *
+ * 左侧规格按钮标的就是它；右侧摘要的「套餐」行 + 「配置」行相加也等于它。
+ */
+export function specMachinePrice(
+  plan: ServerPlan,
+  spec: ServerSpec,
+  billing: BillingMode
+): number {
+  return roundMoney(planBasePrice(plan, billing) * spec.multiplier)
+}
+
+/**
+ * 某个规格相对基准规格的加价（按当前口径）。
+ *
+ * 基准规格为 0。左侧规格按钮用「规格机型价」展示，右侧摘要的「配置」行
+ * 用这个加价展示 —— 两者必须出自同一个函数，否则左右两边会对不上。
+ */
+export function specSurcharge(
+  plan: ServerPlan,
+  spec: ServerSpec,
+  billing: BillingMode
+): number {
+  return roundMoney(
+    specMachinePrice(plan, spec, billing) - planBasePrice(plan, billing)
+  )
 }
 
 /**
@@ -97,18 +144,18 @@ export function resolveBilling(config: ServerConfig): BillingMode {
  * 报价公式（占位价格模型，后端接入后由服务端报价覆盖）：
  *
  * 按量（小时 / 天）：
- *   型号基准小时价 × 规格系数 = 机型小时价
- *   机型小时价 + 带宽小时加价 = 小时单价小计
- *   小时单价小计 × 地区系数   = 折算小时价
- *   折算小时价 × 小时数 × 时长折扣 = 实付总价
- *   原价 = 折算小时价 × 小时数
+ *   裸机型小时价 + 规格加价 + 带宽小时加价 = 时价小计
+ *   时价小计 × 地区系数                     = 小时单价
+ *   小时单价 × 小时数 × 时长折扣            = 实付总价
  *
  * 包月预付：
- *   型号基准月价 × 规格系数 = 机型月价
- *   机型月价 + 带宽加价     = 月价小计
- *   月价小计 × 地区系数     = 折算月价
- *   折算月价 × 月数 × 时长折扣 = 实付总价
- *   原价 = 折算月价 × 月数
+ *   裸机型月价 + 规格加价 + 带宽月加价 = 月价小计
+ *   月价小计 × 地区系数                = 月单价
+ *   月单价 × 月数 × 时长折扣           = 实付总价
+ *
+ * 为什么要拆成「裸机型价 + 规格加价 + 带宽加价」三项：
+ * 裸机型价必须与左侧套餐卡上标的数字**完全一致**，各行相加又能正好等于
+ * 右侧显示的单价 —— 读者在页面上就能自己把总价加出来，不必相信我们的算法。
  */
 export function computePrice(config: ServerConfig): PriceBreakdown {
   const plan = getPlan(config.plan)
@@ -118,13 +165,15 @@ export function computePrice(config: ServerConfig): PriceBreakdown {
   const duration = getDuration(resolveDurationId(config))
 
   if (duration.pricing === 'hourly') {
-    const baseHourly = roundMoney(plan.basePricePerHour * spec.multiplier)
+    // 拆成可加总的分项：读者在摘要里把各行加起来就能得到单价。
+    //   裸机型时价 + 规格加价 + 带宽时价 = 时价小计；× 地区系数 = 小时单价
+    const planPrice = planBasePrice(plan, 'hourly')
+    const planUnit = specMachinePrice(plan, spec, 'hourly')
+    const specPrice = specSurcharge(plan, spec, 'hourly')
     // 带宽在按量口径下同样按小时计价：用月加价折算成小时值
-    const bandwidthHourly = roundMoney(
-      bandwidth.pricePerMonth / HOURS_PER_MONTH
-    )
+    const bandwidthPrice = roundMoney(bandwidth.pricePerMonth / HOURS_PER_MONTH)
     const unitPrice = roundMoney(
-      (baseHourly + bandwidthHourly) * region.priceFactor
+      (planUnit + bandwidthPrice) * region.priceFactor
     )
     const listTotal = roundMoney(unitPrice * duration.amount)
     const total = roundMoney(listTotal * duration.discount)
@@ -142,14 +191,18 @@ export function computePrice(config: ServerConfig): PriceBreakdown {
       monthlyEquivalent: roundMoney(
         (total / duration.amount) * HOURS_PER_MONTH
       ),
+      planPrice,
+      specPrice,
+      bandwidthPrice,
+      regionFactor: region.priceFactor,
     }
   }
 
-  const baseMonthly = roundMoney(plan.basePricePerMonth * spec.multiplier)
-  const bandwidthMonthly = roundMoney(bandwidth.pricePerMonth)
-  const monthly = roundMoney(
-    (baseMonthly + bandwidthMonthly) * region.priceFactor
-  )
+  const planPrice = planBasePrice(plan, 'prepaid')
+  const planUnit = specMachinePrice(plan, spec, 'prepaid')
+  const specPrice = specSurcharge(plan, spec, 'prepaid')
+  const bandwidthPrice = roundMoney(bandwidth.pricePerMonth)
+  const monthly = roundMoney((planUnit + bandwidthPrice) * region.priceFactor)
 
   const listTotal = roundMoney(monthly * duration.amount)
   const total = roundMoney(listTotal * duration.discount)
@@ -164,6 +217,10 @@ export function computePrice(config: ServerConfig): PriceBreakdown {
     total,
     saved: roundMoney(listTotal - total),
     monthlyEquivalent: roundMoney(total / duration.amount),
+    planPrice,
+    specPrice,
+    bandwidthPrice,
+    regionFactor: region.priceFactor,
   }
 }
 

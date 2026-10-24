@@ -35,8 +35,20 @@ import {
   formatGpu,
   formatSpec,
 } from '../constants'
-import { computePrice, formatAmount, resolveDurationId } from '../lib/pricing'
+import {
+  computePrice,
+  discountPercent,
+  formatAmount,
+  resolveDurationId,
+} from '../lib/pricing'
 import type { ServerConfig } from '../types'
+
+interface SummaryRow {
+  label: string
+  value: string
+  /** 这一行在单价里的贡献（文案已本地化） */
+  price?: string
+}
 
 interface BillingPanelProps {
   config: ServerConfig
@@ -72,18 +84,63 @@ export function BillingPanel({
     onSelect: () => onChange({ durationId: item.id }),
   }))
 
-  const summaryRows = [
-    { label: t('Region'), value: t(region.nameKey) },
-    { label: t('Plan'), value: t(plan.nameKey) },
+  // 摘要的每一行都带上它在单价里的贡献：读者把各行加起来就能得到单价，
+  // 单价 × 时长 × 折扣 = 总价 —— 页面自身可核对，不用相信我们的算法。
+  // 裸机型价必须与左侧套餐卡上的数字完全一致，「套餐」行就是它。
+  const formatUnitPrice = (value: number) =>
+    isHourly
+      ? t('{{price}} / hour', { price: formatAmount(value) })
+      : t('{{price}} / month', { price: formatAmount(value) })
+
+  const formatUnitSurcharge = (value: number) =>
+    isHourly
+      ? t('+{{price}} / hour', { price: formatAmount(value) })
+      : t('+{{price}} / month', { price: formatAmount(value) })
+
+  const summaryRows: SummaryRow[] = [
+    {
+      label: t('Region'),
+      value: t(region.nameKey),
+      // 地区系数是乘性的，单列出来读者才能把「各行之和」乘成单价。
+      // 「×」是数学符号，各语言一致，直接渲染，不占 i18n key
+      price: price.regionFactor !== 1 ? `×${price.regionFactor}` : undefined,
+    },
+    {
+      label: t('Plan'),
+      value: t(plan.nameKey),
+      price: formatUnitPrice(price.planPrice),
+    },
     {
       label: t('Specifications'),
       value: formatSpec(spec),
+      price:
+        price.specPrice > 0
+          ? formatUnitSurcharge(price.specPrice)
+          : t('Base spec'),
     },
     // 显卡单列一行：下单前必须看得见卡型与显存（能不能装下模型全看它）
     ...(spec.gpu
       ? [{ label: t('Graphics card'), value: formatGpu(spec.gpu) }]
       : []),
-    { label: t('Bandwidth'), value: `${bandwidth.mbps} Mbps` },
+    {
+      label: t('Bandwidth'),
+      value: `${bandwidth.mbps} Mbps`,
+      price:
+        price.bandwidthPrice > 0
+          ? formatUnitSurcharge(price.bandwidthPrice)
+          : t('Included'),
+    },
+    {
+      label: t('Rental duration'),
+      value: t(duration.nameKey),
+      // 折扣同样是乘性的，单列出来（与时长格子上的「省 15%」一致）
+      price:
+        price.discount < 1
+          ? t('Save {{percent}}%', {
+              percent: discountPercent(price.discount),
+            })
+          : undefined,
+    },
   ]
 
   return (
@@ -139,9 +196,22 @@ export function BillingPanel({
               <span className='text-muted-foreground shrink-0'>
                 {row.label}
               </span>
-              <span className='text-right font-medium'>{row.value}</span>
+              <span className='text-right'>
+                <span className='font-medium'>{row.value}</span>
+                {row.price && (
+                  <span className='text-muted-foreground ml-2 text-xs'>
+                    {row.price}
+                  </span>
+                )}
+              </span>
             </div>
           ))}
+          {/* 明说这套数怎么加，读者才能自己核对，而不是只能相信页面 */}
+          <p className='text-muted-foreground mt-1 text-[11px] leading-relaxed'>
+            {t(
+              'The rows above add up to the unit price; the unit price times the rental duration is the total.'
+            )}
+          </p>
         </div>
 
         <Separator />
@@ -179,15 +249,17 @@ export function BillingPanel({
             )}
             {isHourly ? (
               <>
+                {/* 小时单价：就是摘要各行相加（× 地区系数）的结果，精确值，不加「约」 */}
                 <span>
-                  {t('≈ {{amount}} / hour', {
-                    amount: formatAmount(price.unitPrice),
+                  {t('{{price}} / hour', {
+                    price: formatAmount(price.unitPrice),
                   })}
                 </span>
                 {/* 时长直接用档位自己的名字（1 hour / 3 days），
                     不拼「N + hours」—— 拼出来会出现「1 hours」这种量词错误 */}
                 <span>· {t(duration.nameKey)}</span>
-                {/* 折合每月：让用户直接和包月价对比，判断按量租一周贵不贵 */}
+                {/* 折合每月：这是按 730 小时/月摊出来的**折算值**，
+                    用来和包月档的月单价对比，所以必须标「约」 */}
                 <span>
                   ·{' '}
                   {t('≈ {{amount}} / month', {
@@ -197,9 +269,13 @@ export function BillingPanel({
               </>
             ) : (
               <>
+                {/* 月单价：与摘要各行相加（× 地区系数）完全一致，精确值。
+                    不用「≈」—— 包月档这个数不是折算出来的。
+                    折扣不摊进这里，折扣由时长行的「省 15%」和总价区的
+                    划线价体现，读者可以自己乘：月单价 × 月数 × 折扣 = 总价 */}
                 <span>
-                  {t('≈ {{amount}} / month', {
-                    amount: formatAmount(price.monthlyEquivalent),
+                  {t('{{price}} / month', {
+                    price: formatAmount(price.unitPrice),
                   })}
                 </span>
                 <span>· {t(duration.nameKey)}</span>

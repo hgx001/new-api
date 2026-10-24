@@ -44,6 +44,7 @@ import {
 } from '../constants'
 import {
   computePrice,
+  discountPercent,
   formatAmount,
   resolveBilling,
   resolveDurationId,
@@ -61,6 +62,13 @@ interface CheckoutDialogProps {
   paid: boolean
   onPay: () => void
   onDone: () => void
+}
+
+interface OrderRow {
+  label: string
+  value: string
+  /** 这一行在单价里的贡献（文案已本地化） */
+  price?: string
 }
 
 export function CheckoutDialog({
@@ -99,24 +107,60 @@ export function CheckoutDialog({
     }
   }, [open, payMethods, selectedMethod, onSelectMethod])
 
-  const rows = [
-    { label: t('Region'), value: t(region.nameKey) },
-    { label: t('Plan'), value: t(plan.nameKey) },
+  // 与购买摘要同一套拆解：各行相加 = 单价，单价 × 时长 = 总价
+  const formatUnitPrice = (value: number) =>
+    isHourly
+      ? t('{{price}} / hour', { price: formatAmount(value) })
+      : t('{{price}} / month', { price: formatAmount(value) })
+
+  const formatUnitSurcharge = (value: number) =>
+    isHourly
+      ? t('+{{price}} / hour', { price: formatAmount(value) })
+      : t('+{{price}} / month', { price: formatAmount(value) })
+
+  const rows: OrderRow[] = [
+    {
+      label: t('Region'),
+      value: t(region.nameKey),
+      price: price.regionFactor !== 1 ? `×${price.regionFactor}` : undefined,
+    },
+    {
+      label: t('Plan'),
+      value: t(plan.nameKey),
+      price: formatUnitPrice(price.planPrice),
+    },
     {
       label: t('Specifications'),
       value: formatSpec(spec),
+      price:
+        price.specPrice > 0
+          ? formatUnitSurcharge(price.specPrice)
+          : t('Base spec'),
     },
     // 显卡单列一行：确认订单时也要看得见卡型与显存
     ...(spec.gpu
       ? [{ label: t('Graphics card'), value: formatGpu(spec.gpu) }]
       : []),
-    { label: t('Bandwidth'), value: `${bandwidth.mbps} Mbps` },
+    {
+      label: t('Bandwidth'),
+      value: `${bandwidth.mbps} Mbps`,
+      price:
+        price.bandwidthPrice > 0
+          ? formatUnitSurcharge(price.bandwidthPrice)
+          : t('Included'),
+    },
     {
       // 订单里只有一行时间维度：选了多久 + 按什么口径计价
       label: t('Rental duration'),
       value: `${t(duration.nameKey)} · ${
         isHourly ? t('Pay-as-you-go') : t('Prepaid')
       }`,
+      price:
+        price.discount < 1
+          ? t('Save {{percent}}%', {
+              percent: discountPercent(price.discount),
+            })
+          : undefined,
     },
   ]
 
@@ -163,7 +207,14 @@ export function CheckoutDialog({
                     <span className='text-muted-foreground shrink-0'>
                       {row.label}
                     </span>
-                    <span className='text-right font-medium'>{row.value}</span>
+                    <span className='text-right'>
+                      <span className='font-medium'>{row.value}</span>
+                      {row.price && (
+                        <span className='text-muted-foreground ml-2 text-xs'>
+                          {row.price}
+                        </span>
+                      )}
+                    </span>
                   </div>
                 ))}
               </div>
