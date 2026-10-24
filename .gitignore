@@ -41,3 +41,14 @@ skills-lock.json
 .local-tests/
 service/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go
+
+# 本地排查取证与临时产物（不入库）
+# 根目录截图是排查时随手抓的取证图；bundle 是接口/页面抓包；
+# .tmp/.trae/.workbuddy-ai 是工具产生的临时目录。已入库的 png 都在
+# docs/images、electron、web/*/public 等子目录，用 /*.png 不会误伤它们。
+/*.png
+*.bundle
+node_modules/
+.tmp/
+.trae/
+.workbuddy-ai/
