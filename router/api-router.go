@@ -82,6 +82,8 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.POST("/alipay/return", anonymousRequestBodyLimit, controller.AlipayReturn)
 			userRoute.POST("/vpn/epay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.VpnEpayNotify)
 			userRoute.GET("/vpn/epay/notify", middleware.PaymentNotifyRateLimit(), controller.VpnEpayNotify)
+			userRoute.POST("/vpn/alipay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.VpnAlipayNotify)
+			userRoute.GET("/vpn/alipay/notify", middleware.PaymentNotifyRateLimit(), controller.VpnAlipayNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)
 
 			selfRoute := userRoute.Group("/")

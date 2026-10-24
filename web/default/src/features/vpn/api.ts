@@ -17,6 +17,7 @@ export interface VpnOrder {
   plan: string
   money: number
   payment_method: string
+  payment_provider?: string
   status: 'pending' | 'success' | 'failed' | 'expired'
   create_time: number
   complete_time: number
@@ -49,10 +50,25 @@ export async function getTopupInfo(): Promise<TopupInfo | null> {
   }
 }
 
+/**
+ * 支付拉起方式：
+ * - `form`：易支付网关，浏览器要 POST 一张表单过去（submitPaymentForm）
+ * - `redirect`：支付宝官方直连，整页跳转到支付宝收银台即可
+ */
+export type VpnPayMode = 'form' | 'redirect'
+
+export interface VpnOrderResult {
+  success: boolean
+  message?: string
+  url?: string
+  params?: Record<string, unknown>
+  payMode?: VpnPayMode
+}
+
 /** 创建 VPN 年费订单并拉起支付 */
 export async function createVpnOrder(
   paymentMethod: string
-): Promise<{ success: boolean; message?: string; url?: string; params?: unknown }> {
+): Promise<VpnOrderResult> {
   try {
     const res = await api.post(
       '/api/user/vpn/order',
@@ -60,10 +76,23 @@ export async function createVpnOrder(
       { skipBusinessError: true }
     )
     if (res.data?.message === 'success' && res.data?.url) {
-      return { success: true, url: res.data.url, params: res.data.data }
+      const payMode: VpnPayMode =
+        res.data?.pay_mode === 'redirect' ? 'redirect' : 'form'
+      // redirect 模式下 data 里只有 { url, trade_no }，url 在顶层已经给过；
+      // form 模式下 data 是网关要提交的表单字段。
+      const params =
+        payMode === 'redirect'
+          ? undefined
+          : ((res.data?.data as Record<string, unknown>) ?? {})
+      return {
+        success: true,
+        url: res.data.url,
+        params,
+        payMode,
+      }
     }
     return { success: false, message: res.data?.data || '拉起支付失败' }
-  } catch (e) {
+  } catch {
     return { success: false, message: '网络错误，请稍后重试' }
   }
 }
