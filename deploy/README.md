@@ -1,6 +1,8 @@
 # 部署总览（唯一权威文档）
 
-生产环境：`api.heibaidao.cn`。前端与后端是两条独立链路，入口都在本目录：
+生产环境：`api.heibaidao.cn`。前端与后端是两条独立链路，入口都在本目录。
+
+安全探针、误建任务处理与OAuth运维见 [生产运维补充](../docs/agent-guides/production-operations.md)；该指南不替代本文的发布与回滚流程。
 
 后端 Gin 默认信任所有代理传来的客户端 IP 头不安全。应用默认仅信任 Docker bridge 网关 `172.18.0.1`（生产 nginx 容器连接后端时的代理地址），来源由该代理传递的 `X-Real-IP`/`X-Forwarded-For` 才参与 IP 白名单判定。若生产网络结构变更，必须通过容器环境变量 `TRUSTED_PROXIES` 配置实际代理的逗号分隔 IP/CIDR；应配置代理在后端容器看来使用的源地址，不要配置任意客户端网段或 `0.0.0.0/0`。
 
@@ -71,12 +73,12 @@ deploy/deploy-backend.sh --dry-run <sha>    # 只打印将执行的命令
 
 机制（`backend-remote.sh`）：
 
-1. SHA 前缀断言——checkout 后比对完整 SHA，防止用错误代码构建；
+1. 按当前 `DEPLOY_MIN_FREE_MB` 阈值预检磁盘；SHA 前缀断言——checkout 后比对完整 SHA，防止用错误代码构建；
 2. `git fetch origin main`——失败但本地已有该 commit 时继续（生产机连不上 github），否则报错退出；
-3. 服务器上 `docker build -f Dockerfile.deploy`（**该文件已入库，是构建的必要前提**）；
-4. 停旧容器改名 `new-api-prev-<ts>`，env 备份到 `/tmp/newapi-<ts>.env`（mode 600）；
+3. 服务器上 `docker build -f Dockerfile.deploy`，保留构建日志并处理磁盘不足；
+4. **停旧容器前**导出 `/tmp/newapi-<ts>.env`（mode 600）；达到脚本最小字节要求且包含 `SQL_DSN`、`SESSION_SECRET`、`CRYPTO_SECRET` 后，才把旧容器改名为 `new-api-prev-<ts>`；空/缺项快照直接中止；
 5. 裸 `docker run` 按原参数重建 `new-api`（**生产不是 compose 管理**）；
-6. `/api/status` 健康检查，24×5s；
+6. `/api/status` 必须同时 `success:true`、`setup:true`，新容器仍有 `SQL_DSN` 且日志未回落 SQLite；任一不满足自动回滚，不能把空库的 success 当健康；
 7. 只保留最近 3 个旧容器。
 
 ### 已知约束：服务器连不上 github.com:443
