@@ -37,6 +37,84 @@ type TaskPollingAdaptor interface {
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 
+// 超时扫描判死前的上游探测结论。
+type timeoutProbeOutcome int
+
+const (
+	// 上游没给出可用结论（请求失败、5xx、状态无法识别）→ 按原超时语义处理。
+	timeoutProbeUnknown timeoutProbeOutcome = iota
+	// 上游明确成功 → 不许判超时，交给正常轮询收敛并结算。
+	timeoutProbeSucceeded
+)
+
+// probeUpstreamBeforeTimeout 在把任务判超时失败（并退款）之前，问一次上游的真实状态。
+//
+// 为什么必须有这一步：sweepTimedOutTasks 在主轮询**之前**执行，判死时完全不看上游。
+// 「上游刚 ready、这轮轮询还没轮到它」的任务会被超时扫描抢先杀掉 → 客户拿了片、
+// 平台退了钱，正好违反「App 成功了 newapi 就不能退款」。
+//
+// 只回答一个问题：**上游是否已经明确成功**。其余一律返回 unknown，让调用方维持
+// 原有的超时语义 —— 否则一条真的卡死的任务会永远挂着，前端一直转圈。
+//
+// 尽力而为：任何异常都当 unknown，绝不让探测本身阻断回收。
+func probeUpstreamBeforeTimeout(ctx context.Context, task *model.Task) (timeoutProbeOutcome, bool) {
+	if GetTaskAdaptorFunc == nil || task == nil {
+		return timeoutProbeUnknown, false
+	}
+	upstreamID := task.GetUpstreamTaskID()
+	if upstreamID == "" {
+		return timeoutProbeUnknown, false
+	}
+	ch, err := model.CacheGetChannel(task.ChannelId)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("timeout probe: get channel %d failed: %s", task.ChannelId, err.Error()))
+		return timeoutProbeUnknown, false
+	}
+	adaptor := GetTaskAdaptorFunc(task.Platform)
+	if adaptor == nil {
+		return timeoutProbeUnknown, false
+	}
+	info := &relaycommon.RelayInfo{}
+	info.ChannelMeta = &relaycommon.ChannelMeta{
+		ChannelBaseUrl: ch.GetBaseURL(),
+		ChannelType:    ch.Type,
+	}
+	// 与 updateVideoTasks 同款：轮询路径的 info 是空壳，必须初始化内嵌
+	// TaskRelayInfo，否则适配器 Init 访问提升字段会 nil panic。
+	info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	info.ApiKey = ch.Key
+	adaptor.Init(info)
+
+	key := ch.Key
+	if task.PrivateData.Key != "" {
+		key = task.PrivateData.Key
+	}
+	resp, err := adaptor.FetchTask(ch.GetBaseURL(), key, map[string]any{
+		"task_id": upstreamID,
+		"action":  task.Action,
+	}, ch.GetSetting().Proxy)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("timeout probe: fetch task %s failed: %s", task.TaskID, err.Error()))
+		return timeoutProbeUnknown, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return timeoutProbeUnknown, false
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return timeoutProbeUnknown, false
+	}
+	taskResult, err := adaptor.ParseTaskResult(body)
+	if err != nil || taskResult == nil {
+		return timeoutProbeUnknown, false
+	}
+	if taskResult.Status == model.TaskStatusSuccess {
+		return timeoutProbeSucceeded, true
+	}
+	return timeoutProbeUnknown, true
+}
+
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
@@ -58,6 +136,29 @@ func sweepTimedOutTasks(ctx context.Context) {
 
 	for _, task := range tasks {
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < legacyTaskCutoff
+
+		// 【判死前先问一次上游】（2026-10-24）
+		//
+		// 老板的要求：「app 成功了 newapi 那边就不能退款、不能失败」。
+		// 本函数在主轮询**之前**跑，且到点直接判失败 + 退款，完全不看上游 ——
+		// 于是「上游刚 ready、这轮轮询还没轮到它」的任务会被超时扫描抢先杀掉，
+		// 客户拿了片、平台退了钱，账目反着走。
+		//
+		// 这里补一次上游确认：上游明确成功 → 按成功收敛（结算，不退款）；
+		// 其余情况（失败/进行中/问不到）→ 保持原有超时语义，避免任务永远挂着。
+		// 只对「有预扣、非遗留」的任务做这次额外请求：没预扣的任务退款本来就是 no-op，
+		// 不值得为它多打一次上游。
+		if !isLegacy && task.Quota != 0 {
+			if outcome, ok := probeUpstreamBeforeTimeout(ctx, task); ok {
+				if outcome == timeoutProbeSucceeded {
+					logger.LogWarn(ctx, fmt.Sprintf(
+						"sweepTimedOutTasks: task %s already succeeded upstream, settle instead of refund",
+						task.TaskID,
+					))
+					continue // 交给随后的正常轮询收敛到 SUCCESS 并结算
+				}
+			}
+		}
 
 		oldStatus := task.Status
 		task.Status = model.TaskStatusFailure
@@ -466,6 +567,29 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
 
+	// 【上游临时故障 ≠ 任务失败】（2026-10-24）
+	//
+	// 老板的要求：「app 成功了 newapi 那边就不能退款、不能失败」。这条在轮询侧
+	// 最容易被打破的地方就在这里 —— 旧实现**完全不看 HTTP 状态码**：
+	//
+	//   · ArcReel 部署重启期间回 502/503/504，响应体是 nginx 的 HTML 或一段
+	//     不认识的 JSON；
+	//   · 解析不出 status → 落进下面的「unrecognized error format」分支 →
+	//     FailTaskInfo → 任务当场判 FAILURE 并退款。
+	//
+	// 而官网那边片其实已经出了，下一轮轮询本来就能拿到 ready。
+	// 退款不可逆，多等一轮只是晚几分钟 —— 所以这里**保持原状态直接返回**，
+	// 让下一轮轮询重新问一次上游。
+	//
+	// 5xx / 408 / 429 都是典型的「这次没问到，不代表任务失败」。
+	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode == http.StatusTooManyRequests {
+		logger.LogWarn(ctx, fmt.Sprintf(
+			"Task %s upstream returned %d, keep status and retry next round: %s",
+			taskId, resp.StatusCode, truncateBase64(string(responseBody)),
+		))
+		return nil
+	}
+
 	snap := task.Snapshot()
 
 	taskResult := &relaycommon.TaskInfo{}
@@ -491,25 +615,25 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {
-		//taskResult = relaycommon.FailTaskInfo("upstream returned empty status")
-		errorResult := &dto.GeneralErrorResponse{}
-		if err = common.Unmarshal(responseBody, &errorResult); err == nil {
-			openaiError := errorResult.TryToOpenAIError()
-			if openaiError != nil {
-				// 返回规范的 OpenAI 错误格式，提取错误信息，判断错误是否为任务失败
-				if openaiError.Code == "429" {
-					// 429 错误通常表示请求过多或速率限制，暂时不认为是任务失败，保持原状态等待下一轮轮询
-					return nil
-				}
-
-				// 其他错误认为是任务失败，记录错误信息并更新任务状态
-				taskResult = relaycommon.FailTaskInfo("upstream returned error")
-			} else {
-				// unknown error format, log original response
-				logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format, response: %s", taskId, string(responseBody)))
-				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
-			}
-		}
+		// 上游回了 200 但**没有给出任务状态**。这种响应有几种可能：
+		//   · ArcReel 的 {"detail": "..."}（FastAPI 错误）；
+		//   · 网关/反代插进来的 {"error": {...}} / {"message": "..."}；
+		//   · 完全不是 JSON（HTML 错误页）。
+		//
+		// 无论哪种，都**不构成「任务失败」的结论**。旧实现把它们一律
+		// FailTaskInfo → 判 FAILURE + 退款（429 除外），而官网那边片可能
+		// 已经出了 —— 这正是「App 成功了却被退款」的形态。
+		//
+		// 现在统一保持原状态、等下一轮轮询重新问一次。多等一轮只晚几分钟，
+		// 退款却是不可逆的。
+		//
+		// ⚠️ 唯一的例外是上游**明确**表达了失败语义（`{"status":"failed"}`）——
+		// 那会走到下面 switch 的 TaskStatusFailure 分支，照常收敛 + 退款。
+		logger.LogWarn(ctx, fmt.Sprintf(
+			"Task %s upstream returned empty status, keep status and retry next round: %s",
+			taskId, truncateBase64(string(responseBody)),
+		))
+		return nil
 	}
 
 	shouldRefund := false
