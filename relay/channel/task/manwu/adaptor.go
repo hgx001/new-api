@@ -77,9 +77,12 @@ const (
 	submitPath = "/api/v1/remote-generation/jobs"
 
 	defaultRatio = "16:9"
-	// defaultDuration 与上游兜底口径对齐：ArcReel 对未指定/非法时长会回落 15 秒，
-	// 这里缺省显式传 15，保证预扣与实际生成时长一致。
-	defaultDuration = 15
+	// dolaFixedDuration 是 dola（seedance-2.0）的**锁定时长**：固定 10 秒
+	// （2026-10-24 老板定稿）。客户端未指定时长 → 下发 10 秒；显式传其它值 →
+	// 400 invalid_duration（fail-loud，不静默改档：静默改成 10 秒 = 客户以为
+	// 拿到的是自己要的时长，成片出来才发现时长不对，等于错交付）。
+	// 价格不变：仍按次计费 ¥1.00/次，与时长无关。
+	dolaFixedDuration = 10
 
 	// 参考图上限按 dola 官网真机口径取 10（与 ArcReel openai 后端 manwu 分支同口径）。
 	//
@@ -127,7 +130,7 @@ const (
 // 差异只在 platformId + outputMode + 参数白名单，故用一张路由表而不是多个 adaptor。
 //
 // 模型名口径：
-//   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，5-15 秒区间任意值真跑，按次计费）
+//   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，时长固定 10 秒，按次计费）
 //   - seedance-2.5：dola 官网 Seedance 2.5（远端视频，固定 30 秒 / 720p，按次计费）
 //   - seedance-2-5：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒四档，
 //     按次计费 ¥3.0/次）。公开名是短名（2026-10-08 用户定稿，2026-10-12 去掉
@@ -176,7 +179,7 @@ const picsartUpstreamModel = "wan-3.0-video"
 
 // 任务形态：决定校验分支与建单载荷。
 const (
-	kindDolaVideo   = "dola_video"   // Seedance 2.0：5/10/15 秒/比例/参考图白名单
+	kindDolaVideo   = "dola_video"   // Seedance 2.0：时长固定 10 秒/比例/参考图白名单
 	kindDola25Video = "dola25_video" // Seedance 2.5：固定 30 秒/720p/比例/参考图白名单
 	kindDoubaoVideo = "doubao_video" // 豆包官网：5/10/15/30 秒四档/比例七档（含 auto）/参考图
 	kindVeoVideo    = "veo_video"    // 只有宽高比：官网无模型/时长/分辨率控件
@@ -279,14 +282,15 @@ func ModelList() []string {
 	return names
 }
 
-// Seedance 2.0 系时长口径（2026-10-10 用户定稿，同日升级为两端分口径）：
-// 对外均按 **5–15 秒区间**受理，区间内任意整数秒都放行且**原样透传、不吸附**；
-// 区间外（含 30s）400。
+// Seedance 2.0 系时长口径（2026-10-10 用户定稿，两端分口径；2026-10-24 dola 收窄为固定 10 秒）：
 //
-//   - dola（seedance-2.0）：**任意值真跑**——区间内原样透传。依据：Worker
-//     durationHack 真机实证官网后端接受任意值（7 秒提交成片 ffprobe 实测
-//     7.10 秒），且 dola 不点时长 UI、目标值全靠请求体改写下发。
-//   - 豆包（seedance-2-0-fast，2026-10-12 跟进）：与 dola 同口径透传——Worker
+//   - dola（seedance-2.0）：**固定 10 秒**（dolaFixedDuration）。客户端未指定时长
+//     → 下发 10 秒；显式传其它值 → 400 invalid_duration（fail-loud，不静默改档：
+//     静默改成 10 秒 = 客户以为拿到的是自己要的时长，成片出来才发现，等于错交付）。
+//     依据：dola 不点时长 UI、目标值全靠请求体改写下发，原本任意秒真跑；本商品
+//     只卖 10 秒这一档，按次计费 ¥1.00/次与时长无关（价格不变）。
+//   - 豆包（seedance-2-0-fast，2026-10-12 跟进）：保持 **5–15 秒区间**受理，区间内
+//     任意整数秒放行且**原样透传、不吸附**；区间外（含 30s）400。依据：Worker
 //     侧豆包 durationHack（请求体改写）兜底，非档位值跳过 UI、提交前武装
 //     钩子 + 硬闸门拒单，不会静默回落错误时长。
 const (
@@ -294,10 +298,10 @@ const (
 	seedance20MaxDuration = 15
 )
 
-// validateSeedance20Duration 校验 Seedance 2.0 系（dola / 豆包 2.0 Fast 共用）
-// 单字段的 5–15 秒区间口径：区间内任意整数秒**原样透传**（任意秒真跑，不吸附），
-// 区间外报错。与 ArcReel `_doubao20_duration_or_default`/`_dola20_duration_or_default`
-// 及 Worker 侧 normalizeDoubaoDuration/normalizeDolaDuration 同边界。
+// validateSeedance20Duration 校验**豆包 seedance-2-0-fast** 单字段的 5–15 秒区间口径：
+// 区间内任意整数秒**原样透传**（任意秒真跑，不吸附），区间外报错。与 ArcReel
+// `_doubao20_duration_or_default` 及 Worker 侧 normalizeDoubaoDuration 同边界。
+// ⚠️ dola（seedance-2.0）已不共用本口径：它锁定 10 秒，走 resolveFixedDuration。
 func validateSeedance20Duration(field string, value int, model string) (int, error) {
 	if value < seedance20MinDuration || value > seedance20MaxDuration {
 		return 0, fmt.Errorf("%s must be between 5 and 15 for %s, got %d", field, model, value)
@@ -316,10 +320,12 @@ var allowedRatios = map[string]bool{
 
 // 豆包官网参数白名单（2026-10-06 真机探针订正，与 Worker 侧
 // cron_video_brach src/platforms/doubao/params.ts 同口径）：
-//   - 时长分模型：2.5 四档 5/10/15/30（比 dola 多 30）；2.0 Fast 按 5–15 秒
-//     区间**透传**（2026-10-12 任意秒真跑，与 dola 同口径，见
+//   - 时长分模型：2.5 四档 5/10/15/30；2.0 Fast 按 5–15 秒
+//     区间**透传**（2026-10-12 任意秒真跑，见
 //     validateSeedance20Duration——不再吸附），区间外直接 400——Worker 侧
 //     durationHack 武装失败会硬闸门拒单，这里提前挡避免用户下单后才失败；
+//     ⚠️ dola（seedance-2.0）不再是区间口径：2026-10-24 起锁定 10 秒
+//     （dolaFixedDuration），与本表无关；
 //   - 比例七档，含官网出厂默认档 `auto`（「自动 · 10s」）；
 //   - 比例「未指定不编造」：豆包未指定时保持官网当前状态（App 侧
 //     resolveDoubaoRatioLabel 空 → null 纪律），不强补 16:9。
@@ -590,7 +596,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 	switch spec.Kind {
 	case kindDolaVideo:
-		duration, err := resolveDuration(req, norm.Model)
+		// 时长锁定 10 秒：未指定 → 10；显式传其它值 → 400（不静默改档）。
+		duration, err := resolveFixedDuration(req, norm.Model, dolaFixedDuration)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
@@ -1178,31 +1185,6 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 	return nil
 }
 
-// resolveDuration 解析 dola seedance-2.0 时长：seconds（首选，数字或数字字符串）
-// → duration → 缺省 15。口径为 **5–15 秒区间任意值真跑**（2026-10-10 升级）：
-// 区间内任意整数秒原样透传（真机实证官网后端接受任意值）；缺省或 null 视为
-// 未指定；字段存在但非法（格式错误或越出 5–15）直接报错——上游 ArcReel 对
-// 非法值会静默回落 15，厂商侧必须显式拒绝，避免计费时长与实际生成时长脱节。
-func resolveDuration(req clientRequest, model string) (int, error) {
-	seconds, found, err := parseFlexibleInt(req.Seconds)
-	if err != nil {
-		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
-	}
-	if found {
-		return validateSeedance20Duration("seconds", seconds, model)
-	}
-
-	duration, found, err := parseFlexibleInt(req.Duration)
-	if err != nil {
-		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
-	}
-	if found {
-		return validateSeedance20Duration("duration", duration, model)
-	}
-
-	return defaultDuration, nil
-}
-
 // resolveWanDuration 解析万相（图生/编辑）时长：seconds → duration → 缺省 5。
 // 口径 5–15 秒逐秒（与 Worker 侧 TONGYIWAN_UNLIMITED_VIDEO_PROFILE.durations 同源），
 // 越界显式报错 —— ArcReel 侧对非法值会静默回落 5，厂商侧必须显式拒绝，
@@ -1304,7 +1286,7 @@ const doubaoDefaultDuration = 5
 // resolveDoubaoDuration 解析豆包时长：seconds（首选，数字或数字字符串）→ duration
 // → 缺省 5。口径分模型：2.5 四档白名单 5/10/15/30；2.0 Fast 按 **5–15 秒区间**
 // 透传（2026-10-12 任意秒真跑，与 dola 同口径，不再吸附）。缺省或 null 视为
-// 未指定；字段存在但非法直接报错——与 resolveDuration 同纪律，避免计费时长与
+// 未指定；字段存在但非法直接报错——与 resolveFixedDuration 同纪律，避免计费时长与
 // 实际生成时长脱节（ArcReel 侧对非法值会静默回落 5）。
 func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
 	seconds, found, err := parseFlexibleInt(req.Seconds)

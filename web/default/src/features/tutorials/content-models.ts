@@ -34,7 +34,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan3.0-1080p-慢速｜视频（按次）｜¥2.00 / 次，480p–1080p 竖横可选，次日出片',
   'wan2.7-r2v｜视频（按秒）｜¥0.10/s，720p / 1080p 同价',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s（仅此两档）',
-  'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5/10/15 秒',
+  'seedance-2.0｜视频（按次）｜¥1.00 / 次，固定 10 秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
   'seedance-2-5｜视频（按次）｜¥3.00 / 次，5/10/15/30 秒同价',
   'gemini-web-video｜视频（按次）｜¥1.00 / 次',
@@ -548,7 +548,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           children: [{ type: 'strong', value: 'seedance-2.0' }],
         },
         { type: 'list', ordered: false, items: [
-          ['seconds：5 / 10 / 15，默认 15'],
+          ['seconds：固定 10 秒（缺省 10；传其它时长直接 400 invalid_duration）'],
           ['ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9，也可用 size 传比例字符串'],
           ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
           ['计费：按次 ¥1.00，与时长无关'],

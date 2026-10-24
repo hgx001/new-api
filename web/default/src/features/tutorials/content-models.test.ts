@@ -253,6 +253,26 @@ describe('tutorials model guide content', () => {
     assert.equal(sectionsJson.includes('¥1.00 / 次'), true)
   })
 
+  // seedance-2.0 时长锁定 10 秒（2026-10-24）：文档不能再写 5/10/15 三档，
+  // 否则客户按 5 秒提交会被网关 400（invalid_duration）后以为是自己写错了参数。
+  test('documents seedance-2.0 as a fixed 10 second model', () => {
+    assert.equal(
+      sectionsJson.includes('seedance-2.0｜视频（按次）｜¥1.00 / 次，固定 10 秒'),
+      true,
+      'the model overview must state that seedance-2.0 is fixed at 10 seconds'
+    )
+    assert.equal(
+      sectionsJson.includes('seconds：固定 10 秒'),
+      true,
+      'the seedance-2.0 parameter section must state the fixed 10 second duration'
+    )
+    assert.equal(
+      sectionsJson.includes('5 / 10 / 15，默认 15'),
+      false,
+      'seedance-2.0 must no longer advertise the 5/10/15 duration tiers'
+    )
+  })
+
   // 回归守卫：wan2.7 免灵感值双模型 2026-10-16 上架（图生 / 编辑，¥0.30/次）。
   // 文档必须写出慢队列交付预期（「通常 3 小时左右出一条」），否则客户会按分钟级
   // 预期接入、白白等待；也必须在索引与 FAQ 实测耗时两处都写，单写一处不一致。
