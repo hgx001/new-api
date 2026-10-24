@@ -70,12 +70,14 @@ describe('tutorials model guide content', () => {
       'seedance-2.0',
       'seedance-2-0-fast',
       'seedance-2-5',
+      'wan-3.0-无限',
       '¥0.15 / 张',
       '¥8.00 / 次',
       '¥0.28/s',
       '¥0.10/s',
       '¥1.00 / 次',
       '¥3.00 / 次',
+      '¥3.00 / 条',
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
     }

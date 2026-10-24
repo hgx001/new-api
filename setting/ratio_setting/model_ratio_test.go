@@ -125,6 +125,22 @@ func TestDefaultModelPriceWan27R2VPerSecond(t *testing.T) {
 	require.InDelta(t, 0.1/USD2RMB, price, 1e-12, "r2v base must equal ¥0.10/sec in USD")
 }
 
+// wan-3.0-无限（漫屋 → Picsart 免费无限档）：按次 ¥3.00/条。
+// 与 MegaAI 的 wan-3.0 同价但**不同商品**（不同渠道/不同上游），必须各自独立成条。
+func TestDefaultModelPriceWan3UnlimitedPerCall(t *testing.T) {
+	InitRatioSettings()
+
+	price, ok := GetModelPrice("wan-3.0-无限", false)
+	require.True(t, ok, "wan-3.0-无限 must have an explicit per-call price")
+	require.InDelta(t, 3.0/USD2RMB, price, 1e-12, "picsart unlimited base must equal ¥3.00/call in USD")
+
+	// 分辨率档不参与计价：480P 与 720P 同价（EstimateBilling 返回 nil）。
+	base, ok := GetModelPrice("wan-3.0", false)
+	require.True(t, ok)
+	require.InDelta(t, base, price, 1e-12,
+		"对外同为 ¥3.00，但两条是不同渠道的独立商品，改动其中一条不能带走另一条")
+}
+
 // 6/7.3 = 0.821918；任务链路按 ModelPrice 固定扣费，禁止乘 seconds。
 func TestDefaultModelPriceSD25PerUse(t *testing.T) {
 	InitRatioSettings()

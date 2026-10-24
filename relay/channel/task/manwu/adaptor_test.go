@@ -610,6 +610,7 @@ func TestModelListAndChannelName(t *testing.T) {
 		"seedance-2-5",
 		"seedance-2.0",
 		"seedance-2.5",
+		"wan-3.0-无限",
 		"wan2.7-图生",
 		"wan2.7-编辑",
 	}, a.GetModelList())

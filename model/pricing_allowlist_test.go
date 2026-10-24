@@ -98,3 +98,25 @@ func TestIsAllowedPricingModelManwuWan27(t *testing.T) {
 		assert.False(t, isAllowedPricingModel(hidden), "%s must not show in pricing square", hidden)
 	}
 }
+
+// 漫屋 ArcReel → Picsart 免费无限档 Wan 3.0（2026-10-24 上架）：
+// 固定 30 秒、分辨率 480P/720P，按次 ¥3.00/条。
+func TestIsAllowedPricingModelManwuWan3Unlimited(t *testing.T) {
+	require.True(t, isAllowedPricingModel("wan-3.0-无限"),
+		"wan-3.0-无限 must show in pricing square")
+
+	// 官网档位真名与上游内部名不对外：公开名只存在于 adaptor 的 modelSpecs 里。
+	//
+	// ⚠️ 注意连字符 vs 点号：picsart 的上游真名是 `wan-3.0-video`（连字符），
+	// 必须不上广场；`wan3.0-video`（点号）是**别的渠道的既有商品**（有赞/官方，
+	// 走 `strings.HasPrefix(name, "wan3.0-video")` 白名单），它上广场是对的。
+	// 两者肉眼几乎一样，别在断言里混用。
+	for _, hidden := range []string{"wan-3.0-video", "wan-3.0-unlimited"} {
+		assert.False(t, isAllowedPricingModel(hidden),
+			"%s must not show in pricing square", hidden)
+	}
+
+	// 与 MegaAI 渠道的 wan-3.0 是两个商品：前者是精确名，不能被本行的存在影响。
+	assert.True(t, isAllowedPricingModel("wan-3.0"),
+		"MegaAI wan-3.0 仍须独立上广场")
+}
