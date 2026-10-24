@@ -1,5 +1,7 @@
 # MegaAI 渠道接入 wan-3.0（2026-10-22）
 
+本文保留带日期的接入证据；现行协议、别名出口与锁档约束见 [渠道契约](../agent-guides/channel-contracts.md)，变更顺序见 [定价与目录](../agent-guides/pricing-catalog.md)。历史报价、渠道状态和验收记录不代表当前生产配置，改价须现查。
+
 ## Context
 
 把第三方 new-api 实例 **MegaAI**（`https://newapi.megabyai.cc`）接进本站网关，
@@ -155,7 +157,7 @@
 别名模型锁死 720p → 成本 ¥1.8/条，我们固定收 ¥3.0 → 毛利 40%，不会亏。
 （2026-10-22 上线时对外价是 ¥5.0/条，同日 wan-3.0 档位价上调后于 2026-10-23 下调到 ¥3.0/条。）
 
-上线步骤（与 AGENTS.md「模型改名/调价」口径一致）：**先发版**（代码里要有这个模型）→
+上线步骤（见 [模型改名/调价契约](../agent-guides/pricing-catalog.md)）：**先发版**（代码里要有这个模型）→
 再改渠道（管理 API 加 `models` + `model_mapping`，自动重建能力行）→ 改 `ModelPrice` option
 → 建 `models` 广场卡片。顺序反了会出现「模型可见但一调就坏」。
 
