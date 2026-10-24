@@ -481,6 +481,14 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan2.7-图生" || name == "wan2.7-编辑" {
 		return true
 	}
+	// 漫屋 ArcReel → Picsart 免费无限档 Wan 3.0（2026-10-24 上架）：
+	// platformId=picsart，固定 30 秒、分辨率 480P/720P，按次 ¥3.00/条。
+	// ⚠️ 与 MegaAI 渠道的 `wan-3.0` 是两个商品（上面 `name == "wan-3.0"` 是精确
+	// 比较，不会误吃本行；本行也不能写成 `strings.HasPrefix(name, "wan-3.0")`，
+	// 那会把 MegaAI 那档也一起放进来）。
+	if name == "wan-3.0-无限" {
+		return true
+	}
 	// ⚠️ jimeng-video-reverse 故意**不**上广场：反解定价（¥1.0/次）是占位值，
 	// 尚未商务核定。在价格确认前只保证可调用（白名单只管广场展示，不影响调用），
 	// 确认后再加这一行，并同步接入教程的模型总览

@@ -62,6 +62,14 @@ const (
 	// generateWithCredits + requireFreeMode，因此这条通路**不消耗灵感值**。
 	// 对外两个模型（图生 / 编辑）共用该 platformId，靠素材类型分流 DOM 路线。
 	PlatformIDTongyiwan = "tongyiwan"
+	// PlatformIDPicsart 是 Picsart 官网（picsart.com）平台，走**免费无限合成档
+	// Wan 3.0**（账号权益，不扣积分）。Worker 侧上报 `picsart.dom` 能力接单。
+	//
+	// ⚠️ 与豆包/万相不同，picsart 是**一级建单平台**（2026-10-24 老板定稿），
+	// 不再靠「豆包建单 + Worker 路由」那条老路。历史所有 Picsart 出片都是
+	// platformId=doubao + reroutedToPlatformId=picsart；本模型起改直派，
+	// 账目/白名单/重派都按 picsart 走。
+	PlatformIDPicsart = "picsart"
 
 	// baseURLDefault 为渠道未配置 BaseURL 时的兜底（ArcReel 生产地址）
 	baseURLDefault = "https://arcreel.heibaidao.cn"
@@ -145,6 +153,13 @@ const (
 	// 与 dola/doubao 的公开名风格区分，避免和上游 dashscope 的 wan 系重名。
 	ModelWan27I2V  = "wan2.7-图生"
 	ModelWan27Edit = "wan2.7-编辑"
+	// ModelWan3Unlimited 是 Picsart 免费无限档 Wan 3.0（2026-10-24 老板定稿上架）。
+	//
+	// 命名理由：「无限」指**账号侧的无限合成权益**（不扣积分、不限条数），
+	// 不是「客户免费无限调用」—— 对外仍按次计费 ¥3.00/条。
+	// 与 MegaAI 渠道的 `wan-3.0`（付费满参版，按分辨率档计价）是**两个不同的商品**，
+	// 名字只差后缀，不要合并、不要互相别名化。
+	ModelWan3Unlimited = "wan-3.0-无限"
 )
 
 // 豆包官网档位真名：Worker 侧 DOM 点击目标（src/platforms/doubao/params.ts），
@@ -153,6 +168,11 @@ const (
 	doubaoUpstreamModel25     = "doubao-seedance-2-5-260628"
 	doubaoUpstreamModel20Fast = "doubao-seedance-2-0-fast-260128"
 )
+
+// picsartUpstreamModel 是 Picsart 官网 Wan 3.0 的档位 id（URL `?model=` 与内部
+// payload 同名，见 cron_video_brach src/platforms/picsart/params.ts:108）。
+// 公开名 `wan-3.0-无限` 只在本表内存在，发往 ArcReel/Worker 的一律是它。
+const picsartUpstreamModel = "wan-3.0-video"
 
 // 任务形态：决定校验分支与建单载荷。
 const (
@@ -167,6 +187,9 @@ const (
 	// generationMode='edit' || !!referenceVideo 判定 isEditMode）。
 	kindWanI2VVideo  = "wan_i2v_video"  // 图生：5–15 秒逐秒 / 720P-1080P / 参考图 ≤2 / 不收参考视频
 	kindWanEditVideo = "wan_edit_video" // 编辑：主视频恰 1 个 / 参考图 ≤10 / 时长跟随
+	// kindPicsartVideo 是 Picsart 官网 Wan 3.0（免费无限档）：固定 30 秒、
+	// 分辨率 480P/720P、比例六档（含 adaptive）、参考图 ≤10、不收参考视频。
+	kindPicsartVideo = "picsart_video"
 )
 
 // 万相 wan2.7 免灵感值参数口径（与 Worker 侧 TONGYIWAN_UNLIMITED_VIDEO_PROFILE 同源：
@@ -188,6 +211,32 @@ const (
 // wanAllowedResolutions 只认 720P/1080P（大小写不敏感，解析时统一转大写）。
 var wanAllowedResolutions = map[string]bool{"720P": true, "1080P": true}
 
+// ── Picsart 免费无限档 Wan 3.0 口径（2026-10-24 老板定稿）──
+//
+// 与 Worker 侧 src/platforms/picsart/params.ts 的官网档位同源，但**收窄**：
+//   - 时长固定 30 秒（官网还有 auto/5/10/15，本商品只卖 30 秒）；
+//   - 分辨率只开 480P/720P（1080P 官网有，但 30 秒 1080P 出片更慢且没溢价）；
+//   - 比例六档，含官网默认的 adaptive，**没有 21:9**（Wan 3.0 官网不支持）。
+//
+// 非法值一律 400，不静默回落 —— 客户以为买的是 10 秒、我们交付 30 秒，
+// 或者以为 1080P、实际 720P，都是错交付。
+const (
+	picsartFixedDuration      = 30
+	picsartDefaultResolution  = "720P"
+	picsartMaxReferenceImages = 10
+)
+
+var picsartAllowedResolutions = map[string]bool{"480P": true, "720P": true}
+
+var picsartAllowedRatios = map[string]bool{
+	"adaptive": true,
+	"16:9":     true,
+	"9:16":     true,
+	"1:1":      true,
+	"4:3":      true,
+	"3:4":      true,
+}
+
 type modelSpec struct {
 	PlatformID string
 	OutputMode string
@@ -208,6 +257,9 @@ var modelSpecs = map[string]modelSpec{
 	// 万相两个模型共用 tongyiwan 平台，差异在 Kind（→ 校验分支 / DOM 路线）。
 	ModelWan27I2V:  {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanI2VVideo},
 	ModelWan27Edit: {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanEditVideo},
+	// Picsart 免费无限档 Wan 3.0（2026-10-24 上架）：公开名 → 官网档位 id 的翻译
+	// 在这一层做，ArcReel/Worker 两侧白名单仍是官网真名。
+	ModelWan3Unlimited: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel},
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -507,7 +559,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 	// 豆包的比例在 kindDoubaoVideo 分支自行解析：官网含 auto 档且「未指定不编造」
 	// （空 → 保持官网当前状态），与 dola「缺省补 16:9」口径不同，公共段不适用。
-	if spec.Kind != kindDoubaoVideo {
+	// Picsart 同理：官网默认档是 adaptive（跟随输入图比例），缺省不能补成 16:9。
+	if spec.Kind != kindDoubaoVideo && spec.Kind != kindPicsartVideo {
 		ratio, err := resolveRatio(req)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
@@ -646,6 +699,57 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
 		}
+	case kindPicsartVideo:
+		// Picsart 免费无限档 Wan 3.0（2026-10-24 老板定稿上架）：固定 30 秒、
+		// 分辨率 480P/720P、比例六档（含 adaptive）、参考图 ≤10、不收参考视频。
+		// 与 Worker 侧 src/platforms/picsart/params.ts 的官网档位同源但**收窄**。
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		// Picsart 官网这条路线只吃参考图；参考视频是别的平台的素材形态，
+		// 静默丢弃会让客户白付一次，入口直接拒。
+		if hasValue(req.Videos) || hasValue(req.Video) {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("%s accepts reference images only, not reference video", norm.Model),
+				"invalid_input_reference", http.StatusBadRequest,
+			)
+		}
+		if len(images) > picsartMaxReferenceImages {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("%s accepts at most %d reference images, got %d", norm.Model, picsartMaxReferenceImages, len(images)),
+				"invalid_input_reference", http.StatusBadRequest,
+			)
+		}
+		// 固定 30 秒：客户端传 10 秒 → **400 拒绝**，不静默改成 30
+		// （客户会以为拿到的是 10 秒，成片出来才发现，等于错交付）。
+		duration, err := resolveFixedDuration(req, norm.Model, picsartFixedDuration)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		norm.Duration = duration
+		// 比例「未指定不编造」：空 → 不下发，让官网用它自己的 adaptive 默认档。
+		rawRatio := firstNonEmpty(
+			strings.TrimSpace(req.Size),
+			strings.TrimSpace(req.Ratio),
+			strings.TrimSpace(req.AspectRatio),
+		)
+		if rawRatio == "" {
+			norm.Ratio = ""
+		} else {
+			normalizedRatio := normalizePicsartRatio(rawRatio)
+			if normalizedRatio == "" {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("ratio must be one of adaptive/16:9/9:16/1:1/4:3/3:4, got %q", rawRatio),
+					"invalid_ratio", http.StatusBadRequest,
+				)
+			}
+			norm.Ratio = normalizedRatio
+		}
+		resolution, resErr := resolvePicsartResolution(req)
+		if resErr != nil {
+			return service.TaskErrorWrapperLocal(resErr, "invalid_resolution", http.StatusBadRequest)
+		}
+		norm.Resolution = resolution
 	}
 
 	c.Set(normalizedRequestKey, norm)
@@ -750,6 +854,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 		// 图生的首/尾帧与编辑的参考图都走 reference_image 槽。
 		body.Inputs = append(body.Inputs, toInputs(InputTypeImage, req.Images)...)
+	case kindPicsartVideo:
+		// Picsart 免费无限档 Wan 3.0：model 恒为官网档位 id（公开名 wan-3.0-无限
+		// 只在本表内存在，不对 ArcReel/Worker 暴露）；时长 30 秒固定、分辨率
+		// 480P/720P 已在校验层归一。ratio 可为空串（未指定不编造 → Worker 端
+		// 保持官网 adaptive 默认档，不硬塞 16:9）。
+		body.VideoParams = &videoParams{
+			Model:      firstNonEmpty(spec.UpstreamModel, picsartUpstreamModel),
+			Ratio:      req.Ratio,
+			Duration:   &req.Duration,
+			Resolution: req.Resolution,
+		}
+		body.Inputs = toInputs(InputTypeImage, req.Images)
 	default:
 		return nil, fmt.Errorf("unsupported manwu request kind: %s", spec.Kind)
 	}
@@ -1132,8 +1248,45 @@ func resolveWanResolution(req clientRequest) (string, error) {
 	return normalized, nil
 }
 
-// resolveReferenceVideos 解析编辑路线的**主视频**：input_reference → videos → video，
-// 必须恰好 1 个（ArcReel 编辑任务硬约束，多传只取首个会静默丢掉用户素材）。
+// normalizePicsartRatio 把客户端各种写法归一到 Picsart 官网的六档比例。
+// 返回空串 = 不在白名单（调用方负责 400，**不回落默认值**）。
+//
+// 归一规则与 Worker 侧 src/platforms/picsart/params.ts 的
+// normalizePicsartAspectRatio 同口径：`auto` / `自适应` 都收敛到官网的 `adaptive`，
+// `16/9`、`16：9`、`16x9` 统一成 `16:9`。
+func normalizePicsartRatio(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	lower := strings.ToLower(strings.ReplaceAll(text, " ", ""))
+	switch lower {
+	case "auto", "adaptive", "自适应", "自适应比例":
+		return "adaptive"
+	}
+	normalized := strings.NewReplacer("：", ":", "/", ":", "x", ":", "×", ":").Replace(lower)
+	if !picsartAllowedRatios[normalized] {
+		return ""
+	}
+	return normalized
+}
+
+// resolvePicsartResolution 解析分辨率：只认 480P/720P（大小写不敏感）。
+//
+// 缺省给 720P 而不是空：Picsart 官网默认档是 1080P，本商品**不开放 1080P**，
+// 不下发就会让官网出客户没买的档（更慢、也没溢价）。这与「不编造用户没选的值」
+// 不冲突 —— 开放集合里必须有确定默认，否则默认值落在开放集合之外。
+func resolvePicsartResolution(req clientRequest) (string, error) {
+	raw := strings.TrimSpace(req.Resolution)
+	if raw == "" {
+		return picsartDefaultResolution, nil
+	}
+	normalized := strings.ToUpper(strings.ReplaceAll(raw, " ", ""))
+	if !picsartAllowedResolutions[normalized] {
+		return "", fmt.Errorf("resolution must be one of 480P/720P, got %q", raw)
+	}
+	return normalized, nil
+}
 func resolveReferenceVideos(req clientRequest) ([]string, error) {
 	videos, err := resolveVideos(req)
 	if err != nil {
