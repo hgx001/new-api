@@ -180,45 +180,49 @@ func TestPicsartUnlimitedBuildsOfficialPayload(t *testing.T) {
 	assert.Equal(t, InputTypeImage, inputs[0].(map[string]any)["type"])
 }
 
-// 分分辨率定价：720P 是基准价（返回 nil = 不乘），480P 返回 size=0.75。
+// 按次计价：**不分分辨率**，480P 与 720P 都是 ¥1.50/次。
 //
-// 单模型名承载两档价，靠的就是这条倍率 —— relay_task.go 用
-// applyTaskOtherRatios 把预扣额乘一次，而按次任务在
-// service/task_polling.go:767 跳过差额结算，所以预扣额就是最终扣费。
-// 若这里误返回 nil，480P 会按 720P 的 ¥2.00 收（多收 33%）。
-func TestPicsartUnlimitedBillingByResolution(t *testing.T) {
-	// 720P = 基准价，不返回倍率（applyTaskOtherRatios 在 multiplier==1 时原样返回）。
-	c, info, a := postVideoCtx(t, `{"model":"wan-3.0-特惠","prompt":"x","resolution":"720P"}`)
-	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
-	assert.Nil(t, a.EstimateBilling(c, info), "720P 是基准价，不该再乘")
+// 2026-10-25 老板定稿：按最低的 480P 定价 ¥1.50，卡片徽标也只显示 ¥1.50。
+// 之前「720P 基准 ¥2.00 + 480P 打 75 折」的方案作废 —— 那会让徽标显示 ¥2，
+// 而客户最低能买到 ¥1.50，看着像涨价。
+//
+// 按次任务在 service/task_polling.go:767 跳过差额结算，所以预扣额就是最终扣费；
+// 这里若误返回倍率，会被 applyTaskOtherRatios 再乘一次（¥1.5 × 30 秒 = ¥45）。
+func TestPicsartUnlimitedBillingFlatPerCall(t *testing.T) {
+	for _, resolution := range []string{"480P", "720P"} {
+		body := fmt.Sprintf(`{"model":"wan-3.0-特惠","prompt":"x","resolution":%q}`, resolution)
+		c, info, a := postVideoCtx(t, body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+		assert.Nil(t, a.EstimateBilling(c, info),
+			"%s 必须返回 nil：两档同价，任何倍率都会把按次价再乘一遍", resolution)
+	}
 
-	// 缺省分辨率在 ArcReel 侧落 720P，同样按基准价。
-	c, info, a = postVideoCtx(t, `{"model":"wan-3.0-特惠","prompt":"x"}`)
+	// 缺省分辨率落 720P，同样不乘。
+	c, info, a := postVideoCtx(t, `{"model":"wan-3.0-特惠","prompt":"x"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
-	assert.Nil(t, a.EstimateBilling(c, info), "缺省即 720P，不该再乘")
-
-	// 480P 打 75 折。
-	c, info, a = postVideoCtx(t, `{"model":"wan-3.0-特惠","prompt":"x","resolution":"480p"}`)
-	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
-	assert.Equal(t, map[string]float64{"size": 0.75}, a.EstimateBilling(c, info),
-		"480P 必须返回 size=0.75，否则按 720P 价多收 33%")
+	assert.Nil(t, a.EstimateBilling(c, info), "缺省即 720P，不该乘倍率")
 }
 
-// 倍率与价目的对应关系必须成立：480P ¥1.50 / 720P ¥2.00 → 0.75。
+// 价目与扣费口径必须一致：¥1.50/次，与分辨率无关。
 //
-// ModelPrice 存在数据库里，测试读不到，所以这里把「价目 → 倍率」的算式钉死：
-// 谁改了一边没改另一边，这个用例立刻红（这正是 2026-10-13 错价事故的防线思路）。
-func TestPicsartUnlimited480PRatioMatchesPriceList(t *testing.T) {
+// ModelPrice 存在数据库里，测试读不到，所以这里把「价目 → 扣费」的算式钉死：
+// 谁改了价目表却没改这条，或者反过来，这个用例立刻红
+// （这正是 2026-10-13 错价事故的防线思路）。
+func TestPicsartUnlimitedPriceMatchesPriceList(t *testing.T) {
 	const (
-		wan3Unlimited480PPriceCNY = 1.50 // ModelPrice 里的 720P 基价 × 本倍率
-		wan3Unlimited720PPriceCNY = 2.00 // ModelPrice['wan-3.0-特惠'] 的对外价
+		wan3TeHuiPriceCNY = 1.50 // ModelPrice['wan-3.0-特惠'] 的对外价，按次
 	)
-	assert.Equal(t, wan3Unlimited480PPriceCNY/wan3Unlimited720PPriceCNY, picsart480PSizeRatio,
-		"picsart480PSizeRatio 必须等于 480P 价 / 720P 价；改价时两处要一起改")
 
-	// 真算一遍额度，确认落地到「元」是 1.50 / 2.00（QuotaPerUnit 口径与生产一致）。
-	baseQuota := int(wan3Unlimited720PPriceCNY / 7.3 * common.QuotaPerUnit)
-	discountedQuota := int(float64(baseQuota) * picsart480PSizeRatio)
-	assert.InDelta(t, 2.00, float64(baseQuota)/common.QuotaPerUnit*7.3, 0.005)
-	assert.InDelta(t, 1.50, float64(discountedQuota)/common.QuotaPerUnit*7.3, 0.005)
+	// 真算一遍额度，确认落地到「元」是 1.50（QuotaPerUnit 口径与生产一致）。
+	quota := int(wan3TeHuiPriceCNY / 7.3 * common.QuotaPerUnit)
+	assert.InDelta(t, 1.50, float64(quota)/common.QuotaPerUnit*7.3, 0.005)
+
+	// 两档分辨率都不产生倍率 ⇒ 扣费恒等于基价，不存在「传 480P 少收」或
+	// 「传 720P 多收」的分支。
+	for _, resolution := range []string{"480P", "720P"} {
+		body := fmt.Sprintf(`{"model":"wan-3.0-特惠","prompt":"x","resolution":%q}`, resolution)
+		c, info, a := postVideoCtx(t, body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+		assert.Nil(t, a.EstimateBilling(c, info), "%s 不得有倍率", resolution)
+	}
 }
