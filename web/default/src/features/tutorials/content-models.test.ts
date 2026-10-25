@@ -68,7 +68,10 @@ describe('tutorials model guide content', () => {
       'seedance-2.0',
       'seedance-2-0-fast',
       'seedance-2-5',
+      'seedance2.5-特惠',
+      'wan-3.0',
       'wan-3.0-特惠',
+      'MiniMax-M3.1',
       '¥0.15 / 张',
       '¥0.28/s',
       '¥0.10/s',
@@ -112,15 +115,24 @@ describe('tutorials model guide content', () => {
     }
 
     // 已下线的旧价格必须不再出现，避免同时展示两套价。
-    // '¥3.00 / 条' 是 wan-3.0-特惠 2026-10-25 分档前的旧价（现为 480P ¥1.50 / 720P ¥2.00）；
-    // 注意别和 seedance-2-5 的 '¥3.00 / 次' 混为一谈。
-    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s', '¥3.00 / 条']) {
+    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s']) {
       assert.equal(
         sectionsJson.includes(stale),
         false,
         `stale price still documented: ${stale}`
       )
     }
+
+    // '¥3.00 / 条' 只对 wan-3.0-特惠 那一行判旧价：2026-10-25 它分档前是 ¥3.00/条，
+    // 现为 480P ¥1.50 / 720P ¥2.00。但 **不能整篇禁用这句话** ——
+    // seedance2.5-特惠 就是按条收 ¥3.00（正常价），所以只能锁 wan-3.0-特惠 那一行。
+    const wan30TehuiLine = /wan-3\.0-特惠｜[^"]*/.exec(sectionsJson)?.[0] ?? ''
+    assert.notEqual(wan30TehuiLine, '', 'the wan-3.0-特惠 overview entry must exist')
+    assert.equal(
+      wan30TehuiLine.includes('¥3.00 / 条'),
+      false,
+      'wan-3.0-特惠 must not advertise the old flat ¥3.00 per-item price'
+    )
 
     // autodl:minimax-h3-u24 的分辨率白名单（constants.go Resolutions）只有
     // 480p/768p 竖横/(1:1)，传 1080p 会被 invalid_resolution 拦下。
@@ -274,6 +286,40 @@ describe('tutorials model guide content', () => {
       false,
       'seedance-2.0 must no longer advertise the 5/10/15 duration tiers'
     )
+  })
+
+  // 回归守卫：模型广场上架的模型必须逐个写进接入教程。
+  // 2026-10-25 核对发现广场有 3 个模型教程里没写（MiniMax-M3.1 / wan-3.0 /
+  // seedance2.5-特惠），客户按教程找不到入口。清单按生产 /api/pricing 当前返回逐个列出，
+  // 以后再上新模型必须同步补本文件 + content-models.ts，否则这里会红。
+  test('documents every model currently listed in the model square', () => {
+    const squareModels = [
+      'MiniMax-M3',
+      'MiniMax-M3.1',
+      'Nano Banana Pro',
+      'autodl:minimax-h3-u24',
+      'gemini-web-video',
+      'gpt-6-luna',
+      'gpt-6-sol',
+      'gpt-image-2.5-官方',
+      'seedance-2-0-fast',
+      'seedance-2-5',
+      'seedance-2.0',
+      'seedance2.5-特惠',
+      'wan-3.0',
+      'wan-3.0-特惠',
+      'wan2.7-图生',
+      'wan2.7-编辑',
+      'wan3.0-smart',
+      'wan3.0-video-官网',
+    ]
+    for (const model of squareModels) {
+      assert.equal(
+        sectionsJson.includes(`${model}｜`),
+        true,
+        `model square lists ${model} but the integration guide never mentions it`
+      )
+    }
   })
 
   // 回归守卫：wan2.7 免灵感值双模型 2026-10-16 上架（图生 / 编辑，¥0.30/次）。
