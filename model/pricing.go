@@ -489,6 +489,12 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan-3.0-无限" {
 		return true
 	}
+	// 同商品的分分辨率定价名（2026-10-25 上架：480p ¥1.50/次、720p ¥2.00/次）。
+	// 仍是精确比较：这三个名字都带 `wan-3.0` 前缀，用 HasPrefix 会连带放行
+	// MegaAI 的 `wan-3.0`（不同商品、不同计价形态）。
+	if name == "wan-3.0-无限-480p" || name == "wan-3.0-无限-720p" {
+		return true
+	}
 	// ⚠️ jimeng-video-reverse 故意**不**上广场：反解定价（¥1.0/次）是占位值，
 	// 尚未商务核定。在价格确认前只保证可调用（白名单只管广场展示，不影响调用），
 	// 确认后再加这一行，并同步接入教程的模型总览

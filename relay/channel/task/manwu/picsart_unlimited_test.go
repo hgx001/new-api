@@ -170,3 +170,117 @@ func TestPicsartUnlimitedBillingIsPerCall(t *testing.T) {
 	assert.Nil(t, a.EstimateBilling(c, info),
 		"按次模型返回倍率会被再乘一遍（¥3 × 30 秒 = ¥90），必须 nil")
 }
+
+// ── 分分辨率定价公开名（2026-10-25 老板定稿：480p ¥1.50/次、720p ¥2.00/次） ──
+//
+// new-api 只能按模型名计价（ModelPrice 按名索引，relay/relay_task.go:181 的
+// ModelPriceHelperPerCall 读 OriginModelName），单名字承载不了两个价格，
+// 因此拆成 `-480p` / `-720p` 两个公开名，**同走 picsart 上游**。
+// 分辨率必须由名字锁死：否则调用方传 `model=...-480p` + `resolution=720P`
+// 就能花 480p 的钱拿 720p 的片。
+
+// 两个分档名必须与单档名同一条上游（picsart / wan-3.0-video），只是多了锁分辨率。
+func TestPicsartTieredNamesShareUpstream(t *testing.T) {
+	for _, name := range []string{ModelWan3Unlimited480P, ModelWan3Unlimited720P} {
+		spec, ok := SpecFor(name)
+		require.True(t, ok, "%s 必须在路由表里", name)
+		assert.Equal(t, PlatformIDPicsart, spec.PlatformID, name)
+		assert.Equal(t, OutputModeVideo, spec.OutputMode, name)
+		assert.Equal(t, kindPicsartVideo, spec.Kind, name)
+		assert.Equal(t, "wan-3.0-video", spec.UpstreamModel, name,
+			"分档名只是计价壳，发往 ArcReel/Worker 的仍是官网档位 id")
+		assert.NotEmpty(t, spec.ForcedResolution, name, "分档名必须锁分辨率")
+	}
+	assert.Equal(t, "480P", mustSpec(t, ModelWan3Unlimited480P).ForcedResolution)
+	assert.Equal(t, "720P", mustSpec(t, ModelWan3Unlimited720P).ForcedResolution)
+}
+
+func mustSpec(t *testing.T, name string) modelSpec {
+	t.Helper()
+	spec, ok := SpecFor(name)
+	require.True(t, ok, name)
+	return spec
+}
+
+// 锁分辨率：缺省按名字补档；显式传别的档 → 400（不静默改档）。
+func TestPicsartTieredNamesLockResolution(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string
+		wantErr     bool
+		wantResolut string
+	}{
+		// 缺省 → 按名字补，不能落到默认 720P（否则 480p 名白拿 720p 片）。
+		{ModelWan3Unlimited480P, `{"model":"wan-3.0-无限-480p","prompt":"x"}`, false, "480P"},
+		{ModelWan3Unlimited720P, `{"model":"wan-3.0-无限-720p","prompt":"x"}`, false, "720P"},
+		// 显式传同一档（大小写不敏感）→ 放行。
+		{ModelWan3Unlimited480P, `{"model":"wan-3.0-无限-480p","prompt":"x","resolution":"480p"}`, false, "480P"},
+		{ModelWan3Unlimited720P, `{"model":"wan-3.0-无限-720p","prompt":"x","resolution":"720P"}`, false, "720P"},
+		// 显式传别的档 → 400。这是计价漏洞：名字说 480p、身体要 720p。
+		{ModelWan3Unlimited480P, `{"model":"wan-3.0-无限-480p","prompt":"x","resolution":"720P"}`, true, ""},
+		{ModelWan3Unlimited720P, `{"model":"wan-3.0-无限-720p","prompt":"x","resolution":"480P"}`, true, ""},
+		// 非白名单值照旧 400。
+		{ModelWan3Unlimited480P, `{"model":"wan-3.0-无限-480p","prompt":"x","resolution":"1080P"}`, true, ""},
+	}
+	for _, tc := range cases {
+		c, info, a := postVideoCtx(t, tc.body)
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		if tc.wantErr {
+			require.NotNil(t, taskErr, tc.body)
+			assert.Equal(t, "invalid_resolution", taskErr.Code, tc.body)
+			continue
+		}
+		require.Nil(t, taskErr, tc.body)
+		req, err := getNormalizedRequest(c)
+		require.NoError(t, err)
+		assert.Equal(t, tc.wantResolut, req.Resolution, tc.body)
+		assert.Equal(t, 30, req.Duration, tc.body, "分档名不改时长口径，仍固定 30 秒")
+	}
+}
+
+// 单档名 `wan-3.0-无限` 行为不变：分辨率仍随请求体（回归保护）。
+func TestPicsartUnlimitedNameStillHonorsBodyResolution(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"wan-3.0-无限","prompt":"x","resolution":"480p"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "480P", req.Resolution, "单档名没有 ForcedResolution，不能被锁")
+
+	spec, ok := SpecFor(ModelWan3Unlimited)
+	require.True(t, ok)
+	assert.Empty(t, spec.ForcedResolution, "单档名不该锁分辨率")
+}
+
+// 建单载荷：分档名的分辨率必须落到 videoParams，model 仍是官网真名。
+func TestPicsartTieredNamesBuildOfficialPayload(t *testing.T) {
+	for _, tc := range []struct{ name, wantResolution string }{
+		{ModelWan3Unlimited480P, "480P"},
+		{ModelWan3Unlimited720P, "720P"},
+	} {
+		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":%q,"prompt":"x"}`, tc.name))
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), tc.name)
+		reader, err := a.BuildRequestBody(c, info)
+		require.NoError(t, err, tc.name)
+		data, err := io.ReadAll(reader)
+		require.NoError(t, err)
+
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(data, &payload))
+		assert.Equal(t, PlatformIDPicsart, payload["platformId"], tc.name)
+		vp, ok := payload["videoParams"].(map[string]any)
+		require.True(t, ok, tc.name)
+		assert.Equal(t, "wan-3.0-video", vp["model"], tc.name)
+		assert.Equal(t, tc.wantResolution, vp["resolution"], tc.name)
+		assert.Equal(t, float64(30), vp["duration"], tc.name)
+	}
+}
+
+// 按次计费不变：分档名也不能返回倍率（否则 ¥1.5 会被再乘 30 秒）。
+func TestPicsartTieredNamesBillingIsPerCall(t *testing.T) {
+	for _, name := range []string{ModelWan3Unlimited480P, ModelWan3Unlimited720P} {
+		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":%q,"prompt":"x"}`, name))
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), name)
+		assert.Nil(t, a.EstimateBilling(c, info), name,
+			"按次模型返回倍率会被 relay_task 再乘一遍，必须 nil")
+	}
+}
