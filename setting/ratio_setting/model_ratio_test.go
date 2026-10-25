@@ -125,20 +125,30 @@ func TestDefaultModelPriceWan27R2VPerSecond(t *testing.T) {
 	require.InDelta(t, 0.1/USD2RMB, price, 1e-12, "r2v base must equal ¥0.10/sec in USD")
 }
 
-// wan-3.0-无限（漫屋 → Picsart 免费无限档）：按次 ¥3.00/条。
-// 与 MegaAI 的 wan-3.0 同价但**不同商品**（不同渠道/不同上游），必须各自独立成条。
-func TestDefaultModelPriceWan3UnlimitedPerCall(t *testing.T) {
+// wan-3.0-特惠（漫屋 → Picsart 特惠档，2026-10-25 由 wan-3.0-无限 改名）：
+// 720P 基价 ¥2.00/条，480P 由 adaptor 的 size=0.75 倍率折成 ¥1.50/条。
+// 与 MegaAI 的 wan-3.0（¥3.00/条）是**不同商品**（不同渠道/不同上游），
+// 价格必须各自独立，改动其中一条不能带走另一条。
+func TestDefaultModelPriceWan3TeHuiPerCall(t *testing.T) {
 	InitRatioSettings()
 
-	price, ok := GetModelPrice("wan-3.0-无限", false)
-	require.True(t, ok, "wan-3.0-无限 must have an explicit per-call price")
-	require.InDelta(t, 3.0/USD2RMB, price, 1e-12, "picsart unlimited base must equal ¥3.00/call in USD")
+	price, ok := GetModelPrice("wan-3.0-特惠", false)
+	require.True(t, ok, "wan-3.0-特惠 must have an explicit per-call price")
+	require.InDelta(t, 2.0/USD2RMB, price, 1e-12, "picsart 特惠档基价必须等于 ¥2.00/条（720P）")
 
-	// 分辨率档不参与计价：480P 与 720P 同价（EstimateBilling 返回 nil）。
+	// 旧名必须**仍有价**：DB 的 ModelPrice 改名后旧名会落到
+	// ModelPriceHelperPerCall 的「查不到价」分支，任务按次计费算成 ¥0（静默免单）。
+	legacy, legacyOk := GetModelPrice("wan-3.0-无限", false)
+	require.True(t, legacyOk, "旧名 wan-3.0-无限 过渡期仍可调用，必须有价，否则按次计费静默算 ¥0")
+	require.InDelta(t, price, legacy, 1e-12, "旧名与新名必须同价，否则两个名字下单是两个价")
+
+	// MegaAI 同名近似商品是 ¥3.00/条，与本档 ¥2.00 不同 —— 显式锁住这个差异，
+	// 防止有人图省事把两条合并。
 	base, ok := GetModelPrice("wan-3.0", false)
 	require.True(t, ok)
-	require.InDelta(t, base, price, 1e-12,
-		"对外同为 ¥3.00，但两条是不同渠道的独立商品，改动其中一条不能带走另一条")
+	require.InDelta(t, 3.0/USD2RMB, base, 1e-12, "MegaAI wan-3.0 仍是 ¥3.00/条")
+	require.NotEqual(t, base, price,
+		"两条是不同渠道的独立商品，价格不同；合并会让其中一侧算错账")
 }
 
 // 6/7.3 = 0.821918；任务链路按 ModelPrice 固定扣费，禁止乘 seconds。

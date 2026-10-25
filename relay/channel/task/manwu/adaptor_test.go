@@ -612,7 +612,10 @@ func TestModelListAndChannelName(t *testing.T) {
 		"seedance-2-5",
 		"seedance-2.0",
 		"seedance-2.5",
+		// 改名前后两个公开名都在：新名上广场，旧名只保可调用
+		//（ModelWan3TeHuiLegacy 的注释里写了清理条件）。
 		"wan-3.0-无限",
+		"wan-3.0-特惠",
 		"wan2.7-图生",
 		"wan2.7-编辑",
 	}, a.GetModelList())

@@ -99,11 +99,17 @@ func TestIsAllowedPricingModelManwuWan27(t *testing.T) {
 	}
 }
 
-// 漫屋 ArcReel → Picsart 免费无限档 Wan 3.0（2026-10-24 上架）：
-// 固定 30 秒、分辨率 480P/720P，按次 ¥3.00/条。
-func TestIsAllowedPricingModelManwuWan3Unlimited(t *testing.T) {
-	require.True(t, isAllowedPricingModel("wan-3.0-无限"),
-		"wan-3.0-无限 must show in pricing square")
+// 漫屋 ArcReel → Picsart 免费无限档 Wan 3.0（2026-10-24 上架，2026-10-25 改名「特惠」）：
+// 固定 30 秒、分辨率 480P/720P，按次 ¥2.00/条（480P 走 size 倍率 ¥1.50）。
+func TestIsAllowedPricingModelManwuWan3TeHui(t *testing.T) {
+	require.True(t, isAllowedPricingModel("wan-3.0-特惠"),
+		"wan-3.0-特惠 must show in pricing square")
+
+	// 改名前的旧名只保可调用、**不上广场**：广场上同时挂两个名字等于卖两个商品，
+	// 客户无法判断差别。旧名的可调用性由 adaptor 的 modelSpecs 保证
+	//（见 TestWan3TeHuiLegacyAliasStillRoutes）。
+	assert.False(t, isAllowedPricingModel("wan-3.0-无限"),
+		"legacy name wan-3.0-无限 must not show in pricing square")
 
 	// 官网档位真名与上游内部名不对外：公开名只存在于 adaptor 的 modelSpecs 里。
 	//

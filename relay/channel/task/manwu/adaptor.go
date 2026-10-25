@@ -156,13 +156,24 @@ const (
 	// 与 dola/doubao 的公开名风格区分，避免和上游 dashscope 的 wan 系重名。
 	ModelWan27I2V  = "wan2.7-图生"
 	ModelWan27Edit = "wan2.7-编辑"
-	// ModelWan3Unlimited 是 Picsart 免费无限档 Wan 3.0（2026-10-24 老板定稿上架）。
+	// ModelWan3TeHui 是 Picsart 免费无限档 Wan 3.0（2026-10-24 上架，2026-10-25 改名）。
 	//
-	// 命名理由：「无限」指**账号侧的无限合成权益**（不扣积分、不限条数），
-	// 不是「客户免费无限调用」—— 对外仍按次计费 ¥3.00/条。
-	// 与 MegaAI 渠道的 `wan-3.0`（付费满参版，按分辨率档计价）是**两个不同的商品**，
+	// 改名理由（老板 2026-10-25）：「无限」指**账号侧的无限合成权益**（不扣积分、
+	// 不限条数），但对客户是**按次计费**，叫「无限」容易被理解成「免费无限调用」，
+	// 咨询成本高。改用「特惠」——与 MegaAI 渠道的 `seedance2.5-特惠`
+	// （relay/channel/task/megabyai/constants.go）同一套后缀风格。
+	//
+	// 与 MegaAI 渠道的 `wan-3.0`（付费满参版，按分辨率档计价）仍是**两个不同的商品**，
 	// 名字只差后缀，不要合并、不要互相别名化。
-	ModelWan3Unlimited = "wan-3.0-无限"
+	ModelWan3TeHui = "wan-3.0-特惠"
+	// ModelWan3TeHuiLegacy 是改名前的公开名，**只保留可调用**、不进模型广场
+	// （广场白名单见 model/pricing.go 的 isAllowedPricingModel）。
+	//
+	// 为什么留别名而不是硬切：本商品 2026-10-24 才上架，24 小时内可能已有接入方
+	// 按旧名联调；断掉是不可逆的商务损失，而多一个 map 条目的成本几乎为零。
+	// 清理条件：确认 30 天内无任何调用（`logs` 表按 model_name 统计）后，
+	// 删掉本行 + modelSpecs 里对应条目 + 生产库 abilities 里的旧名即可。
+	ModelWan3TeHuiLegacy = "wan-3.0-无限"
 )
 
 // 豆包官网档位真名：Worker 侧 DOM 点击目标（src/platforms/doubao/params.ts），
@@ -174,7 +185,7 @@ const (
 
 // picsartUpstreamModel 是 Picsart 官网 Wan 3.0 的档位 id（URL `?model=` 与内部
 // payload 同名，见 cron_video_brach src/platforms/picsart/params.ts:108）。
-// 公开名 `wan-3.0-无限` 只在本表内存在，发往 ArcReel/Worker 的一律是它。
+// 公开名 `wan-3.0-特惠` 只在本表内存在，发往 ArcReel/Worker 的一律是它。
 const picsartUpstreamModel = "wan-3.0-video"
 
 // 任务形态：决定校验分支与建单载荷。
@@ -232,7 +243,7 @@ const (
 	// 对外价（老板 2026-10-25 定稿）：480P ¥1.50/次、720P ¥2.00/次。
 	// ModelPrice 只能配一个数，所以配 720P 基价 ¥2.00，480P 用本倍率折：
 	//   0.75 = 1.50 / 2.00
-	// ⚠️ 改价时 ModelPrice['wan-3.0-无限'] 与本倍率必须同时改，否则两档价会错位
+	// ⚠️ 改价时 ModelPrice['wan-3.0-特惠'] 与本倍率必须同时改，否则两档价会错位
 	//    （测试 TestPicsartUnlimited480PRatioMatchesPriceList 锁住了这层关系）。
 	picsart480PSizeRatio = 0.75
 )
@@ -268,9 +279,11 @@ var modelSpecs = map[string]modelSpec{
 	// 万相两个模型共用 tongyiwan 平台，差异在 Kind（→ 校验分支 / DOM 路线）。
 	ModelWan27I2V:  {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanI2VVideo},
 	ModelWan27Edit: {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanEditVideo},
-	// Picsart 免费无限档 Wan 3.0（2026-10-24 上架）：公开名 → 官网档位 id 的翻译
-	// 在这一层做，ArcReel/Worker 两侧白名单仍是官网真名。
-	ModelWan3Unlimited: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel},
+	// Picsart 免费无限档 Wan 3.0（2026-10-24 上架，2026-10-25 改名「特惠」）：
+	// 公开名 → 官网档位 id 的翻译在这一层做，ArcReel/Worker 两侧白名单仍是官网真名。
+	ModelWan3TeHui: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel},
+	// 改名前的公开名，同一条 spec：只保可调用，不进广场（见 ModelWan3TeHuiLegacy 注释）。
+	ModelWan3TeHuiLegacy: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel},
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -883,7 +896,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// 图生的首/尾帧与编辑的参考图都走 reference_image 槽。
 		body.Inputs = append(body.Inputs, toInputs(InputTypeImage, req.Images)...)
 	case kindPicsartVideo:
-		// Picsart 免费无限档 Wan 3.0：model 恒为官网档位 id（公开名 wan-3.0-无限
+		// Picsart 特惠档 Wan 3.0：model 恒为官网档位 id（公开名 wan-3.0-特惠
 		// 只在本表内存在，不对 ArcReel/Worker 暴露）；时长 30 秒固定、分辨率
 		// 480P/720P 已在校验层归一。ratio 可为空串（未指定不编造 → Worker 端
 		// 保持官网 adaptive 默认档，不硬塞 16:9）。
