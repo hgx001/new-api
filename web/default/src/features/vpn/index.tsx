@@ -67,6 +67,16 @@ import {
   type VpnKeyResult,
   type VpnOrder,
 } from './api'
+import {
+  daysLeft,
+  formatDate,
+  formatDateTime,
+  isTrustedAlipayUrl,
+  PENDING_FAST_WINDOW_SEC,
+  resolvePollIntervalMs,
+  resolveVpnState,
+  type VpnState,
+} from './page-logic'
 
 const V2RAYN_VERSION = '7.24.8'
 const V2RAYN_WINDOWS_URL = `https://github.com/2dust/v2rayN/releases/download/${V2RAYN_VERSION}/v2rayN-windows-64.zip`
@@ -74,57 +84,9 @@ const V2RAYN_MACOS_ARM_URL = `https://github.com/2dust/v2rayN/releases/download/
 const V2RAYN_MACOS_INTEL_URL = `https://github.com/2dust/v2rayN/releases/download/${V2RAYN_VERSION}/v2rayN-macos-64.dmg`
 const V2RAYN_RELEASES_URL = 'https://github.com/2dust/v2rayN/releases'
 
-/** 支付宝官方直连的收银台域名白名单：只允许跳转到支付宝自己的域名 */
-const ALIPAY_CHECKOUT_HOSTS = new Set([
-  'openapi.alipay.com',
-  'openapi.alipaydev.com',
-])
-
-/** 待支付订单超过这个时间仍未确认，就把轮询频率降下来（仍在轮询，不放弃） */
-const PENDING_FAST_WINDOW_SEC = 30 * 60
-
-const POLL_FAST_MS = 3000
-const POLL_SLOW_MS = 30000
-
 const PLAN_PRICE = 199
 const PLAN_ORIGINAL_PRICE = 399
 const PLAN_DAYS = 365
-
-function formatDate(ts: number) {
-  if (!ts) return '-'
-  return new Date(ts * 1000).toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  })
-}
-
-function formatDateTime(ts: number) {
-  if (!ts) return '-'
-  return new Date(ts * 1000).toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function daysLeft(expireTs: number) {
-  return Math.max(0, Math.ceil((expireTs * 1000 - Date.now()) / 86400000))
-}
-
-/** 只允许整页跳转到支付宝官方收银台，避免把用户送去任意地址 */
-function isTrustedAlipayUrl(url: string) {
-  try {
-    const parsed = new URL(url)
-    return (
-      parsed.protocol === 'https:' && ALIPAY_CHECKOUT_HOSTS.has(parsed.hostname)
-    )
-  } catch {
-    return false
-  }
-}
 
 const FEATURES = [
   {
@@ -203,23 +165,6 @@ const FAQS = [
     a: '虚拟服务商品，密钥一经下发不支持退款。如遇节点故障请优先联系客服处理。',
   },
 ]
-
-type VpnState = 'active' | 'pending' | 'expired' | 'none'
-
-function resolveVpnState({
-  hasKey,
-  isExpired,
-  hasPending,
-}: {
-  hasKey: boolean
-  isExpired: boolean
-  hasPending: boolean
-}): VpnState {
-  if (hasKey) return 'active'
-  if (isExpired) return 'expired'
-  if (hasPending) return 'pending'
-  return 'none'
-}
 
 const STATE_CHIP: Record<VpnState, { label: string; className: string }> = {
   active: {
@@ -314,8 +259,7 @@ export function Vpn() {
     : 0
   // 订单刚创建时用 3 秒快轮询；长时间没确认就降到 30 秒，但**永不停止**：
   // 支付宝的异步通知可能迟到，停了轮询就等于放弃这一单。
-  const pollMs =
-    pendingAgeSec > PENDING_FAST_WINDOW_SEC ? POLL_SLOW_MS : POLL_FAST_MS
+  const pollMs = resolvePollIntervalMs(pendingAgeSec)
 
   const vpnState: VpnState = resolveVpnState({
     hasKey: !!keyData,
