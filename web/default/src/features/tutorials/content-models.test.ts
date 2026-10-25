@@ -71,13 +71,17 @@ describe('tutorials model guide content', () => {
       'seedance-2-0-fast',
       'seedance-2-5',
       'wan-3.0-无限',
+      // 2026-10-25 分分辨率定价（480p ¥1.50 / 720p ¥2.00），同走 picsart 上游。
+      'wan-3.0-无限-480p',
+      'wan-3.0-无限-720p',
       '¥0.15 / 张',
       '¥8.00 / 次',
       '¥0.28/s',
       '¥0.10/s',
       '¥1.00 / 次',
       '¥3.00 / 次',
-      '¥3.00 / 条',
+      '¥1.50 / 条',
+      '¥2.00 / 条',
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
     }
@@ -112,7 +116,9 @@ describe('tutorials model guide content', () => {
     }
 
     // 已下线的旧价格必须不再出现，避免同时展示两套价。
-    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s']) {
+    // '¥3.00 / 条' 是 wan-3.0-无限 2026-10-25 分价前的旧价（现为 ¥2.00 / 条，
+    // 480p 档 ¥1.50 / 条）；注意别和 seedance-2-5 的 '¥3.00 / 次' 混为一谈。
+    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s', '¥3.00 / 条']) {
       assert.equal(
         sectionsJson.includes(stale),
         false,
