@@ -227,6 +227,14 @@ const (
 	picsartFixedDuration      = 30
 	picsartDefaultResolution  = "720P"
 	picsartMaxReferenceImages = 10
+	// picsart480PSizeRatio 是 480P 相对 720P 基准价的倍率。
+	//
+	// 对外价（老板 2026-10-25 定稿）：480P ¥1.50/次、720P ¥2.00/次。
+	// ModelPrice 只能配一个数，所以配 720P 基价 ¥2.00，480P 用本倍率折：
+	//   0.75 = 1.50 / 2.00
+	// ⚠️ 改价时 ModelPrice['wan-3.0-无限'] 与本倍率必须同时改，否则两档价会错位
+	//    （测试 TestPicsartUnlimited480PRatioMatchesPriceList 锁住了这层关系）。
+	picsart480PSizeRatio = 0.75
 )
 
 var picsartAllowedResolutions = map[string]bool{"480P": true, "720P": true}
@@ -764,10 +772,18 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
-// EstimateBilling 只对按量模型返回倍率：豆包 2.0 Fast 按秒（¥0.1/秒 × 秒数）、
-// 图片按张（张数作为 n 倍率乘到 ¥0.3/张 的基础价上）。
-// 按次模型（豆包 2.5、dola 两档、Gemini Veo、反解）必须返回 nil，否则 relay_task.go
-// 会把按次价再乘一遍（¥3/次 × 30 秒 = ¥90，账实不符）。
+// EstimateBilling 只对需要「基价 × 倍率」的模型返回倍率：
+// 豆包 2.0 Fast 按秒（¥0.1/秒 × 秒数）、图片按张（张数作为 n 倍率乘到 ¥0.3/张 上）、
+// Picsart 无限档按分辨率（480P 取 720P 基价的 75%）。
+//
+// 其余按次模型（豆包 2.5、dola 两档、Gemini Veo、反解）必须返回 nil，否则
+// relay_task.go 会把按次价再乘一遍（¥3/次 × 30 秒 = ¥90，账实不符）。
+//
+// ⚠️ picsart 是**故意**返回倍率的例外：它的对外价是「480P ¥1.50 / 720P ¥2.00」，
+// 而 ModelPrice 只能配一个数，所以配 720P 基价 ¥2.00，480P 用 size=0.75 折下来。
+// 这样单模型名就能承载两档价（与 dashscope/ali 的 size 倍率同口径），
+// 不需要拆成两个公开名；而且「按 480P 请求就按 480P 计价」天然一致，
+// 不存在「调 480p 名却传 720P 参」的计价漏洞。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
 	if c == nil {
 		return nil
@@ -781,6 +797,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	}
 	if req.Kind == kindDoubaoVideo && req.Model == ModelDoubao20Fast && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
+	}
+	// Picsart 无限档：720P 是基准价（返回 nil = 不乘），480P 打 75 折。
+	// 0.75 = ¥1.50 / ¥2.00，改价时这两个数必须一起改（见 picsart480PSizeRatio 注释）。
+	if req.Kind == kindPicsartVideo && req.Resolution == "480P" {
+		return map[string]float64{"size": picsart480PSizeRatio}
 	}
 	return nil
 }

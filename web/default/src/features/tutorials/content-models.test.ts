@@ -77,7 +77,9 @@ describe('tutorials model guide content', () => {
       '¥0.10/s',
       '¥1.00 / 次',
       '¥3.00 / 次',
-      '¥3.00 / 条',
+      // wan-3.0-无限 按分辨率两档（2026-10-25）：480P ¥1.50、720P ¥2.00
+      '480P ¥1.50 / 条',
+      '720P ¥2.00 / 条',
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
     }
@@ -112,7 +114,9 @@ describe('tutorials model guide content', () => {
     }
 
     // 已下线的旧价格必须不再出现，避免同时展示两套价。
-    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s']) {
+    // '¥3.00 / 条' 是 wan-3.0-无限 2026-10-25 分档前的旧价（现为 480P ¥1.50 / 720P ¥2.00）；
+    // 注意别和 seedance-2-5 的 '¥3.00 / 次' 混为一谈。
+    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s', '¥3.00 / 条']) {
       assert.equal(
         sectionsJson.includes(stale),
         false,
