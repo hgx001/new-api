@@ -120,15 +120,3 @@ func TestIsAllowedPricingModelManwuWan3Unlimited(t *testing.T) {
 	assert.True(t, isAllowedPricingModel("wan-3.0"),
 		"MegaAI wan-3.0 仍须独立上广场")
 }
-
-// 同商品的分分辨率定价名（2026-10-25 上架：480p ¥1.50/次、720p ¥2.00/次）：
-// 必须精确放行，且不能顺手把 MegaAI 的 wan-3.0 一起放进来（不同商品）。
-func TestIsAllowedPricingModelManwuWan3UnlimitedTiered(t *testing.T) {
-	for _, name := range []string{"wan-3.0-无限-480p", "wan-3.0-无限-720p"} {
-		assert.True(t, isAllowedPricingModel(name), "%s must show in pricing square", name)
-	}
-	// 上游真名 / 拼错名一律不对外。
-	for _, hidden := range []string{"wan-3.0-video-480p", "wan-3.0-unlimited-480p"} {
-		assert.False(t, isAllowedPricingModel(hidden), "%s must not show in pricing square", hidden)
-	}
-}

@@ -163,14 +163,6 @@ const (
 	// 与 MegaAI 渠道的 `wan-3.0`（付费满参版，按分辨率档计价）是**两个不同的商品**，
 	// 名字只差后缀，不要合并、不要互相别名化。
 	ModelWan3Unlimited = "wan-3.0-无限"
-	// ModelWan3Unlimited480P / ModelWan3Unlimited720P 是 Picsart 无限档 Wan 3.0 的
-	// **分分辨率定价公开名**（2026-10-25 老板定稿：480p ¥1.50/次、720p ¥2.00/次）。
-	//
-	// 与 ModelWan3Unlimited 是同一条上游（picsart / wan-3.0-video），差异只在
-	// 分辨率由模型名锁定（见 modelSpec.ForcedResolution）。拆名的原因是 new-api
-	// 只能按模型名计价，单名字无法承载两个价格。
-	ModelWan3Unlimited480P = "wan-3.0-无限-480p"
-	ModelWan3Unlimited720P = "wan-3.0-无限-720p"
 )
 
 // 豆包官网档位真名：Worker 侧 DOM 点击目标（src/platforms/doubao/params.ts），
@@ -255,15 +247,6 @@ type modelSpec struct {
 	// UpstreamModel：发往 ArcReel 的上游模型名；空 = 与公开名一致。豆包公开短名
 	// ≠ 官网档位真名，翻译在这一层做（ArcReel/Worker 两侧白名单仍是真名）。
 	UpstreamModel string
-	// ForcedResolution：非空 = 该公开名把分辨率写进了名字里，请求体的 resolution
-	// 必须与它一致（显式传别的档 → 400，缺省 → 补这个值）。
-	//
-	// 为什么需要：new-api 只能按**模型名**计价（ModelPrice 按名索引，
-	// relay/relay_task.go:181 的 ModelPriceHelperPerCall 读 OriginModelName），
-	// 而分辨率原本是请求体参数。分档定价（480p ¥1.50 / 720p ¥2.00）若只拆名字
-	// 不锁分辨率，调用方传 `model=wan-3.0-无限-480p` + `resolution=720P`
-	// 就能花 480p 的钱拿 720p 的片——名字是计价契约，必须锁死。
-	ForcedResolution string
 }
 
 var modelSpecs = map[string]modelSpec{
@@ -279,13 +262,7 @@ var modelSpecs = map[string]modelSpec{
 	ModelWan27Edit: {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanEditVideo},
 	// Picsart 免费无限档 Wan 3.0（2026-10-24 上架）：公开名 → 官网档位 id 的翻译
 	// 在这一层做，ArcReel/Worker 两侧白名单仍是官网真名。
-	//
-	// 三个公开名同走 picsart 上游：`wan-3.0-无限` 是 2026-10-24 上架的单档名
-	//（分辨率随请求体，¥3.00/次）；两个分档名 2026-10-25 补，分辨率锁死在名字里
-	//（480p ¥1.50 / 720p ¥2.00），供按分辨率计价使用。
-	ModelWan3Unlimited:    {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel},
-	ModelWan3Unlimited480P: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel, ForcedResolution: "480P"},
-	ModelWan3Unlimited720P: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel, ForcedResolution: "720P"},
+	ModelWan3Unlimited: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel},
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -778,19 +755,6 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		resolution, resErr := resolvePicsartResolution(req)
 		if resErr != nil {
 			return service.TaskErrorWrapperLocal(resErr, "invalid_resolution", http.StatusBadRequest)
-		}
-		// 分档定价名（-480p / -720p）把分辨率写进了名字：显式传别的档 → 400，
-		// 与固定 30 秒同口径（不静默改档，客户会以为拿到自己要的档）；
-		// 没传 → 按名字补，防止「调 -480p 名却不传 resolution」落到默认 720P，
-		// 花 480p 的钱拿 720p 的片。
-		if spec.ForcedResolution != "" {
-			if raw := strings.TrimSpace(req.Resolution); raw != "" && resolution != spec.ForcedResolution {
-				return service.TaskErrorWrapperLocal(
-					fmt.Errorf("%s resolution is fixed at %s, got %q", norm.Model, spec.ForcedResolution, raw),
-					"invalid_resolution", http.StatusBadRequest,
-				)
-			}
-			resolution = spec.ForcedResolution
 		}
 		norm.Resolution = resolution
 	}

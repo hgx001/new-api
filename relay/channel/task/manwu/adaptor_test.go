@@ -613,9 +613,6 @@ func TestModelListAndChannelName(t *testing.T) {
 		"seedance-2.0",
 		"seedance-2.5",
 		"wan-3.0-无限",
-		// 2026-10-25 分分辨率定价（480p ¥1.50 / 720p ¥2.00），同走 picsart 上游。
-		"wan-3.0-无限-480p",
-		"wan-3.0-无限-720p",
 		"wan2.7-图生",
 		"wan2.7-编辑",
 	}, a.GetModelList())
