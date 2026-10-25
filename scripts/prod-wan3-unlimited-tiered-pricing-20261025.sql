@@ -106,9 +106,17 @@ UPDATE options
  WHERE key = 'ModelPrice'
    AND (value::jsonb ->> 'wan-3.0-无限')::numeric <> (2.0 / 7.3)::numeric;
 
-COMMIT;
+-- ---------- ⑤ models：单档名卡片正文同步改价 ----------
+-- ④-b 把 wan-3.0-无限 的价格改成 ¥2.00，但卡片 description（广场正文）里还写着
+-- 「固定 ¥3.00/条」——价格与文案不一致会被客户当成乱价。此处同步。
+-- 守卫用 LIKE '%¥3.00%'：只改还没改过的，重复执行不覆盖人工润色后的文案。
+UPDATE models
+   SET description = 'Wan 3.0 视频生成（Picsart 免费无限档）。固定 30 秒一条；未指定分辨率时按 720P 交付，按次计费 ¥2.00/次。需要 480P 请改用 wan-3.0-无限-480p（¥1.50/次）。支持 6 档比例（含自适应），≤10 张参考图，不收参考视频。⚠️ 官网免费档串行出片，单条通常 15–25 分钟，急单请选其它模型',
+       updated_time = EXTRACT(EPOCH FROM now())::bigint
+ WHERE model_name = 'wan-3.0-无限'
+   AND description LIKE '%¥3.00%';
 
--- ---------- 复核（事务外只读，脚本跑完必须逐项核对）----------
+COMMIT;
 SELECT id, models FROM channels WHERE id = 20;
 
 SELECT model, "group", enabled, priority, weight, tag
