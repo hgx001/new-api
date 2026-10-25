@@ -21,6 +21,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// videoProxyFetchTimeout 是「从上游回源 + 转发给客户端」整段的总超时（2026-10-25）。
+//
+// ⚠️ 这个 ctx 同时覆盖 client.Do(req) 和后面的 io.Copy(c.Writer, resp.Body)，
+// 也就是「从上游下载」与「写给客户端」**共用同一个 deadline**。
+// 旧值 60 秒对 30 秒 720P 成片（27~30MB）远远不够，生产实测（2026-10-25）：
+//   - new-api → ArcReel 走公网域名回源只有 244~337 KB/s（同机内网直连是 17~22 MB/s），
+//     60 秒只拉到 19~20MB → io.Copy 报 `context deadline exceeded`；
+//   - 客户端侧同理：用户带宽 1.3Mbps 时 60 秒只能收 ~10MB，
+//     用户看到的就是「拉到 10M 就断了，一直显示生成中」。
+// 后果是上游（ArcReel）已结算扣费、下游拿不到完整产物 → 用户收不到成片、new-api 无法结算。
+// 30MB 在 1Mbps 下约需 240 秒，留足余量取 600 秒；慢客户端占用连接可接受，
+// 真正的兜底在网关/nginx 层。
+const videoProxyFetchTimeout = 600 * time.Second
+
 // videoProxyError returns a standardized OpenAI-style error response.
 func videoProxyError(c *gin.Context, status int, errType, message string) {
 	c.JSON(status, gin.H{
@@ -76,7 +90,7 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), videoProxyFetchTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "", nil)
 	if err != nil {
