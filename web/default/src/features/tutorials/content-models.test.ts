@@ -64,14 +64,12 @@ describe('tutorials model guide content', () => {
       'gpt-image-2.5-官方',
       'wan3.0-smart',
       'wan3.0-video-官网',
-      'wan3.0-video-prime-1080p',
       'autodl:minimax-h3-u24',
       'seedance-2.0',
       'seedance-2-0-fast',
       'seedance-2-5',
       'wan-3.0-无限',
       '¥0.15 / 张',
-      '¥8.00 / 次',
       '¥0.28/s',
       '¥0.10/s',
       '¥1.00 / 次',
@@ -187,8 +185,8 @@ describe('tutorials model guide content', () => {
   test('keeps per-model hard limits documented', () => {
     for (const expected of [
       // '仅 5 或 10' / '必填，1–3 张参考图' 原本来自 wan2.7-r2v 的参数表，
-      // 该模型 2026-10-25 下架后随章节一并移除（见下方 de-listed 守卫）。
-      '固定 1080P',
+      // '固定 1080P' 原本来自 wan3.0-video-prime-1080p 的参数表。
+      // 这两个模型 2026-10-25 下架后随章节一并移除（见下方 de-listed 守卫）。
       '固定 30',
       '必填，1–9 张',
       '首尾帧不能与普通参考图/视频/音频混用',
@@ -203,8 +201,9 @@ describe('tutorials model guide content', () => {
   // Media 字段真实下发上游，限额为图 ≤10 / 视频 ≤5 / 音频 ≤5。
   // 按旧文档接入的客户会白白放弃已经可用的图生视频与多模态参考能力。
   test('does not claim the official wan3 channel ignores reference media', () => {
-    // 不能只断言「会被忽略」四个字：prime 的「固定 1080P/30，传其它值会被忽略」
-    // 是合法描述。要断的是官网那条具体的错误断言。
+    // 不能只断言「会被忽略」四个字：「传其它值会被忽略」这类描述对固定档位的模型是
+    // 合法的（原先的 wan3.0-video-prime-1080p 就是这种，已于 2026-10-25 下架）。
+    // 要断的是官网那条具体的错误断言。
     assert.equal(sectionsJson.includes('仅支持文生视频'), false)
     assert.equal(
       sectionsJson.includes('需要图生视频或多模态参考请改用 wan3.0-smart'),
@@ -378,12 +377,12 @@ describe('tutorials model guide content', () => {
       'wan2.7-r2v',
       'model-wan27-r2v',
       'wan3.0-480p',
+      'model-wan30-prime',
     ]) {
       assert.equal(sectionsJson.includes(gone), false, `still documented: ${gone}`)
     }
     // 同前缀的在售模型不能被误删
     assert.equal(sectionsJson.includes('wan2.7-图生'), true)
-    assert.equal(sectionsJson.includes('wan3.0-video-prime-1080p'), true)
   })
 
   // 回归守卫：2026-10-12 豆包公开名去掉 db- 前缀，旧名退役后文档不得再出现，
