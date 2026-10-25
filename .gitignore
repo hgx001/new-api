@@ -52,3 +52,8 @@ node_modules/
 .tmp/
 .trae/
 .workbuddy-ai/
+
+# 本地生成的媒体与导出产物（output/ 下是排查用的视频/图片/海报，最大 32MB；
+# 全仓无代码引用，误提交会永久留在 git 历史里）。.tmp_pr.json 是草稿 PR 载荷。
+/output/
+.tmp_pr.json
