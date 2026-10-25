@@ -197,14 +197,18 @@ func TestGetUserModelsFiltersByRequestedGroup(t *testing.T) {
 }
 
 func TestListModelsIncludesTieredBillingModel(t *testing.T) {
+	// 夹具名必须落在公开广场白名单里（model.isAllowedPricingModel，2026-08-28
+	// 「restrict public model square models」起生效）：/v1/models 不走白名单，
+	// 但 model.GetPricing() 走。用白名单外的名字，前半段 ListModels 断言照过、
+	// 后半段查广场必然查不到——这正是本用例挂了两个月的原因。
 	withSelfUseModeDisabled(t)
 	withTieredBillingConfig(t, map[string]string{
-		"zz-tiered-visible-model":      "tiered_expr",
-		"zz-tiered-empty-expr-model":   "tiered_expr",
-		"zz-tiered-missing-expr-model": "tiered_expr",
+		"gpt-6-tiered-visible-model":      "tiered_expr",
+		"gpt-6-tiered-empty-expr-model":   "tiered_expr",
+		"gpt-6-tiered-missing-expr-model": "tiered_expr",
 	}, map[string]string{
-		"zz-tiered-visible-model":    `tier("base", p * 1 + c * 2)`,
-		"zz-tiered-empty-expr-model": "   ",
+		"gpt-6-tiered-visible-model":    `tier("base", p * 1 + c * 2)`,
+		"gpt-6-tiered-empty-expr-model": "   ",
 	})
 
 	db := setupModelListControllerTestDB(t)
@@ -216,9 +220,9 @@ func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 		Status:   common.UserStatusEnabled,
 	}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
-		{Group: "default", Model: "zz-tiered-visible-model", ChannelId: 1, Enabled: true},
-		{Group: "default", Model: "zz-tiered-empty-expr-model", ChannelId: 1, Enabled: true},
-		{Group: "default", Model: "zz-tiered-missing-expr-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "gpt-6-tiered-visible-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "gpt-6-tiered-empty-expr-model", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "gpt-6-tiered-missing-expr-model", ChannelId: 1, Enabled: true},
 		{Group: "default", Model: "zz-unpriced-model", ChannelId: 1, Enabled: true},
 	}).Error)
 
@@ -230,26 +234,30 @@ func TestListModelsIncludesTieredBillingModel(t *testing.T) {
 	ListModels(ctx, constant.ChannelTypeOpenAI)
 
 	ids := decodeListModelsResponse(t, recorder)
-	require.Contains(t, ids, "zz-tiered-visible-model")
-	require.NotContains(t, ids, "zz-tiered-empty-expr-model")
-	require.NotContains(t, ids, "zz-tiered-missing-expr-model")
+	require.Contains(t, ids, "gpt-6-tiered-visible-model")
+	require.NotContains(t, ids, "gpt-6-tiered-empty-expr-model")
+	require.NotContains(t, ids, "gpt-6-tiered-missing-expr-model")
 	require.NotContains(t, ids, "zz-unpriced-model")
 
 	pricingByName := pricingByModelName(model.GetPricing())
-	visiblePricing, ok := pricingByName["zz-tiered-visible-model"]
+	visiblePricing, ok := pricingByName["gpt-6-tiered-visible-model"]
 	require.True(t, ok)
 	require.Equal(t, "tiered_expr", visiblePricing.BillingMode)
 	require.NotEmpty(t, visiblePricing.BillingExpr)
 
-	emptyExprPricing, ok := pricingByName["zz-tiered-empty-expr-model"]
+	emptyExprPricing, ok := pricingByName["gpt-6-tiered-empty-expr-model"]
 	require.True(t, ok)
 	require.Empty(t, emptyExprPricing.BillingMode)
 	require.Empty(t, emptyExprPricing.BillingExpr)
 
-	missingExprPricing, ok := pricingByName["zz-tiered-missing-expr-model"]
+	missingExprPricing, ok := pricingByName["gpt-6-tiered-missing-expr-model"]
 	require.True(t, ok)
 	require.Empty(t, missingExprPricing.BillingMode)
 	require.Empty(t, missingExprPricing.BillingExpr)
+
+	// 白名单外的模型不上公开广场：渠道开着、能力已启用也不行。
+	// 锁住这条，防止下一个人以为「广场少了模型」是 bug 去拆白名单。
+	require.NotContains(t, pricingByName, "zz-unpriced-model")
 }
 
 func TestListModelsTokenLimitIncludesTieredBillingModel(t *testing.T) {
