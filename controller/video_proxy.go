@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -34,6 +35,69 @@ import (
 // 30MB 在 1Mbps 下约需 240 秒，留足余量取 600 秒；慢客户端占用连接可接受，
 // 真正的兜底在网关/nginx 层。
 const videoProxyFetchTimeout = 600 * time.Second
+
+// videoProxyRelayRedirectEnv 是「跨主机重定向透传」的开关，设为 0/false/off 可关闭。
+//
+// 留这个开关是为了**不用重新构建镜像就能回滚**：万一某个客户端不跟随 302，
+// 改 docker 环境变量重启即可回到「本机代理转发」的旧行为。
+const videoProxyRelayRedirectEnv = "VIDEO_PROXY_RELAY_REDIRECT"
+
+// videoProxyRelayRedirectEnabled 判断是否透传跨主机重定向，默认开启。
+func videoProxyRelayRedirectEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(videoProxyRelayRedirectEnv))) {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+// videoProxyRedirectClient 返回一个「跨主机重定向不跟随」的客户端副本。
+//
+// 背景（2026-10-25）：ArcReel 托管产物在写入 300 秒后对 /output 返回
+// 302 → COS/CDN 直链（arcmedia.heibaidao.cn）。若本服务继续跟随，视频字节
+// 会先下到本机、再原样吐给客户端，而本机公网出口只有 3Mbps：
+//
+//	29MB 实测 87.51s（331 KB/s）—— 正好是这个上限算出来的
+//
+// 而客户端直连 CDN 只要 1.55s（边缘命中）/ 11.5s（回源 COS）。所以把跨主机
+// 302 原样透传，让字节根本不经过本机，同时把 3Mbps 让给 API 本身。
+//
+// 为什么只透传「跨主机」：
+//   - net/http 在跨 host 重定向时会剥掉 Authorization 等敏感头，也就是说
+//     跟随它本来就只能取到公开资源（需要凭证的上游会 401）。透传不降低能力。
+//   - 同 host 重定向通常靠请求头里的凭证才能取到内容（Gemini 的
+//     x-goog-api-key、OpenAI 的 Bearer），透传给客户端必然 401，必须继续跟随。
+//
+// 返回副本而不是改原 client：client 由 service.GetHttpClientWithProxy 提供，
+// 可能是共享实例，就地改 CheckRedirect 会影响其它调用方。
+func videoProxyRedirectClient(base *http.Client) *http.Client {
+	clone := *base
+	clone.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) == 0 {
+			return http.ErrUseLastResponse
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
+	return &clone
+}
+
+// isRelayableRedirect 判断这个状态码是不是可以透传给客户端。
+func isRelayableRedirect(status int) bool {
+	switch status {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	default:
+		return false
+	}
+}
 
 // videoProxyError returns a standardized OpenAI-style error response.
 func videoProxyError(c *gin.Context, status int, errType, message string) {
@@ -207,13 +271,35 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	resp, err := client.Do(req)
+	fetchClient := client
+	if videoProxyRelayRedirectEnabled() {
+		fetchClient = videoProxyRedirectClient(client)
+	}
+
+	resp, err := fetchClient.Do(req)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to fetch video from %s: %s", videoURL, err.Error()))
 		videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
 		return
 	}
 	defer resp.Body.Close()
+
+	// 跨主机重定向：透传给客户端，让字节直连 CDN，不经过本机 3Mbps 出口。
+	// 能走到这里的 3xx 一定是「跨主机」的（同主机的已被 CheckRedirect 跟随掉）。
+	if isRelayableRedirect(resp.StatusCode) {
+		location := resp.Header.Get("Location")
+		if location == "" {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d without Location for %s", resp.StatusCode, videoURL))
+			videoProxyError(c, http.StatusBadGateway, "server_error", "Upstream redirect missing Location")
+			return
+		}
+		// 302 绝不能被客户端长缓存：CDN 直链带 ?v=<mtime_ns> 版本参数，
+		// 一旦被缓存住就会一直拿到旧版本（ArcReel 侧 2026-09-23 踩过同类坑）。
+		c.Writer.Header().Set("Cache-Control", "no-cache")
+		c.Writer.Header().Set("Location", location)
+		c.Writer.WriteHeader(resp.StatusCode)
+		return
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
