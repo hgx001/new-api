@@ -126,8 +126,10 @@ func TestDefaultModelPriceWan27R2VPerSecond(t *testing.T) {
 }
 
 // wan-3.0-特惠（漫屋 → Picsart 特惠档，2026-10-25 由 wan-3.0-无限 改名）：
-// 按次 ¥1.50/条，**不分分辨率**（老板 2026-10-25 定稿：按最低的 480P 定价，
-// 卡片徽标也只显示 ¥1.50）。
+// 按次计费，**480P ¥1.50 / 720P ¥2.00**。
+// ModelPrice 配的是**最低档 480P 的 ¥1.50** —— 模型广场徽标直接显示它，
+// 配 720P 的 ¥2.00 会让徽标显示 ¥2 而客户最低能买到 ¥1.50（老板 2026-10-25 定稿）。
+// 720P 由 manwu adaptor 的 picsart720PSizeRatio 乘上去。
 // 与 MegaAI 的 wan-3.0（¥3.00/条）是**不同商品**（不同渠道/不同上游），
 // 价格必须各自独立，改动其中一条不能带走另一条。
 func TestDefaultModelPriceWan3TeHuiPerCall(t *testing.T) {
@@ -135,7 +137,7 @@ func TestDefaultModelPriceWan3TeHuiPerCall(t *testing.T) {
 
 	price, ok := GetModelPrice("wan-3.0-特惠", false)
 	require.True(t, ok, "wan-3.0-特惠 must have an explicit per-call price")
-	require.InDelta(t, 1.5/USD2RMB, price, 1e-12, "picsart 特惠档必须等于 ¥1.50/条，与分辨率无关")
+	require.InDelta(t, 1.5/USD2RMB, price, 1e-12, "picsart 特惠档基价必须等于最低档 480P 的 ¥1.50")
 
 	// 旧名必须**仍有价**：DB 的 ModelPrice 改名后旧名会落到
 	// ModelPriceHelperPerCall 的「查不到价」分支，任务按次计费算成 ¥0（静默免单）。
@@ -143,7 +145,7 @@ func TestDefaultModelPriceWan3TeHuiPerCall(t *testing.T) {
 	require.True(t, legacyOk, "旧名 wan-3.0-无限 过渡期仍可调用，必须有价，否则按次计费静默算 ¥0")
 	require.InDelta(t, price, legacy, 1e-12, "旧名与新名必须同价，否则两个名字下单是两个价")
 
-	// MegaAI 同名近似商品是 ¥3.00/条，与本档 ¥1.50 不同 —— 显式锁住这个差异，
+	// MegaAI 同名近似商品是 ¥3.00/条，与本档 ¥1.50 基价不同 —— 显式锁住这个差异，
 	// 防止有人图省事把两条合并。
 	base, ok := GetModelPrice("wan-3.0", false)
 	require.True(t, ok)

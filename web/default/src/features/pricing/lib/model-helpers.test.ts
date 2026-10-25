@@ -168,8 +168,8 @@ describe('AutoDL H3 resolution tier note', () => {
       'wan3.0-video-prime-1080p', // 满血 30s 档按次
       'wan-3.0', // MegaAI 渠道：按次 + 分辨率档（无 seconds 倍率）
       'seedance2.5-特惠', // MegaAI 渠道：固定 ¥5.0/条（无 seconds 倍率、无分辨率档）
-      // 漫屋 → Picsart 特惠档：固定 30 秒、按次 ¥1.50/条，不分分辨率
-      // （EstimateBilling 返回 nil）。
+      // 漫屋 → Picsart 特惠档：固定 30 秒、按次 480P ¥1.50 / 720P ¥2.00
+      // （720P 走 size 倍率，不是 seconds 倍率）。
       // 名字是连字符 `wan-3.0-特惠`，与上面点号前缀的 wan3.0-video* 系列不同族，
       // 不能被 `startsWith('wan3.0-video')` 吃掉。
       'wan-3.0-特惠',

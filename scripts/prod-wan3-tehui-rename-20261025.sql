@@ -10,7 +10,8 @@
 --
 -- 影响面（4 处 + 1 处过渡期保留）：
 --   ① models          id=55 广场卡片  → 改名 + 正文改口径
---   ② options.ModelPrice      价目键  → 新增 wan-3.0-特惠 = ¥1.50（按次，不分分辨率）
+--   ② options.ModelPrice      价目键  → 新增 wan-3.0-特惠 = ¥1.50（最低档 480P 基价，
+--      模型广场徽标直接显示它；720P 由 adaptor 的 size 倍率乘到 ¥2.00）
 --   ③ abilities      channel 20      → 新增 wan-3.0-特惠 能力行
 --   ④ channels.models channel 20     → 追加 wan-3.0-特惠（array_append，不整体覆写）
 --   ⑤ 【过渡期保留】旧名 wan-3.0-无限 的 abilities 行 / channels.models 条目 /
@@ -38,7 +39,7 @@ CREATE TABLE IF NOT EXISTS _bak_wan3_tehui_options_20261025 AS
 -- 只在旧名还在、且新名不存在时改，重复执行无副作用。
 UPDATE models
    SET model_name   = 'wan-3.0-特惠',
-       description  = 'Wan 3.0 视频生成（Picsart 特惠档）。固定 30 秒一条：¥1.50/次（480P / 720P 同价）。支持 6 档比例（含自适应），≤10 张参考图，不收参考视频。⚠️ 官网串行出片，单条通常 15–25 分钟，急单请选其它模型',
+       description  = 'Wan 3.0 视频生成（Picsart 特惠档）。固定 30 秒一条：480P ¥1.50/次、720P ¥2.00/次（按请求的分辨率自动计价，未指定时按 720P）。支持 6 档比例（含自适应），≤10 张参考图，不收参考视频。⚠️ 官网串行出片，单条通常 15–25 分钟，急单请选其它模型',
        updated_time = EXTRACT(EPOCH FROM now())::bigint
  WHERE model_name = 'wan-3.0-无限'
    AND deleted_at IS NULL
@@ -49,7 +50,7 @@ UPDATE models
 
 -- 若卡片已是新名（重复执行），只补正文里的旧口径字样。
 UPDATE models
-   SET description  = 'Wan 3.0 视频生成（Picsart 特惠档）。固定 30 秒一条：¥1.50/次（480P / 720P 同价）。支持 6 档比例（含自适应），≤10 张参考图，不收参考视频。⚠️ 官网串行出片，单条通常 15–25 分钟，急单请选其它模型',
+   SET description  = 'Wan 3.0 视频生成（Picsart 特惠档）。固定 30 秒一条：480P ¥1.50/次、720P ¥2.00/次（按请求的分辨率自动计价，未指定时按 720P）。支持 6 档比例（含自适应），≤10 张参考图，不收参考视频。⚠️ 官网串行出片，单条通常 15–25 分钟，急单请选其它模型',
        updated_time = EXTRACT(EPOCH FROM now())::bigint
  WHERE model_name = 'wan-3.0-特惠'
    AND deleted_at IS NULL
@@ -57,13 +58,15 @@ UPDATE models
         OR description LIKE '%官网免费档%'
         OR description LIKE '%480P ¥1.50%');
 
--- ---------- ② 价目键：新增 wan-3.0-特惠 = ¥1.50（按次，不分分辨率）----------
+-- ---------- ② 价目键：新增 wan-3.0-特惠 = ¥1.50（最低档 480P 基价）----------
 -- 单位 USD 等值；1 元 = 1/7.3 USD（与 wan2.7-图生 的 0.3/7.3 同口径）。
 -- ¥1.50 → 1.5/7.3 = 0.2054794520547945
 --
--- 老板 2026-10-25 定稿：按最低的 480P 定价 ¥1.50，卡片徽标也只显示 ¥1.50。
--- 原先「720P 基准 ¥2.00 + 480P 走 size=0.75」的分档方案作废（代码侧
--- picsart480PSizeRatio 已删除）—— 那会让徽标显示 ¥2，而客户最低能买到 ¥1.50。
+-- 老板 2026-10-25 定稿：**720P 仍收 ¥2.00**，只是模型广场徽标要显示最低档 ¥1.50。
+-- 徽标直接读 ModelPrice，所以基价配 480P 的 ¥1.50，720P 由代码里的
+-- picsart720PSizeRatio（2.0/1.5）乘回 ¥2.00。
+-- 原先「720P 基准 ¥2.00 + 480P 走 size=0.75」的方案作废 —— 那会让徽标显示 ¥2，
+-- 而客户最低能买到 ¥1.50，看着像涨价。
 UPDATE options
    SET value = jsonb_set(value::jsonb, '{wan-3.0-特惠}', to_jsonb(1.5 / 7.3::numeric))::text
  WHERE key = 'ModelPrice'
@@ -99,7 +102,7 @@ UPDATE channels
 COMMIT;
 
 -- ---------- 复核（事务外只读，脚本跑完必须逐项核对）----------
--- 期望：两张卡（wan-3.0 = MegaAI ¥3.00 起、wan-3.0-特惠 = Picsart ¥1.50 按次），
+-- 期望：两张卡（wan-3.0 = MegaAI ¥3.00 起、wan-3.0-特惠 = Picsart ¥1.50 最低档），
 --       正文都不含「无限」字样。这里用 `wan-3.0%`（不带横线）才能同时看到 MegaAI 那张。
 SELECT id, model_name, status, left(description, 60) AS descr_head
   FROM models WHERE model_name LIKE 'wan-3.0%' AND deleted_at IS NULL ORDER BY model_name;
@@ -111,7 +114,8 @@ SELECT model, channel_id, "group", enabled FROM abilities
 -- 期望：models 字段同时含新旧两名，且 MegaAI 的 seedance2.5-特惠 等未被破坏。
 SELECT id, name, models, model_mapping FROM channels WHERE id IN (20, 24);
 
--- 期望：wan-3.0-特惠 = ¥1.50；wan-3.0-无限 = ¥1.50（过渡期同价）；wan-3.0 = ¥3.00（不受影响）。
+-- 期望：wan-3.0-特惠 = ¥1.50（480P 基价，720P 由 size 倍率乘到 ¥2.00）；
+--       wan-3.0-无限 = ¥1.50（过渡期同价）；wan-3.0 = ¥3.00（不受影响）。
 SELECT e.key, e.value, round((e.value::numeric * 7.3)::numeric, 4) AS cny
   FROM options o, LATERAL jsonb_each_text(o.value::jsonb) e
  WHERE o.key = 'ModelPrice' AND e.key LIKE 'wan-3.0%' ORDER BY e.key;

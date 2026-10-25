@@ -230,8 +230,9 @@ var wanAllowedResolutions = map[string]bool{"720P": true, "1080P": true}
 // 与 Worker 侧 src/platforms/picsart/params.ts 的官网档位同源，但**收窄**：
 //   - 时长固定 30 秒（官网还有 auto/5/10/15，本商品只卖 30 秒）；
 //   - 分辨率只开 480P/720P（1080P 官网有，但 30 秒 1080P 出片更慢且没溢价）；
-//     两档**同价** ¥1.50/次（2026-10-25 老板定稿：按最低的 480P 定价，
-//     卡片徽标也只显示 ¥1.50，不再出现「徽标 ¥2、最低档 ¥1.50」的误导）。
+//     两档不同价：480P ¥1.50、720P ¥2.00。ModelPrice 配**最低档 480P** 的 ¥1.50，
+//     这样模型广场徽标显示「¥1.50 / 请求」；720P 由 EstimateBilling 的 size 倍率
+//     乘回 ¥2.00（见 picsart720PSizeRatio）。
 //   - 比例六档，含官网默认的 adaptive，**没有 21:9**（Wan 3.0 官网不支持）。
 //
 // 非法值一律 400，不静默回落 —— 客户以为买的是 10 秒、我们交付 30 秒，
@@ -240,6 +241,15 @@ const (
 	picsartFixedDuration      = 30
 	picsartDefaultResolution  = "720P"
 	picsartMaxReferenceImages = 10
+	// picsart720PSizeRatio 是 720P 相对 480P 基准价的倍率。
+	//
+	// 对外价（老板 2026-10-25 定稿）：480P ¥1.50/次、720P ¥2.00/次。
+	// ModelPrice 只能配一个数，且模型广场徽标直接显示它 —— 所以配**最低档**
+	// 480P 的 ¥1.50，720P 用本倍率乘回 ¥2.00：
+	//   1.333… = 2.00 / 1.50
+	// ⚠️ 改价时 ModelPrice['wan-3.0-特惠'] 与本倍率必须同时改，否则两档价会错位
+	//    （测试 TestPicsartUnlimited720PRatioMatchesPriceList 锁住了这层关系）。
+	picsart720PSizeRatio = 2.0 / 1.5
 )
 
 var picsartAllowedResolutions = map[string]bool{"480P": true, "720P": true}
@@ -780,14 +790,19 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 }
 
 // EstimateBilling 只对需要「基价 × 倍率」的模型返回倍率：
-// 豆包 2.0 Fast 按秒（¥0.1/秒 × 秒数）、图片按张（张数作为 n 倍率乘到 ¥0.3/张 上）。
+// 豆包 2.0 Fast 按秒（¥0.1/秒 × 秒数）、图片按张（张数作为 n 倍率乘到 ¥0.3/张 上）、
+// Picsart 特惠档按分辨率（720P 取 480P 基价的 1.333…）。
 //
-// 其余按次模型（豆包 2.5、dola 两档、Gemini Veo、反解、Picsart 特惠档）必须返回 nil，
-// 否则 relay_task.go 会把按次价再乘一遍（¥1.5/次 × 30 秒 = ¥45，账实不符）。
+// 其余按次模型（豆包 2.5、dola 两档、Gemini Veo、反解）必须返回 nil，否则
+// relay_task.go 会把按次价再乘一遍（¥3/次 × 30 秒 = ¥90，账实不符）。
 //
-// ⚠️ Picsart 特惠档 2026-10-25 起**不再按分辨率分档**（老板定稿：按最低的 480P
-// 统一 ¥1.50/次）。原先 480P 返回 size=0.75 的例外已删除 —— 留着会让 480P 变成
-// ¥1.125，与价目表不符。分辨率仍只允许 480P/720P（校验层拦），但两者同价。
+// ⚠️ picsart 是**故意**返回倍率的例外：对外价是「480P ¥1.50 / 720P ¥2.00」，
+// 而 ModelPrice 只能配一个数、且模型广场的徽标直接显示它。老板 2026-10-25
+// 定稿：**基价配最低档 480P 的 ¥1.50**，让徽标显示「¥1.50 / 请求」；
+// 720P 用 size=2.0/1.5 乘回 ¥2.00。
+//   - 反过来配 720P 基价 ¥2.00 会让徽标显示 ¥2，而客户最低能买到 ¥1.50，
+//     看着像涨价（这就是本次调整的起因）。
+//   - 缺省分辨率在归一阶段已落 720P，所以走倍率分支，不会漏乘。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
 	if c == nil {
 		return nil
@@ -801,6 +816,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	}
 	if req.Kind == kindDoubaoVideo && req.Model == ModelDoubao20Fast && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
+	}
+	// Picsart 特惠档：480P 是基准价（返回 nil = 不乘，¥1.50），720P 乘 1.333… → ¥2.00。
+	// 改价时 ModelPrice 与本倍率必须一起改（见 picsart720PSizeRatio 注释）。
+	if req.Kind == kindPicsartVideo && req.Resolution == "720P" {
+		return map[string]float64{"size": picsart720PSizeRatio}
 	}
 	return nil
 }
