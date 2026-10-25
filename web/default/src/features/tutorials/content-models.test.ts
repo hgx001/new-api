@@ -377,6 +377,7 @@ describe('tutorials model guide content', () => {
       'wan2.7-r2v',
       'model-wan27-r2v',
       'wan3.0-480p',
+      'wan3.0-video-prime-1080p',
       'model-wan30-prime',
     ]) {
       assert.equal(sectionsJson.includes(gone), false, `still documented: ${gone}`)
