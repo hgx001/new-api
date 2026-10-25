@@ -1121,6 +1121,41 @@ func TestDoubaoVideoRoutesToDoubaoPlatform(t *testing.T) {
 	assert.Equal(t, float64(30), vp["duration"], "豆包支持 30s 档（与 dola 2.0 的三档不同）")
 }
 
+// seedance-2-5（豆包官网）**不支持**音频参数：Worker 侧豆包注入器（src/platforms/doubao/）
+// 没有任何音频/音轨开关，官网 UI 上那个能力我们不去驱动。
+//
+// 但「不支持」不等于「要报错」。第三方客户端常按别家习惯带 audio / generate_audio /
+// with_audio 过来（老板 2026-10-25 明确：忽略就行）。这些键不在 clientRequest 里，
+// encoding/json 解码时直接丢弃，所以天然不会 400 —— 本测试把这个契约钉住，
+// 顺带断言它**不能漏进 videoParams**：ArcReel 对未知键要么 422、要么静默吞，
+// 两种都会让「客户端以为要了音频、我们以为没要」变成一次说不清的争议。
+func TestDoubaoIgnoresAudioFields(t *testing.T) {
+	bodies := []string{
+		`{"model":"seedance-2-5","prompt":"x","audio":true}`,
+		`{"model":"seedance-2-5","prompt":"x","generate_audio":true}`,
+		`{"model":"seedance-2-5","prompt":"x","with_audio":"yes","audio_format":"mp3"}`,
+	}
+	banned := []string{"audio", "generate_audio", "generateAudio", "with_audio", "audio_format"}
+	for _, body := range bodies {
+		c, info, a := postVideoCtx(t, body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), "音频字段必须被忽略而不是报错: %s", body)
+
+		reader, err := a.BuildRequestBody(c, info)
+		require.NoError(t, err, body)
+		payload := decodePayload(t, reader)
+
+		vp, _ := payload["videoParams"].(map[string]any)
+		require.NotNil(t, vp, body)
+		assert.Equal(t, "doubao-seedance-2-5-260628", vp["model"], body)
+		for _, key := range banned {
+			_, inVideoParams := vp[key]
+			assert.False(t, inVideoParams, "%s: videoParams 不应带 %s", body, key)
+			_, atTop := payload[key]
+			assert.False(t, atTop, "%s: 建单载荷顶层不应带 %s", body, key)
+		}
+	}
+}
+
 func TestDoubaoRatioNotInventedWhenUnspecified(t *testing.T) {
 	// 豆包「未指定不编造」：公共段 resolveRatio 会把空值填成 16:9（dola 口径），
 	// 豆包必须覆盖回空 —— Worker 端保持官网当前状态（出厂「自动」档）。
