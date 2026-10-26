@@ -107,6 +107,17 @@ const (
 
 	normalizedRequestKey = "manwu_request"
 
+	// CtxKeyManwuIdempotencyKey：按「客户端本次请求」缓存的幂等键。重试（同渠道
+	// 或换渠道）都会重新走 ValidateRequestAndSetAction，若每次都用新 UUID，ArcReel
+	// 的幂等重放就永远不命中 —— 504 这类「提交结果未知」的失败重试会重复建单、
+	// 重复预扣。gen-78754689fdc325f5ce17510c 事故（2026-10-25）根因之一。
+	CtxKeyManwuIdempotencyKey = "manwu_idempotency_key"
+
+	// CtxKeyTaskSubmitIdempotent：标记本任务提交是幂等的（走 ArcReel 唯一索引 +
+	// 幂等重放防重）。controller 据此对 408/504/524 这类「结果未知」放行重试，
+	// 其他渠道保持原有的不重试语义。
+	CtxKeyTaskSubmitIdempotent = "task_submit_idempotent"
+
 	reasonCancelled = "任务已取消"
 	// reasonEmptyResult：上游报 ready 却既没有产物 URL 也没有文本结果。判失败而不是
 	// 成功——空交付必须触发退款，否则用户为「什么都没拿到」付了钱。
@@ -559,10 +570,24 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		)
 	}
 
+	// 幂等键口径：客户端显式传入则原样用（每次重试天然相同）；否则从 gin context
+	// 取本请求缓存的 key，没有才生成新的并缓存 —— 保证重试复用同一个 key，让
+	// ArcReel 的 (user_id, idempotency_key) 唯一索引 + 幂等重放真正生效。
+	idemKey := req.IdempotencyKey
+	if idemKey == "" {
+		idemKey = c.GetString(CtxKeyManwuIdempotencyKey)
+		if idemKey == "" {
+			idemKey = idempotencyKeyPrefix + common.GetUUID()
+		}
+		c.Set(CtxKeyManwuIdempotencyKey, idemKey)
+	}
+	// 标记提交幂等：controller 的 shouldRetryTaskRelay 据此对 408/504/524 放行重试。
+	c.Set(CtxKeyTaskSubmitIdempotent, true)
+
 	norm := &normalizedRequest{
 		Model:          strings.TrimSpace(req.Model),
 		Kind:           spec.Kind,
-		IdempotencyKey: firstNonEmpty(req.IdempotencyKey, idempotencyKeyPrefix+common.GetUUID()),
+		IdempotencyKey: idemKey,
 	}
 
 	if spec.Kind == kindReverse {

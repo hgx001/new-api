@@ -18,6 +18,7 @@ import (
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/channel/task/manwu"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
@@ -641,6 +642,22 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	}
 	if taskErr.StatusCode == 307 {
 		return true
+	}
+	// 幂等任务提交（manwu/ArcReel 链路）：408/504/524 意味着「提交结果未知」——
+	// 请求可能已被 ArcReel 收下并开始计费/执行。这类失败不重试会造成用户侧
+	// 无单无扣、上游白烧额度（gen-78754689fdc325f5ce17510c 事故：nginx 504 后
+	// ArcReel 迟到落库，用户 0 消费、我们烧 10 小时 Picsart 额度）。幂等键已按
+	// 请求固定（adaptor 的 CtxKeyManwuIdempotencyKey），ArcReel 靠
+	// (user_id, idempotency_key) 唯一索引 + 幂等重放防重，重试是安全的。
+	// 其他渠道（非幂等提交）保持原有语义：408/504/524 依旧不重试。
+	if taskErr.StatusCode == http.StatusRequestTimeout ||
+		taskErr.StatusCode == http.StatusGatewayTimeout ||
+		taskErr.StatusCode == 524 {
+		if v, ok := c.Get(manwu.CtxKeyTaskSubmitIdempotent); ok {
+			if idem, isBool := v.(bool); isBool && idem {
+				return true
+			}
+		}
 	}
 	if taskErr.StatusCode/100 == 5 {
 		// 超时不重试
