@@ -310,6 +310,7 @@ describe('tutorials model guide content', () => {
       'seedance2.5-特惠',
       'wan-3.0',
       'wan-3.0-特惠',
+      'wan2.7-r2v',
       'wan2.7-图生',
       'wan2.7-编辑',
       'wan3.0-smart',
@@ -417,14 +418,13 @@ describe('tutorials model guide content', () => {
   // 回归守卫：2026-10-25 下架 wan3.0-1080p-慢速 / wan2.7-r2v / wan3.0-480p
   // （接口层 channels.models + abilities + 广场卡片 + ModelPrice 同时摘除）。
   // 文档必须同步移除，否则客户照文档调用只会拿到
-  // 503「No available channel for model ...」。注意 wan2.7-图生 / wan2.7-编辑
-  // 是另外两个仍在售的模型名，别把它们一起删了。
-  test('does not document the de-listed wan3.0 / wan2.7 models', () => {
+  // 503「No available channel for model ...」。
+  // ⚠️ 2026-10-26 wan2.7-r2v 恢复上架 → 它的两个名字从本守卫移除，
+  //    并回到「广场在售模型必须逐个写进教程」那份清单里。
+  test('does not document the de-listed wan3.0 models', () => {
     for (const gone of [
       'wan3.0-1080p-慢速',
       'model-wan30-1080p-slow',
-      'wan2.7-r2v',
-      'model-wan27-r2v',
       'wan3.0-480p',
       'wan3.0-video-prime-1080p',
       'model-wan30-prime',
@@ -433,6 +433,7 @@ describe('tutorials model guide content', () => {
     }
     // 同前缀的在售模型不能被误删
     assert.equal(sectionsJson.includes('wan2.7-图生'), true)
+    assert.equal(sectionsJson.includes('wan2.7-编辑'), true)
   })
 
   // 回归守卫：2026-10-12 豆包公开名去掉 db- 前缀，旧名退役后文档不得再出现，
