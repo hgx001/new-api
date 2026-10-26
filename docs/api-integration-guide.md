@@ -14,7 +14,6 @@
 
 - **过期时间**：可设永久或指定日期
 - **额度**：可设限额或「不限量」（不限量时只消耗所属用户的余额）
-- **IP 白名单**：设置后仅白名单内的 IP 可用；下游机器固定 IP 时强烈建议设置
 - **分组**：令牌可绑定分组，走对应渠道池
 
 ```bash
@@ -26,7 +25,6 @@ curl https://api.heibaidao.cn/v1/models \
 |---|---|---|
 | 没带 key | 401 | `{"error":{"message":"无效的令牌","type":"new_api_error","code":""}}`（未提供与无效都归为同一文案） |
 | key 不存在 / key 禁用或过期 / key 额度耗尽 | 401 | 同上 |
-| key 配了 IP 白名单且你的 IP 不在其中 | 403 | `{"error":{"message":"您的 IP 不在令牌允许访问的列表中",...}}` |
 | 所属用户被封禁 | 403 | `{"error":{"message":"用户已被封禁",...}}` |
 
 > 错误响应统一是 OpenAI 风格：`error.message` 可读、`error.type` 固定为 `new_api_error`、`error.code` 可能为空字符串。
@@ -153,7 +151,7 @@ Authorization: Bearer sk-xxxxxxxx
 |---|---|
 | 200 | 查询成功。**余额很小也返回 200**——余额不足不是查询失败，是查出来一个很小的数 |
 | 401 | 没带 key / key 不存在 / key 被禁用或过期 |
-| 403 | key 配了 IP 白名单且你的 IP 不在其中 / 所属用户被封禁 |
+| 403 | 所属用户被封禁 |
 | 429 | 触发限流（见 3.5），退避后重试。429 响应不带 `Retry-After` 头，按 §3.5 的固定间隔退避即可 |
 | 500 | 服务端查询失败，错误体同 §1 的 OpenAI 风格（`error.type = server_error`），可重试 |
 
@@ -212,7 +210,7 @@ while True:
 1. **模型列表里有少量历史遗留名字不可调用**：`/v1/models` 目前会列出少量已下架的 `gpt-5.x` 旧名，调用返回 503 `model_not_found` 且**不扣费**。以下游实际测试结果为准，别把列表当可用性承诺；发现某个模型调不通请联系管理员确认
 2. **别把 `remain_token` 当唯一余额**：不限量令牌它是 `null`；限额令牌它可能大于钱包余额。统一用 `effective_remain`
 3. **金额单位是 quota 不是元**：程序内一律用 `effective_remain`（quota），要展示再除以 `quota_per_unit`（或直接用 `display_remain`）
-4. **IP 白名单是双向的**：控制台给令牌配白名单后，只有白名单 IP 能访问全部接口（含余额查询）。换服务器 / 上 NAT 后 IP 变化会导致 403，需同步更新白名单
+4. **令牌不限制来源 IP**：key 在任何 IP 都能访问全部接口（含余额查询）；需要限 IP 请在网关层（nginx / CDN）做
 5. **视频类任务是异步的**：`POST /v1/videos` 建单后轮询 `GET /v1/videos/{task_id}` 取状态，产物走 `GET /v1/videos/{task_id}/content`；反解类参考视频只收公网 `http(s)` URL
 
 ---

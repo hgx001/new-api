@@ -108,7 +108,7 @@ const QUOTA_QUERY_ITEMS = [
   'quota.remain_user 是用户钱包剩余 quota；quota.remain_token 是令牌剩余额度，不限量令牌为 null。quota.effective_remain 是下游应使用的可用余额：有限额令牌取 min(remain_user, remain_token)，不限量令牌取 remain_user。',
   '程序判断和告警请使用 effective_remain（quota）；display_remain 仅供展示，受站点币种与汇率设置影响。quota_per_unit 表示 500000 quota = $1。',
   '响应可能因批量落库最多滞后 5 秒；建议每 10 秒或更长时间轮询一次。限流为每用户 6 次 / 60 秒；429 不带 Retry-After，等下一轮再请求。',
-  'HTTP 状态：200 成功（余额低也返回 200）；401 API Key 无效/缺失；403 IP 白名单拒绝、用户封禁或调用权限不足；429 触发限流；500 查询失败。错误体为 OpenAI 风格 error 对象。',
+  'HTTP 状态：200 成功（余额低也返回 200）；401 API Key 无效/缺失；403 用户封禁或调用权限不足；429 触发限流；500 查询失败。错误体为 OpenAI 风格 error 对象。',
 ]
 
 const QUOTA_QUERY_EXAMPLE = (url: string) => `curl ${url}/v1/dashboard/billing/quota \\

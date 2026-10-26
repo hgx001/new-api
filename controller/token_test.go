@@ -60,7 +60,6 @@ type legacyToken struct {
 	UnlimitedQuota     bool
 	ModelLimitsEnabled bool
 	ModelLimits        string  `gorm:"type:text"`
-	AllowIps           *string `gorm:"default:''"`
 	UsedQuota          int     `gorm:"default:0"`
 	Group              string  `gorm:"column:group;default:''"`
 	CrossGroupRetry    bool
@@ -297,7 +296,6 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 		UnlimitedQuota:     true,
 		ModelLimitsEnabled: false,
 		ModelLimits:        "",
-		AllowIps:           common.GetPointer(""),
 		UsedQuota:          0,
 		Group:              "default",
 		CrossGroupRetry:    false,
@@ -338,7 +336,6 @@ func runTokenMigrationCompatibilityTest(t *testing.T, db *gorm.DB, dialect strin
 		UnlimitedQuota:     true,
 		ModelLimitsEnabled: false,
 		ModelLimits:        "",
-		AllowIps:           common.GetPointer(""),
 		UsedQuota:          0,
 		Group:              "default",
 		CrossGroupRetry:    false,

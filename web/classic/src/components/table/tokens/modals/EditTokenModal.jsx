@@ -78,7 +78,6 @@ const EditTokenModal = (props) => {
     unlimited_quota: true,
     model_limits_enabled: false,
     model_limits: [],
-    allow_ips: '',
     group: '',
     cross_group_retry: false,
     tokenCount: 1,
@@ -622,20 +621,6 @@ const EditTokenModal = (props) => {
                       filter={selectFilter}
                       autoClearSearchValue={false}
                       searchPosition='dropdown'
-                      showClear
-                      style={{ width: '100%' }}
-                    />
-                  </Col>
-                  <Col span={24}>
-                    <Form.TextArea
-                      field='allow_ips'
-                      label={t('IP白名单（支持CIDR表达式）')}
-                      placeholder={t('允许的IP，一行一个，不填写则不限制')}
-                      autosize
-                      rows={1}
-                      extraText={t(
-                        '请勿过度信任此功能，IP可能被伪造，请配合nginx和cdn等网关使用',
-                      )}
                       showClear
                       style={{ width: '100%' }}
                     />

@@ -254,46 +254,6 @@ const renderModelLimits = (text, record, t) => {
   }
 };
 
-// Render IP restrictions column
-const renderAllowIps = (text, t) => {
-  if (!text || text.trim() === '') {
-    return (
-      <Tag color='white' shape='circle'>
-        {t('无限制')}
-      </Tag>
-    );
-  }
-
-  const ips = text
-    .split('\n')
-    .map((ip) => ip.trim())
-    .filter(Boolean);
-
-  const displayIps = ips.slice(0, 1);
-  const extraCount = ips.length - displayIps.length;
-
-  const ipTags = displayIps.map((ip, idx) => (
-    <Tag key={idx} shape='circle'>
-      {ip}
-    </Tag>
-  ));
-
-  if (extraCount > 0) {
-    ipTags.push(
-      <Tooltip
-        key='extra'
-        content={ips.slice(1).join(', ')}
-        position='top'
-        showArrow
-      >
-        <Tag shape='circle'>{'+' + extraCount}</Tag>
-      </Tooltip>,
-    );
-  }
-
-  return <Space wrap>{ipTags}</Space>;
-};
-
 // Render separate quota usage column
 const renderQuotaUsage = (text, record, t) => {
   const { Paragraph } = Typography;
@@ -523,11 +483,6 @@ export const getTokensColumns = ({
       title: t('可用模型'),
       dataIndex: 'model_limits',
       render: (text, record) => renderModelLimits(text, record, t),
-    },
-    {
-      title: t('IP限制'),
-      dataIndex: 'allow_ips',
-      render: (text) => renderAllowIps(text, t),
     },
     {
       title: t('创建时间'),
