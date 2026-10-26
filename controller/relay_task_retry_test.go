@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relay/channel/task/manwu"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,5 +59,39 @@ func TestShouldRetryTaskRelayOnBalanceError(t *testing.T) {
 		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 		ctx.Set("specific_channel_id", 17)
 		assert.False(t, shouldRetryTaskRelay(ctx, 17, testTaskError(400, "账户余额不足", false), 1))
+	})
+}
+
+// 幂等任务提交（manwu/ArcReel）：408/504/524 是「提交结果未知」，不重试会造成
+// 用户无单无扣、上游白烧额度（gen-78754689fdc325f5ce17510c 事故）。幂等键已按
+// 请求固定，ArcReel 靠唯一索引 + 幂等重放防重，此时重试是安全的。
+func TestShouldRetryTaskRelayIdempotentSubmit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	newIdemCtx := func() *gin.Context {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set(manwu.CtxKeyTaskSubmitIdempotent, true)
+		return ctx
+	}
+
+	t.Run("idempotent 408 retries", func(t *testing.T) {
+		assert.True(t, shouldRetryTaskRelay(newIdemCtx(), 17, testTaskError(408, "context deadline exceeded", false), 1))
+	})
+	t.Run("idempotent 504 retries", func(t *testing.T) {
+		assert.True(t, shouldRetryTaskRelay(newIdemCtx(), 17, testTaskError(504, "<html>504 Gateway Time-out</html>", false), 1))
+	})
+	t.Run("idempotent 524 retries", func(t *testing.T) {
+		assert.True(t, shouldRetryTaskRelay(newIdemCtx(), 17, testTaskError(524, "a timeout occurred", false), 1))
+	})
+	t.Run("idempotent 400 still never retries", func(t *testing.T) {
+		assert.False(t, shouldRetryTaskRelay(newIdemCtx(), 17, testTaskError(400, "prompt is required", true), 1))
+	})
+	t.Run("non-idempotent 408 stays no-retry", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		assert.False(t, shouldRetryTaskRelay(ctx, 17, testTaskError(408, "azure timeout", false), 1))
+	})
+	t.Run("non-idempotent 504 stays no-retry", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		assert.False(t, shouldRetryTaskRelay(ctx, 17, testTaskError(504, "gateway timeout", false), 1))
 	})
 }
