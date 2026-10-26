@@ -68,7 +68,7 @@ func TestInitFillsChannelMeta(t *testing.T) {
 	assert.Empty(t, noInit.baseURL)
 }
 
-// 最小合法请求：仅 model + prompt，其余走缺省（时长锁定 10、比例 16:9、自动幂等键）。
+// 最小合法请求：仅 model + prompt，其余走缺省（时长 15、比例 16:9、自动幂等键）。
 func TestValidateAcceptsMinimalRequest(t *testing.T) {
 	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"一只猫在屋顶奔跑"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
@@ -77,7 +77,7 @@ func TestValidateAcceptsMinimalRequest(t *testing.T) {
 	req, err := getNormalizedRequest(c)
 	require.NoError(t, err)
 	assert.Equal(t, "一只猫在屋顶奔跑", req.Prompt)
-	assert.Equal(t, 10, req.Duration)
+	assert.Equal(t, 15, req.Duration)
 	assert.Equal(t, "16:9", req.Ratio)
 	assert.Empty(t, req.Images)
 	assert.True(t, strings.HasPrefix(req.IdempotencyKey, "manwu-"))
@@ -116,13 +116,13 @@ func TestValidateRejectsSeedance25VariableSpec(t *testing.T) {
 func TestValidateResolvesAliases(t *testing.T) {
 	c, info, a := postVideoCtx(t, `{
 		"model":"seedance-2.0","prompt":"hi",
-		"seconds":"10","aspect_ratio":"9:16",
+		"seconds":"15","aspect_ratio":"9:16",
 		"images":["https://a.example/1.png"],
 		"idempotency_key":"my-key"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	req, err := getNormalizedRequest(c)
 	require.NoError(t, err)
-	assert.Equal(t, 10, req.Duration)
+	assert.Equal(t, 15, req.Duration)
 	assert.Equal(t, "9:16", req.Ratio)
 	assert.Equal(t, []string{"https://a.example/1.png"}, req.Images)
 	assert.Equal(t, "my-key", req.IdempotencyKey)
@@ -164,8 +164,7 @@ func TestValidateRejectsIllegalRequests(t *testing.T) {
 		"bad json":           {`{`, "invalid_request"},
 		"seconds over range": {`{"model":"seedance-2.0","prompt":"hi","seconds":20}`, "invalid_duration"},
 		"duration below min": {`{"model":"seedance-2.0","prompt":"hi","duration":4}`, "invalid_duration"},
-		"duration not 10":    {`{"model":"seedance-2.0","prompt":"hi","duration":15}`, "invalid_duration"},
-		"seconds not 10":     {`{"model":"seedance-2.0","prompt":"hi","seconds":5}`, "invalid_duration"},
+		"duration 30":        {`{"model":"seedance-2.0","prompt":"hi","duration":30}`, "invalid_duration"},
 		"seconds malformed":  {`{"model":"seedance-2.0","prompt":"hi","seconds":"abc"}`, "invalid_duration"},
 		"seconds float":      {`{"model":"seedance-2.0","prompt":"hi","seconds":10.5}`, "invalid_duration"},
 		"ratio not allowed":  {`{"model":"seedance-2.0","prompt":"hi","ratio":"16:10"}`, "invalid_ratio"},
@@ -413,7 +412,7 @@ func TestBuildRequestBodyMapsSeedance25FixedPayload(t *testing.T) {
 	assert.Equal(t, "720p", videoPayload["resolution"])
 }
 
-// 无参考图时 inputs 必须整体省略（omitempty），时长缺省时显式下发锁定的 10 秒。
+// 无参考图时 inputs 必须整体省略（omitempty），时长缺省时显式下发 15（与上游兜底口径一致）。
 func TestBuildRequestBodyOmitsEmptyInputs(t *testing.T) {
 	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
@@ -430,7 +429,7 @@ func TestBuildRequestBodyOmitsEmptyInputs(t *testing.T) {
 
 	vp, ok := payload["videoParams"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, float64(dolaFixedDuration), vp["duration"])
+	assert.Equal(t, float64(defaultDuration), vp["duration"])
 	assert.Equal(t, defaultRatio, vp["ratio"])
 }
 
@@ -1188,31 +1187,35 @@ func TestDoubao20FastRejects30s(t *testing.T) {
 	}
 }
 
-// dola（seedance-2.0）时长锁定 10 秒（2026-10-24 老板定稿）：
-// 未指定 → 下发 10；显式传 10 → 10；显式传其它值 → 400 invalid_duration
-// （fail-loud，不静默改档）。价格不变（按次计费，与时长无关）。
-// ⚠️ 豆包 2.0 Fast 仍是 5–15 秒区间透传，见 TestDoubao20FastDurationPassesThroughArbitraryValues。
-func TestDolaDurationIsFixedAt10Seconds(t *testing.T) {
-	// 显式传 10（两个字段名）→ 受理且归一到 10。
-	for _, field := range []string{"seconds", "duration"} {
-		c, info, a := postVideoCtx(t,
-			fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":10}`, ModelDola, field))
-		require.Nil(t, a.ValidateRequestAndSetAction(c, info), "dola %s=10 应被受理", field)
+// dola（seedance-2.0）时长口径为 5–15 秒区间（2026-10-24 曾锁定 10 秒，
+// 2026-10-26 按用户要求恢复为区间透传）：区间内任意整数秒原样透传、不吸附，
+// 区间外一律 400；未指定 → 缺省 15。价格不变（按次计费，与时长无关）。
+// ⚠️ 豆包 2.0 Fast 同口径，见 TestDoubao20FastDurationPassesThroughArbitraryValues。
+func TestDolaDurationPassesThroughArbitraryValues(t *testing.T) {
+	// 区间内任意整数秒原样透传（含非档位值 7）。
+	for _, value := range []int{5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} {
+		for _, field := range []string{"seconds", "duration"} {
+			c, info, a := postVideoCtx(t,
+				fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, ModelDola, field, value))
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info),
+				"dola %s=%d 应在区间内被受理", field, value)
 
-		req, err := getNormalizedRequest(c)
-		require.NoError(t, err)
-		assert.Equal(t, 10, req.Duration, "dola %s=10 应归一到 10", field)
+			req, err := getNormalizedRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, value, req.Duration,
+				"dola %s=%d 应原样透传（任意秒真跑，不吸附）", field, value)
+		}
 	}
 
-	// 未指定时长 → 缺省 10。
+	// 未指定时长 → 缺省 15（与上游兜底口径一致）。
 	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi"}`)
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 	req, err := getNormalizedRequest(c)
 	require.NoError(t, err)
-	assert.Equal(t, 10, req.Duration, "dola 未指定时长应缺省 10 秒")
+	assert.Equal(t, 15, req.Duration, "dola 未指定时长应缺省 15 秒")
 
-	// 其它任何时长一律 400（含原区间内的 5/7/15 与区间外的 4/16/30）。
-	for _, value := range []int{4, 5, 7, 9, 11, 15, 16, 30} {
+	// 区间外一律 400：下限以下、上限以上、以及 2.0 系没有的 30s 档。
+	for _, value := range []int{4, 16, 30} {
 		for _, field := range []string{"seconds", "duration"} {
 			c, info, a := postVideoCtx(t,
 				fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, ModelDola, field, value))

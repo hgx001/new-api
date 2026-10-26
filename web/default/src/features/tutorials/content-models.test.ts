@@ -269,23 +269,24 @@ describe('tutorials model guide content', () => {
     assert.equal(sectionsJson.includes('¥1.00 / 次'), true)
   })
 
-  // seedance-2.0 时长锁定 10 秒（2026-10-24）：文档不能再写 5/10/15 三档，
-  // 否则客户按 5 秒提交会被网关 400（invalid_duration）后以为是自己写错了参数。
-  test('documents seedance-2.0 as a fixed 10 second model', () => {
+  // seedance-2.0 时长口径：5–15 秒区间逐秒透传（2026-10-24 曾锁定 10 秒，
+  // 2026-10-26 恢复为区间）。文档必须写对区间，否则客户按 5 秒提交会被网关
+  // 400（invalid_duration）后以为是自己写错了参数。
+  test('documents seedance-2.0 as a 5-15 second per-second model', () => {
     assert.equal(
-      sectionsJson.includes('seedance-2.0｜视频（按次）｜¥1.00 / 次，固定 10 秒'),
+      sectionsJson.includes('seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒'),
       true,
-      'the model overview must state that seedance-2.0 is fixed at 10 seconds'
+      'the model overview must state that seedance-2.0 supports 5-15 seconds'
     )
     assert.equal(
-      sectionsJson.includes('seconds：固定 10 秒'),
+      sectionsJson.includes('seconds / duration：5–15 秒逐秒，默认 15'),
       true,
-      'the seedance-2.0 parameter section must state the fixed 10 second duration'
+      'the seedance-2.0 parameter section must state the 5-15 second range'
     )
     assert.equal(
-      sectionsJson.includes('5 / 10 / 15，默认 15'),
+      sectionsJson.includes('固定 10 秒'),
       false,
-      'seedance-2.0 must no longer advertise the 5/10/15 duration tiers'
+      'seedance-2.0 must no longer be documented as fixed at 10 seconds'
     )
   })
 

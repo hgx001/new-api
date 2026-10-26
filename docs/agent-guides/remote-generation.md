@@ -46,7 +46,7 @@
 
 - dola 公共名是 `seedance-2.0`（点号）；豆包是 `seedance-2-0-fast` / `seedance-2-5`（连字符），转发后者时翻译成 `doubao-*` 官网真名。
 - `seedance-2.5` 的 dola 30s 已按既定业务下架/退役；旧代码还存在表项不等于可售能力，不据此恢复 channels/abilities 或承诺 Worker 30s。
-- dola（`seedance-2.0`）时长锁定 10 秒：缺省 10，显式传其它值 400 invalid_duration，不静默改档；按次价与时长无关。
+- dola（`seedance-2.0`）时长为 5–15 秒区间：区间内任意整数秒原样透传、不吸附，区间外（含 30s）400 invalid_duration，缺省 15；按次价与时长无关。
 - 豆包 Fast 合法 5–15s 任意整数原样透传、不吸附；豆包2.5为5/10/15/30档，未指定比例不编造，豆包不接受 resolution。
 - `gemini-web-video` 故意不叫官方 `veo-*`，避免渠道重名；Veo 不接受自定 seconds/duration/resolution，不能静默丢弃后假装执行。
 - `Nano Banana Pro` 对应 ArcReel 抽象 `manwu-image`，内部实际站点由服务端路由；图片不接受视频参数。
