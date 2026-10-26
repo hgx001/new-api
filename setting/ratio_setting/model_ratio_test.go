@@ -23,6 +23,14 @@ func TestDefaultModelRatioGpt6Family(t *testing.T) {
 	require.Equal(t, 8.0, GetCompletionRatio("gpt-6-luna"), "gpt-6 must inherit the gpt-5 completion ratio")
 	require.Equal(t, 8.0, GetCompletionRatio("gpt-6-sol"))
 
+	// gpt-6.1-sol：上游（sub2api）实测可用，与 gpt-6-sol 同为 sol 档 → 必须同价。
+	// 它的输入倍率不会被前缀兜底（GetModelRatio 精确查表），所以必须显式登记；
+	// 补全倍率则由 gpt-6* 硬编码兜底为 8。
+	sol61, ok, _ := GetModelRatio("gpt-6.1-sol")
+	require.True(t, ok, "gpt-6.1-sol must have an explicit ratio")
+	require.Equal(t, sol, sol61, "gpt-6.1-sol must match gpt-6-sol price")
+	require.Equal(t, 8.0, GetCompletionRatio("gpt-6.1-sol"))
+
 	// gpt-5.6 只保留 luna/sol 两个兼容别名（渠道映射到 gpt-6），
 	// 同名同价：下游无需改模型名即可平滑迁移。
 	for alias, target := range map[string]string{"gpt-5.6-luna": "gpt-6-luna", "gpt-5.6-sol": "gpt-6-sol"} {

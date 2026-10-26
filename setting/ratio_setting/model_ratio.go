@@ -100,6 +100,10 @@ var defaultModelRatio = map[string]float64{
 	"gpt-5-nano-2025-08-07":                   0.025,
 	"gpt-6-luna":                              0.064212, // 与 gpt-5.6-luna 同名同价
 	"gpt-6-sol":                               1.28424,  // 与 gpt-5.6-sol 同名同价
+	// gpt-6.1-sol：上游（sub2api）实测可用、与 gpt-6-sol 同为 sol 档 → 同价。
+	// ⚠️ 必须显式登记：getHardcodedCompletionModelRatio 只兜底「补全倍率 8」，
+	// 输入侧倍率不会按前缀回落（GetModelRatio 精确查表），不登记就是「无价格可用」。
+	"gpt-6.1-sol":                             1.28424,
 	"MiniMax-M3.1":                            0.015103, // 沿用 MiniMax-M3 输入价格
 	// gpt-5.6 旧名保留为兼容别名（渠道 model_mapping 转发到 gpt-6），
 	// 不在模型广场展示，价格与同名 gpt-6 保持一致。
