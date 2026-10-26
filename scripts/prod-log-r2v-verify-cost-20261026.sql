@@ -13,7 +13,7 @@
 \set ON_ERROR_STOP on
 
 INSERT INTO logs (user_id, created_at, type, content, username, token_name, model_name, quota, channel_id)
-SELECT t.user_id, EXTRACT(EPOCH FROM TIMESTAMP '2026-10-26 13:57:21')::bigint, 5,
+SELECT t.user_id, EXTRACT(EPOCH FROM TIMESTAMP '2026-10-26 13:57:21' AT TIME ZONE 'Asia/Shanghai')::bigint, 5,
        '[OPERATOR-COST-ACCOUNTING] wan2.7-r2v 恢复上架后的授权真机验证（1 条，task '
        || t.task_id || '）。上游真实扣 10 积分（2 积分/秒 × 5 秒，chargedPoints=10、'
        || 'refundedPoints=0）≈ ¥0.10（1 积分 ≈ ¥0.01）；本站收 34245 quota = ¥0.50'

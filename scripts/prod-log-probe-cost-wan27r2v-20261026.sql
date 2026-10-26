@@ -19,7 +19,7 @@
 \set ON_ERROR_STOP on
 
 INSERT INTO logs (user_id, created_at, type, content, username, token_name, model_name, quota, channel_id)
-SELECT 2, EXTRACT(EPOCH FROM TIMESTAMP '2026-10-26 13:49:38')::bigint, 5,
+SELECT 2, EXTRACT(EPOCH FROM TIMESTAMP '2026-10-26 13:49:38' AT TIME ZONE 'Asia/Shanghai')::bigint, 5,
        '[OPERATOR-COST-ACCOUNTING] 恢复上架 wan2.7-r2v 的探针误建 1 个真实任务'
        || '（task 727 / task_U7UeCCoMh222jC3ljCuKcOQA5h96VFYA，10 秒，预扣 68490 quota=¥1.00）。'
        || ' 净损失 0：上游 chargedPoints=0 且 refundedPoints=20（假参考图域名被拒，20 积分已退）；'

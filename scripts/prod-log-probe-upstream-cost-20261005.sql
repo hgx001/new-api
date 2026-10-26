@@ -9,7 +9,7 @@
 -- 所以那 8 个 1080p 探针相对 720p 并没有多花上游成本，纯粹是没意识到可以只跑 720p。
 
 INSERT INTO logs (user_id, created_at, type, content, username, token_name, model_name, quota, channel_id)
-SELECT 2, EXTRACT(EPOCH FROM TIMESTAMP '2026-10-05 22:35:00')::bigint, 5,
+SELECT 2, EXTRACT(EPOCH FROM TIMESTAMP '2026-10-05 22:35:00' AT TIME ZONE 'Asia/Shanghai')::bigint, 5,
        '[OPERATOR-COST-ACCOUNTING] 调价探针上游净损 810 有赞积分（9 任务 × 90 分，task 306-314）。'
        || ' 客户侧已按 410948+410956+95890 quota 全额退款并留痕；'
        || '上游 costPoints 已实扣且无法撤销，810 分由运营方承担。'
