@@ -29,6 +29,8 @@
 
 ## MegaAI / wan-3.0 与别名
 
+⚠️ **2026-10-26：wan-3.0 与别名 seedance2.5-特惠 已停售**（渠道 24「MegaAI-Wan3」整条删除）；`wan-3.0-特惠` 也已从渠道 20 摘除。三者 adaptor 常量与本页契约仍保留，但没有 ability 就没有路由 —— 本节仅作历史契约记录。
+
 - 复用 `ChannelTypeMegaAI` 的 Sora facade，协议为 `/v1/videos` 提交、`/{id}` 轮询和 `/{id}/content` 下载。
 - `wan-3.0` 与 `wan3.0-video` / `wan3.0-video-官网` 是不同公开名，不互相覆盖。别名 `seedance2.5-特惠` 实际上游仍是 wan-3.0，必须经 model_mapping 或兜底表翻译，不把中文别名原样发上游。
 - 参数契约集合、分辨率分层计价集合、锁档集合使用**精确模型名**，不前缀匹配相近 Seedance 名。
