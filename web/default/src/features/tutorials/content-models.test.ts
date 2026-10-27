@@ -69,19 +69,12 @@ describe('tutorials model guide content', () => {
       'seedance-2.0',
       'seedance-2-0-fast',
       'seedance-2-5',
-      'seedance2.5-特惠',
-      'wan-3.0',
-      'wan-3.0-特惠',
       'MiniMax-M3.1',
       '¥0.15 / 张',
       '¥0.28/s',
       '¥0.10/s',
       '¥1.00 / 次',
       '¥3.00 / 次',
-      // wan-3.0-特惠 按分辨率两档（2026-10-25）：480P ¥1.50、720P ¥2.00
-      // （徽标显示最低档 ¥1.50，720P 走 size 倍率乘到 ¥2.00）
-      '480P ¥1.50 / 条',
-      '720P ¥2.00 / 条',
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
     }
@@ -124,16 +117,11 @@ describe('tutorials model guide content', () => {
       )
     }
 
-    // '¥3.00 / 条' 只对 wan-3.0-特惠 那一行判旧价：2026-10-25 它分档前是 ¥3.00/条，
-    // 现为 480P ¥1.50 / 720P ¥2.00。但 **不能整篇禁用这句话** ——
-    // seedance2.5-特惠 就是按条收 ¥3.00（正常价），所以只能锁 wan-3.0-特惠 那一行。
-    const wan30TehuiLine = /wan-3\.0-特惠｜[^"]*/.exec(sectionsJson)?.[0] ?? ''
-    assert.notEqual(wan30TehuiLine, '', 'the wan-3.0-特惠 overview entry must exist')
-    assert.equal(
-      wan30TehuiLine.includes('¥3.00 / 条'),
-      false,
-      'wan-3.0-特惠 must not advertise the old flat ¥3.00 per-item price'
-    )
+    // 2026-10-26：wan-3.0 / wan-3.0-特惠 / seedance2.5-特惠 三个模型已下架
+    // （渠道删除 + 卡片/定价清理），文档里不得再出现这三个名字。
+    for (const gone of ['wan-3.0｜', 'wan-3.0-特惠', 'seedance2.5-特惠', 'model-wan-3-0']) {
+      assert.equal(sectionsJson.includes(gone), false, `still documented: ${gone}`)
+    }
 
     // autodl:minimax-h3-u24 的分辨率白名单（constants.go Resolutions）只有
     // 480p/768p 竖横/(1:1)，传 1080p 会被 invalid_resolution 拦下。
@@ -199,9 +187,9 @@ describe('tutorials model guide content', () => {
   test('keeps per-model hard limits documented', () => {
     for (const expected of [
       // '仅 5 或 10' / '必填，1–3 张参考图' 原本来自 wan2.7-r2v 的参数表，
-      // '固定 1080P' 原本来自 wan3.0-video-prime-1080p 的参数表。
-      // 这两个模型 2026-10-25 下架后随章节一并移除（见下方 de-listed 守卫）。
-      '固定 30',
+      // '固定 1080P' 原本来自 wan3.0-video-prime-1080p 的参数表，
+      // '固定 30' 原本来自 wan-3.0-特惠 / seedance2.5-特惠 的参数表。
+      // 这几个模型先后下架后随章节一并移除（见下方 de-listed 守卫）。
       '必填，1–9 张',
       '首尾帧不能与普通参考图/视频/音频混用',
     ]) {
@@ -308,9 +296,6 @@ describe('tutorials model guide content', () => {
       'seedance-2-0-fast',
       'seedance-2-5',
       'seedance-2.0',
-      'seedance2.5-特惠',
-      'wan-3.0',
-      'wan-3.0-特惠',
       'wan2.7-r2v',
       'wan2.7-图生',
       'wan2.7-编辑',

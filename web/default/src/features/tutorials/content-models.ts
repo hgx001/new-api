@@ -36,18 +36,10 @@ const MODEL_OVERVIEW_ITEMS = [
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
   'seedance-2-5｜视频（按次）｜¥3.00 / 次，5/10/15/30 秒同价',
-  'seedance2.5-特惠｜视频（按次）｜¥3.00 / 条，固定 720p + 30 秒，不分档、不随时长加价',
   'gemini-web-video｜视频（按次）｜¥1.00 / 次',
   'wan2.7-r2v｜视频（按秒）｜¥0.10 / 秒，720P / 1080P 同价，需 1–3 张参考图，时长 5–10 秒',
   'wan2.7-图生｜视频（按次）｜¥0.30 / 次，5–15 秒逐秒，720P/1080P，≤2 张参考图。⚠️ 免灵感值慢队列，通常 3 小时左右出一条',
   'wan2.7-编辑｜视频（按次）｜¥0.30 / 次，需 1 个主视频（≤10 秒），≤10 张参考图。⚠️ 免灵感值慢队列，通常 3 小时左右出一条',
-  'wan-3.0｜视频（按次）｜480P ¥3.00 / 次、720P ¥3.50 / 次、1080P ¥4.00 / 次，时长 5/10/15/30 秒（不随时长加价），≤10 张参考图 / 5 段参考视频 / 5 条参考音频，全比例',
-  // 「特惠」指官网账号侧的无限合成权益（不扣积分、不限条数），**不是**客户无限次调用：
-  // 对外仍按条计费。改名前的名字是「无限」，容易被理解成免费无限调用，2026-10-25 改掉。
-  // 按分辨率两档（2026-10-25）：480P ¥1.50、720P ¥2.00。
-  // 模型广场徽标显示的是 ModelPrice 里配的**最低档** ¥1.50（按次），
-  // 720P 由 adaptor 的 size 倍率乘到 ¥2.00 —— 徽标不写「起」，正文必须把两档讲清。
-  'wan-3.0-特惠｜视频（按次）｜480P ¥1.50 / 条、720P ¥2.00 / 条，固定 30 秒，比例六档（含自适应），≤10 张参考图，不收参考视频。⚠️ 官网免费档串行出片，单条通常 15–25 分钟',
   'Nano Banana Pro｜图片（按张）｜¥0.30 / 张',
   'jimeng-video-reverse｜提示词（按次）｜¥1.00 / 次',
 ]
@@ -97,7 +89,7 @@ const BILLING_ITEMS = [
   '文本：输入、输出 token 分别计价',
   '图片：按张计费，gpt-image-2.5-官方 ¥0.15 / 张（n=2 扣两次）；Nano Banana Pro ¥0.30 / 张，走 /v1/videos 异步任务，成图读 metadata.url',
   '视频（按秒）：单价 × 秒数 × 分辨率档位倍率；seedance-2-0-fast 无分辨率档位，固定 ¥0.10 / 秒',
-  '视频（按次）：seedance-2.0 ¥1.00 / 次，seedance-2-5 ¥3.00 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次，wan-3.0 480P ¥3.00 / 720P ¥3.50 / 1080P ¥4.00 / 次，seedance2.5-特惠 固定 ¥3.00 / 条',
+  '视频（按次）：seedance-2.0 ¥1.00 / 次，seedance-2-5 ¥3.00 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
   '任务失败：自动全额退还，无需申请',
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
@@ -126,7 +118,7 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本，wan-3.0 / wan-3.0-特惠 / seedance2.5-特惠 暂无实测样本',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
@@ -518,57 +510,6 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'heading',
           level: 3,
-          id: 'model-wan-3-0',
-          children: [{ type: 'strong', value: 'wan-3.0（满参版）' }],
-        },
-        { type: 'list', ordered: false, items: [
-          ['resolution：480p（默认）/ 720p / 1080p，本地归一；认不出的档位直接 400'],
-          ['duration：5 / 10 / 15 / 30 秒，不随时长加价；本地不做档位白名单，其它值原样下发上游'],
-          ['ratio：透传（16:9 / 9:16 / 1:1 / 4:3 / 3:4 等）；不传则不下发，用上游默认'],
-          ['参考素材：图 ≤10 张、参考视频 ≤5 段、参考音频 ≤5 条'],
-          ['素材字段：media / metadata.media（type=reference_image / reference_video / reference_audio）；images、input_reference 也会一并合并进来'],
-          ['seed：可选，透传给上游'],
-          ['计费：按次 480P ¥3.00 / 720P ¥3.50 / 1080P ¥4.00（不乘时长）'],
-        ] },
-        {
-          type: 'heading',
-          level: 3,
-          id: 'model-wan-3-0-tehui',
-          children: [{ type: 'strong', value: 'wan-3.0-特惠（官网免费档）' }],
-        },
-        { type: 'list', ordered: false, items: [
-          ['duration：固定 30 秒；不传即 30，传其它时长直接 400'],
-          ['resolution：480P / 720P（默认 720P），只认这两档'],
-          ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4'],
-          ['参考素材：图 ≤10 张；不收参考视频（传入直接 400）'],
-          ['计费：按次 480P ¥1.50 / 720P ¥2.00（不随时长加价）'],
-        ] },
-        {
-          type: 'hint',
-          children: ['该档位走官网免费队列，串行出片，耗时长（见「可用模型总览」）。'],
-        },
-        {
-          type: 'heading',
-          level: 3,
-          id: 'model-seedance25-tehui',
-          children: [{ type: 'strong', value: 'seedance2.5-特惠（固定 720p / 30 秒）' }],
-        },
-        { type: 'list', ordered: false, items: [
-          ['duration：固定 30 秒；不传即 30，传其它时长直接 400'],
-          ['resolution：固定 720p；不传即 720p，传其它档位直接 400'],
-          ['ratio：透传（16:9 / 9:16 / 1:1 / 4:3 / 3:4 等）；不传则不下发，用上游默认'],
-          ['参考素材：图 ≤10 张、参考视频 ≤5 段、参考音频 ≤5 条'],
-          ['素材字段：media / metadata.media（type=reference_image / reference_video / reference_audio）；images、input_reference 也会一并合并进来'],
-          ['seed：可选，透传给上游'],
-          ['计费：固定按次 ¥3.00 / 条（不分分辨率档、不乘时长）'],
-        ] },
-        {
-          type: 'hint',
-          children: ['参数校验在本地做，档位不对直接 400（不建单不扣费）；不会静默改成 30 秒 / 720p。'],
-        },
-        {
-          type: 'heading',
-          level: 3,
           id: 'model-gemini-web-video',
           children: [{ type: 'strong', value: 'gemini-web-video' }],
         },
@@ -716,9 +657,6 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: 'seedance-2.0', href: '#model-seedance-2' },
     { title: 'seedance-2-0-fast', href: '#model-seedance-2-0-fast' },
     { title: 'seedance-2-5', href: '#model-seedance-2-5' },
-    { title: 'wan-3.0', href: '#model-wan-3-0' },
-    { title: 'wan-3.0-特惠', href: '#model-wan-3-0-tehui' },
-    { title: 'seedance2.5-特惠', href: '#model-seedance25-tehui' },
     { title: '参考素材要求', href: '#video-media-rules' },
     { title: '计费与退款', href: '#billing-refund' },
     { title: '错误码', href: '#api-errors' },
