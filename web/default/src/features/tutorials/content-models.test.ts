@@ -63,7 +63,8 @@ describe('tutorials model guide content', () => {
       'gpt-6-sol',
       'gpt-6.1-sol',
       'gpt-image-2.5-官方',
-      'wan3.0-smart',
+      'wan3.0-video',
+      'wan3.0-video-prime',
       'wan3.0-video-官网',
       'autodl:minimax-h3-u24',
       'seedance-2.0',
@@ -71,7 +72,7 @@ describe('tutorials model guide content', () => {
       'seedance-2-5',
       'MiniMax-M3.1',
       '¥0.15 / 张',
-      '¥0.28/s',
+      '¥0.23/秒',
       '¥0.10/s',
       '¥1.00 / 次',
       '¥3.00 / 次',
@@ -84,8 +85,10 @@ describe('tutorials model guide content', () => {
   // 所以 2026-10-13 之前 wan3.0-smart 与 wan3.0-video-官网 的错价（分别写成
   // ¥0.32/¥0.40 与 ¥0.53/¥0.85）一直没被拦住，官网 1080P 比实际低 27%。
   // 这里把每个分辨率档的实际单价钉死，依据：
-  //   - youzanwan3/constants.go smartResolutionSizeRatio{480P:1.0,720P:1.0,1080P:0.30/0.28}
-  //     基准 ¥0.28/秒 → 0.28 / 0.28 / 0.30
+  //   - youzanwan3/constants.go videoResolutionSizeRatio{480P:1.0,720P:1.0,1080P:1.0}
+  //     基准 ¥0.23/秒（上游 0.18 + ¥0.05）→ 0.23 / 0.23 / 0.23
+  //   - youzanwan3/constants.go primeResolutionSizeRatio{720P:1.0,1080P:1.25}
+  //     基准 ¥0.20/秒（上游 0.15 + ¥0.05）→ 0.20 / 0.25
   //   - wan3/constants.go resolutionSizeRatio{480P:1.0,720P:2.0,1080P:4.0}
   //     基准 ¥0.27/秒 → 0.27 / 0.54 / 1.08
   //   - autodl/constants.go u24 的 Resolutions 只含 480p/768p → 0.10 / 0.12，**没有 1080p**
@@ -93,8 +96,10 @@ describe('tutorials model guide content', () => {
   test('prices match the resolution tiers the adaptors actually charge', () => {
     const expected = [
       // 索引区与详情区都要写对，且两处必须一致
-      '480P ¥0.28/s、720P ¥0.28/s、1080P ¥0.30/s', // wan3.0-smart 索引
-      '¥0.28 / ¥0.28 / ¥0.30（480P / 720P / 1080P）', // wan3.0-smart 详情
+      '480P / 720P / 1080P 同价 ¥0.23/秒', // wan3.0-video 索引
+      '按秒 ¥0.23（480P / 720P / 1080P 三档同价）', // wan3.0-video 详情
+      '720P ¥0.20/s、1080P ¥0.25/s', // wan3.0-video-prime 索引
+      '按秒 ¥0.20（720P）/ ¥0.25（1080P）', // wan3.0-video-prime 详情
       '480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s', // wan3.0-video-官网 索引
       '¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）', // wan3.0-video-官网 详情
       '480p ¥0.10/s、768p ¥0.12/s（仅此两档）', // autodl H3 索引
@@ -109,7 +114,7 @@ describe('tutorials model guide content', () => {
     }
 
     // 已下线的旧价格必须不再出现，避免同时展示两套价。
-    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s']) {
+    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s', '¥0.28 / ¥0.28 / ¥0.30']) {
       assert.equal(
         sectionsJson.includes(stale),
         false,
@@ -296,10 +301,10 @@ describe('tutorials model guide content', () => {
       'seedance-2-0-fast',
       'seedance-2-5',
       'seedance-2.0',
-      'wan2.7-r2v',
       'wan2.7-图生',
       'wan2.7-编辑',
-      'wan3.0-smart',
+      'wan3.0-video',
+      'wan3.0-video-prime',
       'wan3.0-video-官网',
     ]
     for (const model of squareModels) {
@@ -348,14 +353,16 @@ describe('tutorials model guide content', () => {
       '顶层 audios / audio：',
       '仅 autodl:minimax-h3-u24 生效',
       '传了会被静默丢弃',
-      'metadata.audio 是「是否生成音轨」开关',
-      '与顶层 audios 不是一回事',
+      // ⚠️ 2026-10-28：metadata.audio 此前被描述成「wan3 系通用开关」，实际只有
+      // 官网渠道读它；有赞 V1 协议不读这个字段（传了被静默丢弃）。
+      'metadata.audio（是否生成音轨）只对 wan3.0-video-官网 生效',
+      '有赞 wan3.0-video / wan3.0-video-prime 不读这个字段',
       '只有 wan3.0-video-官网 会按 URL 后缀推断类型',
       '传参考视频、参考音频只有这一条路',
       '「传图片给视频模型」的三种写法',
       '优先级 media > metadata.media > 旧字段',
       '首尾帧是图片的一种特殊类型',
-      '请用 reference_image',
+      '请改用 reference_image',
       // Nano Banana Pro 走 /v1/videos 且支持 n：客户端若按图片接口习惯
       // 直接 POST /v1/images/generations 会拿不到模型，这两点之前都没写。
       '本模型走 /v1/videos 异步任务（不是 /v1/images/generations）',
@@ -407,6 +414,8 @@ describe('tutorials model guide content', () => {
   // 503「No available channel for model ...」。
   // ⚠️ 2026-10-26 wan2.7-r2v 恢复上架 → 它的两个名字从本守卫移除，
   //    并回到「广场在售模型必须逐个写进教程」那份清单里。
+  // ⚠️ 2026-10-28 上游切换到 V1 协议，/v1/models 目录里已没有 wan2.7-r2v，
+  //    该模型被**再次**彻底下架 → 名字重新加回本守卫，并从在售清单里移除。
   test('does not document the de-listed wan3.0 models', () => {
     for (const gone of [
       'wan3.0-1080p-慢速',
@@ -414,6 +423,7 @@ describe('tutorials model guide content', () => {
       'wan3.0-480p',
       'wan3.0-video-prime-1080p',
       'model-wan30-prime',
+      'wan2.7-r2v',
     ]) {
       assert.equal(sectionsJson.includes(gone), false, `still documented: ${gone}`)
     }

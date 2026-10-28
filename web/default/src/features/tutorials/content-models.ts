@@ -30,14 +30,14 @@ const MODEL_OVERVIEW_ITEMS = [
   'gpt-6-sol｜文本｜输入 ¥18.75 / 1M，输出 ¥150.00 / 1M',
   'gpt-6.1-sol｜文本｜输入 ¥18.75 / 1M，输出 ¥150.00 / 1M（与 gpt-6-sol 同价）',
   'gpt-image-2.5-官方｜图片｜¥0.15 / 张',
-  'wan3.0-smart｜视频（按秒）｜480P ¥0.28/s、720P ¥0.28/s、1080P ¥0.30/s',
+  'wan3.0-video｜视频（按秒）｜480P / 720P / 1080P 同价 ¥0.23/秒，时长 2–30 秒',
+  'wan3.0-video-prime｜视频（按秒）｜720P ¥0.20/s、1080P ¥0.25/s，时长 2–30 秒',
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s，参考视频按时长同价并入（生成秒数+参考视频秒数）',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s（仅此两档）',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
   'seedance-2-5｜视频（按次）｜¥3.00 / 次，5/10/15/30 秒同价',
   'gemini-web-video｜视频（按次）｜¥1.00 / 次',
-  'wan2.7-r2v｜视频（按秒）｜¥0.10 / 秒，720P / 1080P 同价，需 1–3 张参考图，时长 5–10 秒',
   'wan2.7-图生｜视频（按次）｜¥0.30 / 次，5–15 秒逐秒，720P/1080P，≤2 张参考图。⚠️ 免灵感值慢队列，通常 3 小时左右出一条',
   'wan2.7-编辑｜视频（按次）｜¥0.30 / 次，需 1 个主视频（≤10 秒），≤10 张参考图。⚠️ 免灵感值慢队列，通常 3 小时左右出一条',
   'Nano Banana Pro｜图片（按张）｜¥0.30 / 张',
@@ -62,12 +62,12 @@ const VIDEO_COMMON_FIELDS = [
   'seconds / duration：时长（秒），duration 传整数（推荐）；seconds 为字符串（OpenAI 风格，如 "5"），传数字会报 invalid_json；两者都传时以 duration 为准',
   'resolution：分辨率档位，大小写均可（720p / 720P）',
   'ratio / aspect_ratio：画幅比例（官网渠道请放在 metadata.ratio，或用 size）',
-  'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链。⚠️ 这几个字段在 wan3.0-smart 上一律被标记为 reference_image（往里塞 .mp4 会被当图片送上游），只有 wan3.0-video-官网 会按 URL 后缀推断类型',
-  'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio / first_frame / last_frame。⚠️ wan3.0-smart / 官网 传参考视频、参考音频只有这一条路',
+  'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链。⚠️ 这几个字段在有赞 wan3.0-video / wan3.0-video-prime 上一律被标记为 reference_image（往里塞 .mp4 会被当图片送上游），只有 wan3.0-video-官网 会按 URL 后缀推断类型',
+  'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio。⚠️ 有赞 wan3.0-video / wan3.0-video-prime / 官网 传参考视频、参考音频只有这一条路',
   '顶层 audios / audio：⚠️ 仅 autodl:minimax-h3-u24 生效。wan3 系不读这两个字段，传了会被静默丢弃——不报错、不计入上限、任务照跑，请改用 media 数组',
-  'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media、metadata.audio。⚠️ metadata.audio 是「是否生成音轨」开关（默认 true，false 关闭，别名 generate_audio），仅 wan3 系 smart / 官网 生效，与顶层 audios 不是一回事',
+  'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media。⚠️ metadata.audio（是否生成音轨）只对 wan3.0-video-官网 生效，有赞 wan3.0-video / wan3.0-video-prime 不读这个字段（传了被静默丢弃）',
   '⚠️ 「传图片给视频模型」的三种写法（任选其一，优先级 media > metadata.media > 旧字段）：① media 里 type=reference_image；② metadata.media（同样格式）；③ images / input_reference / image。后者会被一律标记为参考图，不会按后缀推断类型；autodl:minimax-h3-u24 的 images 是必填，缺失直接 400',
-  '⚠️ 首尾帧是图片的一种特殊类型：在 media 里用 type=first_frame / last_frame，各最多 1 张，且不能与 reference_image / reference_video / reference_audio 混用（混用直接 400，不消耗费用）。若下游只想表达「参考图」而非「锁定起始画面」，请用 reference_image',
+  '⚠️ 首尾帧是图片的一种特殊类型：在 media 里用 type=first_frame / last_frame。⚠️ 有赞 wan3.0-video / wan3.0-video-prime 的上游已取消首尾帧，传入直接 400（不消耗费用），请改用 reference_image；官网渠道仍支持，各最多 1 张，且首尾帧不能与普通参考图/视频/音频混用（混用直接 400，不消耗费用）',
 ]
 
 const VIDEO_STATUS_ITEMS = [
@@ -118,7 +118,7 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-smart 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-video 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
@@ -257,7 +257,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
   -H "Authorization: Bearer $NEW_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "wan3.0-smart",
+    "model": "wan3.0-video",
     "prompt": "一只橘猫在窗台晒太阳，午后暖光",
     "duration": 5,
     "resolution": "720P",
@@ -271,7 +271,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'codeBlock',
           lang: 'json',
-          value: `{"created_at": 1790475484, "id": "task_xxx", "object": "video", "model": "wan3.0-smart", "progress": 0, "status": "queued"}`,
+          value: `{"created_at": 1790475484, "id": "task_xxx", "object": "video", "model": "wan3.0-video", "progress": 0, "status": "queued"}`,
         },
         {
           type: 'paragraph',
@@ -290,7 +290,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           value: `{
   "id": "task_xxx",
   "object": "video",
-  "model": "wan3.0-smart",
+  "model": "wan3.0-video",
   "status": "completed",
   "progress": 100,
   "metadata": {"url": "https://..."}
@@ -358,7 +358,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
   -H "Authorization: Bearer $NEW_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "wan3.0-smart",
+    "model": "wan3.0-video",
     "prompt": "让画面里的橘猫跳下窗台走向镜头",
     "duration": 5,
     "resolution": "720P",
@@ -376,7 +376,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
   -H "Authorization: Bearer $NEW_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "wan3.0-smart",
+    "model": "wan3.0-video",
     "prompt": "参考 @图片1 的角色形象与 @视频1 的运镜，配音跟随 @音频1 的节奏",
     "duration": 10,
     "resolution": "720P",
@@ -390,7 +390,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'hint',
           children: [
-            'wan3.0-smart / 官网 / prime 的参考视频、参考音频只能走 media（或 metadata.media，格式相同）这一条路，顶层 audios / audio 会被静默丢弃；images 旧字段一律按参考图处理。首帧、尾帧各最多 1 张，且不能与参考素材混用（混用直接 400，不消耗费用）。素材 URL 须为公网 HTTPS 直链，要求见「参考素材要求」。',
+            '有赞 wan3.0-video / wan3.0-video-prime 与官网渠道的参考视频、参考音频只能走 media（或 metadata.media，格式相同）这一条路，顶层 audios / audio 会被静默丢弃；images 旧字段一律按参考图处理。素材 URL 须为公网 HTTPS 直链，要求见「参考素材要求」。',
           ],
         },
       ],
@@ -403,21 +403,39 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'heading',
           level: 3,
-          id: 'model-wan30-smart',
-          children: [{ type: 'strong', value: 'wan3.0-smart（智能调度）' }],
+          id: 'model-wan30-video',
+          children: [{ type: 'strong', value: 'wan3.0-video（有赞标准版）' }],
         },
         { type: 'list', ordered: false, items: [
           ['resolution：480P（默认）/ 720P / 1080P'],
           ['seconds：2–30，默认 5'],
-          ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4'],
-          ['参考素材：图 ≤10 张、视频 ≤5 个（合计 ≤15 秒）、音频 ≤5 条（合计 ≤15 秒）、首尾帧各 1 张'],
-          ['metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）'],
-          ['计费：按秒 ¥0.28 / ¥0.28 / ¥0.30（480P / 720P / 1080P）'],
+          ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
+          ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
+          ['计费：按秒 ¥0.23（480P / 720P / 1080P 三档同价）'],
         ] },
         {
           type: 'hint',
           children: [
-            '首尾帧不能与普通参考图/视频/音频混用，混用会直接报错（不消耗费用）。支持纯文生视频、图生视频与多模态参考。',
+            '支持纯文生视频、图生视频与多模态参考。首尾帧（first_frame / last_frame）已被上游移除，传入会直接 400（不消耗费用），请改用参考图。旧名 wan3.0-smart 仍可路由，等价于本模型，但已不在模型广场展示。',
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-wan30-video-prime',
+          children: [{ type: 'strong', value: 'wan3.0-video-prime（有赞 Prime 增强画质）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['resolution：720P（默认）/ 1080P（无 480P 档；传 480P 会按 720P 执行，不会静默升到 1080P）'],
+          ['seconds：2–30，默认 5'],
+          ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
+          ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
+          ['计费：按秒 ¥0.20（720P）/ ¥0.25（1080P）'],
+        ] },
+        {
+          type: 'hint',
+          children: [
+            'Prime 按分辨率分档按秒计费（不再是固定 1080P / 30 秒的按次计费）。参考素材上限与标准版一致。',
           ],
         },
         {
@@ -439,7 +457,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'hint',
           children: [
-            '本渠道同样支持图生视频与多模态参考，与 wan3.0-smart 走相同的 media 解析逻辑；唯一区别是分辨率倍率（1:2:4，720P、1080P 更贵）且没有 adaptive 比例之外的智能调度。',
+            '本渠道同样支持图生视频与多模态参考，与有赞 wan3.0-video 走相同的 media 解析逻辑；唯一区别是分辨率倍率（1:2:4，720P、1080P 更贵）且没有 adaptive 比例之外的智能调度。',
           ],
         },
         {
@@ -651,7 +669,8 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: '传递参考素材（图片 / 视频 / 音频）', href: '#video-media-examples' },
     { title: '各视频模型参数', href: '#video-model-params' },
     { title: '余额查询接口', href: '#quota-query' },
-    { title: 'wan3.0-smart', href: '#model-wan30-smart' },
+    { title: 'wan3.0-video', href: '#model-wan30-video' },
+    { title: 'wan3.0-video-prime', href: '#model-wan30-video-prime' },
     { title: 'wan3.0-video-官网', href: '#model-wan30-guanwang' },
     { title: 'autodl:minimax-h3-u24', href: '#model-autodl-h3-u24' },
     { title: 'seedance-2.0', href: '#model-seedance-2' },

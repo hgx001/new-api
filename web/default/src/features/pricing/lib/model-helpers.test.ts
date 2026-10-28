@@ -151,7 +151,6 @@ describe('AutoDL H3 resolution tier note', () => {
   test('classifies every model currently sold by billing unit', () => {
     const perSecond = [
       'seedance-2-0-fast', // manwu 豆包 2.0 Fast
-      'wan2.7-r2v', // 有赞参考生
       'wan3.0-480p', // Erchun（仅 480P）
       'wan3.0-smart', // 有赞智能调度（历史别名，等价 wan3.0-video）
       'wan3.0-video', // 有赞标准版
