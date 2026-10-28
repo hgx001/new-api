@@ -57,14 +57,21 @@ export function isTokenBasedModel(model: PricingModel): boolean {
  * Sample `resolution` value for wan3-family video models, or null when the
  * model takes no resolution parameter (callers then skip the field).
  *
- * - `wan3.0-smart` / `wan3.0-video` / `wan3.0-video-官网`: 480P is the default,
- *   720P and 1080P are also accepted and billed at a higher per-second tier.
+ * - `wan3.0-video` / `wan3.0-smart` / `wan3.0-video-官网`: 480P is the default,
+ *   720P and 1080P are also accepted.
  * - `wan2.7-r2v`: only 720p/1080p, and the upstream expects lowercase.
- * - `wan3.0-video-prime-1080p`: fixed 1080P.
+ * - `wan3.0-video-prime`: only 720P/1080P, 720P is the default (and cheapest).
  */
 export function getWan3SampleResolution(modelName: string): string | null {
   if (modelName === 'wan2.7-r2v') return '720p'
-  if (modelName === 'wan3.0-video-prime-1080p') return '1080P'
+  // 2026-10-28 起 prime 改为 720P/1080P 分档按秒计价，默认取最低档 720P；
+  // 旧名 wan3.0-video-prime-1080p 仅历史兼容。
+  if (
+    modelName === 'wan3.0-video-prime' ||
+    modelName === 'wan3.0-video-prime-1080p'
+  ) {
+    return '720P'
+  }
   if (modelName === 'wan3.0-smart' || modelName.startsWith('wan3.0-video')) {
     return '480P'
   }
@@ -75,12 +82,13 @@ export function getWan3SampleResolution(modelName: string): string | null {
  * Check if a video model is billed per second.
  *
  * Only adaptors whose EstimateBilling returns a `seconds` ratio bill per
- * second: wan3/youzanwan3 (wan3.0-video*, wan3.0-smart, wan2.7-r2v), autodl
- * (autodl:* workflows), erchun (wan3.0-480p) and the doubao Seedance 2.0 Fast
- * (manwu `seedance-2-0-fast`, per-second since 2026-10-12).
+ * second: wan3/youzanwan3 (wan3.0-video / wan3.0-video-prime / wan3.0-smart /
+ * wan2.7-r2v), autodl (autodl:* workflows), erchun (wan3.0-480p) and the
+ * doubao Seedance 2.0 Fast (manwu `seedance-2-0-fast`, per-second since
+ * 2026-10-12).
  * Models whose EstimateBilling returns nil are billed a fixed price per call
- * (e.g. youzan wan3.0-video-prime-1080p, doubao `seedance-2-5`, dola
- * seedance-2.0/2.5), so they must NOT show the per-second suffix.
+ * (e.g. doubao `seedance-2-5`, dola seedance-2.0/2.5), so they must NOT show
+ * the per-second suffix.
  * If a new per-second adaptor goes live, add its model name here AND to the
  * exhaustive table in model-helpers.test.ts.
  *
@@ -91,6 +99,9 @@ export function getWan3SampleResolution(modelName: string): string | null {
  * mispricing until someone remembers to add it here, so the test enumerates
  * every model currently sold.
  *
+ * ⚠️ `wan3.0-video-prime` 曾在 2026-10-28 之前是「固定 30 秒按次」的例外，
+ * 上游改成按分辨率分档按秒后该例外已取消 —— 不要再为它加 per-call 分支。
+ *
  * ⚠️ Seedance must be matched by **exact name**: the doubao pair uses hyphens
  * (`seedance-2-0-fast` per-second, `seedance-2-5` per-call) while the dola pair
  * uses dots (`seedance-2.0`, `seedance-2.5`, both per-call). A prefix check on
@@ -99,10 +110,6 @@ export function getWan3SampleResolution(modelName: string): string | null {
  */
 export function isPerSecondModel(model: PricingModel): boolean {
   const name = model.model_name ?? ''
-  // 有赞满血 30 秒档按次计费（EstimateBilling 返回 nil），不能显示按秒后缀。
-  if (name === 'wan3.0-video-prime-1080p') {
-    return false
-  }
   // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥3/次），不命中。
   if (name.startsWith('seedance-2-0')) {
     return true

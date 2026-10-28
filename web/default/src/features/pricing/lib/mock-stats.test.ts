@@ -175,11 +175,13 @@ describe('Wan3 Model Square API parameters', () => {
     }
   })
 
-  test('pins wan3.0-video-prime-1080p to 1080P and 30 seconds', () => {
-    const params = parametersByName('wan3.0-video-prime-1080p')
-    assert.deepEqual(params.resolution.enumValues, ['1080P'])
-    assert.equal(params.resolution.defaultValue, '1080P')
-    assert.equal(params.duration.range, '30')
+  test('gives wan3.0-video-prime the 720P/1080P tiers and 2-30 seconds', () => {
+    for (const modelName of ['wan3.0-video-prime', 'wan3.0-video-prime-1080p']) {
+      const params = parametersByName(modelName)
+      assert.deepEqual(params.resolution.enumValues, ['720P', '1080P'])
+      assert.equal(params.resolution.defaultValue, '720P')
+      assert.equal(params.duration.range, '2 ~ 30')
+    }
   })
 
   test('describes wan2.7-r2v limits including the required reference images', () => {

@@ -795,21 +795,24 @@ function buildWan3VideoParameters(): SupportedParameter[] {
   ]
 }
 
-/** wan3.0-video-prime-1080p：分辨率固定 1080P、时长固定 30 秒。 */
+/**
+ * wan3.0-video-prime：2026-10-28 起上游改为 720P / 1080P 分档按秒计价，
+ * 时长 2—30 秒逐秒可选（不再固定 1080P / 30 秒），缺省取最低档 720P。
+ */
 function buildWan3PrimeVideoParameters(): SupportedParameter[] {
   return [
     VIDEO_PARAMS[0],
     {
       name: 'duration',
       type: 'integer',
-      range: '30',
+      range: '2 ~ 30',
       descriptionKey: 'Video length in seconds',
     },
     {
       name: 'resolution',
       type: 'enum',
-      enumValues: ['1080P'],
-      defaultValue: '1080P',
+      enumValues: ['720P', '1080P'],
+      defaultValue: '720P',
       descriptionKey: 'Output video resolution',
     },
   ]
@@ -1070,7 +1073,10 @@ export function buildSupportedParameters(
     if (model.model_name === 'wan2.7-r2v') {
       return buildR2VVideoParameters()
     }
-    if (model.model_name === 'wan3.0-video-prime-1080p') {
+    if (
+      model.model_name === 'wan3.0-video-prime' ||
+      model.model_name === 'wan3.0-video-prime-1080p'
+    ) {
       return buildWan3PrimeVideoParameters()
     }
     if (isWan3VideoModel(model.model_name)) {

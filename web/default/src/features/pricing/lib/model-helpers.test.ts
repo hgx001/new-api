@@ -111,13 +111,15 @@ describe('AutoDL H3 resolution tier note', () => {
     )
   })
 
-  // wan3.0-smart 按秒计费（EstimateBilling 返回 seconds），
-  // wan3.0-video-prime-1080p 按次计费（EstimateBilling 返回 nil）。
-  test('marks wan3.0-smart per second and wan3.0-video-prime-1080p per request', () => {
+  // 2026-10-28 起有赞两个在售模型都按秒计费（wan3.0-video-prime 由「按次」改为
+  // 「按分辨率分档按秒」，EstimateBilling 已返回 seconds）。
+  test('marks wan3.0-video and wan3.0-video-prime both per second', () => {
     assert.equal(isPerSecondModel(autoDLModel('wan3.0-smart')), true)
+    assert.equal(isPerSecondModel(autoDLModel('wan3.0-video')), true)
+    assert.equal(isPerSecondModel(autoDLModel('wan3.0-video-prime')), true)
     assert.equal(
       isPerSecondModel(autoDLModel('wan3.0-video-prime-1080p')),
-      false
+      true
     )
     // 官方渠道标准版仍是按秒。
     assert.equal(isPerSecondModel(autoDLModel('wan3.0-video-官网')), true)
@@ -151,7 +153,9 @@ describe('AutoDL H3 resolution tier note', () => {
       'seedance-2-0-fast', // manwu 豆包 2.0 Fast
       'wan2.7-r2v', // 有赞参考生
       'wan3.0-480p', // Erchun（仅 480P）
-      'wan3.0-smart', // 有赞智能调度
+      'wan3.0-smart', // 有赞智能调度（历史别名，等价 wan3.0-video）
+      'wan3.0-video', // 有赞标准版
+      'wan3.0-video-prime', // 有赞 Prime（720P/1080P 分档按秒）
       'wan3.0-video-官网', // 官网标准版
       'autodl:minimax-h3-u24', // AutoDL H3
     ]
@@ -165,7 +169,6 @@ describe('AutoDL H3 resolution tier note', () => {
       'seedance-2-5', // 豆包 2.5 按次
       'seedance-2.0', // dola 2.0 按次
       'seedance-2.5', // dola 2.5 按次（已下架）
-      'wan3.0-video-prime-1080p', // 满血 30s 档按次
       'wan-3.0', // MegaAI 渠道：按次 + 分辨率档（无 seconds 倍率）
       'seedance2.5-特惠', // MegaAI 渠道：固定 ¥5.0/条（无 seconds 倍率、无分辨率档）
       // 漫屋 → Picsart 特惠档：固定 30 秒、按次 480P ¥1.50 / 720P ¥2.00
@@ -192,12 +195,15 @@ describe('AutoDL H3 resolution tier note', () => {
   })
 
   // 有赞/官网 wan3 系模型都接受 resolution 参数，示例值按模型给：
-  // smart/官网 默认 480P，r2v 只能 720p/1080p（上游要小写），prime 固定 1080P。
+  // video/官网 默认 480P，r2v 只能 720p/1080p（上游要小写），
+  // prime 只有 720P/1080P，默认取最低档 720P。
   test('returns the wan3 sample resolution per model', () => {
     assert.equal(getWan3SampleResolution('wan3.0-smart'), '480P')
+    assert.equal(getWan3SampleResolution('wan3.0-video'), '480P')
     assert.equal(getWan3SampleResolution('wan3.0-video-官网'), '480P')
     assert.equal(getWan3SampleResolution('wan2.7-r2v'), '720p')
-    assert.equal(getWan3SampleResolution('wan3.0-video-prime-1080p'), '1080P')
+    assert.equal(getWan3SampleResolution('wan3.0-video-prime'), '720P')
+    assert.equal(getWan3SampleResolution('wan3.0-video-prime-1080p'), '720P')
     // 非 wan3 系模型没有该参数，示例里不应出现 resolution。
     assert.equal(getWan3SampleResolution('autodl:minimax-h3-u24'), null)
     assert.equal(getWan3SampleResolution('gpt-6-luna'), null)

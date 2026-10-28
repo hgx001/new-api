@@ -6,7 +6,6 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -30,32 +29,29 @@ func onePixelPNG(t *testing.T) string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buffer.Bytes())
 }
 
-func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
-	assetIndex := 0
-	fileContentTypes := make(map[int]string)
+// 2026-10-28 协议：素材走 POST /v1/assets?kind=&filename=（裸 body + 真实 MIME），
+// 建单时把回执 url 按数组顺序放进 media，不再有 conversationId / mentions / @alias。
+func TestBuildRequestBodyUsesV1AssetsAndMediaArray(t *testing.T) {
+	type upload struct {
+		kind        string
+		filename    string
+		contentType string
+	}
+	uploads := make([]upload, 0, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
-		case "/api/conversations":
+		case "/v1/assets":
+			query := request.URL.Query()
+			_, _ = writer.Write([]byte{})
+			uploads = append(uploads, upload{
+				kind:        query.Get("kind"),
+				filename:    query.Get("filename"),
+				contentType: request.Header.Get("Content-Type"),
+			})
 			writer.Header().Set("Content-Type", "application/json")
-			_, _ = writer.Write([]byte(`{"id":"conversation-1"}`))
-		case "/api/multimodal-assets":
-			assetIndex++
-			// Upstream rejects application/octet-stream parts (MEDIA_MIME_MISMATCH);
-			// the file part must declare its real MIME type.
-			if reader, err := request.MultipartReader(); err == nil {
-				for {
-					part, err := reader.NextPart()
-					if err != nil {
-						break
-					}
-					_, _ = io.Copy(io.Discard, part)
-					if part.FileName() != "" {
-						fileContentTypes[assetIndex] = part.Header.Get("Content-Type")
-					}
-				}
-			}
-			writer.Header().Set("Content-Type", "application/json")
-			_, _ = writer.Write([]byte(`{"asset":{"id":"asset-` + string(rune('0'+assetIndex)) + `","displayAlias":"asset` + string(rune('0'+assetIndex)) + `"}}`))
+			index := strconv.Itoa(len(uploads))
+			_, _ = writer.Write([]byte(`{"asset":{"id":"asset-` + index + `","kind":"` +
+				query.Get("kind") + `"},"url":"https://signed.example/asset-` + index + `"}`))
 		default:
 			t.Fatalf("unexpected path: %s", request.URL.Path)
 		}
@@ -65,97 +61,149 @@ func TestBuildRequestBodyUploadsWan3AssetsAndMapsMentions(t *testing.T) {
 	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
 	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
 		Model:  "wan3.0-smart",
-		Prompt: "让@图片1配合@音频1运动",
+		Prompt: "城市夜景缓慢推进",
 		Media: []relaycommon.TaskMedia{
 			{Type: "reference_image", URL: onePixelPNG(t)},
 			{Type: "reference_audio", URL: "data:audio/mpeg;base64," + base64.StdEncoding.EncodeToString([]byte("audio"))},
 		},
-		Duration: 5,
+		Duration:   2,
+		Resolution: "480P",
 	})
 	require.NoError(t, err)
 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
-	require.Equal(t, "wan3.0-smart", payload["model"])
-	require.Equal(t, "conversation-1", payload["conversationId"])
-	require.Contains(t, payload["prompt"], "@asset1")
-	require.Contains(t, payload["prompt"], "@asset2")
-	require.Len(t, payload["mentions"], 2)
-	// Upstream rejects application/octet-stream file parts (MEDIA_MIME_MISMATCH).
-	require.Len(t, fileContentTypes, 2)
-	for _, contentType := range fileContentTypes {
-		require.NotEqual(t, "application/octet-stream", contentType)
-	}
-	require.Contains(t, fileContentTypes[1], "image/")
-	require.Equal(t, "audio/mpeg", fileContentTypes[2])
+	// 公开别名 wan3.0-smart 必须映射成上游现存的 wan3.0-video。
+	require.Equal(t, "wan3.0-video", payload["model"])
+	require.Equal(t, float64(2), payload["duration"])
+	require.Equal(t, "480P", payload["resolution"])
+	require.Equal(t, "adaptive", payload["ratio"])
+	// 旧协议的痕迹必须彻底消失。
+	require.NotContains(t, payload, "conversationId")
+	require.NotContains(t, payload, "mentions")
+	require.NotContains(t, payload, "audio")
+
+	media, ok := payload["media"].([]any)
+	require.True(t, ok)
+	require.Len(t, media, 2)
+	first := media[0].(map[string]any)
+	require.Equal(t, "reference_image", first["type"])
+	require.Equal(t, "https://signed.example/asset-1", first["url"])
+	second := media[1].(map[string]any)
+	require.Equal(t, "reference_audio", second["type"])
+	require.Equal(t, "https://signed.example/asset-2", second["url"])
+
+	require.Len(t, uploads, 2)
+	require.Equal(t, "reference_image", uploads[0].kind)
+	require.Equal(t, "reference_audio", uploads[1].kind)
+	require.Contains(t, uploads[0].contentType, "image/")
+	require.Equal(t, "audio/mpeg", uploads[1].contentType)
 }
 
-func TestGetModelListExposesYouzanModels(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-	require.Equal(t, []string{"wan3.0-smart", primeModel, "wan2.7-r2v"}, adaptor.GetModelList())
-}
-
-func TestBuildRequestBodyUsesR2VDefaults(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
-		Model:  r2vModel,
-		Prompt: "让画面自然运动",
-		Images: []string{"https://cdn.example/a.png"},
-	})
-	require.NoError(t, err)
-
-	var payload map[string]any
-	require.NoError(t, common.Unmarshal(body, &payload))
-	require.Equal(t, r2vModel, payload["model"])
-	require.Equal(t, "1080p", payload["resolution"])
-	require.Equal(t, "16:9", payload["ratio"])
-	require.Equal(t, float64(defaultDuration), payload["duration"])
-}
-
-func TestParseTaskResultReadsYouzanResult(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-	result, err := adaptor.ParseTaskResult([]byte(`{"status":"succeeded","result":{"url":"https://cdn.example/video.mp4"}}`))
-	require.NoError(t, err)
-	require.Equal(t, "https://cdn.example/video.mp4", result.Url)
-	require.Equal(t, "100%", result.Progress)
-}
-
-func TestNormalizeAPIRootStripsVersionSuffix(t *testing.T) {
-	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip/v1"))
-	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip/v1/"))
-	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip"))
-	require.Equal(t, "https://example.com/openai", normalizeAPIRoot("https://example.com/openai"))
-}
-
-func TestParseTaskResultResolvesRelativeVideoURL(t *testing.T) {
+func TestBuildRequestURLAndIdempotencyKey(t *testing.T) {
 	adaptor := &TaskAdaptor{baseURL: normalizeAPIRoot("https://youzan666.vip/v1")}
-	result, err := adaptor.ParseTaskResult([]byte(`{"status":"success","result":{"url":"/outputs/videos/vid_1.mp4"}}`))
+	url, err := adaptor.BuildRequestURL(nil)
 	require.NoError(t, err)
-	require.Equal(t, "https://youzan666.vip/outputs/videos/vid_1.mp4", result.Url)
-	require.Equal(t, "100%", result.Progress)
+	require.Equal(t, "https://youzan666.vip/v1/tasks", url)
+
+	// 上游要求 8—100 位、仅字母/数字/下划线/连字符。
+	require.Equal(t, "task_1791125558575_71psn3", idempotencyKey(&relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_1791125558575_71psn3"},
+	}))
+	// 非法字符要净化，不能透传给上游。
+	key := idempotencyKey(&relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task/1 2:3"},
+	})
+	require.Equal(t, "task-1-2-3", key)
+	require.NotContains(t, key, "/")
+	require.NotContains(t, key, " ")
+	// 过短要补足 8 位，过长要截到 100 位。
+	require.GreaterOrEqual(t, len(idempotencyKey(&relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "a"},
+	})), 8)
+	require.Len(t, idempotencyKey(&relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: strings.Repeat("a", 150)},
+	}), 100)
+	require.GreaterOrEqual(t, len(idempotencyKey(nil)), 8)
 }
 
-func TestParseTaskResultUnifiesUnexplainedFailureAsModeration(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-	// 上游只回 status=failed、无任何原因：统一记为内容审核不通过。
-	result, err := adaptor.ParseTaskResult([]byte(`{"model":"wan3.0-smart","status":"failed","taskId":"wan3_45ea34d8"}`))
-	require.NoError(t, err)
-	require.Equal(t, "内容审核不通过", result.Reason)
+func TestFetchTaskHitsV1TasksPath(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		gotPath = request.URL.Path
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"ok":true,"task":{"id":"wz_1","status":"processing"}}`))
+	}))
+	defer server.Close()
 
-	// 上游给了原因则原样保留。
+	adaptor := &TaskAdaptor{}
+	resp, err := adaptor.FetchTask(server.URL, "k", map[string]any{"id": "wz_32167290-46e9-48d3-aeb7-69ba331223c3"}, "")
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	_ = resp.Body.Close()
+	require.Equal(t, "/v1/tasks/wz_32167290-46e9-48d3-aeb7-69ba331223c3", gotPath)
+}
+
+// 生产实测报文（2026-10-28，task wz_32167290）：状态在 task 对象里，videoUrl 为绝对地址。
+func TestParseTaskResultReadsV1TaskObject(t *testing.T) {
+	adaptor := &TaskAdaptor{baseURL: "https://youzan666.vip"}
+
+	queued, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"queued","videoUrl":null}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusQueued, queued.Status)
+
+	processing, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"processing","videoUrl":null}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusInProgress, processing.Status)
+
+	done, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"succeeded","videoUrl":"https://oss.example/v.mp4?Expires=1&Signature=x"}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, done.Status)
+	require.Equal(t, "100%", done.Progress)
+	require.Equal(t, "https://oss.example/v.mp4?Expires=1&Signature=x", done.Url)
+
+	// succeeded 但还没有 videoUrl：不能提前收尾，继续轮询。
+	pending, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"succeeded","videoUrl":null}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusInProgress, pending.Status)
+
+	failed, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"MEDIA_INVALID","errorMessage":"参考素材已失效"}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, failed.Status)
+	require.Equal(t, "参考素材已失效", failed.Reason)
+
+	// 只有 errorCode 没有 message 时也不能丢信息。
+	codeOnly, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"MEDIA_INVALID"}}`))
+	require.NoError(t, err)
+	require.Equal(t, "MEDIA_INVALID", codeOnly.Reason)
+}
+
+// 老协议落库的历史任务仍在轮询中，扁平字段必须继续可解析。
+func TestParseTaskResultKeepsLegacyFlatShape(t *testing.T) {
+	adaptor := &TaskAdaptor{baseURL: normalizeAPIRoot("https://youzan666.vip/v1")}
+
+	result, err := adaptor.ParseTaskResult([]byte(`{"status":"succeeded","result":{"url":"/outputs/videos/vid_1.mp4"}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, result.Status)
+	require.Equal(t, "https://youzan666.vip/outputs/videos/vid_1.mp4", result.Url)
+
 	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","message":"balance insufficient"}`))
 	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, result.Status)
 	require.Equal(t, "balance insufficient", result.Reason)
+
+	// 无理由失败统一归因内容审核不通过。
+	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","error":null,"result":null}`))
+	require.NoError(t, err)
+	require.Equal(t, "内容审核不通过", result.Reason)
 }
 
-// 有赞的 error 字段有两种形态，且 status 还有 refunded 这个终态。两者任一处理不对，
-// 任务就会永远停在 NOT_START / 0%：2026-10-05 生产事故 task 249（wan2.7-r2v）就是
-// 上游回了 {code,message} 对象，退款已在有赞侧发生（refundedPoints），new-api 却因
-// 反序列化失败拿不到失败原因，用户的钱一直卡在预扣里。
+// 有赞的 error 有两种形态，且 status 还有 refunded 终态。任一处理不对，
+// 任务会永远停在 0%：2026-10-05 生产事故 task 249 就是 {code,message} 对象形态
+// 导致反序列化失败，退款已在有赞侧发生而用户的钱卡在预扣里。
 func TestParseTaskResultHandlesUpstreamErrorShapesAndRefundedStatus(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 
-	// 生产真实报文（task_1791125558575_71psn3）：对象形态 error + refunded 终态。
 	result, err := adaptor.ParseTaskResult([]byte(`{
 		"taskId":"task_1791125558575_71psn3","type":"video","model":"wan2.7-r2v",
 		"status":"refunded","result":null,
@@ -167,13 +215,10 @@ func TestParseTaskResultHandlesUpstreamErrorShapesAndRefundedStatus(t *testing.T
 	require.Equal(t, "100%", result.Progress)
 	require.Equal(t, "UPSTREAM_TASK_FAILED: 参考素材已失效或无法访问，请重新上传素材后再试", result.Reason)
 
-	// error 为裸字符串：保持原有 "code: message" 风格不变。
 	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","error":"WAN3_QUOTA_CAPACITY_INSUFFICIENT: max duration is 4 seconds"}`))
 	require.NoError(t, err)
-	require.Equal(t, model.TaskStatusFailure, result.Status)
 	require.Equal(t, "WAN3_QUOTA_CAPACITY_INSUFFICIENT: max duration is 4 seconds", result.Reason)
 
-	// 对象只带 message / 只带 code：都不能丢信息，也不能报错。
 	result, err = adaptor.ParseTaskResult([]byte(`{"status":"error","error":{"message":"素材不可访问"}}`))
 	require.NoError(t, err)
 	require.Equal(t, "素材不可访问", result.Reason)
@@ -181,12 +226,165 @@ func TestParseTaskResultHandlesUpstreamErrorShapesAndRefundedStatus(t *testing.T
 	result, err = adaptor.ParseTaskResult([]byte(`{"status":"error","error":{"code":"ASSET_EXPIRED"}}`))
 	require.NoError(t, err)
 	require.Equal(t, "ASSET_EXPIRED", result.Reason)
+}
 
-	// error 为 null 且无任何原因：回落内容审核不通过，不得反序列化失败。
-	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","error":null,"result":null}`))
-	require.NoError(t, err)
-	require.Equal(t, model.TaskStatusFailure, result.Status)
-	require.Equal(t, "内容审核不通过", result.Reason)
+func TestValidateMediaRejectsUnsupportedTypesAndLimits(t *testing.T) {
+	image := func() relaycommon.TaskMedia {
+		return relaycommon.TaskMedia{Type: "reference_image", URL: "https://cdn.example/r.png"}
+	}
+
+	// 2026-10-28 上游取消首尾帧（firstFrameAssetId/lastFrameAssetId 已不存在），
+	// 必须明确拒绝而不是静默降级成参考图。
+	err := validateMedia([]relaycommon.TaskMedia{
+		{Type: "first_frame", URL: "https://cdn.example/f.png"},
+	}, "wan3.0-smart")
+	require.EqualError(t, err, "youzan wan3 no longer supports first_frame/last_frame, use reference_image instead")
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{
+		{Type: "last_frame", URL: "https://cdn.example/l.png"},
+	}, "wan3.0-smart"))
+
+	// 三类素材各自上限：图片 10 / 视频 5 / 音频 5，总量 20。
+	media := func(kind string, n int) []relaycommon.TaskMedia {
+		items := make([]relaycommon.TaskMedia, 0, n)
+		for i := 0; i < n; i++ {
+			items = append(items, relaycommon.TaskMedia{Type: kind, URL: "https://cdn.example/" + strconv.Itoa(i)})
+		}
+		return items
+	}
+	require.NoError(t, validateMedia(media("reference_image", 10), "wan3.0-smart"))
+	require.Error(t, validateMedia(media("reference_image", 11), "wan3.0-smart"))
+	require.NoError(t, validateMedia(media("reference_video", 5), "wan3.0-smart"))
+	require.Error(t, validateMedia(media("reference_video", 6), "wan3.0-smart"))
+	require.NoError(t, validateMedia(media("reference_audio", 5), "wan3.0-smart"))
+	require.Error(t, validateMedia(media("reference_audio", 6), "wan3.0-smart"))
+
+	// 10 + 5 + 5 = 20 允许，再多一项就超总量。
+	twenty := append(append(media("reference_image", 10), media("reference_video", 5)...), media("reference_audio", 5)...)
+	require.NoError(t, validateMedia(twenty, "wan3.0-smart"))
+	require.Error(t, validateMedia(append(twenty, image()), "wan3.0-smart"))
+
+	// 空 URL 直接拒绝，避免把无效素材传上游。
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{{Type: "reference_image", URL: " "}}, "wan3.0-smart"))
+	// 未知类型拒绝。
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{{Type: "mask", URL: "https://cdn.example/m.png"}}, "wan3.0-smart"))
+}
+
+func TestUpstreamModelFor(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{videoModel, "wan3.0-video"},
+		{smartLegacyModel, "wan3.0-video"},
+		{primeModel, "wan3.0-video-prime"},
+		{legacyPrimeModel, "wan3.0-video-prime"},
+	}
+	for _, tc := range cases {
+		got, err := upstreamModelFor(tc.input)
+		require.NoError(t, err, "input=%s", tc.input)
+		require.Equal(t, tc.want, got, "input=%s", tc.input)
+	}
+	// wan2.7-r2v 已从上游 /v1/models 目录消失，必须报错而不是发出去。
+	_, err := upstreamModelFor(r2vModel)
+	require.Error(t, err)
+	_, err = upstreamModelFor("unknown-model")
+	require.Error(t, err)
+}
+
+func TestResolutionDurationRatio(t *testing.T) {
+	// wan3.0-video：480P / 720P / 1080P 三档都受支持，缺省 480P。
+	require.Equal(t, "480P", resolveResolution(relaycommon.TaskSubmitReq{Model: videoModel}))
+	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: videoModel, Resolution: "720p"}))
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: videoModel, Size: "1080"}))
+	// 上游 2—30 秒，越界夹紧。
+	require.Equal(t, 2, resolveDuration(relaycommon.TaskSubmitReq{Model: videoModel, Duration: 1}))
+	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: videoModel, Duration: 99}))
+	require.Equal(t, 7, resolveDuration(relaycommon.TaskSubmitReq{Model: videoModel, Seconds: "7"}))
+	// 2026-10-28 新增 21:9 宽银幕。
+	require.Equal(t, "21:9", resolveRatio(relaycommon.TaskSubmitReq{
+		Model:    videoModel,
+		Metadata: map[string]interface{}{"ratio": "21:9"},
+	}))
+	require.Equal(t, "adaptive", resolveRatio(relaycommon.TaskSubmitReq{Model: videoModel}))
+	// 非法比例回退缺省值。
+	require.Equal(t, "adaptive", resolveRatio(relaycommon.TaskSubmitReq{
+		Model:    videoModel,
+		Metadata: map[string]interface{}{"aspect_ratio": "2:1"},
+	}))
+	// 历史别名 wan3.0-smart 解析结果与 wan3.0-video 完全一致。
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: smartLegacyModel, Resolution: "1080p"}))
+	require.Equal(t, 8, resolveDuration(relaycommon.TaskSubmitReq{Model: smartLegacyModel, Duration: 8}))
+}
+
+func TestPrimeTiersAndDuration(t *testing.T) {
+	// 上游 prime 只有 720P / 1080P，缺省 720P（最低档，不静默升价）。
+	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel}))
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel, Resolution: "1080p"}))
+	// 480P 请求按最低档 720P 执行，而不是被丢掉或升到 1080P。
+	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel, Resolution: "480P"}))
+	// 2026-10-28 起 prime 也按秒计费，2—30 秒逐秒可选，不再固定 30 秒。
+	require.Equal(t, 2, resolveDuration(relaycommon.TaskSubmitReq{Model: primeModel, Duration: 2}))
+	require.Equal(t, 12, resolveDuration(relaycommon.TaskSubmitReq{Model: primeModel, Seconds: "12"}))
+	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: primeModel, Duration: 99}))
+	// 参考图上限与 video 一致（10 张），旧版的 8 张限制已随新协议取消。
+	media := make([]relaycommon.TaskMedia, 0, 10)
+	for index := 0; index < 10; index++ {
+		media = append(media, relaycommon.TaskMedia{
+			Type: "reference_image",
+			URL:  "https://cdn.example/" + strconv.Itoa(index) + ".png",
+		})
+	}
+	require.NoError(t, validateMedia(media, primeModel))
+	require.Error(t, validateMedia(append(media, relaycommon.TaskMedia{
+		Type: "reference_image",
+		URL:  "https://cdn.example/10.png",
+	}), primeModel))
+}
+
+func TestEstimateBillingChargesResolutionTiers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adaptor := &TaskAdaptor{}
+	cases := []struct {
+		model      string
+		resolution string
+		wantSize   float64
+	}{
+		// wan3.0-video：上游三档同价（0.18 ⚡/秒），售价统一 ¥0.23/秒，倍率全为 1。
+		{videoModel, "480P", 1.0},
+		{videoModel, "720P", 1.0},
+		{videoModel, "1080P", 1.0},
+		// wan3.0-video-prime：上游 720P 0.15 / 1080P 0.20 ⚡/秒，
+		// 售价 ¥0.20 / ¥0.25，1080P 倍率 = 0.25/0.20 = 1.25。
+		{primeModel, "720P", 1.0},
+		{primeModel, "1080P", 1.25},
+		// 480P 不在 prime 档位内，按 720P 计费（不低于成本）。
+		{primeModel, "480P", 1.0},
+		// 未知档位回退 1，避免多扣费。
+		{videoModel, "4K", 1.0},
+	}
+	for _, tc := range cases {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Set("task_request", relaycommon.TaskSubmitReq{
+			Duration:   5,
+			Resolution: tc.resolution,
+		})
+		info := &relaycommon.RelayInfo{OriginModelName: tc.model}
+		require.Equal(t, map[string]float64{
+			"seconds": 5,
+			"size":    tc.wantSize,
+		}, adaptor.EstimateBilling(context, info), "model=%s resolution=%s", tc.model, tc.resolution)
+	}
+}
+
+func TestPrimeBillsPerSecondNotPerCall(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 30, Resolution: "1080P"})
+	info := &relaycommon.RelayInfo{OriginModelName: primeModel}
+	// 2026-10-28 起 prime 改为按秒计费：必须返回 seconds/size 倍率，
+	// 否则 quota 会退化成「一次任务 = ModelPrice」的按次计费。
+	require.Equal(t, map[string]float64{"seconds": 30, "size": 1.25},
+		(&TaskAdaptor{}).EstimateBilling(context, info))
 }
 
 func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
@@ -210,250 +408,34 @@ func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
 	require.Equal(t, task.FailReason, response.Error.Message)
 }
 
-func TestEstimateBillingChargesSmartResolutionTiers(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	adaptor := &TaskAdaptor{}
-	cases := []struct {
-		model      string
-		resolution string
-		wantSize   float64
-	}{
-		// 智能调度版档位（2026-10-05 调价后）：480P=¥0.28/秒、720P=¥0.28/秒、1080P=¥0.30/秒。
-		{"wan3.0-smart", "480P", 1.0},
-		{"wan3.0-smart", "720P", 1.0},
-		{"wan3.0-smart", "1080P", 0.30 / 0.28},
-		// R2V 对外全分辨率统一价（¥0.10/秒），各档倍率均为 1（上游只认小写分辨率）。
-		{"wan2.7-r2v", "720p", 1.0},
-		{"wan2.7-r2v", "1080p", 1.0},
-		// R2V 不支持 480P，缺省/非法档位回退 1（落在统一价上）。
-		{"wan2.7-r2v", "480P", 1.0},
-		// 未知档位回退 1，避免多扣费。
-		{"wan3.0-smart", "4K", 1.0},
-	}
-	for _, tc := range cases {
-		context, _ := gin.CreateTestContext(httptest.NewRecorder())
-		context.Set("task_request", relaycommon.TaskSubmitReq{
-			Duration:   5,
-			Resolution: tc.resolution,
-		})
-		info := &relaycommon.RelayInfo{OriginModelName: tc.model}
-		require.Equal(t, map[string]float64{
-			"seconds": 5,
-			"size":    tc.wantSize,
-		}, adaptor.EstimateBilling(context, info), "model=%s resolution=%s", tc.model, tc.resolution)
-	}
-}
-
-func TestPrimeForces1080PAnd30Seconds(t *testing.T) {
-	// 上游满血档仅支持 1080P，请求里的其它分辨率被忽略。
-	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel}))
-	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel, Resolution: "480P"}))
-	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel, Resolution: "720P"}))
-	// 时长固定 30 秒。
-	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: primeModel, Duration: 2}))
-	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: primeModel, Duration: 30}))
-}
-
-func TestPrimeBillsPerCall(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	context, _ := gin.CreateTestContext(httptest.NewRecorder())
-	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 30, Resolution: "1080P"})
-	info := &relaycommon.RelayInfo{OriginModelName: primeModel}
-	// 按次计费：不返回 seconds/size 倍率，一次任务的价格直接由 ModelPrice 决定。
-	require.Nil(t, (&TaskAdaptor{}).EstimateBilling(context, info))
-}
-
-func TestValidateMediaRejectsFrameReferenceMixing(t *testing.T) {
-	frame := relaycommon.TaskMedia{Type: "first_frame", URL: "https://cdn.example/first.png"}
-	lastFrame := relaycommon.TaskMedia{Type: "last_frame", URL: "https://cdn.example/last.png"}
-	reference := relaycommon.TaskMedia{Type: "reference_image", URL: "https://cdn.example/ref.png"}
-
-	// 首尾帧可成对使用，但不能和普通参考素材混用（上游会拒绝）。
-	require.NoError(t, validateMedia([]relaycommon.TaskMedia{frame, lastFrame}, "wan3.0-smart"))
-	require.Error(t, validateMedia([]relaycommon.TaskMedia{frame, reference}, "wan3.0-smart"))
-	require.Error(t, validateMedia([]relaycommon.TaskMedia{lastFrame, reference}, "wan3.0-smart"))
-	// wan2.7-r2v 只支持参考图：首尾帧、参考视频、参考音频都会被静默丢弃，本地直接拒绝。
-	require.Error(t, validateMedia([]relaycommon.TaskMedia{frame}, r2vModel))
-	require.Error(t, validateMedia([]relaycommon.TaskMedia{
-		reference,
-		{Type: "reference_video", URL: "https://cdn.example/v.mp4"},
-	}, r2vModel))
-	require.Error(t, validateMedia([]relaycommon.TaskMedia{
-		reference,
-		{Type: "reference_audio", URL: "https://cdn.example/a.mp3"},
-	}, r2vModel))
-}
-
-// 只传参考视频（没传图）时，报错必须直指「不支持视频参考」。
-// 生产实测 2026-10-06：修正前这里返回的是 “requires at least one reference image”，
-// 客户端会误以为补一张图就能跑通，而真正的原因是 r2v 根本不吃视频参考。
-func TestR2VVideoOnlyRejectionNamesTheRealCause(t *testing.T) {
-	tests := []struct {
-		name  string
-		media []relaycommon.TaskMedia
-		want  string
-	}{
-		{
-			name:  "只传视频",
-			media: []relaycommon.TaskMedia{{Type: "reference_video", URL: "https://cdn.example/v.mp4"}},
-			want:  "youzan wan2.7-r2v does not accept reference video or audio",
-		},
-		{
-			name:  "只传音频",
-			media: []relaycommon.TaskMedia{{Type: "reference_audio", URL: "https://cdn.example/a.mp3"}},
-			want:  "youzan wan2.7-r2v does not accept reference video or audio",
-		},
-		{
-			name:  "只传首帧",
-			media: []relaycommon.TaskMedia{{Type: "first_frame", URL: "https://cdn.example/first.png"}},
-			want:  "youzan wan2.7-r2v does not accept first_frame/last_frame",
-		},
-		{
-			// 既没有视频也没有首尾帧，才轮到这个分支。
-			name:  "空素材",
-			media: nil,
-			want:  "wan2.7-r2v requires at least one reference image",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateMedia(tt.media, r2vModel)
-			require.EqualError(t, err, tt.want)
-		})
-	}
-}
-
-func TestPrimeBodyShapeAndReferenceLimit(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
-		Model:    primeModel,
-		Prompt:   "海边的日落延时",
-		Duration: 5,
-	})
-	require.NoError(t, err)
-
-	var payload map[string]interface{}
-	require.NoError(t, common.Unmarshal(body, &payload))
-	require.Equal(t, float64(30), payload["duration"])
-	require.Equal(t, "1080P", payload["resolution"])
-
-	// 参考图上限 8 张（smart 为 10 张）。
-	images := make([]relaycommon.TaskMedia, 0, 9)
-	for index := 0; index < 9; index++ {
-		images = append(images, relaycommon.TaskMedia{
-			Type: "reference_image",
-			URL:  "https://cdn.example/" + strconv.Itoa(index) + ".png",
-		})
-	}
-	require.Error(t, validateMedia(images, primeModel))
-	require.NoError(t, validateMedia(images[:8], primeModel))
-	require.NoError(t, validateMedia(images, "wan3.0-smart"))
-}
-
-func TestR2VResolutionAndDurationLimits(t *testing.T) {
-	// 上游只认小写 720p / 1080p，缺省 1080p。
-	require.Equal(t, "1080p", resolveResolution(relaycommon.TaskSubmitReq{Model: r2vModel}))
-	require.Equal(t, "720p", resolveResolution(relaycommon.TaskSubmitReq{
-		Model:      r2vModel,
-		Resolution: "720P",
-	}))
-	// 480P 不支持，回退上游默认 1080p。
-	require.Equal(t, "1080p", resolveResolution(relaycommon.TaskSubmitReq{
-		Model:      r2vModel,
-		Resolution: "480P",
-	}))
-	// 上游 wan2.7-r2v 时长仅支持 5s / 10s，就近取档。
-	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 2}))
-	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 5}))
-	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 7}))
-	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: r2vModel, Duration: 30}))
-	// wan3.0-smart 仍按 2-30s 保留原值。
-	require.Equal(t, 7, resolveDuration(relaycommon.TaskSubmitReq{Model: "wan3.0-smart", Duration: 7}))
-}
-
-func TestR2VBodyUsesFlatReferenceImages(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
-		Model:    r2vModel,
-		Prompt:   "@图片1 中的人物转身",
-		Duration: 7,
-		Images:   []string{"https://cdn.example/a.png", "https://cdn.example/b.png"},
-	})
-	require.NoError(t, err)
-
-	var payload map[string]interface{}
-	require.NoError(t, common.Unmarshal(body, &payload))
-	require.Equal(t, []interface{}{"https://cdn.example/a.png", "https://cdn.example/b.png"}, payload["referenceImages"])
-	require.Equal(t, float64(10), payload["duration"], "7s 应就近取 10s 档")
-	// r2v 不走 assets/mentions 协议。
-	require.NotContains(t, payload, "conversationId")
-	require.NotContains(t, payload, "mentions")
-
-	// 没有参考图时本地就拒绝，不消耗上游调用。
-	_, err = adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
-		Model:    r2vModel,
-		Prompt:   "no image",
-		Duration: 5,
-	})
-	require.Error(t, err)
-}
-
-func TestR2VRatioAndReferenceImageLimits(t *testing.T) {
-	// r2v 不接受 adaptive，缺省回退 16:9；显式传入的合法比例原样保留。
-	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{Model: r2vModel}))
-	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{
-		Model:    r2vModel,
-		Metadata: map[string]interface{}{"ratio": "adaptive"},
-	}))
-	require.Equal(t, "9:16", resolveRatio(relaycommon.TaskSubmitReq{
-		Model:    r2vModel,
-		Metadata: map[string]interface{}{"ratio": "9:16"},
-	}))
-	// smart 保留 adaptive 与 4:3 / 3:4。
-	require.Equal(t, "adaptive", resolveRatio(relaycommon.TaskSubmitReq{Model: "wan3.0-smart"}))
-	require.Equal(t, "4:3", resolveRatio(relaycommon.TaskSubmitReq{
-		Model:    "wan3.0-smart",
-		Metadata: map[string]interface{}{"ratio": "4:3"},
-	}))
-
-	// r2v 上游最多 3 张参考图，第 4 张要报错；smart 上限仍是 10。
-	media := func(n int) []relaycommon.TaskMedia {
-		items := make([]relaycommon.TaskMedia, 0, n)
-		for i := 0; i < n; i++ {
-			items = append(items, relaycommon.TaskMedia{Type: "reference_image", URL: "https://example.com/i.png"})
-		}
-		return items
-	}
-	require.NoError(t, validateMedia(media(3), r2vModel))
-	require.Error(t, validateMedia(media(4), r2vModel))
-	require.NoError(t, validateMedia(media(4), "wan3.0-smart"))
-}
-
 func TestValidateRequestRejectsBadMediaAsLocal400(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adaptor := &TaskAdaptor{}
-
-	// r2v 缺参考图：客户端参数错误，必须是 400 本地错误（不触发渠道重试）。
 	info := &relaycommon.RelayInfo{
 		ChannelMeta:   &relaycommon.ChannelMeta{},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public001"},
 	}
+
+	// 首尾帧已不被上游接受：属于客户端参数错误，必须是 400 本地错误（不触发渠道重试）。
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
-	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos",
-		strings.NewReader(`{"model":"wan2.7-r2v","prompt":"x","seconds":5}`))
+	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(
+		`{"model":"wan3.0-smart","prompt":"x","metadata":{"media":[{"type":"first_frame","url":"https://cdn.example/a.png"}]}}`))
 	context.Request.Header.Set("Content-Type", "application/json")
 	taskErr := adaptor.ValidateRequestAndSetAction(context, info)
 	require.NotNil(t, taskErr)
 	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 	require.True(t, taskErr.LocalError)
+}
 
-	// 首尾帧与参考素材混用：同样是 400 本地错误。
-	context, _ = gin.CreateTestContext(httptest.NewRecorder())
-	context.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(
-		`{"model":"wan3.0-smart","prompt":"x","metadata":{"media":[{"type":"first_frame","url":"https://cdn.example/a.png"},{"type":"reference_image","url":"https://cdn.example/b.png"}]}}`))
-	context.Request.Header.Set("Content-Type", "application/json")
-	taskErr = adaptor.ValidateRequestAndSetAction(context, info)
-	require.NotNil(t, taskErr)
-	require.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
-	require.True(t, taskErr.LocalError)
+func TestNormalizeAPIRootStripsVersionSuffix(t *testing.T) {
+	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip/v1"))
+	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip/v1/"))
+	require.Equal(t, "https://youzan666.vip", normalizeAPIRoot("https://youzan666.vip"))
+	require.Equal(t, "https://example.com/openai", normalizeAPIRoot("https://example.com/openai"))
+}
+
+func TestGetModelListExposesYouzanModels(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	// 与上游 /v1/models 完全一致（wan3.0-smart / wan2.7-r2v 已不再展示）。
+	require.Equal(t, []string{"wan3.0-video", "wan3.0-video-prime"}, adaptor.GetModelList())
 }

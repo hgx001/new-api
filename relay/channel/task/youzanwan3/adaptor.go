@@ -10,9 +10,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
 	"net/url"
 	"path"
 	"regexp"
@@ -33,7 +31,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-const maxAssetBytes = 64 << 20
+const maxAssetBytes = 100 << 20
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
@@ -46,7 +44,10 @@ type TaskAdaptor struct {
 type generateResponse struct {
 	ID     string `json:"id"`
 	TaskID string `json:"taskId"`
-	Data   struct {
+	Task   struct {
+		ID string `json:"id"`
+	} `json:"task"`
+	Data struct {
 		ID string `json:"id"`
 	} `json:"data"`
 }
@@ -92,23 +93,29 @@ func (e *upstreamError) UnmarshalJSON(data []byte) error {
 }
 
 type taskResponse struct {
+	OK     bool   `json:"ok"`
 	Status string `json:"status"`
 	Result struct {
 		URL string `json:"url"`
 	} `json:"result"`
 	Error   upstreamError `json:"error"`
 	Message string        `json:"message"`
-}
-
-type conversationResponse struct {
-	ID string `json:"id"`
+	Task    struct {
+		ID           string        `json:"id"`
+		Status       string        `json:"status"`
+		VideoURL     string        `json:"videoUrl"`
+		ErrorCode    string        `json:"errorCode"`
+		ErrorMessage string        `json:"errorMessage"`
+		Error        upstreamError `json:"error"`
+	} `json:"task"`
 }
 
 type assetResponse struct {
 	Asset struct {
-		ID           string `json:"id"`
-		DisplayAlias string `json:"displayAlias"`
+		ID   string `json:"id"`
+		Kind string `json:"kind"`
 	} `json:"asset"`
+	URL string `json:"url"`
 }
 
 var versionSuffixPattern = regexp.MustCompile(`(?i)/v\d+(beta)?$`)
@@ -183,13 +190,42 @@ func isR2VModel(model string) bool {
 }
 
 func isPrimeModel(model string) bool {
-	return strings.TrimSpace(model) == primeModel
+	switch strings.TrimSpace(model) {
+	case primeModel, legacyPrimeModel:
+		return true
+	default:
+		return false
+	}
+}
+
+// upstreamModelFor maps the public aliases retained by new-api to the model
+// IDs exposed by the current Youzan API.  The mapping is explicit so the
+// public name remains stable while the upstream protocol can evolve.
+func upstreamModelFor(model string) (string, error) {
+	switch strings.TrimSpace(model) {
+	case videoModel, smartLegacyModel:
+		return videoModel, nil
+	case primeModel, legacyPrimeModel:
+		return primeModel, nil
+	case r2vModel:
+		return "", errors.New("youzan wan2.7-r2v is not exposed by the current upstream API")
+	default:
+		return "", errors.Errorf("unsupported Youzan Wan3 model %q", model)
+	}
 }
 
 func normalizeResolutionForModel(model, resolution string) string {
 	if isPrimeModel(model) {
-		// 上游该档位仅支持 1080P，请求里的其它分辨率一律按 1080P 执行。
-		return primeResolution
+		// 上游 prime 只提供 720P / 1080P：480P 请求按最低档 720P 执行，
+		// 既不静默升到更贵的 1080P，也让请求能够成功。
+		switch resolution {
+		case "720P", "1080P":
+			return resolution
+		case "480P":
+			return primeDefaultResolution
+		default:
+			return ""
+		}
 	}
 	if !isR2VModel(model) {
 		return resolution
@@ -208,6 +244,9 @@ func normalizeResolutionForModel(model, resolution string) string {
 func defaultResolutionForModel(model string) string {
 	if isR2VModel(model) {
 		return "1080p"
+	}
+	if isPrimeModel(model) {
+		return primeDefaultResolution
 	}
 	return defaultResolution
 }
@@ -234,10 +273,13 @@ func resolveResolution(req relaycommon.TaskSubmitReq) string {
 }
 
 func resolveDuration(req relaycommon.TaskSubmitReq) int {
-	if isPrimeModel(req.Model) {
-		// 上游该档位固定 30 秒，忽略请求里的其它时长。
-		return primeDuration
-	}
+	return resolveDurationForModel(req, req.Model)
+}
+
+// resolveDurationForModel 解析时长。2026-10-28 起上游 prime 也改为按秒计费
+// （supportsSmartDuration=false，但 2—30 秒逐秒可选），不再固定 30 秒；
+// 两个在售模型因此共用同一套夹紧规则。
+func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	duration := req.Duration
 	if duration <= 0 {
 		duration, _ = strconv.Atoi(req.Seconds)
@@ -245,7 +287,7 @@ func resolveDuration(req relaycommon.TaskSubmitReq) int {
 	if duration <= 0 {
 		return defaultDuration
 	}
-	if isR2VModel(req.Model) {
+	if isR2VModel(model) {
 		// 上游仅接受 5 秒和 10 秒两档，就近取档。
 		if duration <= r2vMinDuration {
 			return r2vMinDuration
@@ -282,25 +324,6 @@ func resolveRatio(req relaycommon.TaskSubmitReq) string {
 		}
 	}
 	return fallback
-}
-
-func metadataBool(metadata map[string]interface{}, keys ...string) (bool, bool) {
-	for _, key := range keys {
-		value, ok := metadata[key]
-		if !ok {
-			continue
-		}
-		switch typed := value.(type) {
-		case bool:
-			return typed, true
-		case string:
-			parsed, err := strconv.ParseBool(strings.TrimSpace(typed))
-			if err == nil {
-				return parsed, true
-			}
-		}
-	}
-	return false, false
 }
 
 func metadataMedia(metadata map[string]interface{}) ([]relaycommon.TaskMedia, error) {
@@ -360,51 +383,29 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 			return errors.New("youzan wan3 media url is required")
 		}
 		switch item.Type {
-		case "first_frame", "last_frame", "reference_image", "reference_video", "reference_audio":
+		case "reference_image", "reference_video", "reference_audio":
 			counts[item.Type]++
+		case "first_frame", "last_frame":
+			// 2026-10-28 上游 /v1/tasks 取消了 firstFrameAssetId/lastFrameAssetId，
+			// media 只认 reference_image / reference_video / reference_audio 三类，
+			// 且 type 必须等于上传回执的 asset.kind。首尾帧已无法表达；静默降级成
+			// 参考图会让客户端以为做了首尾帧控制（实际只是普通参考），故本地直接拒绝。
+			return errors.New("youzan wan3 no longer supports first_frame/last_frame, use reference_image instead")
 		default:
 			return errors.Errorf("youzan wan3 media type %q is unsupported", item.Type)
 		}
 	}
-	if counts["first_frame"] > 1 || counts["last_frame"] > 1 {
-		return errors.New("youzan wan3 accepts at most one first_frame and one last_frame")
-	}
-	// 上游文档：首尾帧单独使用，不能和普通参考素材混用；
-	// 混用会被上游拒绝（WAN3_API_REFERENCE_MODE / WAN3_REFERENCE_MODE_CONFLICT）。
-	if counts["first_frame"]+counts["last_frame"] > 0 &&
-		counts["reference_image"]+counts["reference_video"]+counts["reference_audio"] > 0 {
-		return errors.New("youzan wan3 does not accept first_frame/last_frame mixed with reference media")
-	}
-	// 拒绝分支的顺序 = 诊断价值排序：先报「哪种素材根本不支持」，再报「必需素材缺失」。
-	// 否则只传一个参考视频的客户端会拿到 “requires at least one reference image”，
-	// 而真正的原因是它压根不支持视频参考 —— 客户端会误以为补张图就行，白试一轮。
-	if isR2VModel(model) && counts["reference_video"]+counts["reference_audio"] > 0 {
-		// r2v 只发参考图，参考视频/音频会被静默丢弃，这里直接拒绝。
-		return errors.New("youzan wan2.7-r2v does not accept reference video or audio")
-	}
-	if isR2VModel(model) && counts["first_frame"]+counts["last_frame"] > 0 {
-		// wan2.7-r2v 上游只支持参考图，首尾帧会被静默丢弃，这里直接拒绝。
-		return errors.New("youzan wan2.7-r2v does not accept first_frame/last_frame")
-	}
-	if isR2VModel(model) && counts["reference_image"] == 0 {
-		// 上游要求至少 1 张参考图，本地先拦住，不消耗上游调用。
-		return errors.New("wan2.7-r2v requires at least one reference image")
-	}
-	imageLimit := maxReferenceImages
-	switch {
-	case isR2VModel(model):
-		imageLimit = r2vMaxReferenceImages
-	case isPrimeModel(model):
-		imageLimit = primeMaxReferenceImages
-	}
-	if counts["reference_image"] > imageLimit {
-		return errors.Errorf("youzan wan3 accepts at most %d reference images", imageLimit)
+	if counts["reference_image"] > maxReferenceImages {
+		return errors.Errorf("youzan wan3 accepts at most %d reference images", maxReferenceImages)
 	}
 	if counts["reference_video"] > maxReferenceVideos {
 		return errors.Errorf("youzan wan3 accepts at most %d reference videos", maxReferenceVideos)
 	}
 	if counts["reference_audio"] > maxReferenceAudios {
 		return errors.Errorf("youzan wan3 accepts at most %d reference audios", maxReferenceAudios)
+	}
+	if total := counts["reference_image"] + counts["reference_video"] + counts["reference_audio"]; total > maxTotalMedia {
+		return errors.Errorf("youzan wan3 accepts at most %d media items in total", maxTotalMedia)
 	}
 	return nil
 }
@@ -519,154 +520,85 @@ func fileName(kind, source, mimeType string) string {
 	return name
 }
 
-func (a *TaskAdaptor) requestJSON(method, endpoint string, body []byte) ([]byte, int, error) {
-	client, err := getHTTPClient(a.proxy)
-	if err != nil {
-		return nil, 0, err
+func assetUploadKind(mediaType string) (string, string, error) {
+	switch mediaType {
+	case "reference_image":
+		return "reference_image", "image", nil
+	case "reference_video":
+		return "reference_video", "video", nil
+	case "reference_audio":
+		return "reference_audio", "audio", nil
+	default:
+		return "", "", errors.Errorf("youzan wan3 media type %q is unsupported by the current API", mediaType)
 	}
-	request, err := http.NewRequest(method, strings.TrimRight(a.baseURL, "/")+endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, 0, err
-	}
-	request.Header.Set("Authorization", "Bearer "+a.apiKey)
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer response.Body.Close()
-	data, readErr := io.ReadAll(io.LimitReader(response.Body, maxAssetBytes))
-	return data, response.StatusCode, readErr
 }
 
-func (a *TaskAdaptor) createConversation() (string, error) {
-	body, err := common.Marshal(map[string]string{"title": "Wan3 工作台任务"})
+func (a *TaskAdaptor) uploadAsset(mediaType, source string) (string, error) {
+	assetKind, fileKind, err := assetUploadKind(mediaType)
 	if err != nil {
 		return "", err
 	}
-	data, status, err := a.requestJSON(http.MethodPost, "/api/conversations", body)
-	if err != nil {
-		return "", err
-	}
-	var response conversationResponse
-	if err := common.Unmarshal(data, &response); err != nil || status < 200 || status >= 300 || response.ID == "" {
-		return "", errors.Errorf("youzan wan3 conversation failed: HTTP %d", status)
-	}
-	return response.ID, nil
-}
-
-func (a *TaskAdaptor) uploadAsset(conversationID, kind, source string) (string, string, error) {
 	data, mimeType, sourceName, err := a.readAsset(source)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	if kind == "image" {
+	if fileKind == "image" {
 		data, mimeType, err = flattenImage(data)
 		if err != nil {
-			return "", "", err
+			return "", err
 		}
 	}
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	if err := writer.WriteField("conversationId", conversationID); err != nil {
-		return "", "", err
-	}
-	if err := writer.WriteField("kind", kind); err != nil {
-		return "", "", err
-	}
-	// Upstream validates the file part's declared MIME against the actual
-	// content (MEDIA_MIME_MISMATCH otherwise); CreateFormFile would send
-	// application/octet-stream, so build the part header explicitly.
 	contentType := strings.TrimSpace(mimeType)
 	if contentType == "" {
 		contentType = http.DetectContentType(data)
 	}
-	partHeader := make(textproto.MIMEHeader)
-	partHeader.Set("Content-Disposition", `form-data; name="file"; filename=`+strconv.Quote(fileName(kind, sourceName, mimeType)))
-	partHeader.Set("Content-Type", contentType)
-	part, err := writer.CreatePart(partHeader)
-	if err != nil {
-		return "", "", err
-	}
-	if _, err = part.Write(data); err != nil {
-		return "", "", err
-	}
-	if err := writer.Close(); err != nil {
-		return "", "", err
+	query := url.Values{
+		"kind":     {assetKind},
+		"filename": {fileName(fileKind, sourceName, mimeType)},
 	}
 	client, err := getHTTPClient(a.proxy)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	request, err := http.NewRequest(http.MethodPost, strings.TrimRight(a.baseURL, "/")+"/api/multimodal-assets", &body)
+	request, err := http.NewRequest(
+		http.MethodPost,
+		strings.TrimRight(a.baseURL, "/")+"/v1/assets?"+query.Encode(),
+		bytes.NewReader(data),
+	)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	request.Header.Set("Authorization", "Bearer "+a.apiKey)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("Accept", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	defer response.Body.Close()
-	dataResponse, err := io.ReadAll(io.LimitReader(response.Body, maxAssetBytes))
+	dataResponse, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	var parsed assetResponse
-	if err := common.Unmarshal(dataResponse, &parsed); err != nil || response.StatusCode < 200 || response.StatusCode >= 300 || parsed.Asset.ID == "" {
+	if err := common.Unmarshal(dataResponse, &parsed); err != nil || response.StatusCode < 200 || response.StatusCode >= 300 || parsed.Asset.ID == "" || strings.TrimSpace(parsed.URL) == "" {
 		detail := strings.TrimSpace(string(dataResponse))
 		if len(detail) > 300 {
 			detail = detail[:300]
 		}
-		return "", "", errors.Errorf("youzan wan3 asset upload failed: HTTP %d: %s", response.StatusCode, detail)
+		return "", errors.Errorf("youzan wan3 asset upload failed: HTTP %d: %s", response.StatusCode, detail)
 	}
-	alias := parsed.Asset.DisplayAlias
-	if alias == "" {
-		alias = kind + "1"
+	if parsed.Asset.Kind != "" && parsed.Asset.Kind != assetKind {
+		return "", errors.Errorf("youzan wan3 asset kind mismatch: requested %s, got %s", assetKind, parsed.Asset.Kind)
 	}
-	return parsed.Asset.ID, alias, nil
-}
-
-func validatePromptReferences(prompt string, media []relaycommon.TaskMedia) error {
-	counts := map[string]int{}
-	for _, item := range media {
-		counts[item.Type]++
-	}
-	checks := []struct {
-		pattern string
-		count   int
-		label   string
-	}{
-		{`@(?:image|图片)\d+`, counts["reference_image"], "图片"},
-		{`@(?:video|视频)\d+`, counts["reference_video"], "视频"},
-		{`@(?:audio|音频)\d+`, counts["reference_audio"], "音频"},
-	}
-	for _, check := range checks {
-		matches := len(regexp.MustCompile(check.pattern).FindAllString(prompt, -1))
-		if matches > check.count {
-			return errors.Errorf("提示词引用的%s素材超过已提供数量", check.label)
-		}
-	}
-	return nil
-}
-
-func replaceLegacyToken(prompt, kind, token string, index int) string {
-	patterns := map[string][]string{
-		"image": {"@image" + strconv.Itoa(index), "@图片" + strconv.Itoa(index)},
-		"video": {"@video" + strconv.Itoa(index), "@视频" + strconv.Itoa(index)},
-		"audio": {"@audio" + strconv.Itoa(index), "@音频" + strconv.Itoa(index)},
-	}
-	for _, candidate := range patterns[kind] {
-		if strings.Contains(prompt, candidate) {
-			return strings.Replace(prompt, candidate, token, 1)
-		}
-	}
-	return prompt
+	return parsed.URL, nil
 }
 
 func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, error) {
+	upstreamModel, err := upstreamModelFor(req.Model)
+	if err != nil {
+		return nil, err
+	}
 	media, err := buildMedia(req)
 	if err != nil {
 		return nil, err
@@ -675,86 +607,28 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 	if prompt == "" && len(media) == 0 {
 		return nil, errors.New("youzan wan3 requires prompt or media")
 	}
-	if err := validatePromptReferences(prompt, media); err != nil {
-		return nil, err
-	}
-
 	body := map[string]interface{}{
-		"model":      req.Model,
+		"model":      upstreamModel,
 		"prompt":     prompt,
 		"ratio":      resolveRatio(req),
 		"resolution": resolveResolution(req),
 		"duration":   resolveDuration(req),
 	}
-	if isR2VModel(req.Model) {
-		// r2v 走上游扁平参考图字段（referenceImages）；assets + mentions 是
-		// all_in_one 智能调度的约定，r2v 不识别，会导致上游报缺少参考图。
-		referenceImages := make([]string, 0, len(media))
-		for _, item := range media {
-			if item.Type == "reference_image" {
-				referenceImages = append(referenceImages, item.URL)
-			}
-		}
-		if len(referenceImages) == 0 {
-			// validateMedia 已拦住缺图情况，这里只是防御性检查。
-			return nil, errors.New("wan2.7-r2v requires at least one reference image")
-		}
-		body["referenceImages"] = referenceImages
-		return common.Marshal(body)
-	}
-	if req.Metadata != nil {
-		if audio, ok := metadataBool(req.Metadata, "audio", "generate_audio"); ok {
-			body["audio"] = audio
-		} else {
-			body["audio"] = defaultAudio
-		}
-	} else {
-		body["audio"] = defaultAudio
-	}
-
 	if len(media) == 0 {
 		return common.Marshal(body)
 	}
-	conversationID, err := a.createConversation()
-	if err != nil {
-		return nil, err
-	}
-	body["conversationId"] = conversationID
-	mentions := make([]map[string]string, 0)
-	kindIndices := make(map[string]int)
+	// 2026-10-28 协议：素材先 POST /v1/assets 上传，再把回执里的签名 url 按数组顺序
+	// 放进 media，且 type 必须等于回执的 asset.kind。旧协议那套
+	// conversationId + mentions + @alias 占位符已被上游整体移除。
+	items := make([]map[string]string, 0, len(media))
 	for _, item := range media {
-		kind := "image"
-		switch item.Type {
-		case "reference_video":
-			kind = "video"
-		case "reference_audio":
-			kind = "audio"
-		case "first_frame", "last_frame":
-			kind = "image"
-		}
-		assetID, alias, err := a.uploadAsset(conversationID, kind, item.URL)
+		assetURL, err := a.uploadAsset(item.Type, item.URL)
 		if err != nil {
 			return nil, err
 		}
-		switch item.Type {
-		case "first_frame":
-			body["firstFrameAssetId"] = assetID
-		case "last_frame":
-			body["lastFrameAssetId"] = assetID
-		default:
-			kindIndices[kind]++
-			token := "@" + alias
-			prompt = replaceLegacyToken(prompt, kind, token, kindIndices[kind])
-			if !strings.Contains(prompt, token) {
-				prompt = strings.TrimSpace(prompt + " " + token)
-			}
-			mentions = append(mentions, map[string]string{"token": token, "assetId": assetID})
-		}
+		items = append(items, map[string]string{"type": item.Type, "url": assetURL})
 	}
-	body["prompt"] = prompt
-	if len(mentions) > 0 {
-		body["mentions"] = mentions
-	}
+	body["media"] = items
 	return common.Marshal(body)
 }
 
@@ -770,13 +644,12 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if strings.TrimSpace(modelName) == "" {
 		modelName = req.Model
 	}
-	if isPrimeModel(modelName) {
-		// 按次计费：ModelPrice 已是一次任务的价格，不能再乘时长/分辨率倍率。
-		return nil
-	}
+	// 两个在售模型均为按秒计费：quota = ModelPrice × seconds × size。
+	// prime 的 720P / 1080P 分档差价体现在 size 倍率（见 primeResolutionSizeRatio），
+	// 不再像旧版那样整条模型按次计价。
 	resolution := resolveResolutionForModel(req, modelName)
 	ratio := resolutionRatioForModel(modelName, resolution)
-	return map[string]float64{"seconds": float64(resolveDuration(req)), "size": ratio}
+	return map[string]float64{"seconds": float64(resolveDurationForModel(req, modelName)), "size": ratio}
 }
 
 // billingModelName 取本次请求的下游模型名（优先 OriginModelName，回退上游名）。
@@ -801,19 +674,56 @@ func resolutionRatioForModel(model, resolution string) float64 {
 		}
 		return 1
 	}
-	if ratio := smartResolutionSizeRatio[resolution]; ratio > 0 {
+	if isPrimeModel(model) {
+		if ratio := primeResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
+	if ratio := videoResolutionSizeRatio[resolution]; ratio > 0 {
 		return ratio
 	}
 	return 1
 }
 
+// idempotencyKey 由公开 task id 派生：上游 /v1/tasks 强制要求 Idempotency-Key
+// （8—100 位，仅字母/数字/下划线/连字符），同一编号不得改任务内容。
+// 用公开 task id 派生可让「本地重试同一次提交」命中上游幂等窗口，避免重复扣费。
+func idempotencyKey(info *relaycommon.RelayInfo) string {
+	raw := ""
+	if info != nil {
+		raw = strings.TrimSpace(info.PublicTaskID)
+	}
+	var builder strings.Builder
+	for _, char := range raw {
+		switch {
+		case char >= 'a' && char <= 'z', char >= 'A' && char <= 'Z', char >= '0' && char <= '9', char == '_', char == '-':
+			builder.WriteRune(char)
+		default:
+			builder.WriteByte('-')
+		}
+	}
+	key := builder.String()
+	if len(key) < 8 {
+		key = "wan3task-" + key
+	}
+	if len(key) > 100 {
+		key = key[:100]
+	}
+	if len(key) < 8 {
+		key = "wan3task-fallback"
+	}
+	return key
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	return strings.TrimRight(a.baseURL, "/") + "/api/generate-video", nil
+	return strings.TrimRight(a.baseURL, "/") + "/v1/tasks", nil
 }
 
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", idempotencyKey(info))
 	return nil
 }
 
@@ -894,7 +804,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if err != nil {
 		return nil, err
 	}
-	request, err := http.NewRequest(http.MethodGet, normalizeAPIRoot(baseURL)+"/api/task/"+url.PathEscape(taskID), nil)
+	request, err := http.NewRequest(http.MethodGet, normalizeAPIRoot(baseURL)+"/v1/tasks/"+url.PathEscape(taskID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -907,7 +817,20 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if err := common.Unmarshal(respBody, &response); err != nil {
 		return nil, err
 	}
-	status := strings.ToLower(strings.TrimSpace(response.Status))
+	// 2026-10-28 起 /v1/tasks 把状态放在 task 对象里（task.status / task.videoUrl /
+	// task.errorCode / task.errorMessage）。旧的扁平字段（status / result.url）保留
+	// 兼容读取，因为库里按老协议落库的历史任务还要在轮询里正常收敛。
+	status := strings.ToLower(strings.TrimSpace(firstNonEmpty(response.Task.Status, response.Status)))
+	resultURL := firstNonEmpty(response.Task.VideoURL, response.Result.URL)
+	reason := firstNonEmpty(
+		string(response.Task.ErrorMessage),
+		// 只有 errorCode 时也要把它带出来：比兜底的「内容审核不通过」更接近真相，
+		// 也能避免把参数类失败误报成审核问题。
+		response.Task.ErrorCode,
+		string(response.Task.Error),
+		string(response.Error),
+		response.Message,
+	)
 	result := &relaycommon.TaskInfo{Code: 0}
 	switch status {
 	case "queued", "pending", "submitted", "submitting":
@@ -917,20 +840,20 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress
 	case "succeeded", "success", "completed", "done":
-		if resultURL := a.resolveResultURL(response.Result.URL); resultURL == "" {
+		if resolved := a.resolveResultURL(resultURL); resolved == "" {
 			result.Status = model.TaskStatusInProgress
 			result.Progress = taskcommon.ProgressInProgress
 		} else {
 			result.Status = model.TaskStatusSuccess
 			result.Progress = taskcommon.ProgressComplete
-			result.Url = resultURL
+			result.Url = resolved
 		}
 	case "failed", "failure", "canceled", "cancelled", "error", "refunded":
 		// refunded 是有赞的终态：上游已把点数退回（refundedPoints > 0）且 result 为空。
 		// 不映射成失败的话会落进 default 继续报 IN_PROGRESS，用户的钱就卡在预扣里。
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = firstNonEmpty(string(response.Error), response.Message, reasonContentModeration)
+		result.Reason = firstNonEmpty(reason, reasonContentModeration)
 	default:
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress

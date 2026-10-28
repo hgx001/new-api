@@ -437,19 +437,22 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "xuan:") {
 		return true
 	}
-	// wan3.chat：官方标准版、有赞满血 30 秒档（wan3.0-video-prime-1080p）
-	if strings.HasPrefix(name, "wan3.0-video") {
-		return true
+	// wan3 系：官网标准版（wan3.0-video-官网）与有赞两个在售模型
+	// （wan3.0-video / wan3.0-video-prime，2026-10-28 起与上游命名一致）共用该前缀。
+	// ⚠️ 旧名必须先拦掉再走前缀，否则 wan3.0-video-prime-1080p 会被前缀吃掉：
+	// 两者仍留在渠道 17 的 models 里，只为让历史客户的请求拿到可读错误
+	// （可调用、不上广场）。渠道一旦被编辑，UpdateAbilities 会按 channels.models
+	// 重新生成能力行 —— 白名单若放行，它们就会重新出现在广场，与「广场命名
+	// 与上游一致」的约定冲突。wan2.7-r2v 则已被上游下架。
+	switch name {
+	case "wan3.0-smart", "wan3.0-video-prime-1080p", "wan2.7-r2v":
+		return false
 	}
-	// 有赞智能调度版（独立模型名，不带 wan3.0-video 前缀）
-	if name == "wan3.0-smart" {
+	if strings.HasPrefix(name, "wan3.0-video") {
 		return true
 	}
 	// 三元巡狩 wanwan 1080P（拼车）慢速档：按次计费，次日出片
 	if name == "wan3.0-1080p-慢速" {
-		return true
-	}
-	if name == "wan2.7-r2v" {
 		return true
 	}
 	// AutoDL ComfyUI：全部已配置工作流（autodl: 前缀）

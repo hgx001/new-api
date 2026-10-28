@@ -10,13 +10,22 @@ import (
 func TestIsAllowedPricingModelWanVideo(t *testing.T) {
 	allowed := []string{
 		"wan3.0-video",
+		"wan3.0-video-prime",
 		"wan3.0-video-官网",
-		"wan3.0-video-prime-1080p",
-		"wan3.0-smart",
-		"wan2.7-r2v",
 	}
 	for _, name := range allowed {
 		require.True(t, isAllowedPricingModel(name), "model %q must show in pricing square", name)
+	}
+	// 2026-10-28 有赞对齐上游改名：旧名只保可调用、不上广场。
+	// wan3.0-video-prime-1080p 必须以「旧名拦截」优先于 wan3.0-video 前缀规则，
+	// 否则它会在渠道被编辑、能力行自动重建后重新出现在广场上。
+	for _, legacy := range []string{
+		"wan3.0-smart",
+		"wan3.0-video-prime-1080p",
+		"wan2.7-r2v",
+	} {
+		assert.False(t, isAllowedPricingModel(legacy),
+			"legacy model %q must stay off the pricing square", legacy)
 	}
 	assert.False(t, isAllowedPricingModel("some-random-model"), "unlisted model must stay hidden")
 	// 注：已下线的错误 id（wan3.0-video-smart）仍命中 wan3.0-video 前缀规则，
