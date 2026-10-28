@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -142,6 +143,69 @@ func TestFetchTaskHitsV1TasksPath(t *testing.T) {
 	require.NotNil(t, resp)
 	_ = resp.Body.Close()
 	require.Equal(t, "/v1/tasks/wz_32167290-46e9-48d3-aeb7-69ba331223c3", gotPath)
+}
+
+// 上游建单失败时返回 {"ok":false,"error":{"code":...,"message":...}}，
+// 响应里没有 task id。适配器必须把上游的真实原因透出去，
+// 而不是退化成无信息量的「returned empty task id」（2026-10-28 生产实测）。
+func TestDoResponseSurfacesUpstreamRejection(t *testing.T) {
+	cases := []struct {
+		name     string
+		payload  string
+		contains string
+	}{
+		{
+			name:     "对象形态 error",
+			payload:  `{"ok":false,"error":{"code":"DURATION_INVALID","message":"时长必须为 2 至 30 秒整数"}}`,
+			contains: "DURATION_INVALID",
+		},
+		{
+			name:     "裸字符串 error",
+			payload:  `{"ok":false,"error":"积分不足"}`,
+			contains: "积分不足",
+		},
+		{
+			name:     "顶层 message",
+			payload:  `{"ok":false,"message":"提示词不能为空或超过 20000 字"}`,
+			contains: "提示词不能为空",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+
+			adaptor := &TaskAdaptor{}
+			response := &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(tc.payload)),
+			}
+
+			_, _, taskErr := adaptor.DoResponse(context, response, nil)
+			require.NotNil(t, taskErr, "上游拒绝时必须返回错误，不能当成空 task id")
+			require.Contains(t, taskErr.Message, tc.contains)
+			require.NotContains(t, taskErr.Message, "empty task id")
+		})
+	}
+}
+
+// 上游确实建了任务时，错误字段必须被忽略，照常返回 task id。
+func TestDoResponseIgnoresErrorWhenTaskIDPresent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	adaptor := &TaskAdaptor{}
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			`{"ok":true,"task":{"id":"wz_1","status":"queued"}}`)),
+	}
+
+	_, _, taskErr := adaptor.DoResponse(context, response, nil)
+	require.Nil(t, taskErr)
 }
 
 // 生产实测报文（2026-10-28，task wz_32167290）：状态在 task 对象里，videoUrl 为绝对地址。

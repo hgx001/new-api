@@ -50,6 +50,13 @@ type generateResponse struct {
 	Data struct {
 		ID string `json:"id"`
 	} `json:"data"`
+	// 上游 V1 协议用 ok + error 表达失败（形如 {"ok":false,"error":{"code":...,
+	// "message":...}}）。这两个字段必须单独解析：失败响应里根本没有 task id，
+	// 若不先判错误就会退化成「returned empty task id」，把上游的真实原因
+	// （如 DURATION_INVALID / PROMPT_INVALID / 积分不足）吞成无信息量的 502。
+	OK      bool          `json:"ok"`
+	Error   upstreamError `json:"error"`
+	Message string        `json:"message"`
 }
 
 // upstreamError 兼容有赞两种 error 形态：裸字符串，或 {code, message} 对象。
@@ -770,9 +777,30 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		taskID = parsed.TaskID
 	}
 	if taskID == "" {
+		// V1 协议把 task id 放在 task 对象里（{"ok":true,"task":{"id":"wz_..."}}），
+		// 这一支必须查，否则所有正常建单都会退化成「empty task id」。
+		taskID = parsed.Task.ID
+	}
+	if taskID == "" {
 		taskID = parsed.Data.ID
 	}
 	if taskID == "" {
+		// 先把上游的真实错误透出去：ok=false 或带 error 字段时上游没建任务，
+		// 直接报「空 task id」会掩盖真实原因（入参非法 / 积分不足 / 上游故障）。
+		if upstreamMsg := string(parsed.Error); upstreamMsg != "" {
+			return "", nil, service.TaskErrorWrapper(
+				errors.New("youzan wan3 rejected the request: "+upstreamMsg),
+				"upstream_error",
+				http.StatusBadRequest,
+			)
+		}
+		if parsed.Message != "" {
+			return "", nil, service.TaskErrorWrapper(
+				errors.New("youzan wan3 rejected the request: "+parsed.Message),
+				"upstream_error",
+				http.StatusBadRequest,
+			)
+		}
 		return "", nil, service.TaskErrorWrapper(errors.New("youzan wan3 returned empty task id"), "invalid_response", http.StatusBadGateway)
 	}
 	publicID := ""
