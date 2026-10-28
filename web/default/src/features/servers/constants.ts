@@ -64,10 +64,10 @@ export const PLANS: ServerPlan[] = [
     taglineKey: 'Best for personal projects and blogs',
     descriptionKey:
       'Entry-level instances for websites, blogs and small services. Instant provisioning with a public IPv4 address.',
-    basePricePerMonth: 38,
-    // 按小时口径：约合 ¥65.7/月（包月 ¥38/月 的 1.7 倍），
+    basePricePerMonth: 68,
+    // 按小时口径：约合 ¥116.8/月（包月 ¥68/月 的 1.72 倍），
     // 按量要为闲置/停机时段付费，所以比包月折算价贵
-    basePricePerHour: 0.09,
+    basePricePerHour: 0.16,
     specs: [
       { id: 'lite-2c2g', cpu: 2, memory: 2, disk: 40, multiplier: 1 },
       { id: 'lite-2c4g', cpu: 2, memory: 4, disk: 60, multiplier: 1.25 },

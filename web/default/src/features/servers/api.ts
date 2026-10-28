@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { api } from '@/lib/api'
 
-import { getDuration, getRegion } from './constants'
+import { getDuration } from './constants'
 import { resolveDurationId } from './lib/pricing'
 import type { OwnedServer, PayMethod, ServerConfig, ServerOrder } from './types'
 
@@ -84,39 +84,68 @@ function randomId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}${rand}`
 }
 
+/**
+ * 生成高强度随机密码。
+ *
+ * 密码会明文展示给用户并写在「我的服务器」里，必须满足：
+ * 大小写字母 + 数字 + 符号各至少一个，且不用易混字符（0/O、1/l/I）。
+ * 长度 20 位，前 4 位强制各取自一类（保证类别不缺失），
+ * 剩余位从全集随机，最后再打乱顺序（避免「类别固定在前几位」的结构特征）。
+ */
 function randomPassword() {
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
   const lower = 'abcdefghijkmnpqrstuvwxyz'
   const digits = '23456789'
-  const symbols = '!@#%^&*'
+  const symbols = '!@#$%^&*-_=+'
   const all = upper + lower + digits + symbols
   const pick = (chars: string) =>
     chars[Math.floor(Math.random() * chars.length)]
-  const body = Array.from({ length: 12 }, () => pick(all)).join('')
-  return `${pick(upper)}${pick(upper)}${pick(digits)}${body}`
+
+  const length = 20
+  const chars = [
+    pick(upper),
+    pick(lower),
+    pick(digits),
+    pick(symbols),
+    ...Array.from({ length: length - 4 }, () => pick(all)),
+  ]
+
+  // Fisher-Yates 打乱：强制类别的那 4 位不能留在固定位置
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[chars[i], chars[j]] = [chars[j], chars[i]]
+  }
+
+  return chars.join('')
 }
 
-/** 按地区生成看起来合理的公网 IP */
-function generateIp(regionId: string) {
-  if (regionId === 'shanghai') {
-    const second = 80 + Math.floor(Math.random() * 60)
-    return `47.${second}.${Math.floor(Math.random() * 254)}.${Math.floor(
-      Math.random() * 254
-    )}`
-  }
-  const second = 100 + Math.floor(Math.random() * 60)
-  return `121.${second}.${Math.floor(Math.random() * 254)}.${Math.floor(
-    Math.random() * 254
-  )}`
-}
+/**
+ * 演示态的公网 IP 与登录用户。
+ *
+ * 演示态没有真实机器池，IP / 用户名是**固定**的（用户指定）。
+ * 后端接入后这两个值由开台接口返回，这里只是占位。
+ */
+const DEMO_SERVER_IP = '43.142.108.151'
+const DEMO_SERVER_USERNAME = 'ubuntu'
 
 /**
  * 获取可用支付方式。
  *
- * 返回空数组表示「站点当前没有可用的在线支付渠道」，调用方需要禁用支付并提示；
- * 不会伪造支付宝 / 微信等真实渠道。
+ * ⚠️ **后端未接入时，只返回演示渠道 —— 绝不返回站点的真实渠道。**
+ *
+ * 原因：`payServerOrder` 目前是本地模拟（必定成功、不扣款）。如果把站点
+ * 真实的「支付宝 / 微信」渠道摆出来，用户会以为点下去真的付了钱，
+ * 实际既没扣款也没开台 —— 支付闭环直接断裂，还可能被当成站点在收钱。
+ * 所以真实渠道只在 `PAYMENT_BACKEND_ENABLED = true`（即 `payServerOrder`
+ * 换成真实请求）之后才允许出现。
+ *
+ * 返回空数组表示「站点当前没有可用的在线支付渠道」，调用方需要禁用支付并提示。
  */
 export async function getServerPayMethods(): Promise<PayMethod[]> {
+  // 后端未接入：无论站点配了什么支付渠道，一律只给演示渠道
+  if (!PAYMENT_BACKEND_ENABLED) {
+    return [DEMO_PAY_METHOD]
+  }
   try {
     const res = await api.get('/api/user/topup/info', {
       skipBusinessError: true,
@@ -133,7 +162,7 @@ export async function getServerPayMethods(): Promise<PayMethod[]> {
   } catch {
     // 网络异常：按「站点未开通在线支付」处理，不伪造渠道
   }
-  return PAYMENT_BACKEND_ENABLED ? [] : [DEMO_PAY_METHOD]
+  return []
 }
 
 /** 创建订单（模拟后端下单） */
@@ -166,7 +195,6 @@ export async function payServerOrder(
 ): Promise<{ success: boolean; server?: OwnedServer; messageKey?: string }> {
   await delay(1400)
 
-  const region = getRegion(order.config.region)
   const duration = getDuration(resolveDurationId(order.config))
   // 到期时间跟着选中的时长档走：
   // 按量档（小时/天）= 买的小时数之后释放；包月档 = 月数 × 30 天
@@ -180,8 +208,8 @@ export async function payServerOrder(
     id: randomId('node'),
     orderId: order.id,
     config: order.config,
-    ip: generateIp(region.id),
-    username: 'root',
+    ip: DEMO_SERVER_IP,
+    username: DEMO_SERVER_USERNAME,
     password: randomPassword(),
     status: 'running',
     expireAt,

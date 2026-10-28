@@ -479,11 +479,11 @@ describe('servers: 价格逐项可核对', () => {
 
   test('单价 = 裸机型价 + 规格加价 + 带宽加价，再乘地区系数', () => {
     const price = computePrice(lite())
-    assert.equal(price.planPrice, 38)
+    assert.equal(price.planPrice, 68)
     assert.equal(price.specPrice, 0)
     assert.equal(price.bandwidthPrice, 45)
     assert.equal(price.regionFactor, 1)
-    assert.equal(price.unitPrice, 83)
+    assert.equal(price.unitPrice, 113)
     assert.equal(
       roundMoney(
         (price.planPrice + price.specPrice + price.bandwidthPrice) *
@@ -514,15 +514,15 @@ describe('servers: 价格逐项可核对', () => {
       />
     )
     // 套餐行 = 裸机型价（与左侧套餐卡同一个数）
-    assert.ok(html.includes('¥38.00 / month'), '缺少套餐行的机型价')
+    assert.ok(html.includes('¥68.00 / month'), '缺少套餐行的机型价')
     // 基准规格没有规格加价
     assert.ok(html.includes('Base spec'), '基准规格未标明')
     // 带宽行
     assert.ok(html.includes('¥45.00 / month'), '缺少带宽行的加价')
-    // 单价行 = 38 + 0 + 45
-    assert.ok(html.includes('¥83.00 / month'), '缺少单价行')
+    // 单价行 = 68 + 0 + 45
+    assert.ok(html.includes('¥113.00 / month'), '缺少单价行')
     // 总价
-    assert.ok(html.includes('¥83.00'), '缺少总价')
+    assert.ok(html.includes('¥113.00'), '缺少总价')
   })
 
   test('左侧套餐卡的价格与右侧「套餐」行是同一个数', async () => {
@@ -559,18 +559,18 @@ describe('servers: 价格逐项可核对', () => {
         requiresLogin={false}
       />
     )
-    // lite-4c4g 系数 1.7 → 38 × 1.7 = 64.60
-    assert.ok(card.includes('¥64.60 / month'), '规格按钮没标该档机型价')
-    assert.ok(panel.includes('¥38.00 / month'), '缺少套餐行的裸机型价')
-    assert.ok(panel.includes('+¥26.60 / month'), '缺少规格加价')
-    assert.ok(panel.includes('¥109.60 / month'), '单价与各行之和对不上')
+    // lite-4c4g 系数 1.7 → 68 × 1.7 = 115.60
+    assert.ok(card.includes('¥115.60 / month'), '规格按钮没标该档机型价')
+    assert.ok(panel.includes('¥68.00 / month'), '缺少套餐行的裸机型价')
+    assert.ok(panel.includes('+¥47.60 / month'), '缺少规格加价')
+    assert.ok(panel.includes('¥160.60 / month'), '单价与各行之和对不上')
   })
 
   test('地区系数单列显示，乘完正好是单价', async () => {
     const cfg = lite({ region: 'shanghai' })
     const price = computePrice(cfg)
     assert.equal(price.regionFactor, 1.08)
-    assert.equal(price.unitPrice, 89.64)
+    assert.equal(price.unitPrice, 122.04)
 
     const html = await renderWithI18n(
       <BillingPanel
@@ -581,7 +581,7 @@ describe('servers: 价格逐项可核对', () => {
       />
     )
     assert.ok(html.includes('×1.08'), '地区系数没有显示')
-    assert.ok(html.includes('¥89.64 / month'), '乘完地区系数后单价对不上')
+    assert.ok(html.includes('¥122.04 / month'), '乘完地区系数后单价对不上')
   })
 
   test('时长折扣单列显示，折完正好是总价', async () => {
@@ -599,16 +599,16 @@ describe('servers: 价格逐项可核对', () => {
       />
     )
     assert.ok(html.includes('Save 15%'), '时长折扣没有显示')
-    // 83 × 12 × 0.85 = 846.60
-    assert.ok(html.includes('¥846.60'), '折后总价对不上')
+    // 113 × 12 × 0.85 = 1152.60
+    assert.ok(html.includes('¥1,152.60'), '折后总价对不上')
   })
 
   test('按量档：小时单价 = 裸机型时价 + 带宽时价，各行相加一致', async () => {
     const cfg = lite({ durationId: '24h' })
     const price = computePrice(cfg)
-    assert.equal(price.planPrice, 0.09)
+    assert.equal(price.planPrice, 0.16)
     assert.equal(price.bandwidthPrice, 0.06)
-    assert.equal(price.unitPrice, 0.15)
+    assert.equal(price.unitPrice, 0.22)
 
     const html = await renderWithI18n(
       <BillingPanel
@@ -618,9 +618,9 @@ describe('servers: 价格逐项可核对', () => {
         requiresLogin={false}
       />
     )
-    assert.ok(html.includes('¥0.09 / hour'), '缺少套餐行的小时价')
+    assert.ok(html.includes('¥0.16 / hour'), '缺少套餐行的小时价')
     assert.ok(html.includes('+¥0.06 / hour'), '缺少带宽行的小时加价')
-    assert.ok(html.includes('¥0.15 / hour'), '小时单价与各行之和对不上')
+    assert.ok(html.includes('¥0.22 / hour'), '小时单价与各行之和对不上')
   })
 })
 

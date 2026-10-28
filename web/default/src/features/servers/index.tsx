@@ -71,9 +71,9 @@ const ADVANTAGES = [
   },
   {
     icon: RefreshCcw,
-    titleKey: 'Upgrade any time',
+    titleKey: 'Flexible rental terms',
     descKey:
-      'Change plan, specs or bandwidth and the remaining period is charged at a prorated price.',
+      'Rent for a single hour or up to three years. Longer terms get a discount, and the credentials stay in My servers for the whole period.',
   },
   {
     icon: Headphones,
@@ -94,11 +94,11 @@ const FAQS = [
   },
   {
     q: 'What happens when the subscription expires?',
-    a: 'The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.',
+    a: 'The instance is released once the purchased period runs out. You can order a new one at any time with the configuration you need.',
   },
   {
     q: 'Can I switch between Guangzhou and Shanghai?',
-    a: 'Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.',
+    a: 'Both regions run the same images and the same plan catalogue. Pick the region that matches where your users are when you place the order.',
   },
   {
     q: 'Which GPU should I choose for my workload?',
@@ -135,13 +135,15 @@ export function ServersContent({
   const [selectedMethod, setSelectedMethod] = useState('')
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [paying, setPaying] = useState(false)
-  const [paid, setPaid] = useState(false)
+  // 支付成功后拿到实例凭据：收银台要直接展示 IP / 用户名 / 密码
+  const [paidServer, setPaidServer] = useState<OwnedServer | null>(null)
   const [passwordTarget, setPasswordTarget] = useState<OwnedServer | null>(null)
   const [passwordSubmitting, setPasswordSubmitting] = useState(false)
 
   const servers = useOwnedServers()
   const addOrder = useServerStore((s) => s.addOrder)
   const settleOrder = useServerStore((s) => s.settleOrder)
+  const failOrder = useServerStore((s) => s.failOrder)
   const updatePassword = useServerStore((s) => s.updatePassword)
 
   const configRef = useRef<HTMLDivElement>(null)
@@ -200,34 +202,40 @@ export function ServersContent({
       navigate({ to: '/sign-in' })
       return
     }
-    setPaid(false)
+    setPaidServer(null)
     setCheckoutOpen(true)
   }, [isAuthenticated, navigate, t])
 
   const handlePay = useCallback(async () => {
     setPaying(true)
+    let orderId = ''
     try {
       const price = computePrice(config)
       const order = await createServerOrder(config, price.total, selectedMethod)
+      orderId = order.id
       addOrder(order)
       const result = await payServerOrder(order)
       if (result.success && result.server) {
         settleOrder(order.id, result.server)
-        setPaid(true)
-        toast.success(t('Payment successful, your server is being provisioned'))
+        // 凭据直接交给收银台展示，用户不必再翻「我的服务器」
+        setPaidServer(result.server)
+        toast.success(t('Payment successful, your server is ready'))
       } else {
+        // 订单要落成「失败」，否则永远停在 pending —— 状态与事实不符
+        failOrder(order.id)
         toast.error(t('Payment failed, please try again'))
       }
     } catch {
+      if (orderId) failOrder(orderId)
       toast.error(t('Network error, please try again later'))
     } finally {
       setPaying(false)
     }
-  }, [addOrder, config, selectedMethod, settleOrder, t])
+  }, [addOrder, config, failOrder, selectedMethod, settleOrder, t])
 
   const handleCheckoutDone = useCallback(() => {
     setCheckoutOpen(false)
-    setPaid(false)
+    setPaidServer(null)
     setActiveView('owned')
     setTimeout(
       () =>
@@ -395,7 +403,7 @@ export function ServersContent({
         selectedMethod={selectedMethod}
         onSelectMethod={setSelectedMethod}
         paying={paying}
-        paid={paid}
+        paidServer={paidServer}
         onPay={handlePay}
         onDone={handleCheckoutDone}
       />

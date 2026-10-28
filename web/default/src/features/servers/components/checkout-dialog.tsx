@@ -49,7 +49,8 @@ import {
   resolveBilling,
   resolveDurationId,
 } from '../lib/pricing'
-import type { PayMethod, ServerConfig } from '../types'
+import type { OwnedServer, PayMethod, ServerConfig } from '../types'
+import { CredentialsPanel } from './credentials-panel'
 
 interface CheckoutDialogProps {
   open: boolean
@@ -59,7 +60,8 @@ interface CheckoutDialogProps {
   selectedMethod: string
   onSelectMethod: (type: string) => void
   paying: boolean
-  paid: boolean
+  /** 支付成功后的实例凭据；为空表示尚未支付成功 */
+  paidServer: OwnedServer | null
   onPay: () => void
   onDone: () => void
 }
@@ -79,7 +81,7 @@ export function CheckoutDialog({
   selectedMethod,
   onSelectMethod,
   paying,
-  paid,
+  paidServer,
   onPay,
   onDone,
 }: CheckoutDialogProps) {
@@ -167,22 +169,34 @@ export function CheckoutDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='gap-0 overflow-hidden p-0 sm:max-w-lg'>
-        {paid ? (
-          <div className='space-y-5 p-8 text-center'>
-            <div className='mx-auto flex size-14 items-center justify-center rounded-full bg-emerald-500/10'>
-              <CheckCircle2 className='size-7 text-emerald-500' />
+        {paidServer ? (
+          <div className='space-y-5 p-6'>
+            <div className='flex items-start gap-3.5'>
+              <div className='flex size-11 shrink-0 items-center justify-center rounded-full bg-emerald-500/10'>
+                <CheckCircle2 className='size-6 text-emerald-500' />
+              </div>
+              <div className='min-w-0 flex-1'>
+                <DialogTitle className='text-lg font-semibold'>
+                  {t('Payment successful')}
+                </DialogTitle>
+                <DialogDescription className='mt-1'>
+                  {t(
+                    'Your server is ready. Use the credentials below to log in right away.'
+                  )}
+                </DialogDescription>
+              </div>
             </div>
-            <div>
-              <DialogTitle className='text-xl font-semibold'>
-                {t('Payment successful')}
-              </DialogTitle>
-              <DialogDescription className='mt-1.5'>
-                {t(
-                  'Your server is being provisioned. The IP address, username and password are available under My servers.'
-                )}
-              </DialogDescription>
+
+            {/* 凭据面板：付款那一刻用户最关心「怎么连上去」，
+                所以直接把 IP / 用户名 / 密码摆出来，而不是让用户再去「我的服务器」里翻 */}
+            <div className='rounded-2xl border border-[#d9ece6] bg-[#f5f9f7] p-4'>
+              <CredentialsPanel server={paidServer} />
             </div>
-            <Button className='w-full' onClick={onDone}>
+
+            <Button
+              className='w-full rounded-xl bg-[#3a8f7a] text-white hover:bg-[#2f7a66]'
+              onClick={onDone}
+            >
               {t('View my servers')}
             </Button>
           </div>

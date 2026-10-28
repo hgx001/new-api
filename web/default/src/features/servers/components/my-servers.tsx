@@ -1,9 +1,6 @@
 import {
-  Check,
   Clock,
   Copy,
-  Eye,
-  EyeOff,
   Gpu,
   KeyRound,
   MapPin,
@@ -27,7 +24,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -54,6 +50,7 @@ import {
 } from '../constants'
 import { resolveDurationId } from '../lib/pricing'
 import type { OwnedServer } from '../types'
+import { CredentialField } from './credential-field'
 
 interface MyServersProps {
   servers: OwnedServer[]
@@ -76,81 +73,6 @@ function daysLeft(ts: number) {
 /** 按小时计费的实例剩余小时数（向上取整，不足 1 小时算 1 小时） */
 function hoursLeft(ts: number) {
   return Math.max(0, Math.ceil((ts * 1000 - Date.now()) / 3600000))
-}
-
-function CredentialField({
-  label,
-  value,
-  secret,
-  monospace,
-}: {
-  label: string
-  value: string
-  secret?: boolean
-  monospace?: boolean
-}) {
-  const { t } = useTranslation()
-  const [visible, setVisible] = useState(false)
-  const [copied, setCopied] = useState(false)
-
-  const display = secret && !visible ? '••••••••••••' : value
-
-  const handleCopy = async () => {
-    const ok = await copyToClipboard(value)
-    if (ok) {
-      setCopied(true)
-      toast.success(t('Copied to clipboard'))
-      setTimeout(() => setCopied(false), 1800)
-    } else {
-      toast.error(t('Copy failed, please select and copy manually'))
-    }
-  }
-
-  return (
-    <div className='rounded-xl border bg-[#f8fbfa] px-3.5 py-3'>
-      <div className='flex items-center justify-between gap-2'>
-        <span className='text-muted-foreground text-[11px] font-medium tracking-wide uppercase'>
-          {label}
-        </span>
-        <div className='flex items-center gap-0.5'>
-          {secret && (
-            <button
-              type='button'
-              onClick={() => setVisible((v) => !v)}
-              className='text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-1.5 transition-colors'
-              aria-label={t('Toggle password visibility')}
-            >
-              {visible ? (
-                <EyeOff className='size-3.5' />
-              ) : (
-                <Eye className='size-3.5' />
-              )}
-            </button>
-          )}
-          <button
-            type='button'
-            onClick={handleCopy}
-            className='text-muted-foreground hover:bg-muted hover:text-foreground rounded-md p-1.5 transition-colors'
-            aria-label={t('Copy')}
-          >
-            {copied ? (
-              <Check className='size-3.5 text-emerald-500' />
-            ) : (
-              <Copy className='size-3.5' />
-            )}
-          </button>
-        </div>
-      </div>
-      <div
-        className={cn(
-          'mt-1.5 truncate text-sm font-medium text-[#1a4a3f]',
-          monospace && 'font-mono text-[13px]'
-        )}
-      >
-        {display}
-      </div>
-    </div>
-  )
 }
 
 export function MyServers({
@@ -249,18 +171,18 @@ export function MyServers({
                 <CredentialField
                   label={t('Public IP')}
                   value={server.ip}
-                  monospace
+                  dense
                 />
                 <CredentialField
                   label={t('Username')}
                   value={server.username}
-                  monospace
+                  dense
                 />
                 <CredentialField
                   label={t('Password')}
                   value={server.password}
                   secret
-                  monospace
+                  dense
                 />
                 <div className='rounded-xl border bg-[#f8fbfa] px-3.5 py-3'>
                   <div className='text-muted-foreground text-[11px] font-medium tracking-wide uppercase'>

@@ -51,7 +51,7 @@ export function roundMoney(value: number): number {
 /**
  * 金额展示口径：统一 ¥ + 千分位 + 两位小数。
  *
- * 按小时单价会出现 ¥0.09 这种小数，不统一的话套餐卡写「¥0.09」、
+ * 按小时单价会出现 ¥0.16 这种小数，不统一的话套餐卡写「¥0.16」、
  * 摘要写「¥0.1」，同一笔钱两个写法。
  */
 export function formatAmount(value: number): string {
