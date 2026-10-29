@@ -155,6 +155,7 @@ describe('AutoDL H3 resolution tier note', () => {
       'wan3.0-smart', // 有赞智能调度（历史别名，等价 wan3.0-video）
       'wan3.0-video', // 有赞标准版
       'wan3.0-video-prime', // 有赞 Prime（720P/1080P 分档按秒）
+      'seedance2.5-特惠', // 有赞 Prime 的对外别名，与 prime 同价按秒（2026-10-29 起）
       'wan3.0-video-官网', // 官网标准版
       'autodl:minimax-h3-u24', // AutoDL H3
     ]
@@ -169,7 +170,6 @@ describe('AutoDL H3 resolution tier note', () => {
       'seedance-2.0', // dola 2.0 按次
       'seedance-2.5', // dola 2.5 按次（已下架）
       'wan-3.0', // MegaAI 渠道：按次 + 分辨率档（无 seconds 倍率）
-      'seedance2.5-特惠', // MegaAI 渠道：固定 ¥5.0/条（无 seconds 倍率、无分辨率档）
       // 漫屋 → Picsart 特惠档：固定 30 秒、按次 480P ¥1.50 / 720P ¥2.00
       // （720P 走 size 倍率，不是 seconds 倍率）。
       // 名字是连字符 `wan-3.0-特惠`，与上面点号前缀的 wan3.0-video* 系列不同族，
@@ -203,6 +203,8 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(getWan3SampleResolution('wan2.7-r2v'), '720p')
     assert.equal(getWan3SampleResolution('wan3.0-video-prime'), '720P')
     assert.equal(getWan3SampleResolution('wan3.0-video-prime-1080p'), '720P')
+    // prime 的对外别名，档位与默认值必须与 prime 一致。
+    assert.equal(getWan3SampleResolution('seedance2.5-特惠'), '720P')
     // 非 wan3 系模型没有该参数，示例里不应出现 resolution。
     assert.equal(getWan3SampleResolution('autodl:minimax-h3-u24'), null)
     assert.equal(getWan3SampleResolution('gpt-6-luna'), null)

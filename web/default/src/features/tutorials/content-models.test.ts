@@ -87,8 +87,10 @@ describe('tutorials model guide content', () => {
   // 这里把每个分辨率档的实际单价钉死，依据：
   //   - youzanwan3/constants.go videoResolutionSizeRatio{480P:1.0,720P:1.0,1080P:1.0}
   //     基准 ¥0.23/秒（上游 0.18 + ¥0.05）→ 0.23 / 0.23 / 0.23
-  //   - youzanwan3/constants.go primeResolutionSizeRatio{720P:1.0,1080P:1.25}
-  //     基准 ¥0.20/秒（上游 0.15 + ¥0.05）→ 0.20 / 0.25
+  //   - youzanwan3/constants.go primeResolutionSizeRatio{720P:1.0,1080P:1.5}
+  //     基准 ¥0.20/秒（上游 0.15 + ¥0.05）→ 0.20 / 0.30
+  //     （2026-10-29 1080P 由 ¥0.25 上调到 ¥0.30）
+  //   - seedance2.5-特惠 是 prime 的对外别名，两处价格必须与 prime 完全一致
   //   - wan3/constants.go resolutionSizeRatio{480P:1.0,720P:2.0,1080P:4.0}
   //     基准 ¥0.27/秒 → 0.27 / 0.54 / 1.08
   //   - autodl/constants.go u24 的 Resolutions 只含 480p/768p → 0.10 / 0.12，**没有 1080p**
@@ -98,8 +100,11 @@ describe('tutorials model guide content', () => {
       // 索引区与详情区都要写对，且两处必须一致
       '480P / 720P / 1080P 同价 ¥0.23/秒', // wan3.0-video 索引
       '按秒 ¥0.23（480P / 720P / 1080P 三档同价）', // wan3.0-video 详情
-      '720P ¥0.20/s、1080P ¥0.25/s', // wan3.0-video-prime 索引
-      '按秒 ¥0.20（720P）/ ¥0.25（1080P）', // wan3.0-video-prime 详情
+      '720P ¥0.20/s、1080P ¥0.30/s', // wan3.0-video-prime 索引
+      '按秒 ¥0.20（720P）/ ¥0.30（1080P）', // wan3.0-video-prime 详情
+      // 别名必须与 prime 同价，否则客户换个名字调用就被多扣
+      'wan3.0-video-prime 的对外别名，同价：720P ¥0.20/s、1080P ¥0.30/s', // seedance2.5-特惠 索引
+      '与 wan3.0-video-prime 完全一致', // seedance2.5-特惠 详情
       '480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s', // wan3.0-video-官网 索引
       '¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）', // wan3.0-video-官网 详情
       '480p ¥0.10/s、768p ¥0.12/s（仅此两档）', // autodl H3 索引
@@ -122,9 +127,12 @@ describe('tutorials model guide content', () => {
       )
     }
 
-    // 2026-10-26：wan-3.0 / wan-3.0-特惠 / seedance2.5-特惠 三个模型已下架
-    // （渠道删除 + 卡片/定价清理），文档里不得再出现这三个名字。
-    for (const gone of ['wan-3.0｜', 'wan-3.0-特惠', 'seedance2.5-特惠', 'model-wan-3-0']) {
+    // 2026-10-26：wan-3.0 / wan-3.0-特惠 两个模型已下架
+    // （渠道删除 + 卡片/定价清理），文档里不得再出现这两个名字。
+    // ⚠️ seedance2.5-特惠 曾同在本次下架清单里，但 2026-10-29 它作为
+    // wan3.0-video-prime 的对外别名重新上架（改路由到有赞 prime + 按秒计价），
+    // 故从本守卫移除、重新计入下面的「广场在售模型」清单。
+    for (const gone of ['wan-3.0｜', 'wan-3.0-特惠', 'model-wan-3-0']) {
       assert.equal(sectionsJson.includes(gone), false, `still documented: ${gone}`)
     }
 
@@ -301,6 +309,7 @@ describe('tutorials model guide content', () => {
       'seedance-2-0-fast',
       'seedance-2-5',
       'seedance-2.0',
+      'seedance2.5-特惠',
       'wan2.7-图生',
       'wan2.7-编辑',
       'wan3.0-video',
