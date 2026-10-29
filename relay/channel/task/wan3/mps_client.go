@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,6 +87,44 @@ func (e *mpsAPIError) Error() string {
 	return fmt.Sprintf("tencent mps error %s: %s (requestId=%s)", e.Code, e.Message, e.RequestID)
 }
 
+// mpsErrCode 兼容腾讯云 ErrCode 的两种形态：**数字**与**字符串**。
+//
+// ⚠️ 为什么必须兼容（2026-10-30 真机实测踩到）：
+//	DescribeTaskDetail 返回的 WorkflowTask.ErrCode 是**数字**（成功时是 0），
+//	而 TranscodeTask.ErrCode 也是数字、ErrCodeExt 才是字符串。
+//	之前统一声明成 string → 每次轮询都 json unmarshal 失败：
+//	    cannot unmarshal number into Go struct field ...ErrCode of type string
+//	→ 第二跳永远拿不到结果 → 任务挂到 20 分钟超时才回落 480P。
+//	（症状是 MPS 侧明明 8 秒就完成了，站内任务却一直 in_progress。）
+//
+// 用 json.Number + 自定义 UnmarshalJSON：数字原样保留，字符串照收，
+// 两种形态都不会让整个响应解析失败。
+type mpsErrCode string
+
+// UnmarshalJSON 兼容数字与字符串。
+func (c *mpsErrCode) UnmarshalJSON(data []byte) error {
+	raw := strings.TrimSpace(string(data))
+	if raw == "" || raw == "null" {
+		*c = ""
+		return nil
+	}
+	// 数字形态：原样保留（"0" 表示成功）
+	if raw[0] != '"' {
+		*c = mpsErrCode(raw)
+		return nil
+	}
+	// 字符串形态：解引号
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return err
+	}
+	*c = mpsErrCode(text)
+	return nil
+}
+
+// String 返回错误码文本。
+func (c mpsErrCode) String() string { return string(c) }
+
 // mpsResponse 是腾讯云统一响应信封。
 type mpsResponse struct {
 	Response struct {
@@ -94,9 +133,9 @@ type mpsResponse struct {
 		TaskId string `json:"TaskId"`
 		// DescribeTaskDetail：Status / Progress 在**顶层**，不在嵌套任务体里
 		// （TaskDetail 只在 ScheduleTask 类型任务下存在）。
-		Status   string `json:"Status"`
-		Progress string `json:"Progress"`
-		ErrCode  string `json:"ErrCode"`
+		Status   string     `json:"Status"`
+		Progress string     `json:"Progress"`
+		ErrCode  mpsErrCode `json:"ErrCode"`
 		// 嵌套任务体：WorkflowTask（ProcessMedia 产出）/ ScheduleTask。
 		WorkflowTask *mpsTaskBody `json:"WorkflowTask"`
 		ScheduleTask *mpsTaskBody `json:"ScheduleTask"`
@@ -108,10 +147,10 @@ type mpsResponse struct {
 // ⚠️ 产物路径**不在** TranscodeTaskSet 里 —— 提交体是 TranscodeTaskSet，
 // 但查询结果里产物挂在 WorkflowTask.MediaProcessResultSet[].TranscodeTask.Output.Path。
 type mpsTaskBody struct {
-	Status   string `json:"Status"`
-	Progress string `json:"Progress"`
-	ErrCode  string `json:"ErrCode"`
-	Message  string `json:"Message"`
+	Status   string     `json:"Status"`
+	Progress string     `json:"Progress"`
+	ErrCode  mpsErrCode `json:"ErrCode"`
+	Message  string     `json:"Message"`
 	InputInfo struct {
 		Type string `json:"Type"`
 	} `json:"InputInfo"`
@@ -133,10 +172,13 @@ type mpsProcessTaskResult struct {
 
 // mpsTranscodeTask 是转码任务项，输出路径在 Output.Path。
 type mpsTranscodeTask struct {
-	Status   string `json:"Status"`
-	ErrCode  string `json:"ErrCodeExt"`
-	Message  string `json:"Message"`
-	Progress int64  `json:"Progress"`
+	Status string `json:"Status"`
+	// ErrCode 是**数字**形态（成功时 0），ErrCodeExt 才是字符串。
+	// 两个都用兼容类型，解析不会因形态差异整体失败。
+	ErrCode  mpsErrCode `json:"ErrCode"`
+	ErrCodeX mpsErrCode `json:"ErrCodeExt"`
+	Message  string     `json:"Message"`
+	Progress int64      `json:"Progress"`
 	Input    *struct {
 		Object string `json:"Object"`
 	} `json:"Input"`
@@ -424,7 +466,7 @@ func (c *mpsClient) describeSuperRes(ctx context.Context, taskID string) (*mpsSu
 	result := &mpsSuperResResult{
 		TaskID:  taskID,
 		Status:  resp.Response.Status,
-		ErrCode: resp.Response.ErrCode,
+		ErrCode: resp.Response.ErrCode.String(),
 	}
 	// Status 在**响应顶层**；兜底从嵌套任务体里找。
 	if result.Status == "" {
@@ -444,8 +486,16 @@ func (c *mpsClient) describeSuperRes(ctx context.Context, taskID string) (*mpsSu
 			if mr.TranscodeTask == nil {
 				continue
 			}
-			if result.ErrCode == "" && mr.TranscodeTask.ErrCode != "" {
-				result.ErrCode = mr.TranscodeTask.ErrCode
+			if result.ErrCode == "" {
+				// ErrCode 是数字（成功时 0），ErrCodeExt 才是字符串 —— 两个都看。
+				//
+				// ⚠️ 数字 0 不是「没有错误码」，但也不是错误：腾讯云成功时也返回 0。
+				//	只在**非零**时才当作错误码，避免把成功任务标成失败。
+				if code := mr.TranscodeTask.ErrCode.String(); code != "" && code != "0" {
+					result.ErrCode = code
+				} else if code := mr.TranscodeTask.ErrCodeX.String(); code != "" {
+					result.ErrCode = code
+				}
 			}
 			if p := mr.TranscodeTask.outputPath(); p != "" {
 				result.ObjectPath = p

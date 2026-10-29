@@ -721,7 +721,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 
 	openAIResp := dto.NewOpenAIVideo()
 	openAIResp.ID = task.TaskID
-	openAIResp.Status = convertWan3Status(res.Output.TaskStatus)
+	openAIResp.Status = taskVideoStatus(task, res.Output.TaskStatus)
 	openAIResp.Model = task.Properties.OriginModelName
 	openAIResp.SetProgressStr(task.Progress)
 	openAIResp.CreatedAt = task.CreatedAt
@@ -747,6 +747,39 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		}
 	}
 	return common.Marshal(openAIResp)
+}
+
+// taskVideoStatus 决定对外报告的任务状态。
+//
+// ⚠️ 两跳链路**不能**用上游回执里的状态（2026-10-30 修）：
+//	上游回执（task.Data）在第一跳成功的那一刻就冻结了 —— 里面写的 TaskStatus
+//	是 "SUCCEEDED"，指的是「第一跳生成完了」，不是「整条链路完了」。
+//
+//	两跳链路（wan3.0-720p-官网）在第一跳成功后还要跑第二跳（成片提升），
+//	这期间库里任务是 IN_PROGRESS，但回执里已经是 SUCCEEDED。
+//	只按回执判定的话，客户端会在第二跳还没跑完时就看到 status=completed，
+//	然后去取片 —— 拿到的是**还没提升过的 480P**，正是这套链路要消灭的东西。
+//
+//	所以口径是：
+//	  · 任务还没成功（库内非 SUCCESS）→ 以库内状态为准（两跳链路的真实进度）；
+//	  · 任务已成功 → 报 completed。
+//	单跳链路（其它模型名）两者一致，行为不变。
+func taskVideoStatus(task *model.Task, upstreamStatus string) string {
+	if task == nil {
+		return convertWan3Status(upstreamStatus)
+	}
+	switch task.Status {
+	case model.TaskStatusSuccess:
+		return dto.VideoStatusCompleted
+	case model.TaskStatusFailure:
+		return dto.VideoStatusFailed
+	case model.TaskStatusQueued, model.TaskStatusSubmitted, model.TaskStatusNotStart:
+		return dto.VideoStatusQueued
+	case model.TaskStatusInProgress:
+		return dto.VideoStatusInProgress
+	}
+	// 库里状态不认识（历史数据/异常）→ 回落到上游回执。
+	return convertWan3Status(upstreamStatus)
 }
 
 func convertWan3Status(status string) string {
