@@ -22,8 +22,8 @@ func resetPolicy(t *testing.T) {
 	mu.Unlock()
 }
 
-// 默认策略必须与 2026-10-29 上线时的线上售价一致：
-// 标准版 ¥0.23/秒三档同价，prime 720P ¥0.20 / 1080P ¥0.30。
+// 默认策略必须与 2026-10-29 第二轮之后的线上售价一致：
+// 标准版 ¥0.23/秒三档同价，prime 720P ¥0.25 / 1080P ¥0.30（两档加价都是 ¥0.10）。
 func TestDefaultPolicyMatchesProductionPrices(t *testing.T) {
 	resetPolicy(t)
 
@@ -37,9 +37,12 @@ func TestDefaultPolicyMatchesProductionPrices(t *testing.T) {
 	assert.Equal(t, 1.0, ratio720)
 	ratio1080, ok := GetResolutionRatio("wan3.0-video-prime", "1080P")
 	require.True(t, ok)
-	assert.Equal(t, 1.5, ratio1080)
+	assert.Equal(t, 1.2, ratio1080)
 
-	markup, ok := MarkupFor("wan3.0-video-prime", "1080P")
+	markup, ok := MarkupFor("wan3.0-video-prime", "720P")
+	require.True(t, ok)
+	assert.Equal(t, 0.10, markup)
+	markup, ok = MarkupFor("wan3.0-video-prime", "1080P")
 	require.True(t, ok)
 	assert.Equal(t, 0.10, markup)
 	// 未列出的档位回退到 "*"
@@ -82,7 +85,7 @@ func TestUpdateFromJSONStringRejectsMalformed(t *testing.T) {
 	// 解析失败不能破坏当前状态
 	ratio, ok := GetResolutionRatio("wan3.0-video-prime", "1080P")
 	require.True(t, ok)
-	assert.Equal(t, 1.5, ratio)
+	assert.Equal(t, 1.2, ratio)
 }
 
 // Get 必须返回深拷贝，否则调用方改返回值会静默改掉全局配置。
@@ -93,7 +96,7 @@ func TestGetReturnsDeepCopy(t *testing.T) {
 	policy.Markup["wan3.0-video"]["*"] = 99
 
 	ratio, _ := GetResolutionRatio("wan3.0-video-prime", "1080P")
-	assert.Equal(t, 1.5, ratio)
+	assert.Equal(t, 1.2, ratio)
 	markup, _ := MarkupFor("wan3.0-video", "480P")
 	assert.Equal(t, 0.05, markup)
 }
@@ -107,6 +110,6 @@ func TestMarshalRoundTrip(t *testing.T) {
 	require.NoError(t, common.Unmarshal([]byte(raw), &parsed))
 	assert.Equal(t, 0.30, parsed.MaxChangeRatio)
 	assert.True(t, parsed.AutoApply)
-	assert.Equal(t, 1.5, parsed.Ratios["wan3.0-video-prime"]["1080P"])
+	assert.Equal(t, 1.2, parsed.Ratios["wan3.0-video-prime"]["1080P"])
 	assert.Equal(t, 0.10, parsed.Markup["wan3.0-video-prime"]["1080P"])
 }

@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// productionPlans 复刻 2026-10-29 的线上配置：标准版 ¥0.23 三档同价、
-// prime 720P ¥0.20 / 1080P ¥0.30。
+// productionPlans 复刻 2026-10-29 第二轮之后的线上配置：标准版 ¥0.23 三档同价、
+// prime 720P ¥0.25 / 1080P ¥0.30（两档加价都是 ¥0.10，倍率 1.2）。
 func productionPlans() []youzanwan3.ModelPricePlan {
 	return []youzanwan3.ModelPricePlan{
 		{
@@ -23,10 +23,10 @@ func productionPlans() []youzanwan3.ModelPricePlan {
 		},
 		{
 			Model:          "wan3.0-video-prime",
-			Prices:         map[string]float64{"720P": 0.20, "1080P": 0.30},
+			Prices:         map[string]float64{"720P": 0.25, "1080P": 0.30},
 			BaseResolution: "720P",
-			BasePrice:      0.20,
-			Ratios:         map[string]float64{"720P": 1.0, "1080P": 1.5},
+			BasePrice:      0.25,
+			Ratios:         map[string]float64{"720P": 1.0, "1080P": 1.2},
 		},
 	}
 }
@@ -36,28 +36,28 @@ func productionPlans() []youzanwan3.ModelPricePlan {
 func TestDiffYouzanPricesNoChangeAgainstProduction(t *testing.T) {
 	current := map[string]float64{
 		"wan3.0-video":       0.23 / ratio_setting.USD2RMB,
-		"wan3.0-video-prime": 0.20 / ratio_setting.USD2RMB,
+		"wan3.0-video-prime": 0.25 / ratio_setting.USD2RMB,
 	}
 	changes, blocked := diffYouzanPrices(productionPlans(), current, 0.30)
 	assert.Empty(t, changes, "价格没变时不应产生任何变动项")
 	assert.Empty(t, blocked)
 }
 
-// 上游涨价 10%，在 30% 阈值内 → 记录变动但不算拦截。
+// 上游调价 12%，在 30% 阈值内 → 记录变动但不算拦截。
 func TestDiffYouzanPricesWithinThreshold(t *testing.T) {
 	plans := productionPlans()
 	plans[1].Prices = map[string]float64{"720P": 0.22, "1080P": 0.30}
 	plans[1].BasePrice = 0.22
 	current := map[string]float64{
 		"wan3.0-video":       0.23 / ratio_setting.USD2RMB,
-		"wan3.0-video-prime": 0.20 / ratio_setting.USD2RMB,
+		"wan3.0-video-prime": 0.25 / ratio_setting.USD2RMB,
 	}
 	changes, blocked := diffYouzanPrices(plans, current, 0.30)
 	assert.Empty(t, blocked)
 	require.Len(t, changes, 1)
 	assert.Equal(t, "wan3.0-video-prime", changes[0].Model)
 	assert.Equal(t, "720P", changes[0].Resolution)
-	assert.InDelta(t, 0.10, changes[0].ChangeRatio, 1e-9)
+	assert.InDelta(t, 0.12, changes[0].ChangeRatio, 1e-9)
 }
 
 // 上游翻倍（+100%）→ 超过 30% 阈值，必须整批拦下。
@@ -68,7 +68,7 @@ func TestDiffYouzanPricesBlocksLargeChange(t *testing.T) {
 	plans[1].BasePrice = 0.40
 	current := map[string]float64{
 		"wan3.0-video":       0.23 / ratio_setting.USD2RMB,
-		"wan3.0-video-prime": 0.20 / ratio_setting.USD2RMB,
+		"wan3.0-video-prime": 0.25 / ratio_setting.USD2RMB,
 	}
 	changes, blocked := diffYouzanPrices(plans, current, 0.30)
 	require.NotEmpty(t, blocked)

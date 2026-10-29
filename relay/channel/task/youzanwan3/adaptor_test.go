@@ -421,16 +421,16 @@ func TestEstimateBillingChargesResolutionTiers(t *testing.T) {
 		{videoModel, "720P", 1.0},
 		{videoModel, "1080P", 1.0},
 		// wan3.0-video-prime：上游 720P 0.15 / 1080P 0.20 ⚡/秒，
-		// 售价 ¥0.20 / ¥0.30（2026-10-29 起 1080P 由 ¥0.25 上调），
-		// 1080P 倍率 = 0.30/0.20 = 1.5。
+		// 每档加价 ¥0.10 → 售价 ¥0.25 / ¥0.30（2026-10-29 第二轮：720P 由 ¥0.20 上调），
+		// 1080P 倍率 = 0.30/0.25 = 1.2。
 		{primeModel, "720P", 1.0},
-		{primeModel, "1080P", 1.5},
+		{primeModel, "1080P", 1.2},
 		// 480P 不在 prime 档位内，按 720P 计费（不低于成本）。
 		{primeModel, "480P", 1.0},
 		// 对外别名 seedance2.5-特惠 与 prime 同价：档位倍率必须完全一致，
 		// 否则客户换个名字调用就会被多扣或少扣。
 		{tehuiModel, "720P", 1.0},
-		{tehuiModel, "1080P", 1.5},
+		{tehuiModel, "1080P", 1.2},
 		{tehuiModel, "480P", 1.0},
 		// 未知档位回退 1，避免多扣费。
 		{videoModel, "4K", 1.0},
@@ -456,7 +456,7 @@ func TestPrimeBillsPerSecondNotPerCall(t *testing.T) {
 	info := &relaycommon.RelayInfo{OriginModelName: primeModel}
 	// 2026-10-28 起 prime 改为按秒计费：必须返回 seconds/size 倍率，
 	// 否则 quota 会退化成「一次任务 = ModelPrice」的按次计费。
-	require.Equal(t, map[string]float64{"seconds": 30, "size": 1.5},
+	require.Equal(t, map[string]float64{"seconds": 30, "size": 1.2},
 		(&TaskAdaptor{}).EstimateBilling(context, info))
 }
 
@@ -558,11 +558,11 @@ func TestGetModelListExposesYouzanModels(t *testing.T) {
 // 不报错、不掉单，只是每单少赚，只能靠断言发现。
 func TestEstimateBillingPrefersDynamicRatio(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	// 恢复成默认倍率，避免污染同包其它用例（它们断言的是 1.5）。
+	// 恢复成默认倍率，避免污染同包其它用例（它们断言的是 1.2）。
 	t.Cleanup(func() {
 		youzanwan3_setting.SetRatios(map[string]map[string]float64{
 			"wan3.0-video":       {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
-			"wan3.0-video-prime": {"720P": 1.0, "1080P": 1.5},
+			"wan3.0-video-prime": {"720P": 1.0, "1080P": 1.2},
 		}, 0)
 	})
 	youzanwan3_setting.SetRatios(map[string]map[string]float64{

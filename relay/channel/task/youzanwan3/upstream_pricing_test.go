@@ -117,11 +117,12 @@ func TestPlanSellingPricesMatchesProductionPolicy(t *testing.T) {
 
 	prime := plans[1]
 	assert.Equal(t, "wan3.0-video-prime", prime.Model)
-	// 720P 0.15 + 0.05 = 0.20；1080P 0.20 + 0.10 = 0.30（2026-10-29 老板定的 3 毛）
-	assert.Equal(t, map[string]float64{"720P": 0.20, "1080P": 0.30}, prime.Prices)
+	// 每档加价 ¥0.10：720P 0.15 + 0.10 = 0.25；1080P 0.20 + 0.10 = 0.30
+	// （2026-10-29 第二轮：老板要求 720P 由 ¥0.20 提到 ¥0.25）
+	assert.Equal(t, map[string]float64{"720P": 0.25, "1080P": 0.30}, prime.Prices)
 	assert.Equal(t, "720P", prime.BaseResolution)
-	assert.Equal(t, 0.20, prime.BasePrice)
-	assert.Equal(t, map[string]float64{"720P": 1.0, "1080P": 1.5}, prime.Ratios)
+	assert.Equal(t, 0.25, prime.BasePrice)
+	assert.Equal(t, map[string]float64{"720P": 1.0, "1080P": 1.2}, prime.Ratios)
 }
 
 // 上游降价时售价跟着降，倍率按新成本比例重算。
@@ -132,9 +133,9 @@ func TestPlanSellingPricesFollowsUpstreamPriceChange(t *testing.T) {
 	plans, err := PlanSellingPrices(models, productionMarkupFor)
 	require.NoError(t, err)
 	prime := plans[1]
-	// 0.40 + 0.10 = 0.50；倍率 = 0.50 / 0.20 = 2.5
-	assert.Equal(t, map[string]float64{"720P": 0.20, "1080P": 0.50}, prime.Prices)
-	assert.Equal(t, 2.5, prime.Ratios["1080P"])
+	// 0.40 + 0.10 = 0.50；倍率 = 0.50 / 0.25（720P 基准）= 2.0
+	assert.Equal(t, map[string]float64{"720P": 0.25, "1080P": 0.50}, prime.Prices)
+	assert.Equal(t, 2.0, prime.Ratios["1080P"])
 }
 
 // 缺加价配置时必须报错，不能按 0 加价（等于成本价卖出）。
@@ -170,10 +171,8 @@ func productionMarkupFor(model, resolution string) (float64, bool) {
 	case "wan3.0-video":
 		return 0.05, true
 	case "wan3.0-video-prime":
-		if resolution == "1080P" {
-			return 0.10, true
-		}
-		return 0.05, true
+		// 2026-10-29 第二轮起两档统一加价 ¥0.10（720P ¥0.25 / 1080P ¥0.30）。
+		return 0.10, true
 	}
 	return 0, false
 }

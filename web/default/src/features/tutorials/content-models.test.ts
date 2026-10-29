@@ -105,9 +105,8 @@ describe('tutorials model guide content', () => {
   // 这里把每个分辨率档的实际单价钉死，依据：
   //   - youzanwan3/constants.go videoResolutionSizeRatio{480P:1.0,720P:1.0,1080P:1.0}
   //     基准 ¥0.23/秒（上游 0.18 + ¥0.05）→ 0.23 / 0.23 / 0.23
-  //   - youzanwan3/constants.go primeResolutionSizeRatio{720P:1.0,1080P:1.5}
-  //     基准 ¥0.20/秒（上游 0.15 + ¥0.05）→ 0.20 / 0.30
-  //     （2026-10-29 1080P 由 ¥0.25 上调到 ¥0.30）
+  //   - youzanwan3/constants.go primeResolutionSizeRatio{720P:1.0,1080P:1.2}
+  //     每档加价 ¥0.10 → 0.25 / 0.30（2026-10-29 第二轮：720P 由 ¥0.20 上调）
   //   - seedance2.5-特惠 与 prime 同价，但**文案里不许出现 prime / wan3**
   //     （见下面「对外文案不暴露真实货源」用例，价格由该用例单独钉死）
   //   - wan3/constants.go resolutionSizeRatio{480P:1.0,720P:2.0,1080P:4.0}
@@ -119,8 +118,8 @@ describe('tutorials model guide content', () => {
       // 索引区与详情区都要写对，且两处必须一致
       '480P / 720P / 1080P 同价 ¥0.23/秒', // wan3.0-video 索引
       '按秒 ¥0.23（480P / 720P / 1080P 三档同价）', // wan3.0-video 详情
-      '720P ¥0.20/s、1080P ¥0.30/s', // wan3.0-video-prime 索引
-      '按秒 ¥0.20（720P）/ ¥0.30（1080P）', // wan3.0-video-prime 详情（别名同价，见下方专属用例）
+      '720P ¥0.25/s、1080P ¥0.30/s', // wan3.0-video-prime 索引
+      '按秒 ¥0.25（720P）/ ¥0.30（1080P）', // wan3.0-video-prime 详情（别名同价，见下方专属用例）
       '480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s', // wan3.0-video-官网 索引
       '¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）', // wan3.0-video-官网 详情
       '480p ¥0.10/s、768p ¥0.12/s（仅此两档）', // autodl H3 索引
@@ -186,9 +185,9 @@ describe('tutorials model guide content', () => {
       }
     }
 
-    // 价格：按秒分档，与 prime 逐档相同（720P ¥0.20 / 1080P ¥0.30）。
-    assert.equal(section.includes('按秒 ¥0.20（720P）/ ¥0.30（1080P）'), true)
-    assert.equal(indexEntry.includes('720P ¥0.20/s、1080P ¥0.30/s'), true)
+    // 价格：按秒分档，与 prime 逐档相同（720P ¥0.25 / 1080P ¥0.30）。
+    assert.equal(section.includes('按秒 ¥0.25（720P）/ ¥0.30（1080P）'), true)
+    assert.equal(indexEntry.includes('720P ¥0.25/s、1080P ¥0.30/s'), true)
   })
 
   test('documents the quota query endpoint, fields, limits, and HTTP semantics', () => {
