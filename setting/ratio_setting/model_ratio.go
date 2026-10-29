@@ -321,7 +321,12 @@ var defaultModelPrice = map[string]float64{
 	// 旧名会走 ModelPriceHelperPerCall 的「查不到价」分支，任务按次计费算成 ¥0
 	// （静默免单，比报错更难发现）。清理时机与 adaptor.go 的 ModelWan3TeHuiLegacy 同步。
 	"wan-3.0-无限":                       1.5 / USD2RMB,   // = wan-3.0-特惠 的旧名别名，同价同口径（480P 基价，720P 同样走倍率）
-	"seedance2.5-特惠":                  3.0 / USD2RMB,   // MegaAI 渠道 wan-3.0 的对外别名，**固定 ¥3.0/条**（不分分辨率档、不乘时长；参数传递与 wan-3.0 完全一致；上游锁 720p 结算，成本 ¥1.8/条）。2026-10-23 由 ¥5.0 下调
+	// 2026-10-29 起挂在有赞 Wan3 上（上游 wan3.0-video-prime 执行），**按秒**计费，
+	// 独立定价：720P ¥0.20/秒（这里配的就是基准档 720P）、1080P ¥0.30/秒。
+	// 1080P 的 1.5 倍率由 youzanwan3 的 tehuiResolutionSizeRatio 乘上去，
+	// 与 prime 的 1.2 不同 —— 两处不要互相抄。
+	// 这一行只是「DB 的 ModelPrice 里没有这个键」时的兜底；生产以 options 为准。
+	"seedance2.5-特惠":                  0.20 / USD2RMB,
 	"seedance-2.0":                      1.0 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
 	"seedance-2.5":                      0.8 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
 	"seedance-2-5":                      3.0 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥3.0/次（5/10/15/30 秒同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调

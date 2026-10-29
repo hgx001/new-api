@@ -82,7 +82,8 @@ func TestIsAllowedPricingModelMegaAIWan30(t *testing.T) {
 	require.True(t, isAllowedPricingModel("wan-3.0"), "wan-3.0 must show in pricing square")
 }
 
-// MegaAI 渠道 wan-3.0 的对外别名 seedance2.5-特惠 上广场：固定 ¥5.0/条。
+// 有赞 Wan3 的对外别名 seedance2.5-特惠 必须上广场：按秒计费（独立定价
+// 720P ¥0.20 / 1080P ¥0.30），前端要显示「/秒」而不是「/次」。
 func TestIsAllowedPricingModelMegaAISeedance25TeHui(t *testing.T) {
 	require.True(t, isAllowedPricingModel("seedance2.5-特惠"), "seedance2.5-特惠 must show in pricing square")
 }
