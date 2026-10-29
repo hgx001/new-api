@@ -198,7 +198,7 @@ func isR2VModel(model string) bool {
 
 func isPrimeModel(model string) bool {
 	switch strings.TrimSpace(model) {
-	case primeModel, legacyPrimeModel:
+	case primeModel, legacyPrimeModel, tehuiModel:
 		return true
 	default:
 		return false
@@ -212,7 +212,7 @@ func upstreamModelFor(model string) (string, error) {
 	switch strings.TrimSpace(model) {
 	case videoModel, smartLegacyModel:
 		return videoModel, nil
-	case primeModel, legacyPrimeModel:
+	case primeModel, legacyPrimeModel, tehuiModel:
 		return primeModel, nil
 	case r2vModel:
 		return "", errors.New("youzan wan2.7-r2v is not exposed by the current upstream API")

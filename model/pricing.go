@@ -430,7 +430,10 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan-3.0" {
 		return true
 	}
-	// MegaAI 渠道 wan-3.0 的对外别名：固定 ¥5.0/条
+	// 有赞 Wan3 的对外别名：客户看到 seedance2.5-特惠，实际由 wan3.0-video-prime
+	// 执行（2026-10-29 起）。此前它挂在 MegaAI 渠道按次卖 ¥5.0/条，2026-10-26
+	// 随该渠道停售而空置。现计费与 prime 完全一致：按秒 720P ¥0.20 / 1080P ¥0.30，
+	// 所以它必须显示「/秒」而不是「/次」（见前端 isPerSecondModel）。
 	if name == "seedance2.5-特惠" {
 		return true
 	}

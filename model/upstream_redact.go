@@ -13,7 +13,7 @@ import (
 // 用户就能直接反推出真实货源，别名就白起了。其它模型本来就是原样对外，
 // 遮它们的字样只会让报错更难读，还可能把用户自己买的东西的名字也打散。
 var upstreamAliasModels = map[string]bool{
-	"seedance2.5-特惠": true, // 上游是 wan-3.0（第三方渠道）
+	"seedance2.5-特惠": true, // 上游是 wan3.0-video-prime（有赞渠道，2026-10-29 起）
 	"seedance2.5特惠版": true, // 同一模型的历史旧名
 }
 

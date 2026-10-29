@@ -7,6 +7,13 @@ const (
 	videoModel = "wan3.0-video"
 	primeModel = "wan3.0-video-prime"
 
+	// tehuiModel 是对外别名：客户看到「Seedance 2.5 特惠版」，实际由上游
+	// wan3.0-video-prime 执行（同一份算力，按秒分档计价）。
+	// 该名字 2026-10-26 随 MegaAI 渠道停售而空置，2026-10-29 改为路由到有赞 prime。
+	// 别名不写进 ModelList —— 那份清单必须与上游 /v1/models 逐字一致，
+	// 否则「同步上游模型」会把别名当成真实上游模型写回渠道配置。
+	tehuiModel = "seedance2.5-特惠"
+
 	// smartLegacyModel / legacyPrimeModel 是 2026-10-28 前的公开名，语义等价：
 	// wan3.0-smart → wan3.0-video、wan3.0-video-prime-1080p → wan3.0-video-prime。
 	// 保留仅为让老客户的既定请求继续可路由（广场已不再展示）。
@@ -34,12 +41,13 @@ var videoResolutionSizeRatio = map[string]float64{
 }
 
 // primeResolutionSizeRatio：上游 wan3.0-video-prime 按分辨率分档计价
-// （720P 0.15 ⚡/秒、1080P 0.20 ⚡/秒）。售价 = 上游 + ¥0.05：
-// 720P ¥0.20/秒、1080P ¥0.25/秒。ModelPrice 按 720P 基准配置（0.20/7.3 ≈ 0.0273973），
-// 1080P 倍率 = 0.25 / 0.20 = 1.25。
+// （720P 0.15 ⚡/秒、1080P 0.20 ⚡/秒）。售价 = 上游 + ¥0.05 起步：
+// 720P ¥0.20/秒、1080P ¥0.30/秒（1080P 于 2026-10-29 从 ¥0.25 上调，与 720P
+// 拉开 1.5 倍档距，增强画质档才有区分度）。ModelPrice 按 720P 基准配置
+// （0.20/7.3 ≈ 0.0273973），1080P 倍率 = 0.30 / 0.20 = 1.5。
 var primeResolutionSizeRatio = map[string]float64{
 	"720P":  1.0,
-	"1080P": 1.25,
+	"1080P": 1.5,
 }
 
 // r2vResolutionSizeRatio：wan2.7-r2v 已下架，仅为轮询中的历史任务保留倍率表。
