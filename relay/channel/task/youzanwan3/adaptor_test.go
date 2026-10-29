@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/youzanwan3_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -548,4 +549,38 @@ func TestGetModelListExposesYouzanModels(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	// 与上游 /v1/models 完全一致（wan3.0-smart / wan2.7-r2v 已不再展示）。
 	require.Equal(t, []string{"wan3.0-video", "wan3.0-video-prime"}, adaptor.GetModelList())
+}
+
+// TestEstimateBillingPrefersDynamicRatio 锁定「动态调价优先于代码常量」。
+//
+// 上游成本一变，同步任务会写 setting 里的倍率；计费必须立刻按新倍率算。
+// 如果这里读不到动态值，表现是「上游涨了价、我们还在按旧价卖」——
+// 不报错、不掉单，只是每单少赚，只能靠断言发现。
+func TestEstimateBillingPrefersDynamicRatio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	// 恢复成默认倍率，避免污染同包其它用例（它们断言的是 1.5）。
+	t.Cleanup(func() {
+		youzanwan3_setting.SetRatios(map[string]map[string]float64{
+			"wan3.0-video":       {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
+			"wan3.0-video-prime": {"720P": 1.0, "1080P": 1.5},
+		}, 0)
+	})
+	youzanwan3_setting.SetRatios(map[string]map[string]float64{
+		"wan3.0-video":       {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
+		"wan3.0-video-prime": {"720P": 1.0, "1080P": 2.0},
+	}, 0)
+
+	for _, model := range []string{primeModel, tehuiModel, legacyPrimeModel} {
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
+		info := &relaycommon.RelayInfo{OriginModelName: model}
+		require.Equal(t, map[string]float64{"seconds": 10, "size": 2.0},
+			(&TaskAdaptor{}).EstimateBilling(context, info), "model=%s", model)
+	}
+	// 标准版读自己的配置，不受 prime 的倍率影响。
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
+	info := &relaycommon.RelayInfo{OriginModelName: videoModel}
+	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.0},
+		(&TaskAdaptor{}).EstimateBilling(context, info))
 }
