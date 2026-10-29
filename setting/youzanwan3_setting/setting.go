@@ -25,7 +25,7 @@ const OptionKey = "YouzanWan3Pricing"
 type Policy struct {
 	// Markup 每档加价（人民币/秒）。键是上游模型 ID，值是「档位 → 加价」。
 	// 档位用 "*" 表示该模型所有档位统一加价。
-	// 例：{"wan3.0-video-prime": {"720P": 0.05, "1080P": 0.10}}
+	// 例：{"wan3.0-video-prime": {"720P": 0.10, "1080P": 0.10}}
 	Markup map[string]map[string]float64 `json:"markup"`
 	// MaxChangeRatio 单次变动幅度上限（相对当前售价）。超过则只告警不落库。
 	// 0 表示不限制 —— 不建议，上游偶发错价会直接变成我们的售价。
@@ -44,13 +44,13 @@ func defaultPolicy() Policy {
 	return Policy{
 		Markup: map[string]map[string]float64{
 			"wan3.0-video":       {"*": 0.05},
-			"wan3.0-video-prime": {"720P": 0.05, "1080P": 0.10},
+			"wan3.0-video-prime": {"720P": 0.10, "1080P": 0.10},
 		},
 		MaxChangeRatio: 0.30,
 		AutoApply:      true,
 		Ratios: map[string]map[string]float64{
 			"wan3.0-video":       {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
-			"wan3.0-video-prime": {"720P": 1.0, "1080P": 1.5},
+			"wan3.0-video-prime": {"720P": 1.0, "1080P": 1.2},
 		},
 	}
 }
