@@ -174,8 +174,37 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	// 素材组合/数量错误（首尾帧混用、r2v 缺参考图等）属于客户端参数错误：
 	// 在这里以 400 本地错误返回，既给出正确状态码，也不会被当成 5xx 触发渠道重试。
-	if _, mediaErr := buildMedia(req); mediaErr != nil {
+	media, mediaErr := buildMedia(req)
+	if mediaErr != nil {
 		return service.TaskErrorWrapperLocal(mediaErr, "invalid_request", http.StatusBadRequest)
+	}
+	// 参考视频按秒加价（生成秒数 + 参考视频总秒数），秒数在这里探测并塞进 context，
+	// 由 EstimateBilling 读出来并入计费。必须放在预扣之前：EstimateBilling 没有
+	// 错误返回值，那时才发现解析不了就只能按 0 秒收钱（静默少收）。
+	if refErr := a.setReferenceVideoSeconds(c, media); refErr != nil {
+		return service.TaskErrorWrapperLocal(
+			errors.Wrap(refErr, "probe reference video duration failed"),
+			"invalid_input_reference", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// setReferenceVideoSeconds 探测所有 reference_video 素材的时长，累加后写入 context。
+// 没有参考视频时不写 key —— EstimateBilling 读到 0 与读不到要表现一致（不加价）。
+func (a *TaskAdaptor) setReferenceVideoSeconds(c *gin.Context, media []relaycommon.TaskMedia) error {
+	total := 0
+	for _, item := range media {
+		if item.Type != "reference_video" {
+			continue
+		}
+		seconds, err := probeReferenceVideoSeconds(item.URL, a.proxy)
+		if err != nil {
+			return err
+		}
+		total += seconds
+	}
+	if total > 0 {
+		c.Set(refVideoSecondsContextKey, total)
 	}
 	return nil
 }
@@ -664,9 +693,19 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	// 两个在售模型均为按秒计费：quota = ModelPrice × seconds × size。
 	// prime 的 720P / 1080P 分档差价体现在 size 倍率（见 primeResolutionSizeRatio），
 	// 不再像旧版那样整条模型按次计价。
+	//
+	// 带参考视频时把参考视频总秒数并入 seconds（口径同 wan3.0-video-官网）：
+	// 2 秒生成 + 3 秒参考视频 = 按 5 秒收费。秒数由 validate 阶段探测并写入 context，
+	// 这里只读不算 —— 探测失败已在 validate 阶段 400 拒掉，走到这里必然有值。
 	resolution := resolveResolutionForModel(req, modelName)
 	ratio := resolutionRatioForModel(modelName, resolution)
-	return map[string]float64{"seconds": float64(resolveDurationForModel(req, modelName)), "size": ratio}
+	seconds := resolveDurationForModel(req, modelName)
+	if value, ok := c.Get(refVideoSecondsContextKey); ok {
+		if refSeconds, ok := value.(int); ok && refSeconds > 0 {
+			seconds += refSeconds
+		}
+	}
+	return map[string]float64{"seconds": float64(seconds), "size": ratio}
 }
 
 // billingModelName 取本次请求的下游模型名（优先 OriginModelName，回退上游名）。

@@ -189,6 +189,15 @@ describe('tutorials model guide content', () => {
     // 720P ¥0.20 / 1080P ¥0.30，与 prime 现在的 ¥0.25 / ¥0.30 只差 720P 一档。
     assert.equal(section.includes('按秒 ¥0.20（720P）/ ¥0.30（1080P）'), true)
     assert.equal(indexEntry.includes('720P ¥0.20/s、1080P ¥0.30/s'), true)
+
+    // 参考视频加价（2026-10-29 老板要求，口径同 wan3.0-video-官网）：
+    // 生成秒数 + 参考视频总秒数 × 所选分辨率单价。文案必须写清「加秒」而不是
+    // 「加一个固定倍率」，否则客户按 2 秒算钱、实际扣 5 秒，会认为被多收。
+    assert.equal(
+      section.includes('参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」'),
+      true,
+      'seedance2.5-特惠 缺参考视频加秒计费说明'
+    )
   })
 
   test('documents the quota query endpoint, fields, limits, and HTTP semantics', () => {
