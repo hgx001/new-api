@@ -185,3 +185,24 @@ func TestFormatUserLogs_别名模型的消费日志不暴露上游模型名(t *t
 	// 其它模型：映射信息照常展示（本来就对外公开）
 	assert.Contains(t, logs[1].Other, "upstream_model_name")
 }
+
+// 任务类日志（线上实际存在的 type=6：只带 reason / task_id，正文为空）也要抹。
+// 2026-10-29 抽查生产库发现这类行确实带着 upstream_model_name=wan-3.0 ——
+// 它的抹除逻辑与日志类型无关（IsUpstreamAliasModel 分支不分 type），这里钉死，
+// 免得以后有人把该分支挪进 `if Type == LogTypeError` 里，静默放走任务日志。
+func TestFormatUserLogs_别名模型的任务日志不暴露上游模型名(t *testing.T) {
+	logs := []*Log{
+		{
+			Type:      6,
+			ModelName: "seedance2.5-特惠",
+			Content:   "",
+			Other:     `{"group_ratio":1,"is_model_mapped":true,"model_price":0.41,"reason":"第 1 个 image 素材：素材无法下载，HTTP 404","task_id":"task_x","upstream_model_name":"wan-3.0"}`,
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	assert.NotContains(t, logs[0].Other, "upstream_model_name")
+	assert.NotContains(t, logs[0].Other, "is_model_mapped")
+	assert.Contains(t, logs[0].Other, "素材无法下载", "失败原因本身要保留")
+}

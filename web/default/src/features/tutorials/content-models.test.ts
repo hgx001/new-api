@@ -37,6 +37,24 @@ function collectAnchorIds(): Set<string> {
   return ids
 }
 
+/**
+ * 取出某个 level 3 小节的正文（该 heading 起，到下一个 heading 之前）。
+ * 用于「只针对某一个模型」的断言 —— 在整份 sectionsJson 上做 includes 会被
+ * 别的模型同名价格串扰（例如别名与 prime 同价）。
+ */
+function getModelSectionText(anchorId: string): string {
+  for (const section of sections) {
+    const nodes = section.content ?? []
+    const start = nodes.findIndex((node) => node.type === 'heading' && node.id === anchorId)
+    if (start === -1) continue
+    const rest = nodes.slice(start + 1)
+    const end = rest.findIndex((node) => node.type === 'heading')
+    const body = end === -1 ? rest : rest.slice(0, end)
+    return JSON.stringify([nodes[start], ...body])
+  }
+  throw new Error(`missing model section ${anchorId}`)
+}
+
 describe('tutorials model guide content', () => {
   test('exposes the downstream model guide sections', () => {
     const ids = new Set(sections.map((section) => section.id))
@@ -90,7 +108,8 @@ describe('tutorials model guide content', () => {
   //   - youzanwan3/constants.go primeResolutionSizeRatio{720P:1.0,1080P:1.5}
   //     基准 ¥0.20/秒（上游 0.15 + ¥0.05）→ 0.20 / 0.30
   //     （2026-10-29 1080P 由 ¥0.25 上调到 ¥0.30）
-  //   - seedance2.5-特惠 是 prime 的对外别名，两处价格必须与 prime 完全一致
+  //   - seedance2.5-特惠 与 prime 同价，但**文案里不许出现 prime / wan3**
+  //     （见下面「对外文案不暴露真实货源」用例，价格由该用例单独钉死）
   //   - wan3/constants.go resolutionSizeRatio{480P:1.0,720P:2.0,1080P:4.0}
   //     基准 ¥0.27/秒 → 0.27 / 0.54 / 1.08
   //   - autodl/constants.go u24 的 Resolutions 只含 480p/768p → 0.10 / 0.12，**没有 1080p**
@@ -101,10 +120,7 @@ describe('tutorials model guide content', () => {
       '480P / 720P / 1080P 同价 ¥0.23/秒', // wan3.0-video 索引
       '按秒 ¥0.23（480P / 720P / 1080P 三档同价）', // wan3.0-video 详情
       '720P ¥0.20/s、1080P ¥0.30/s', // wan3.0-video-prime 索引
-      '按秒 ¥0.20（720P）/ ¥0.30（1080P）', // wan3.0-video-prime 详情
-      // 别名必须与 prime 同价，否则客户换个名字调用就被多扣
-      'wan3.0-video-prime 的对外别名，同价：720P ¥0.20/s、1080P ¥0.30/s', // seedance2.5-特惠 索引
-      '与 wan3.0-video-prime 完全一致', // seedance2.5-特惠 详情
+      '按秒 ¥0.20（720P）/ ¥0.30（1080P）', // wan3.0-video-prime 详情（别名同价，见下方专属用例）
       '480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s', // wan3.0-video-官网 索引
       '¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）', // wan3.0-video-官网 详情
       '480p ¥0.10/s、768p ¥0.12/s（仅此两档）', // autodl H3 索引
@@ -145,6 +161,34 @@ describe('tutorials model guide content', () => {
       false,
       'autodl u24 does not accept 1080p; documenting its price sends clients into invalid_resolution'
     )
+  })
+
+  // 回归守卫：seedance2.5-特惠 对外是**独立商品**，文案里不得出现真实货源。
+  // 2026-10-29 首次上架时曾把它写成「wan3.0-video-prime 的对外别名，同一模型」，
+  // 等于把上游直接告诉客户 —— 前面日志脱敏（删 upstream_model_name、抹错误文案、
+  // 成片走本站代理）全部白做，客户拿文案一对就知道该盯哪个模型。
+  // 价格仍必须与 prime 一致（同货不同名不能不同价），由本用例单独钉死。
+  test('seedance2.5-特惠 的对外文案不暴露真实货源', () => {
+    const section = getModelSectionText('model-seedance25-tehui')
+    const indexEntry = sectionsJson.match(/"seedance2\.5-特惠｜[^"]*"/)?.[0] ?? ''
+    assert.notEqual(indexEntry, '', '模型总览里缺少 seedance2.5-特惠 一行')
+
+    for (const [label, text] of [
+      ['模型总览', indexEntry],
+      ['教程小节', section],
+    ] as const) {
+      for (const leaked of ['wan3', 'wan-3', 'prime', '有赞', 'youzan', 'aliyun', '万相']) {
+        assert.equal(
+          text.toLowerCase().includes(leaked),
+          false,
+          `${label} 暴露了真实上游关键词「${leaked}」：${text}`
+        )
+      }
+    }
+
+    // 价格：按秒分档，与 prime 逐档相同（720P ¥0.20 / 1080P ¥0.30）。
+    assert.equal(section.includes('按秒 ¥0.20（720P）/ ¥0.30（1080P）'), true)
+    assert.equal(indexEntry.includes('720P ¥0.20/s、1080P ¥0.30/s'), true)
   })
 
   test('documents the quota query endpoint, fields, limits, and HTTP semantics', () => {
