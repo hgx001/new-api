@@ -31,7 +31,8 @@ const MODEL_OVERVIEW_ITEMS = [
   'gpt-6.1-sol｜文本｜输入 ¥18.75 / 1M，输出 ¥150.00 / 1M（与 gpt-6-sol 同价）',
   'gpt-image-2.5-官方｜图片｜¥0.15 / 张',
   'wan3.0-video｜视频（按秒）｜480P / 720P / 1080P 同价 ¥0.23/秒，时长 2–30 秒',
-  'wan3.0-video-prime｜视频（按秒）｜720P ¥0.20/s、1080P ¥0.25/s，时长 2–30 秒',
+  'wan3.0-video-prime｜视频（按秒）｜720P ¥0.20/s、1080P ¥0.30/s，时长 2–30 秒',
+  'seedance2.5-特惠｜视频（按秒）｜wan3.0-video-prime 的对外别名，同价：720P ¥0.20/s、1080P ¥0.30/s，时长 2–30 秒',
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s，参考视频按时长同价并入（生成秒数+参考视频秒数）',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s（仅此两档）',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒',
@@ -430,12 +431,31 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           ['seconds：2–30，默认 5'],
           ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
           ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
-          ['计费：按秒 ¥0.20（720P）/ ¥0.25（1080P）'],
+          ['计费：按秒 ¥0.20（720P）/ ¥0.30（1080P）'],
         ] },
         {
           type: 'hint',
           children: [
             'Prime 按分辨率分档按秒计费（不再是固定 1080P / 30 秒的按次计费）。参考素材上限与标准版一致。',
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-seedance25-tehui',
+          children: [{ type: 'strong', value: 'seedance2.5-特惠（wan3.0-video-prime 的对外别名）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['resolution：720P（默认）/ 1080P（无 480P 档；传 480P 会按 720P 执行，不会静默升到 1080P）'],
+          ['seconds：2–30，默认 5'],
+          ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
+          ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
+          ['计费：按秒 ¥0.20（720P）/ ¥0.30（1080P），与 wan3.0-video-prime 完全一致'],
+        ] },
+        {
+          type: 'hint',
+          children: [
+            '这是 wan3.0-video-prime 的另一个名字，参数、档位、计费完全相同，用哪个名字调用都一样。',
           ],
         },
         {
@@ -671,6 +691,7 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: '余额查询接口', href: '#quota-query' },
     { title: 'wan3.0-video', href: '#model-wan30-video' },
     { title: 'wan3.0-video-prime', href: '#model-wan30-video-prime' },
+    { title: 'seedance2.5-特惠', href: '#model-seedance25-tehui' },
     { title: 'wan3.0-video-官网', href: '#model-wan30-guanwang' },
     { title: 'autodl:minimax-h3-u24', href: '#model-autodl-h3-u24' },
     { title: 'seedance-2.0', href: '#model-seedance-2' },

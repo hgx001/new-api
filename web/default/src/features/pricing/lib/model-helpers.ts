@@ -66,9 +66,11 @@ export function getWan3SampleResolution(modelName: string): string | null {
   if (modelName === 'wan2.7-r2v') return '720p'
   // 2026-10-28 起 prime 改为 720P/1080P 分档按秒计价，默认取最低档 720P；
   // 旧名 wan3.0-video-prime-1080p 仅历史兼容。
+  // seedance2.5-特惠 是 prime 的对外别名（2026-10-29 起），档位与默认值完全一致。
   if (
     modelName === 'wan3.0-video-prime' ||
-    modelName === 'wan3.0-video-prime-1080p'
+    modelName === 'wan3.0-video-prime-1080p' ||
+    modelName === 'seedance2.5-特惠'
   ) {
     return '720P'
   }
@@ -117,6 +119,12 @@ export function isPerSecondModel(model: PricingModel): boolean {
   // Erchun 的 480P 专用档：名字不以 wan3.0-video 开头（那是官网/有赞的命名），
   // 必须单列，否则 ¥0.28/秒 会被显示成按次。
   if (name === 'wan3.0-480p') {
+    return true
+  }
+  // 有赞 Wan3 的对外别名：客户看到 seedance2.5-特惠，实际由 wan3.0-video-prime
+  // 执行（2026-10-29 起），与 prime 同价按秒分档（720P ¥0.20/s、1080P ¥0.30/s）。
+  // ⚠️ 必须精确匹配：`seedance2.5特惠版` 是历史按次旧名，前缀匹配会把两个单位搞混。
+  if (name === 'seedance2.5-特惠') {
     return true
   }
   return (
