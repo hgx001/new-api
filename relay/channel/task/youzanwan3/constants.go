@@ -53,6 +53,19 @@ var primeResolutionSizeRatio = map[string]float64{
 	"1080P": 1.2,
 }
 
+// tehuiResolutionSizeRatio：对外别名 seedance2.5-特惠 **独立定价**，不跟随 prime。
+//
+// 2026-10-29 老板明确：这个模型保持它自己的价（720P ¥0.20/秒、1080P ¥0.30/秒），
+// prime 调价它不动。所以它有自己的一张倍率表，ModelPrice 也是单独配的
+// （0.20/7.3），并且**不在 youzanAliasTargets 里** —— 同步任务只改上游那两个
+// 真实模型的价，不会碰它。
+//
+// 720P 是基准档（ModelPrice 按它配），1080P 倍率 = 0.30 / 0.20 = 1.5。
+var tehuiResolutionSizeRatio = map[string]float64{
+	"720P":  1.0,
+	"1080P": 1.5,
+}
+
 // r2vResolutionSizeRatio：wan2.7-r2v 已下架，仅为轮询中的历史任务保留倍率表。
 // 上游只认小写分辨率，键名与适配器输出保持一致。
 var r2vResolutionSizeRatio = map[string]float64{

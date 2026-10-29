@@ -21,18 +21,19 @@ const youzanPricingSyncInitialDelay = 5 * time.Minute
 // youzanPricingSyncInterval 是常规同步间隔。上游调价是人工操作，按小时足够。
 const youzanPricingSyncInterval = time.Hour
 
-// youzanAliasTargets 是「对外别名 → 真实上游模型」。
+// youzanAliasTargets 是「对外别名 → 真实上游模型」，用于**同步售价**。
 //
-// 同步时必须把别名的价格跟着真实模型一起写：别名与真实模型是同一份算力，
-// 只改一边就会出现「换个名字调用价格不同」，而两边都不会报错。
+// ⚠️ 2026-10-29 起这里**故意是空的**：seedance2.5-特惠 虽然是 prime 的别名，
+// 但老板明确它的价格独立（720P ¥0.20 / 1080P ¥0.30），prime 调价它不动。
+// 放进这张表就会被 applyYouzanPricePlans 覆盖成 prime 的价（而且是静默的：
+// 两边都不报错，只是客户换个名字调用价格不同）。
 //
-// 目前只放 seedance2.5-特惠。wan3.0-smart 虽然也是别名，但它现在没有能力行
-// （渠道 17 的 models 里有、abilities 里没有，2026-10-28 留下的不一致），
-// 价格根本不生效；顺手把它从 ¥0.28 改成 ¥0.23 属于「改同渠道其它模型」，
-// 不在这件事的范围里 —— 等它恢复可路由时再决定要不要纳入。
-var youzanAliasTargets = map[string]string{
-	"seedance2.5-特惠": "wan3.0-video-prime",
-}
+// 它的 ModelPrice 单独配在 options 里，档位倍率走 youzanwan3 包里的
+// tehuiResolutionSizeRatio 常量；applyYouzanPricePlans 只写 plans 里的模型，
+// 不会碰它。
+//
+// 以后要加**跟价**的别名再往这里放。
+var youzanAliasTargets = map[string]string{}
 
 // YouzanPricingChange 是一档售价的变化。
 type YouzanPricingChange struct {
@@ -224,7 +225,9 @@ func applyYouzanPricePlans(plans []youzanwan3.ModelPricePlan) error {
 		prices[plan.Model] = plan.BasePrice / ratio_setting.USD2RMB
 		ratios[plan.Model] = plan.Ratios
 	}
-	// 别名跟随真实模型：价格必须逐字相同，不能各算一遍。
+	// 跟价的别名（见 youzanAliasTargets）。当前为空：seedance2.5-特惠 独立定价。
+	// 这段保留是因为「同一个上游模型对外卖两个名字」以后还会再出现，
+	// 到时的正确做法就是在这里登记，让价格逐字相同。
 	for alias, target := range youzanAliasTargets {
 		baseUSD, ok := prices[target]
 		if !ok {

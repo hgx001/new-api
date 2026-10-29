@@ -206,6 +206,15 @@ func isPrimeModel(model string) bool {
 	}
 }
 
+// isTehuiModel 判断是不是「独立定价的对外别名」seedance2.5-特惠。
+//
+// 它虽然由 prime 执行（isPrimeModel 为真，档位校验/默认值都走 prime 那套），
+// 但**价格是它自己的**：720P ¥0.20、1080P ¥0.30，不跟 prime 联动。
+// 计费取值时必须先认它，否则会读到 prime 的倍率 —— 表现是不报错、静默算错价。
+func isTehuiModel(model string) bool {
+	return strings.TrimSpace(model) == tehuiModel
+}
+
 // upstreamModelFor maps the public aliases retained by new-api to the model
 // IDs exposed by the current Youzan API.  The mapping is explicit so the
 // public name remains stable while the upstream protocol can evolve.
@@ -683,6 +692,17 @@ func billingModelName(info *relaycommon.RelayInfo) string {
 func resolutionRatioForModel(model, resolution string) float64 {
 	if isR2VModel(model) {
 		if ratio := r2vResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
+	if isTehuiModel(model) {
+		// 独立定价：先看它自己的动态倍率，读不到用自己那张常量表。
+		// 注意顺序 —— 必须排在 isPrimeModel 之前，否则会读到 prime 的倍率。
+		if ratio, ok := youzanwan3_setting.GetResolutionRatio(tehuiModel, resolution); ok {
+			return ratio
+		}
+		if ratio := tehuiResolutionSizeRatio[resolution]; ratio > 0 {
 			return ratio
 		}
 		return 1
