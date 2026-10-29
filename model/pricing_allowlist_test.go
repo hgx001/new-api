@@ -38,6 +38,15 @@ func TestIsAllowedPricingModelMiniMaxM3Family(t *testing.T) {
 	}
 }
 
+// wan3.0-720p-官网（2026-10-29）：官网渠道的 720P 成片档。
+//
+// ⚠️ 它**不以 "wan3.0-video" 开头**（是 "wan3.0-720p-"），前缀规则拦不住，
+// 必须在 model/pricing.go 里显式放行，否则广场看不到它、也算不出价。
+func TestIsAllowedPricingModelWan3Official720P(t *testing.T) {
+	require.True(t, isAllowedPricingModel("wan3.0-720p-官网"),
+		"wan3.0-720p-官网 must show in pricing square")
+}
+
 // GPT 文本模型只放行 gpt-6 系列；5.6 全家族下线后必须从广场隐藏。
 func TestIsAllowedPricingModelGpt6(t *testing.T) {
 	for _, name := range []string{"gpt-6-luna", "gpt-6-sol"} {

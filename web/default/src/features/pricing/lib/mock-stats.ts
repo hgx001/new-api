@@ -772,6 +772,7 @@ function isWan3VideoModel(modelName: string): boolean {
   return (
     modelName === 'wan3.0-smart' ||
     modelName === 'wan2.7-r2v' ||
+    modelName === 'wan3.0-720p-官网' ||
     modelName.startsWith('wan3.0-video')
   )
 }
@@ -812,6 +813,30 @@ function buildWan3PrimeVideoParameters(): SupportedParameter[] {
       name: 'resolution',
       type: 'enum',
       enumValues: ['720P', '1080P'],
+      defaultValue: '720P',
+      descriptionKey: 'Output video resolution',
+    },
+  ]
+}
+
+/**
+ * wan3.0-720p-官网：输出档位固定 720P，时长 2—30 秒。
+ * 名字不以 `wan3.0-video` 开头，必须单列 —— 否则会落进通用 wan3 表
+ * （把 480P/1080P 也列成可选，等于告诉客户可以传 480P 拿到 480P）。
+ */
+function buildWan3Official720PVideoParameters(): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      type: 'integer',
+      range: '2 ~ 30',
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: ['720P'],
       defaultValue: '720P',
       descriptionKey: 'Output video resolution',
     },
@@ -1078,6 +1103,9 @@ export function buildSupportedParameters(
       model.model_name === 'wan3.0-video-prime-1080p'
     ) {
       return buildWan3PrimeVideoParameters()
+    }
+    if (model.model_name === 'wan3.0-720p-官网') {
+      return buildWan3Official720PVideoParameters()
     }
     if (isWan3VideoModel(model.model_name)) {
       return buildWan3VideoParameters()

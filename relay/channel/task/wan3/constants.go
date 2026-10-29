@@ -15,6 +15,27 @@ var ModelList = []string{
 // OfficialModelName 官网渠道的独立对外模型名（上游仍是标准版 wan3.0-video）。
 const OfficialModelName = "wan3.0-video-官网"
 
+// Official720PModelName 官网渠道的「720P 成片」对外模型名（2026-10-29 新增）。
+//
+// 与 OfficialModelName 的区别：
+//
+//	OfficialModelName     上游直接生成 720P/1080P，按分辨率档位定价。
+//	Official720PModelName 上游只生成 480P，成片再交给云端做 2 倍提升，
+//	                       最终交付 720P。价格是「生成 + 增强」的复合价。
+//
+// ⚠️ 对外文案**不提**「超分 / 增强 / 腾讯云」等内部实现词 ——
+//	用户只需要知道这个模型出 720P。
+const Official720PModelName = "wan3.0-720p-官网"
+
+// official720PGenerationResolution 是 Official720PModelName 向上游请求的分辨率。
+//
+// 固定 480P：先用便宜的 480P 生成，再提升到 720P，
+// 比直接生成 720P 便宜（实测 480P ¥0.20/秒 vs 720P ¥0.45/秒）。
+const official720PGenerationResolution = "480P"
+
+// official720POutputResolution 是 Official720PModelName 最终交付的分辨率档位。
+const official720POutputResolution = "720P"
+
 // resolutionSizeRatio 各分辨率相对于 480P 基准价的倍率，**按对外模型名分表**。
 //
 // 官网渠道（OfficialModelName）：2026-10-22 用户拍板调价 → 480P ¥0.20/秒、

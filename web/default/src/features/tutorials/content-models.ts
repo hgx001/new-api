@@ -34,6 +34,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan3.0-video-prime｜视频（按秒）｜720P ¥0.25/s、1080P ¥0.30/s，时长 2–30 秒',
   'seedance2.5-特惠｜视频（按秒）｜720P ¥0.20/s、1080P ¥0.30/s，时长 2–30 秒',
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s，参考视频按时长同价并入（生成秒数+参考视频秒数）',
+  'wan3.0-720p-官网｜视频（按秒）｜720P ¥0.25/s，时长 2–30 秒',
   'autodl:minimax-h3-u24｜视频（按秒）｜480p ¥0.10/s、768p ¥0.12/s（仅此两档）',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
@@ -119,7 +120,7 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-video 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时——wan3.0-video 约 2–5 分钟，wan3.0-video-官网 约 6 分钟，wan3.0-720p-官网 约 6–8 分钟（成片需额外一道处理），autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），gemini-web-video 约 2.5 分钟，wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型），jimeng-video-reverse 30 秒视频约 90 秒，Nano Banana Pro 尚无稳定实测样本',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
@@ -484,6 +485,28 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'heading',
           level: 3,
+          id: 'model-wan30-720p-guanwang',
+          children: [{ type: 'strong', value: 'wan3.0-720p-官网（720P 成片档）' }],
+        },
+        { type: 'list', ordered: false, items: [
+          ['输出分辨率：固定 720P（只有一个档位，不接受 480P / 1080P 参数）'],
+          ['seconds：2–30，默认 5'],
+          ['ratio：metadata.ratio 传 adaptive / 16:9 / 4:3 / 1:1 / 3:4 / 9:16，也可用 size（960x540 / 1280x720 / 1920x1080）'],
+          ['参考素材：图 ≤10 张、视频 ≤5 个（单个 1–15 秒、合计 ≤15 秒）、音频 ≤5 条（合计 ≤15 秒）、首尾帧各 1 张'],
+          ['metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）'],
+          ['计费：按秒 ¥0.25，单一价位，不乘分辨率倍率'],
+          ['参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× ¥0.25 计费，例如 10 秒参考视频生成 10 秒 = 0.25 × 20 = ¥5.00；无法解析时长的参考视频会被拒绝（不建单不扣费）'],
+          ['⚠️ 时长约束（有参考视频时）：「输入视频总时长 + 输出视频时长 ≤ 30 秒」，本地强制，超限直接 400（不建单不扣费）。无参考视频时生成时长为 2–30 秒'],
+        ] },
+        {
+          type: 'hint',
+          children: [
+            '本档位固定输出 720P，价格比 wan3.0-video-官网 的 720P 档更低（¥0.25/s 对 ¥0.45/s），适合只要 720P 的场景。',
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
           id: 'model-autodl-h3-u24',
           children: [{ type: 'strong', value: 'autodl:minimax-h3-u24（多图多音频生视频）' }],
         },
@@ -694,6 +717,7 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: 'wan3.0-video-prime', href: '#model-wan30-video-prime' },
     { title: 'seedance2.5-特惠', href: '#model-seedance25-tehui' },
     { title: 'wan3.0-video-官网', href: '#model-wan30-guanwang' },
+    { title: 'wan3.0-720p-官网', href: '#model-wan30-720p-guanwang' },
     { title: 'autodl:minimax-h3-u24', href: '#model-autodl-h3-u24' },
     { title: 'seedance-2.0', href: '#model-seedance-2' },
     { title: 'seedance-2-0-fast', href: '#model-seedance-2-0-fast' },

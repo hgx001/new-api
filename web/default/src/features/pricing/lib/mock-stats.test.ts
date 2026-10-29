@@ -184,6 +184,21 @@ describe('Wan3 Model Square API parameters', () => {
     }
   })
 
+  // 回归守卫：wan3.0-720p-官网 的名字不以 `wan3.0-video` 开头，
+  // 漏登记会被归类成 chat 模型（参数表整张错），或者落进通用 wan3 表
+  // （把 480P/1080P 也列成可选，客户传 480P 会以为拿到 480P）。
+  test('gives wan3.0-720p-官网 a fixed 720P tier and 2-30 seconds', () => {
+    const params = parametersByName('wan3.0-720p-官网')
+    assert.deepEqual(parameterNames('wan3.0-720p-官网'), [
+      'prompt',
+      'duration',
+      'resolution',
+    ])
+    assert.deepEqual(params.resolution.enumValues, ['720P'])
+    assert.equal(params.resolution.defaultValue, '720P')
+    assert.equal(params.duration.range, '2 ~ 30')
+  })
+
   test('describes wan2.7-r2v limits including the required reference images', () => {
     const params = parametersByName('wan2.7-r2v')
     assert.deepEqual(parameterNames('wan2.7-r2v'), [

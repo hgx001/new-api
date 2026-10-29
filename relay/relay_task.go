@@ -570,6 +570,18 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	out := buildTaskDto(task)
 	redactAliasTaskUpstream(out, task)
+	// 内部占位符 → 本站 /content 代理地址。
+	//
+	// 为什么必须换：占位符（cos-proxy://…）是**内部协议**，客户端拿到没法下载。
+	// 它出现在「下载地址」字段里等于交付失败 —— 而用户已经为这条成片付过钱了。
+	//
+	// 为什么放在这里而不是 buildTaskDto：管理员界面（TaskModel2DtoForAdmin）
+	// 要看到库里的原文（排查产物落在哪个桶/路径），不在这儿换。
+	//
+	// 别名模型的 ResultURL 已在上一步重设成本站代理地址，不是占位符，这里不动。
+	if taskcommon.IsResultURLProxyMarker(out.ResultURL) {
+		out.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+	}
 	return out
 }
 

@@ -96,6 +96,7 @@ func (m Properties) Value() (driver.Value, error) {
 	return common.Marshal(m)
 }
 
+// TaskPrivateData 是任务的私有数据（不返回给用户）。
 type TaskPrivateData struct {
 	Key            string `json:"key,omitempty"`
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
@@ -108,6 +109,43 @@ type TaskPrivateData struct {
 	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	// PostProcess 保存「上游成片 → 二次加工」的状态（2026-10-29）。
+	//
+	// 为什么需要：部分模型是**两跳**链路（官网先生成 480P，再交给云端增强服务出 720P）。
+	// 第一跳成功后任务还不能置 SUCCESS —— 产物没加工完，用户拿到的是 480P。
+	// 这里记录第二跳的进度，轮询时按阶段推进。
+	PostProcess *TaskPostProcess `json:"post_process,omitempty"`
+}
+
+// TaskPostProcess 记录第二跳（成片后处理）的状态。
+//
+// 状态机：
+//
+//	""                    → 尚未提交（第一跳刚成功）
+//	"submitted"            → 已提交第二跳，等待上游处理
+//	"success"              → 第二跳完成，ResultURL 已换成加工后的产物
+//	"failed"               → 第二跳失败，**回落**到第一跳原片（任务仍算成功）
+type TaskPostProcess struct {
+	// Stage 当前阶段：submitted / success / failed。
+	Stage string `json:"stage,omitempty"`
+	// Provider 后处理服务标识（当前只有 tencent-mps）。
+	Provider string `json:"provider,omitempty"`
+	// TaskID 后处理服务侧的任务 ID（用于轮询）。
+	TaskID string `json:"task_id,omitempty"`
+	// SubmittedAt 后处理任务的提交时间（Unix 秒）。
+	//
+	// 用于超时回落：后处理服务卡住时不能让用户的任务永远挂在「处理中」，
+	// 到点就回落到第一跳原片，任务照常成功。
+	SubmittedAt int64 `json:"submitted_at,omitempty"`
+	// SourceURL 第一跳的原始成片地址（失败时回落用它）。
+	SourceURL string `json:"source_url,omitempty"`
+	// OutputPath 后处理产物在 COS 中的对象路径。
+	OutputPath string `json:"output_path,omitempty"`
+	// Bucket / Region 产物所在 COS 桶与地域。
+	Bucket string `json:"bucket,omitempty"`
+	Region string `json:"region,omitempty"`
+	// Error 后处理失败原因（仅用于日志，不对外暴露）。
+	Error string `json:"error,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。

@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/manwu"
+	taskwan3 "github.com/QuantumNous/new-api/relay/channel/task/wan3"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -189,9 +190,28 @@ func VideoProxy(c *gin.Context) {
 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	case constant.ChannelTypeWan3:
-		// wan3 的成片是 OSS 直链：轮询时已写入 PrivateData.ResultURL（自带签名，无需
-		// 再转发上游 /result 端点——dashscope 官方没有该端点，转发必 404/502）。
+		// wan3 的成片有两种来源：
+		//
+		// 1. 官网直链（OSS 签名 URL）：轮询时已写入 PrivateData.ResultURL
+		//    （自带签名，无需再转发上游 /result 端点 —— dashscope 官方没有该端点，
+		//    转发必 404/502）。
+		// 2. 成片提升后的产物（在腾讯云 COS 里）：ResultURL 是一个
+		//    cos-proxy://bucket/region/path 标记，需要现签临时直链。
 		videoURL = task.GetResultURL()
+		if bucket, region, objectPath, ok := taskwan3.ParseCOSProxyMarker(videoURL); ok {
+			signed, perr := taskwan3.PresignCOSURL(c.Request.Context(), bucket, region, objectPath)
+			if perr != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf(
+					"Failed to presign COS url for task %s: %s", taskID, perr.Error()))
+				videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
+				return
+			}
+			// 302 直连 COS：字节不经过本机 3Mbps 出口。
+			c.Writer.Header().Set("Cache-Control", "no-cache")
+			c.Writer.Header().Set("Location", signed)
+			c.Writer.WriteHeader(http.StatusFound)
+			return
+		}
 	case constant.ChannelTypeErchun:
 		// 二春：成片在 /v1/tasks/{task_id}/content，必须带渠道密钥才能取。
 		// adaptor 因此不吐上游地址（ParseTaskResult 留空 Url，由轮询落成站内代理路径）。

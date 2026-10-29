@@ -33,6 +33,46 @@ type TaskPollingAdaptor interface {
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
 
+// TaskPostProcessor 是**可选**的成片后处理接口（2026-10-29）。
+//
+// 用途：部分模型是**两跳**链路 —— 上游先出一版成片，再交给第二个服务加工
+// （例如把 480P 提升到 720P），用户最终拿到的是第二跳的产物。
+//
+// 为什么用可选接口而不是加进 TaskAdaptor：
+//
+//	加进 TaskAdaptor 会让 19 个 adaptor 全部被迫实现（哪怕是空实现），
+//	属于「为了一个功能改所有人的接口」。这里用类型断言：实现了就调，
+//	没实现就走原路径，**现有 adaptor 零改动**。
+//
+// 语义约定：
+//
+//	AfterUpstreamSuccess —— 上游第一跳成功、**在置 SUCCESS 之前**调用。
+//	  返回 (handled=true, err=nil) 表示「已接管，本次不置 SUCCESS，产物还没好」；
+//	  返回 (handled=false, err=nil) 表示「不接管，按原流程置 SUCCESS」；
+//	  返回 err 表示接管了但出错 —— 调用方**不判任务失败**，保持处理中，下轮再试。
+//
+//	PollPostProcess —— 第二跳进行中时每轮调用。
+//	  返回 (done=true) 表示第二跳已到终态（成功或已回落原片），可以置 SUCCESS；
+//	  返回 (done=false) 表示还在处理中，保持任务为处理中；
+//	  返回 err 表示本轮查询失败，保持现状、下轮再试。
+type TaskPostProcessor interface {
+	// AfterUpstreamSuccess 在上游返回成功后、任务置 SUCCESS 之前调用。
+	AfterUpstreamSuccess(ctx context.Context, task *model.Task, upstreamURL string) (bool, error)
+	// PollPostProcess 在任务已提交后处理、尚未完成时每轮调用。
+	PollPostProcess(ctx context.Context, task *model.Task) (bool, error)
+}
+
+// postProcessorFor 返回任务对应的后处理器（没有则返回 nil）。
+//
+// 用类型断言探测，**不要求** adaptor 实现 TaskAdaptor 的所有方法 ——
+// 只要它额外实现了 TaskPostProcessor 就会被识别。
+func postProcessorFor(adaptor TaskPollingAdaptor) TaskPostProcessor {
+	if pp, ok := adaptor.(TaskPostProcessor); ok {
+		return pp
+	}
+	return nil
+}
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -639,6 +679,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	shouldRefund := false
 	shouldSettle := false
 	quota := task.Quota
+	// postProcessPending 表示「第一跳成功但成片还在后处理中」。
+	// 置 true 时不能置 SUCCESS、不结算，任务保持处理中。
+	postProcessPending := false
 
 	task.Status = model.TaskStatus(taskResult.Status)
 	switch taskResult.Status {
@@ -655,6 +698,60 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
 			task.FinishTime = now
+		}
+		// ── 成片后处理（两跳链路）──────────────────────────────────────
+		//
+		// 上游第一跳成功了，但产物可能还要交给第二个服务加工（如 480P → 720P）。
+		// 这里在置 SUCCESS **之前**接管：接管了就保持「处理中」，
+		// 等第二跳完成后再由 PollPostProcess 收敛。
+		//
+		// ⚠️ 后处理失败**不判任务失败**（第一跳的钱已经花了，用户也拿到了片），
+		//	由 adaptor 内部回落到原片，任务照常成功。
+		//
+		// postProcessOwnsURL 表示「成片地址已由后处理决定」——
+		// 此时**不能**再用上游 URL 覆盖 ResultURL，否则 720P 产物会被 480P 顶掉。
+		postProcessOwnsURL := false
+		if pp := postProcessorFor(adaptor); pp != nil {
+			// 已经有后处理任务在跑 → 这轮只推进它。
+			if task.PrivateData.PostProcess != nil {
+				done, perr := pp.PollPostProcess(ctx, task)
+				if perr != nil {
+					logger.LogWarn(ctx, fmt.Sprintf(
+						"Task %s post process poll failed: %s", taskId, perr.Error()))
+					// 查询失败不等于失败：保持处理中，下轮再试。
+					postProcessPending = true
+					break
+				}
+				if !done {
+					postProcessPending = true
+					break
+				}
+				// done=true：后处理已到终态（成功或回落原片），继续往下走置 SUCCESS。
+				// 此时 ResultURL 已由 PollPostProcess 写好（成功=加工后产物，
+				// 失败=回落原片），不能再被上游 URL 覆盖。
+				postProcessOwnsURL = true
+			} else {
+				upstreamURL := strings.TrimSpace(taskResult.Url)
+				handled, perr := pp.AfterUpstreamSuccess(ctx, task, upstreamURL)
+				if perr != nil {
+					// 接管了但出错：保持处理中，下轮重试，**不退款、不判失败**。
+					logger.LogWarn(ctx, fmt.Sprintf(
+						"Task %s post process submit failed: %s", taskId, perr.Error()))
+					postProcessPending = true
+					break
+				}
+				if handled {
+					// 已提交后处理，产物还没好：保持处理中。
+					postProcessPending = true
+					break
+				}
+			}
+		}
+		if postProcessOwnsURL {
+			// 成片地址已确定（后处理产物或回落原片），不再动它。
+			task.PrivateData.ResultText = taskResult.ResultText
+			shouldSettle = true
+			break
 		}
 		if strings.HasPrefix(taskResult.Url, "data:") {
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
@@ -690,6 +787,18 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 	if taskResult.Progress != "" {
 		task.Progress = taskResult.Progress
+	}
+	if postProcessPending {
+		// 后处理还在跑：强制保持「处理中」，**不结算、不退款**。
+		//
+		// 这里必须盖掉 taskResult.Progress —— 上游回的是 SUCCESS，
+		// ParseTaskResult 会带 100%，但用户拿到的产物还没加工完，
+		// 显示 100% 会让前端以为已经完成。
+		task.Status = model.TaskStatusInProgress
+		task.Progress = taskcommon.ProgressInProgress
+		// 结算与退款都跳过：等第二跳完成、真正交付产物后再结算。
+		shouldSettle = false
+		shouldRefund = false
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure

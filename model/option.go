@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/QuantumNous/new-api/setting/tencentmps_setting"
 	"github.com/QuantumNous/new-api/setting/youzanwan3_setting"
 	"gorm.io/gorm"
 )
@@ -150,6 +151,7 @@ func InitOptionMap() {
 	common.OptionMap["ModelRatio"] = ratio_setting.ModelRatio2JSONString()
 	common.OptionMap["ModelPrice"] = ratio_setting.ModelPrice2JSONString()
 	common.OptionMap["YouzanWan3Pricing"] = youzanwan3_setting.MarshalJSONString()
+	common.OptionMap[tencentmps_setting.OptionKey] = tencentmps_setting.MarshalJSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
 	common.OptionMap["CreateCacheRatio"] = ratio_setting.CreateCacheRatio2JSONString()
 	common.OptionMap["GroupRatio"] = ratio_setting.GroupRatio2JSONString()
@@ -563,6 +565,10 @@ func updateOptionMap(key string, value string) (err error) {
 		// 有赞 Wan3 的动态调价策略与最近一次同步出的档位倍率。
 		// 计费链在 youzanwan3.EstimateBilling 里读它，见 setting/youzanwan3_setting。
 		err = youzanwan3_setting.UpdateFromJSONString(value)
+	case tencentmps_setting.OptionKey:
+		// 腾讯云 MPS（成片增强）的接入配置：密钥、COS 桶、输出目录。
+		// 含明文密钥，只在 option 表里下发，不要出现在前端或日志中。
+		err = tencentmps_setting.UpdateFromJSONString(value)
 	case "CacheRatio":
 		err = ratio_setting.UpdateCacheRatioByJSONString(value)
 	case "CreateCacheRatio":

@@ -176,6 +176,21 @@ func resolveResolution(req relaycommon.TaskSubmitReq) string {
 	return defaultResolution
 }
 
+// resolveGenerationResolution 解析**向上游请求**的分辨率。
+//
+// 与 resolveResolution 的区别：对外模型 wan3.0-720p-官网 是「两跳」链路，
+// 上游固定只生成 480P，成片再交给云端提升到 720P —— 否则用户传 720P 时
+// 会直接生成 720P，两跳链路形同虚设（多花一倍生成费，还拿不到成片提升的效果）。
+//
+// ⚠️ 只有这个模型名走这条逻辑；其余模型名（官网原生 720P/1080P、标准版）
+//	的分辨率照旧由用户请求决定。
+func resolveGenerationResolution(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
+	if info != nil && info.OriginModelName == Official720PModelName {
+		return official720PGenerationResolution
+	}
+	return resolveResolution(req)
+}
+
 func normalizeResolution(value string) string {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case "480", "480P":
@@ -440,8 +455,18 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 // 共用一张表会把标准版的 720P/1080P 连带带偏。
 func resolutionSizeRatioFor(resolution string, info *relaycommon.RelayInfo) float64 {
 	table := standardResolutionSizeRatio
-	if info != nil && info.OriginModelName == OfficialModelName {
-		table = officialResolutionSizeRatio
+	if info != nil {
+		switch info.OriginModelName {
+		case OfficialModelName:
+			table = officialResolutionSizeRatio
+		case Official720PModelName:
+			// wan3.0-720p-官网 只有一个输出档位（720P），价格是
+			// 「480P 生成 + 成片提升」的复合价，已经含在 ModelPrice 里。
+			//
+			// ⚠️ 这里必须恒为 1.0，不能落进 standardResolutionSizeRatio：
+			// 用户传 720P 时那张表给 2.0，价格会翻一倍。
+			return 1.0
+		}
 	}
 	ratio := table[resolution]
 	if ratio == 0 {
@@ -481,7 +506,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		model = strings.TrimSpace(info.UpstreamModelName)
 	}
 	parameters := submitParameters{
-		Resolution:   resolveResolution(req),
+		Resolution:   resolveGenerationResolution(req, info),
 		Ratio:        resolveRatio(req),
 		Duration:     resolveDuration(req),
 		PromptExtend: true,
@@ -669,6 +694,19 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 // ConvertToOpenAIVideo 把官方 Wan3 响应转换成 OpenAI video 对象返回给客户端。
+//
+// ⚠️ 成片地址的口径：
+//
+//   · 两跳链路（wan3.0-720p-官网）下，库里的 ResultURL 是**内部占位符**
+//     （cos-proxy://…），客户端拿到没法下载；而且上游直链是 **480P 原片**，
+//     而用户买到的是 720P —— 给上游直链等于交付了错的产物。
+//     → 换成本站 /content 代理地址，由代理解析占位符后 302 到临时直链。
+//
+//   · 单跳链路（wan3.0-video 等）下，ResultURL 是上游 OSS 签名直链，
+//     客户端直连下载最快（走本站代理反而要多经一次本机 3Mbps 出口，30MB 要 87 秒）。
+//     → 原样给直链。
+//
+// 这两条都由 taskcommon.PublicResultURL 统一裁决，不在本文件里各写一套。
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	var res taskResponse
 	if err := common.Unmarshal(task.Data, &res); err != nil {
@@ -682,8 +720,19 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	openAIResp.SetProgressStr(task.Progress)
 	openAIResp.CreatedAt = task.CreatedAt
 	openAIResp.CompletedAt = task.UpdatedAt
-	if res.Output.VideoURL != "" {
-		openAIResp.SetMetadata("url", res.Output.VideoURL)
+	// 成片地址：只在任务成功后给。
+	//
+	// 未完成时不给（给的是上游 480P 直链，对两跳链路来说是错的产物；
+	// 未完成的客户端应继续轮询，不该拿到一个半成品的地址）。
+	stored := strings.TrimSpace(task.PrivateData.ResultURL)
+	if stored == "" {
+		// 兜底：库里没落地址的历史任务，用上游回执里的直链。
+		stored = strings.TrimSpace(res.Output.VideoURL)
+	}
+	if task.Status == model.TaskStatusSuccess {
+		if publicURL := taskcommon.PublicResultURL(task.TaskID, stored); publicURL != "" {
+			openAIResp.SetMetadata("url", publicURL)
+		}
 	}
 	if res.Code != "" || res.Output.Code != "" {
 		openAIResp.Error = &dto.OpenAIVideoError{

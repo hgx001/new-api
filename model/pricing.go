@@ -452,6 +452,12 @@ func isAllowedPricingModel(name string) bool {
 	case "wan3.0-smart", "wan3.0-video-prime-1080p", "wan2.7-r2v":
 		return false
 	}
+	// wan3.0-720p-官网（2026-10-29）：官网渠道的 720P 成片档。
+	// ⚠️ 必须显式放行 —— 它**不以 "wan3.0-video" 开头**（是 "wan3.0-720p-"），
+	// 下面的前缀判断拦不住它，不加就会在广场里看不到、也算不出价。
+	if name == "wan3.0-720p-官网" {
+		return true
+	}
 	if strings.HasPrefix(name, "wan3.0-video") {
 		return true
 	}

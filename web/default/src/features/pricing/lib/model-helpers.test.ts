@@ -157,6 +157,7 @@ describe('AutoDL H3 resolution tier note', () => {
       'wan3.0-video-prime', // 有赞 Prime（720P/1080P 分档按秒）
       'seedance2.5-特惠', // 有赞 Prime 的对外别名，与 prime 同价按秒（2026-10-29 起）
       'wan3.0-video-官网', // 官网标准版
+      'wan3.0-720p-官网', // 官网 720P 成片档（2026-10-29 起）
       'autodl:minimax-h3-u24', // AutoDL H3
     ]
     const perRequest = [
@@ -205,6 +206,8 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(getWan3SampleResolution('wan3.0-video-prime-1080p'), '720P')
     // prime 的对外别名，档位与默认值必须与 prime 一致。
     assert.equal(getWan3SampleResolution('seedance2.5-特惠'), '720P')
+    // 官网 720P 成片档：输出固定 720P，示例按 720P 写。
+    assert.equal(getWan3SampleResolution('wan3.0-720p-官网'), '720P')
     // 非 wan3 系模型没有该参数，示例里不应出现 resolution。
     assert.equal(getWan3SampleResolution('autodl:minimax-h3-u24'), null)
     assert.equal(getWan3SampleResolution('gpt-6-luna'), null)

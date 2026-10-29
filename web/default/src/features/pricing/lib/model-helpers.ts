@@ -61,6 +61,7 @@ export function isTokenBasedModel(model: PricingModel): boolean {
  *   720P and 1080P are also accepted.
  * - `wan2.7-r2v`: only 720p/1080p, and the upstream expects lowercase.
  * - `wan3.0-video-prime`: only 720P/1080P, 720P is the default (and cheapest).
+ * - `wan3.0-720p-官网`: fixed 720P output.
  */
 export function getWan3SampleResolution(modelName: string): string | null {
   if (modelName === 'wan2.7-r2v') return '720p'
@@ -72,6 +73,10 @@ export function getWan3SampleResolution(modelName: string): string | null {
     modelName === 'wan3.0-video-prime-1080p' ||
     modelName === 'seedance2.5-特惠'
   ) {
+    return '720P'
+  }
+  // 官网 720P 成片档：输出档位固定 720P，示例按 720P 写。
+  if (modelName === 'wan3.0-720p-官网') {
     return '720P'
   }
   if (modelName === 'wan3.0-smart' || modelName.startsWith('wan3.0-video')) {
@@ -126,6 +131,12 @@ export function isPerSecondModel(model: PricingModel): boolean {
   // 不跟随 prime（prime 是 ¥0.25 / ¥0.30）。
   // ⚠️ 必须精确匹配：`seedance2.5特惠版` 是历史按次旧名，前缀匹配会把两个单位搞混。
   if (name === 'seedance2.5-特惠') {
+    return true
+  }
+  // wan3.0-720p-官网（2026-10-29）：官网渠道的 720P 成片档，按秒 ¥0.25/s。
+  // ⚠️ 必须单列 —— 它不以 "wan3.0-video" 开头（是 "wan3.0-720p-"），
+  // 不加会被显示成按次，价格单位就错了。
+  if (name === 'wan3.0-720p-官网') {
     return true
   }
   return (
