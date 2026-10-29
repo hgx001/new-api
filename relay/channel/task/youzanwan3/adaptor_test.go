@@ -342,6 +342,8 @@ func TestUpstreamModelFor(t *testing.T) {
 		{smartLegacyModel, "wan3.0-video"},
 		{primeModel, "wan3.0-video-prime"},
 		{legacyPrimeModel, "wan3.0-video-prime"},
+		// 对外别名 seedance2.5-特惠 实际由 prime 执行，上游只能收到真实模型名。
+		{tehuiModel, "wan3.0-video-prime"},
 	}
 	for _, tc := range cases {
 		got, err := upstreamModelFor(tc.input)
@@ -418,11 +420,17 @@ func TestEstimateBillingChargesResolutionTiers(t *testing.T) {
 		{videoModel, "720P", 1.0},
 		{videoModel, "1080P", 1.0},
 		// wan3.0-video-prime：上游 720P 0.15 / 1080P 0.20 ⚡/秒，
-		// 售价 ¥0.20 / ¥0.25，1080P 倍率 = 0.25/0.20 = 1.25。
+		// 售价 ¥0.20 / ¥0.30（2026-10-29 起 1080P 由 ¥0.25 上调），
+		// 1080P 倍率 = 0.30/0.20 = 1.5。
 		{primeModel, "720P", 1.0},
-		{primeModel, "1080P", 1.25},
+		{primeModel, "1080P", 1.5},
 		// 480P 不在 prime 档位内，按 720P 计费（不低于成本）。
 		{primeModel, "480P", 1.0},
+		// 对外别名 seedance2.5-特惠 与 prime 同价：档位倍率必须完全一致，
+		// 否则客户换个名字调用就会被多扣或少扣。
+		{tehuiModel, "720P", 1.0},
+		{tehuiModel, "1080P", 1.5},
+		{tehuiModel, "480P", 1.0},
 		// 未知档位回退 1，避免多扣费。
 		{videoModel, "4K", 1.0},
 	}
@@ -447,8 +455,46 @@ func TestPrimeBillsPerSecondNotPerCall(t *testing.T) {
 	info := &relaycommon.RelayInfo{OriginModelName: primeModel}
 	// 2026-10-28 起 prime 改为按秒计费：必须返回 seconds/size 倍率，
 	// 否则 quota 会退化成「一次任务 = ModelPrice」的按次计费。
-	require.Equal(t, map[string]float64{"seconds": 30, "size": 1.25},
+	require.Equal(t, map[string]float64{"seconds": 30, "size": 1.5},
 		(&TaskAdaptor{}).EstimateBilling(context, info))
+}
+
+// TestTehuiAliasMirrorsPrime 锁定对外别名 seedance2.5-特惠 与 wan3.0-video-prime
+// 的行为完全等价：同样的档位、同样的时长、同样的计费。
+//
+// 为什么单独立一条：别名一旦在某个分支上漏判（例如 isPrimeModel 没认它），
+// 表现是「480P 请求被放行到只支持 720P/1080P 的上游」或「1080P 按 1.0 倍率扣费」，
+// 两种都不会报错，只是静默少收钱或让请求 400。这类偏差只能靠断言钉住。
+func TestTehuiAliasMirrorsPrime(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name      string
+		req       relaycommon.TaskSubmitReq
+		wantRes   string
+		wantDur   int
+		wantRatio string
+	}{
+		{"default", relaycommon.TaskSubmitReq{Model: tehuiModel}, "720P", 5, "adaptive"},
+		{"1080p", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "1080p"}, "1080P", 5, "adaptive"},
+		{"480p falls back to 720P", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "480P"}, "720P", 5, "adaptive"},
+		{"duration clamped low", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 1}, "720P", 2, "adaptive"},
+		{"duration clamped high", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 99}, "720P", 30, "adaptive"},
+		{"21:9 allowed", relaycommon.TaskSubmitReq{
+			Model:    tehuiModel,
+			Metadata: map[string]interface{}{"ratio": "21:9"},
+		}, "720P", 5, "21:9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.wantRes, resolveResolution(tc.req))
+			require.Equal(t, tc.wantDur, resolveDuration(tc.req))
+			require.Equal(t, tc.wantRatio, resolveRatio(tc.req))
+		})
+	}
+	// 首尾帧与 prime 一样被拒绝（上游 2026-10-28 已取消该能力）。
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{{
+		Type: "first_frame",
+		URL:  "https://cdn.example/f.png",
+	}}, tehuiModel))
 }
 
 func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
