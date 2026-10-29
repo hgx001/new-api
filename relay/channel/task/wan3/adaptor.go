@@ -505,6 +505,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if info != nil && info.ChannelMeta != nil && strings.TrimSpace(info.UpstreamModelName) != "" {
 		model = strings.TrimSpace(info.UpstreamModelName)
 	}
+	// 兜底：官网这两个对外名上游一律是标准版 wan3.0-video。
+	//
+	// ⚠️ 必须在渠道映射之后做：渠道 model_mapping 是可配的，管理员漏配了新模型名时
+	//	UpstreamModelName 会仍是「wan3.0-720p-官网」，上游根本不认识这个名字。
+	//	不兜底就是「用户付了钱、上游直接拒」。
+	model = upstreamModelFor(model)
 	parameters := submitParameters{
 		Resolution:   resolveGenerationResolution(req, info),
 		Ratio:        resolveRatio(req),

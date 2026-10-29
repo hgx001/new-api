@@ -1,5 +1,7 @@
 package wan3
 
+import "strings"
+
 // ChannelName 后台展示名
 const ChannelName = "Wan3"
 
@@ -35,6 +37,29 @@ const official720PGenerationResolution = "480P"
 
 // official720POutputResolution 是 Official720PModelName 最终交付的分辨率档位。
 const official720POutputResolution = "720P"
+
+// upstreamModelFor 把「对外模型名」映射成上游真正认识的模型名。
+//
+// 为什么必须有这个兜底（2026-10-30 修）：
+//	渠道的 model_mapping 是**可配的**，管理员随时可能改掉或漏配新模型名。
+//	而 BuildRequestBody 原本直接用 info.UpstreamModelName —— 那��的值来自
+//	渠道映射，映射里没有这个键时就还是对外名，于是上游收到
+//	「wan3.0-720p-官网」这种它根本不认识的模型名，直接报错。
+//
+//	官网这两个名字的语义是固定的（上游永远是标准版 wan3.0-video），
+//	所以在代码里锁死，**不依赖渠道配置**——与 youzanwan3 的 upstreamModelFor
+//	是同一套做法。
+//
+// ⚠️ 只认这两个名字，别的一律放行原值：标准版 wan3.0-video 本来就对，
+//	prime 等变体由渠道 model_mapping 负责，代码里不越俎代庖。
+func upstreamModelFor(modelName string) string {
+	switch strings.TrimSpace(modelName) {
+	case OfficialModelName, Official720PModelName:
+		return upstreamModel
+	default:
+		return strings.TrimSpace(modelName)
+	}
+}
 
 // resolutionSizeRatio 各分辨率相对于 480P 基准价的倍率，**按对外模型名分表**。
 //
