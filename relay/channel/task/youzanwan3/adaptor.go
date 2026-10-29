@@ -26,6 +26,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/QuantumNous/new-api/setting/youzanwan3_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -674,6 +675,11 @@ func billingModelName(info *relaycommon.RelayInfo) string {
 }
 
 // resolutionRatioForModel 返回对应模型的分辨率倍率，未知档位回退 1。
+//
+// 优先读「上游动态调价」算出的倍率（setting/youzanwan3_setting），
+// 没有配置时回退到下面的代码常量 —— 保证首次部署、或同步任务还没跑过时行为不变。
+// 别名（wan3.0-video-prime-1080p / seedance2.5-特惠）统一按真实模型名查配置，
+// 否则别名会拿不到动态倍率，静默退回旧价。
 func resolutionRatioForModel(model, resolution string) float64 {
 	if isR2VModel(model) {
 		if ratio := r2vResolutionSizeRatio[resolution]; ratio > 0 {
@@ -682,10 +688,16 @@ func resolutionRatioForModel(model, resolution string) float64 {
 		return 1
 	}
 	if isPrimeModel(model) {
+		if ratio, ok := youzanwan3_setting.GetResolutionRatio(primeModel, resolution); ok {
+			return ratio
+		}
 		if ratio := primeResolutionSizeRatio[resolution]; ratio > 0 {
 			return ratio
 		}
 		return 1
+	}
+	if ratio, ok := youzanwan3_setting.GetResolutionRatio(videoModel, resolution); ok {
+		return ratio
 	}
 	if ratio := videoResolutionSizeRatio[resolution]; ratio > 0 {
 		return ratio

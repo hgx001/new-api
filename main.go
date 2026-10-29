@@ -122,6 +122,10 @@ func main() {
 	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartCodexCredentialAutoRefreshTask()
 
+	// 有赞 Wan3 的上游成本随时会变，定时把「成本 + 固定加价」算成售价写回配置。
+	// 没有该类型渠道时任务内部直接返回，不产生任何上游请求。
+	go controller.StartYouzanWan3PricingSync()
+
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
