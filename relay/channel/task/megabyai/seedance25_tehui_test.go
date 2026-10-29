@@ -13,8 +13,12 @@ import (
 // seedance2.5-特惠 是 wan-3.0 的对外别名（2026-10-22 新增）：
 //
 //   - 参数传递**完全一致**（同一套上游统一参数契约）
-//   - 计价是**固定 ¥3.0/条**（不分分辨率档、不乘时长）
 //   - 上游 model 名恒为 wan-3.0（别名绝不能原样发给上游）
+//
+// ⚠️ 计费口径 2026-10-29 变过一次：这个模型已迁到**有赞 Wan3** 渠道，
+// 计价从「固定 ¥3.0/条」改成「**按秒** ¥0.20/秒（720P）/ ¥0.30/秒（1080P）」。
+// 本文件里与「档位门控」相关的断言（只出 720p、只出 30 秒）仍适用于 MegaAI 渠道，
+// 但**价格断言已按新口径更新**（见 TestSeedance25TeHuiPrice）。
 
 // 别名与 wan-3.0 的上游载荷必须逐字段一致，只有 model 名不同。
 func TestSeedance25TeHuiSharesParameterContractWithWan30(t *testing.T) {
@@ -91,14 +95,25 @@ func TestSeedance25TeHuiIsFixedPerCallPrice(t *testing.T) {
 	}
 }
 
-// 对外价锁死：¥3.0/条（2026-10-23 由 ¥5.0 下调）。改价会红：改价要同时改 defaultModelPrice、
-// 本测试的期望值和生产 ModelPrice option。
+// 对外价锁死：¥0.20/秒（基准档 720P）。
+//
+// ⚠️ 2026-10-29 起 seedance2.5-特惠 已迁到有赞 Wan3 渠道，**按秒**计费：
+// 720P ¥0.20/秒、1080P ¥0.30/秒（1080P 的 1.5 倍率由 youzanwan3 的
+// tehuiResolutionSizeRatio 乘上去，与 prime 的 1.2 不同 —— 两处不要互相抄）。
+//
+// 这里断言的是 **defaultModelPrice 的兜底值**（生产以 options 的 ModelPrice 为准）：
+// 它必须与有赞渠道的口径一致，否则一旦生产那个键丢了，
+// 模型会退回「¥3.0/条、不乘时长」的老口径 —— 那等于静默算错价。
+//
+// 迁移前这里是 ¥3.0/条（按次），与现在的按秒口径不可比，改价会红：
+// 改价要同时改 defaultModelPrice、有赞渠道的 ModelPrice 和生产 options。
 func TestSeedance25TeHuiPrice(t *testing.T) {
 	basePrice, ok := ratio_setting.GetDefaultModelPriceMap()[Seedance25TeHuiModel]
-	require.True(t, ok, "seedance2.5-特惠 必须配置按次单价")
+	require.True(t, ok, "seedance2.5-特惠 必须配置按秒单价")
 	quota := int(basePrice * common.QuotaPerUnit)
 	actualCny := float64(quota) / common.QuotaPerUnit * ratio_setting.USD2RMB
-	require.InDelta(t, 3.0, actualCny, 0.0001)
+	require.InDelta(t, 0.20, actualCny, 0.0001,
+		"特惠的兜底价必须是 ¥0.20/秒（基准档 720P），与有赞渠道口径一致")
 }
 
 // 上游 model 名的解析顺序：渠道 mapping 优先，其次兜底表，最后 wan-3.0。
