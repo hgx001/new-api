@@ -105,12 +105,18 @@ func TestUpstreamCatalogWarningsQuietWhenUnchanged(t *testing.T) {
 	assert.Empty(t, upstreamCatalogWarnings(models))
 }
 
-// 别名必须与真实模型同价：这条规则在 applyYouzanPricePlans 里，
-// 这里只校验映射表本身没有指向不存在的上游模型。
+// 跟价别名表本身不能指向不存在的上游模型。
+//
+// 同时钉住一条业务规则：seedance2.5-特惠 **不得**出现在这里。
+// 它独立定价（720P ¥0.20 / 1080P ¥0.30），一旦被登记进来就会被同步任务
+// 覆盖成 prime 的价，而且两边都不报错 —— 只能靠这条断言拦住。
 func TestAliasTargetsExistInCatalog(t *testing.T) {
 	for alias, target := range youzanAliasTargets {
 		assert.NotEmpty(t, alias)
 		assert.Contains(t, []string{"wan3.0-video", "wan3.0-video-prime"}, target,
 			"别名 %s 指向了未知的上游模型 %s", alias, target)
 	}
+	_, followed := youzanAliasTargets["seedance2.5-特惠"]
+	assert.False(t, followed,
+		"seedance2.5-特惠 独立定价，不能登记为跟价别名（否则会被同步覆盖成 prime 的价）")
 }

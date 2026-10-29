@@ -427,10 +427,10 @@ func TestEstimateBillingChargesResolutionTiers(t *testing.T) {
 		{primeModel, "1080P", 1.2},
 		// 480P 不在 prime 档位内，按 720P 计费（不低于成本）。
 		{primeModel, "480P", 1.0},
-		// 对外别名 seedance2.5-特惠 与 prime 同价：档位倍率必须完全一致，
-		// 否则客户换个名字调用就会被多扣或少扣。
+		// 对外别名 seedance2.5-特惠 **独立定价**（老板 2026-10-29 明确）：
+		// 720P ¥0.20 / 1080P ¥0.30，倍率 1.0 / 1.5，不跟 prime 联动。
 		{tehuiModel, "720P", 1.0},
-		{tehuiModel, "1080P", 1.2},
+		{tehuiModel, "1080P", 1.5},
 		{tehuiModel, "480P", 1.0},
 		// 未知档位回退 1，避免多扣费。
 		{videoModel, "4K", 1.0},
@@ -461,11 +461,15 @@ func TestPrimeBillsPerSecondNotPerCall(t *testing.T) {
 }
 
 // TestTehuiAliasMirrorsPrime 锁定对外别名 seedance2.5-特惠 与 wan3.0-video-prime
-// 的行为完全等价：同样的档位、同样的时长、同样的计费。
+// 在**参数行为**上完全等价：同样的档位校验、同样的时长夹紧、同样的比例白名单。
+//
+// ⚠️ 价格不在「等价」范围内：2026-10-29 老板明确特惠独立定价
+// （720P ¥0.20 / 1080P ¥0.30），prime 调价它不动。计费差异见
+// TestTehuiPriceIsIndependent。
 //
 // 为什么单独立一条：别名一旦在某个分支上漏判（例如 isPrimeModel 没认它），
-// 表现是「480P 请求被放行到只支持 720P/1080P 的上游」或「1080P 按 1.0 倍率扣费」，
-// 两种都不会报错，只是静默少收钱或让请求 400。这类偏差只能靠断言钉住。
+// 表现是「480P 请求被放行到只支持 720P/1080P 的上游」（400），不报错的另一种
+// 是静默算错价。这类偏差只能靠断言钉住。
 func TestTehuiAliasMirrorsPrime(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tc := range []struct {
@@ -570,7 +574,8 @@ func TestEstimateBillingPrefersDynamicRatio(t *testing.T) {
 		"wan3.0-video-prime": {"720P": 1.0, "1080P": 2.0},
 	}, 0)
 
-	for _, model := range []string{primeModel, tehuiModel, legacyPrimeModel} {
+	// prime 与它的历史旧名读 prime 的动态倍率。
+	for _, model := range []string{primeModel, legacyPrimeModel} {
 		context, _ := gin.CreateTestContext(httptest.NewRecorder())
 		context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
 		info := &relaycommon.RelayInfo{OriginModelName: model}
@@ -583,4 +588,35 @@ func TestEstimateBillingPrefersDynamicRatio(t *testing.T) {
 	info := &relaycommon.RelayInfo{OriginModelName: videoModel}
 	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.0},
 		(&TaskAdaptor{}).EstimateBilling(context, info))
+}
+
+// TestTehuiPriceIsIndependent 锁定「seedance2.5-特惠 独立定价」。
+//
+// 2026-10-29 老板明确：prime 调价它不动。实现上它有自己的倍率表
+// （tehuiResolutionSizeRatio：720P 1.0 / 1080P 1.5），并且不在
+// youzanAliasTargets 里。
+//
+// 为什么必须单独钉住：它 isPrimeModel 为真，一旦 resolutionRatioForModel
+// 的分支顺序写反（先走 prime 分支），就会读到 prime 的倍率 —— 不报错、
+// 不报警，只是每单静默算错价。
+func TestTehuiPriceIsIndependent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	// 把 prime 的动态倍率拉到 2.0，模拟「prime 被调价」。
+	t.Cleanup(func() {
+		youzanwan3_setting.SetRatios(map[string]map[string]float64{
+			"wan3.0-video":       {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
+			"wan3.0-video-prime": {"720P": 1.0, "1080P": 1.2},
+		}, 0)
+	})
+	youzanwan3_setting.SetRatios(map[string]map[string]float64{
+		"wan3.0-video":       {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
+		"wan3.0-video-prime": {"720P": 1.0, "1080P": 2.0},
+	}, 0)
+
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
+	info := &relaycommon.RelayInfo{OriginModelName: tehuiModel}
+	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.5},
+		(&TaskAdaptor{}).EstimateBilling(context, info),
+		"特惠 1080P 必须按自己的 1.5 倍率算（0.30/0.20），不能跟 prime 的 2.0")
 }
