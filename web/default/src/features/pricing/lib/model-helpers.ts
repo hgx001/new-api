@@ -122,7 +122,8 @@ export function isPerSecondModel(model: PricingModel): boolean {
     return true
   }
   // 有赞 Wan3 的对外别名：客户看到 seedance2.5-特惠，实际由 wan3.0-video-prime
-  // 执行（2026-10-29 起），与 prime 同价按秒分档（720P ¥0.25/s、1080P ¥0.30/s）。
+  // 执行（2026-10-29 起），**独立定价**：按秒 720P ¥0.20/s、1080P ¥0.30/s，
+  // 不跟随 prime（prime 是 ¥0.25 / ¥0.30）。
   // ⚠️ 必须精确匹配：`seedance2.5特惠版` 是历史按次旧名，前缀匹配会把两个单位搞混。
   if (name === 'seedance2.5-特惠') {
     return true

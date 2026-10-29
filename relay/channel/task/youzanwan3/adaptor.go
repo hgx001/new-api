@@ -687,8 +687,9 @@ func billingModelName(info *relaycommon.RelayInfo) string {
 //
 // 优先读「上游动态调价」算出的倍率（setting/youzanwan3_setting），
 // 没有配置时回退到下面的代码常量 —— 保证首次部署、或同步任务还没跑过时行为不变。
-// 别名（wan3.0-video-prime-1080p / seedance2.5-特惠）统一按真实模型名查配置，
-// 否则别名会拿不到动态倍率，静默退回旧价。
+//
+// 两个别名各有一套：wan3.0-video-prime-1080p 跟 prime 走（读 prime 的倍率），
+// seedance2.5-特惠 独立定价（读它自己的倍率，见 isTehuiModel 分支）。
 func resolutionRatioForModel(model, resolution string) float64 {
 	if isR2VModel(model) {
 		if ratio := r2vResolutionSizeRatio[resolution]; ratio > 0 {
