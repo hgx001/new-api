@@ -76,8 +76,12 @@ func TestRedactUpstreamIdentity_历史旧名同样生效(t *testing.T) {
 // 原因比「藏货源」更硬：它的上游直链指向的是**还没做提升的 480P 原片**，
 // 用户拿到就能绕过本站直接下载到没提升的成片 —— 商业逻辑被击穿。
 func TestRedactUpstreamIdentity_两跳链路模型脱敏(t *testing.T) {
-	assert.True(t, IsUpstreamAliasModel("wan3.0-720p-官网"),
+	assert.True(t, IsUpstreamAliasModel("wan3.0-720p-特惠"),
 		"两跳链路模型必须在脱敏名单里，否则上游 480P 原片直链会漏给用户")
+	// 旧名（2026-10-30 改名前）过渡期仍可调用 → 也必须在名单里，
+	// 否则旧名调用方的 data 字段照样漏出上游签名直链。
+	assert.True(t, IsUpstreamAliasModel("wan3.0-720p-官网"),
+		"旧名过渡期仍可调用，脱敏名单不能漏它")
 
 	raw := `成片地址 https://dashscope-a717.oss-accelerate.aliyuncs.com/1d/54/20261030/xxx.mp4 拉取失败：model wan3.0-video rejected`
 	got := RedactUpstreamText(raw, "wan3.0-720p-官网")

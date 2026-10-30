@@ -22,7 +22,7 @@ import (
 // 返回 handled=true 表示「已接管，本次不置 SUCCESS」——
 // service 层会保持任务为「处理中」，等 PollPostProcess 收敛。
 func (a *TaskAdaptor) AfterUpstreamSuccess(ctx context.Context, task *model.Task, upstreamURL string) (bool, error) {
-	// 只有 wan3.0-720p-官网 需要成片提升；其它模型名直接放行。
+	// 只有 wan3.0-720p-特惠 需要成片提升；其它模型名直接放行。
 	if task == nil || !needsSuperResolution(task.Properties.OriginModelName) {
 		return false, nil
 	}
@@ -63,7 +63,7 @@ func (a *TaskAdaptor) PollPostProcess(ctx context.Context, task *model.Task) (bo
 	if task == nil || task.PrivateData.PostProcess == nil {
 		return true, nil
 	}
-	// 只有 wan3.0-720p-官网 才走这条路；模型名对不上（历史数据/改配置）就放行。
+	// 只有 wan3.0-720p-特惠 才走这条路；模型名对不上（历史数据/改配置）就放行。
 	if !needsSuperResolution(task.Properties.OriginModelName) {
 		return true, nil
 	}

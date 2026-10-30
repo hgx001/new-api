@@ -24,7 +24,7 @@ const OptionKey = "TencentMPSSetting"
 // Config 是 MPS 接入配置。
 type Config struct {
 	// Enabled 是否启用后处理链路。
-	// 关掉后，wan3.0-720p-官网 会直接回落成「480P 原片」，任务不会失败。
+	// 关掉后，wan3.0-720p-特惠 会直接回落成「480P 原片」，任务不会失败。
 	Enabled bool `json:"enabled"`
 	// SecretId 腾讯云 API 密钥 ID。
 	SecretId string `json:"secret_id"`

@@ -17,7 +17,12 @@ var ModelList = []string{
 // OfficialModelName 官网渠道的独立对外模型名（上游仍是标准版 wan3.0-video）。
 const OfficialModelName = "wan3.0-video-官网"
 
-// Official720PModelName 官网渠道的「720P 成片」对外模型名（2026-10-29 新增）。
+// Official720PModelName 官网渠道的「720P 成片」对外模型名。
+//
+// 2026-10-30 改名：「官网」→「特惠」。
+//	改名理由与 seedance2.5-特惠 / wan-3.0-特惠 同一套后缀风格 ——
+//	「特惠」直白表达"比官网原生 720P 便宜"，比「官网」更能让客户一眼看懂档位关系。
+//	旧名 Official720PModelNameLegacy 保留为**可调用别名**（见下），但不进模型广场。
 //
 // 与 OfficialModelName 的区别：
 //
@@ -27,7 +32,19 @@ const OfficialModelName = "wan3.0-video-官网"
 //
 // ⚠️ 对外文案**不提**「超分 / 增强 / 腾讯云」等内部实现词 ——
 //	用户只需要知道这个模型出 720P。
-const Official720PModelName = "wan3.0-720p-官网"
+const Official720PModelName = "wan3.0-720p-特惠"
+
+// Official720PModelNameLegacy 是 Official720PModelName 的**旧名**（2026-10-30 改名前）。
+//
+// 过渡期**保留可调用**（与 wan-3.0-无限 → wan-3.0-特惠 同一套做法，见 manwu 适配器）：
+//   · 已把旧名写进客户端代码的调用方不能立刻断线；
+//   · 但旧名**不进模型广场**（model/pricing.go 的 isAllowedPricingModel 不放行它），
+//     避免出现两个名字卖同一份货、客户不知道该用哪个。
+//
+// ⚠️ 旧名必须同样配 ModelPrice（setting/ratio_setting/model_ratio.go），
+//	否则旧名会走 ModelPriceHelperPerCall 的「查不到价」分支，
+//	任务按次计费算成 ¥0 —— **静默免单**，比报错更难发现。
+const Official720PModelNameLegacy = "wan3.0-720p-官网"
 
 // official720PGenerationResolution 是 Official720PModelName 向上游请求的分辨率。
 //
@@ -42,7 +59,7 @@ const official720POutputResolution = "720P"
 //
 // 为什么必须有这个兜底（2026-10-30 修）：
 //	渠道的 model_mapping 是**可配的**，管理员随时可能改掉或漏配新模型名。
-//	而 BuildRequestBody 原本直接用 info.UpstreamModelName —— 那��的值来自
+//	而 BuildRequestBody 原本直接用 info.UpstreamModelName —— 那个值来自
 //	渠道映射，映射里没有这个键时就还是对外名，于是上游收到
 //	「wan3.0-720p-官网」这种它根本不认识的模型名，直接报错。
 //
@@ -54,10 +71,26 @@ const official720POutputResolution = "720P"
 //	prime 等变体由渠道 model_mapping 负责，代码里不越俎代庖。
 func upstreamModelFor(modelName string) string {
 	switch strings.TrimSpace(modelName) {
-	case OfficialModelName, Official720PModelName:
+	case OfficialModelName, Official720PModelName, Official720PModelNameLegacy:
 		return upstreamModel
 	default:
 		return strings.TrimSpace(modelName)
+	}
+}
+
+// isOfficial720PModel 判断某个对外模型名是否走「480P 生成 → 云端提升 → 交付 720P」
+// 这条两跳链路。
+//
+// 新名（wan3.0-720p-特惠）与旧名（wan3.0-720p-官网）**都算**：
+//	旧名是 2026-10-30 改名前的公开名，过渡期保留可调用（见 Official720PModelNameLegacy）。
+//	只认新名的话，旧名调用方会静默落到单跳链路 —— 结果是
+//	**用户买了 720P 拿到 480P，而且照样扣费**（最坏情况）。
+func isOfficial720PModel(modelName string) bool {
+	switch strings.TrimSpace(modelName) {
+	case Official720PModelName, Official720PModelNameLegacy:
+		return true
+	default:
+		return false
 	}
 }
 

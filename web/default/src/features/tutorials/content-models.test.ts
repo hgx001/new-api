@@ -84,7 +84,7 @@ describe('tutorials model guide content', () => {
       'wan3.0-video',
       'wan3.0-video-prime',
       'wan3.0-video-官网',
-      'wan3.0-720p-官网',
+      'wan3.0-720p-特惠',
       'autodl:minimax-h3-u24',
       'seedance-2.0',
       'seedance-2-0-fast',
@@ -123,8 +123,8 @@ describe('tutorials model guide content', () => {
       '按秒 ¥0.25（720P）/ ¥0.30（1080P）', // wan3.0-video-prime 详情（别名同价，见下方专属用例）
       '480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s', // wan3.0-video-官网 索引
       '¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）', // wan3.0-video-官网 详情
-      '720P ¥0.25/s', // wan3.0-720p-官网 索引（单一价位）
-      '按秒 ¥0.25，单一价位，不乘分辨率倍率', // wan3.0-720p-官网 详情
+      '720P ¥0.20/s', // wan3.0-720p-特惠 索引（单一价位）
+      '按秒 ¥0.20，单一价位，不乘分辨率倍率', // wan3.0-720p-特惠 详情
       '480p ¥0.10/s、768p ¥0.12/s（仅此两档）', // autodl H3 索引
       '480p ¥0.10、768p ¥0.12（仅这两档', // autodl H3 详情
     ]
@@ -203,15 +203,15 @@ describe('tutorials model guide content', () => {
     )
   })
 
-  // 回归守卫：wan3.0-720p-官网 的成片要经过一道**内部**加工（云端 2 倍提升），
-  // 但对外只能让客户知道「这个模型出 720P、¥0.25/秒」。
+  // 回归守卫：wan3.0-720p-特惠 的成片要经过一道**内部**加工（云端 2 倍提升），
+  // 但对外只能让客户知道「这个模型出 720P、¥0.20/秒」。
   // 2026-10-29 老板明确要求：卡片与文档描述里**不写超分相关的字样** ——
   // 一旦露出「超分 / 增强 / 腾讯云 / MPS」，等于把内部实现和真实货源写在脸上，
   // 客户会自己反推成本结构，也会拿「这是超分不是原生 720P」来质疑定价。
-  test('wan3.0-720p-官网 的对外文案不暴露内部实现', () => {
-    const section = getModelSectionText('model-wan30-720p-guanwang')
-    const indexEntry = sectionsJson.match(/"wan3\.0-720p-官网｜[^"]*"/)?.[0] ?? ''
-    assert.notEqual(indexEntry, '', '模型总览里缺少 wan3.0-720p-官网 一行')
+  test('wan3.0-720p-特惠 的对外文案不暴露内部实现', () => {
+    const section = getModelSectionText('model-wan30-720p-tehui')
+    const indexEntry = sectionsJson.match(/"wan3\.0-720p-特惠｜[^"]*"/)?.[0] ?? ''
+    assert.notEqual(indexEntry, '', '模型总览里缺少 wan3.0-720p-特惠 一行')
 
     for (const [label, text] of [
       ['模型总览', indexEntry],
@@ -239,10 +239,11 @@ describe('tutorials model guide content', () => {
       }
     }
 
-    // 对外只需说清：720P + 按秒 ¥0.25 + 时长范围。
-    assert.equal(indexEntry.includes('720P ¥0.25/s'), true)
+    // 对外只需说清：720P + 按秒 ¥0.20 + 时长范围。
+    // ⚠️ 2026-10-30 由 ¥0.25/秒下调到 ¥0.20/秒，改价时这行要一起改。
+    assert.equal(indexEntry.includes('720P ¥0.20/s'), true)
     assert.equal(section.includes('输出分辨率：固定 720P'), true)
-    assert.equal(section.includes('计费：按秒 ¥0.25，单一价位，不乘分辨率倍率'), true)
+    assert.equal(section.includes('计费：按秒 ¥0.20，单一价位，不乘分辨率倍率'), true)
     assert.equal(section.includes('seconds：2–30，默认 5'), true)
   })
 
@@ -414,7 +415,7 @@ describe('tutorials model guide content', () => {
       'wan3.0-video',
       'wan3.0-video-prime',
       'wan3.0-video-官网',
-      'wan3.0-720p-官网',
+      'wan3.0-720p-特惠',
     ]
     for (const model of squareModels) {
       assert.equal(

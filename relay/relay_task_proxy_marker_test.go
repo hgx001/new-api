@@ -28,7 +28,7 @@ func TestTaskModel2DtoTranslatesProxyMarker(t *testing.T) {
 		TaskID: "task_cos",
 		Status: model.TaskStatusSuccess,
 		Properties: model.Properties{
-			OriginModelName: "wan3.0-720p-官网",
+			OriginModelName: "wan3.0-720p-特惠",
 		},
 		PrivateData: model.TaskPrivateData{
 			ResultURL: taskcommon.BuildCOSProxyMarker(
@@ -56,7 +56,7 @@ func TestTaskModel2DtoForAdminKeepsProxyMarker(t *testing.T) {
 		TaskID: "task_cos_admin",
 		Status: model.TaskStatusSuccess,
 		Properties: model.Properties{
-			OriginModelName: "wan3.0-720p-官网",
+			OriginModelName: "wan3.0-720p-特惠",
 		},
 		PrivateData: model.TaskPrivateData{ResultURL: marker},
 	}
@@ -73,7 +73,7 @@ func TestTaskModel2DtoSerializedBodyHasNoProxyMarker(t *testing.T) {
 		TaskID: "task_cos_body",
 		Status: model.TaskStatusSuccess,
 		Properties: model.Properties{
-			OriginModelName: "wan3.0-720p-官网",
+			OriginModelName: "wan3.0-720p-特惠",
 		},
 		PrivateData: model.TaskPrivateData{
 			ResultURL: taskcommon.BuildCOSProxyMarker(

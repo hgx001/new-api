@@ -51,7 +51,7 @@ const mpsMaxWait = 20 * time.Minute
 //   · wan3.0-video-官网 是原生的 720P（上游直接出 720P），不走后处理；
 //   · 标准版 wan3.0-video 走自己的分辨率档，也不走后处理。
 func needsSuperResolution(originModelName string) bool {
-	return strings.TrimSpace(originModelName) == Official720PModelName
+	return isOfficial720PModel(originModelName)
 }
 
 // submitPostProcess 在第一跳成功后提交超分任务。

@@ -452,10 +452,15 @@ func isAllowedPricingModel(name string) bool {
 	case "wan3.0-smart", "wan3.0-video-prime-1080p", "wan2.7-r2v":
 		return false
 	}
-	// wan3.0-720p-官网（2026-10-29）：官网渠道的 720P 成片档。
+	// wan3.0-720p-特惠（2026-10-29 上架，2026-10-30 改名）：官网渠道的 720P 成片档。
 	// ⚠️ 必须显式放行 —— 它**不以 "wan3.0-video" 开头**（是 "wan3.0-720p-"），
 	// 下面的前缀判断拦不住它，不加就会在广场里看不到、也算不出价。
-	if name == "wan3.0-720p-官网" {
+	//
+	// ⚠️ 旧名 `wan3.0-720p-官网` **故意不在这里**（过渡期只保可调用）：
+	// 广场是「客户挑模型」的界面，同一份货挂两个名字会让客户不知道该用哪个，
+	// 也会让「广场命名」与上游对齐的约定破功。旧名仍需配 ModelPrice，
+	// 否则旧名调用会算不出价（见 setting/ratio_setting/model_ratio.go）。
+	if name == "wan3.0-720p-特惠" {
 		return true
 	}
 	if strings.HasPrefix(name, "wan3.0-video") {

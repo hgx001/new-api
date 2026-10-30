@@ -178,14 +178,14 @@ func resolveResolution(req relaycommon.TaskSubmitReq) string {
 
 // resolveGenerationResolution 解析**向上游请求**的分辨率。
 //
-// 与 resolveResolution 的区别：对外模型 wan3.0-720p-官网 是「两跳」链路，
+// 与 resolveResolution 的区别：对外模型 wan3.0-720p-特惠 是「两跳」链路，
 // 上游固定只生成 480P，成片再交给云端提升到 720P —— 否则用户传 720P 时
 // 会直接生成 720P，两跳链路形同虚设（多花一倍生成费，还拿不到成片提升的效果）。
 //
 // ⚠️ 只有这个模型名走这条逻辑；其余模型名（官网原生 720P/1080P、标准版）
 //	的分辨率照旧由用户请求决定。
 func resolveGenerationResolution(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
-	if info != nil && info.OriginModelName == Official720PModelName {
+	if info != nil && isOfficial720PModel(info.OriginModelName) {
 		return official720PGenerationResolution
 	}
 	return resolveResolution(req)
@@ -459,8 +459,8 @@ func resolutionSizeRatioFor(resolution string, info *relaycommon.RelayInfo) floa
 		switch info.OriginModelName {
 		case OfficialModelName:
 			table = officialResolutionSizeRatio
-		case Official720PModelName:
-			// wan3.0-720p-官网 只有一个输出档位（720P），价格是
+		case Official720PModelName, Official720PModelNameLegacy:
+			// wan3.0-720p-特惠 只有一个输出档位（720P），价格是
 			// 「480P 生成 + 成片提升」的复合价，已经含在 ModelPrice 里。
 			//
 			// ⚠️ 这里必须恒为 1.0，不能落进 standardResolutionSizeRatio：
@@ -508,7 +508,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	// 兜底：官网这两个对外名上游一律是标准版 wan3.0-video。
 	//
 	// ⚠️ 必须在渠道映射之后做：渠道 model_mapping 是可配的，管理员漏配了新模型名时
-	//	UpstreamModelName 会仍是「wan3.0-720p-官网」，上游根本不认识这个名字。
+	//	UpstreamModelName 会仍是「wan3.0-720p-特惠」，上游根本不认识这个名字。
 	//	不兜底就是「用户付了钱、上游直接拒」。
 	model = upstreamModelFor(model)
 	parameters := submitParameters{
@@ -703,7 +703,7 @@ func (a *TaskAdaptor) GetChannelName() string {
 //
 // ⚠️ 成片地址的口径：
 //
-//   · 两跳链路（wan3.0-720p-官网）下，库里的 ResultURL 是**内部占位符**
+//   · 两跳链路（wan3.0-720p-特惠）下，库里的 ResultURL 是**内部占位符**
 //     （cos-proxy://…），客户端拿到没法下载；而且上游直链是 **480P 原片**，
 //     而用户买到的是 720P —— 给上游直链等于交付了错的产物。
 //     → 换成本站 /content 代理地址，由代理解析占位符后 302 到临时直链。
@@ -755,7 +755,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 //	上游回执（task.Data）在第一跳成功的那一刻就冻结了 —— 里面写的 TaskStatus
 //	是 "SUCCEEDED"，指的是「第一跳生成完了」，不是「整条链路完了」。
 //
-//	两跳链路（wan3.0-720p-官网）在第一跳成功后还要跑第二跳（成片提升），
+//	两跳链路（wan3.0-720p-特惠）在第一跳成功后还要跑第二跳（成片提升），
 //	这期间库里任务是 IN_PROGRESS，但回执里已经是 SUCCEEDED。
 //	只按回执判定的话，客户端会在第二跳还没跑完时就看到 status=completed，
 //	然后去取片 —— 拿到的是**还没提升过的 480P**，正是这套链路要消灭的东西。

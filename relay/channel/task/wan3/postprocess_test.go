@@ -19,7 +19,7 @@ import (
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
-// wan3.0-720p-官网（两跳链路：官网 480P → 云端提升 → 交付 720P）
+// wan3.0-720p-特惠（两跳链路：官网 480P → 云端提升 → 交付 720P）
 //
 // 这些用例锁死三件最容易出错的事：
 //  1. 向上游只请求 480P（否则两跳链路形同虚设，用户多花一倍生成费）；
@@ -66,8 +66,57 @@ func TestOfficial720PRequests480PFromUpstream(t *testing.T) {
 	}
 }
 
+// TestOfficial720PLegacyNameStillUsesTwoHopChain 锁定旧名（wan3.0-720p-官网，
+// 2026-10-30 改名前的公开名）**仍然走两跳链路**。
+//
+// ⚠️ 这是改名时最容易漏的一步：如果判定函数只认新名，旧名调用方会
+//	静默落到单跳链路 —— 上游直接生成用户请求的分辨率，
+//	结果可能是**用户买了 720P 拿到 480P，而且照样按 720P 档扣费**。
+//	这类缺陷不报错，只是货不对，比崩溃更难发现。
+func TestOfficial720PLegacyNameStillUsesTwoHopChain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// ① 强制 480P 生成
+	adaptor := &TaskAdaptor{}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{},
+		OriginModelName: Official720PModelNameLegacy,
+	}
+	adaptor.Init(info)
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{
+		Prompt:     "一只橘猫",
+		Duration:   5,
+		Resolution: "1080P",
+	})
+	body, err := adaptor.BuildRequestBody(context, info)
+	require.NoError(t, err)
+	encoded, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload struct {
+		Parameters struct {
+			Resolution string `json:"resolution"`
+		} `json:"parameters"`
+	}
+	require.NoError(t, json.Unmarshal(encoded, &payload))
+	require.Equal(t, official720PGenerationResolution, payload.Parameters.Resolution,
+		"旧名也必须强制上游生成 480P（否则用户付 720P 的钱拿 480P 的片）")
+
+	// ② 走成片提升
+	require.True(t, needsSuperResolution(Official720PModelNameLegacy),
+		"旧名必须仍然走成片提升链路")
+
+	// ③ 计费倍率恒为 1.0（落进 1/2/4 表会翻倍）
+	require.Equal(t, 1.0, resolutionSizeRatioFor("720P", info),
+		"旧名的计费倍率也必须恒为 1.0")
+
+	// ④ 向上游请求的模型名仍是标准版
+	require.Equal(t, upstreamModel, upstreamModelFor(Official720PModelNameLegacy),
+		"旧名向上游也必须兜底成标准版 wan3.0-video")
+}
+
 // TestOfficial720PGenerationResolutionOnlyAppliesToItsOwnModelName 确认
-// 「强制 480P」只作用于 wan3.0-720p-官网，不影响官网原生 720P/1080P 与标准版。
+// 「强制 480P」只作用于 wan3.0-720p-特惠，不影响官网原生 720P/1080P 与标准版。
 func TestOfficial720PGenerationResolutionOnlyAppliesToItsOwnModelName(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adaptor := &TaskAdaptor{}
@@ -103,7 +152,7 @@ func TestOfficial720PGenerationResolutionOnlyAppliesToItsOwnModelName(t *testing
 
 // TestOfficial720PPriceRatioIsAlwaysOne 锁定分辨率倍率恒为 1.0。
 //
-// 回归背景：wan3.0-720p-官网 不以 "wan3.0-video" 开头，早期实现会落进
+// 回归背景：wan3.0-720p-特惠 不以 "wan3.0-video" 开头，早期实现会落进
 // standardResolutionSizeRatio（1/2/4），用户传 720P 时算出 2.0 倍率 ——
 // 价格从 ¥0.25/秒直接翻到 ¥0.50/秒。
 func TestOfficial720PPriceRatioIsAlwaysOne(t *testing.T) {
@@ -125,17 +174,28 @@ func TestOfficial720PPriceRatioIsAlwaysOne(t *testing.T) {
 	}
 }
 
-// TestOfficial720PPerSecondPrice 锁定对外价 ¥0.25/秒。
+// TestOfficial720PPerSecondPrice 锁定对外价 ¥0.20/秒。
 //
 // 口径：quota = int(ModelPrice × QuotaPerUnit) × seconds × size。
-// 10 秒 = ¥2.50；带 10 秒参考视频（秒数并入）= ¥5.00。
+// 10 秒 = ¥2.00；带 10 秒参考视频（秒数并入）= ¥4.00。
+//
+// ⚠️ 2026-10-30 由 ¥0.25/秒下调到 ¥0.20/秒（老板拍板，走「特惠」定位）。
+// 改价时这一条和 setting/ratio_setting/model_ratio.go 的默认值、
+// 生产 options.ModelPrice 的键值**必须三处一起改**，否则会出现
+// 「广场显示一个价、实际扣另一个价」。
 func TestOfficial720PPerSecondPrice(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ratio_setting.InitRatioSettings()
 
 	price, ok := ratio_setting.GetModelPrice(Official720PModelName, false)
-	require.True(t, ok, "wan3.0-720p-官网 must have an explicit per-second price")
-	require.InDelta(t, 0.25/ratio_setting.USD2RMB, price, 1e-9, "must equal ¥0.25/sec in USD")
+	require.True(t, ok, "wan3.0-720p-特惠 must have an explicit per-second price")
+	require.InDelta(t, 0.2/ratio_setting.USD2RMB, price, 1e-9, "must equal ¥0.20/sec in USD")
+
+	// 旧名过渡期仍可调用，且**必须同价** —— 改名前后同货不同价会让
+	// 已按旧价谈好的客户觉得被涨价。
+	legacyPrice, ok := ratio_setting.GetModelPrice(Official720PModelNameLegacy, false)
+	require.True(t, ok, "旧名 wan3.0-720p-官网 must still have a price（否则算不出价=静默免单）")
+	require.InDelta(t, price, legacyPrice, 1e-9, "旧名与新名必须同价")
 
 	baseQuota := int(price * common.QuotaPerUnit)
 	adaptor := &TaskAdaptor{}
@@ -146,8 +206,8 @@ func TestOfficial720PPerSecondPrice(t *testing.T) {
 		refSeconds int
 		wantCNY    float64
 	}{
-		{"10s", 0, 2.50},
-		{"10s + 10s reference video", 10, 5.00},
+		{"10s", 0, 2.00},
+		{"10s + 10s reference video", 10, 4.00},
 	}
 
 	for _, tc := range cases {
