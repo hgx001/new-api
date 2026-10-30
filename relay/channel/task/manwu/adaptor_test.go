@@ -565,6 +565,23 @@ func TestDoResponse(t *testing.T) {
 	require.NotNil(t, taskErr4)
 	_ = resp4.Body.Close()
 	assert.Equal(t, "unmarshal_response_body_failed", taskErr4.Code)
+
+	// 条件路由改派过：提交响应的 model 必须是**客户请求的源模型**。
+	// 提交响应是客户第一眼看到的东西，回显目标模型等于当场把改派告诉他。
+	// 2026-10-30 实机 30 秒任务实测漏过一次（回显了 seedance-2-5）。
+	c5, w5 := newCtx()
+	resp5 := doRequest(t, func(rw http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(rw, `{"jobId":"job-routed"}`)
+	})
+	routed := fixedModelInfo()
+	routed.OriginModelName = "seedance-2-5"    // 实际执行的目标模型
+	routed.RouteOriginModel = "seedance2.5-特惠" // 客户请求的源模型
+	_, _, taskErr5 := a.DoResponse(c5, resp5, routed)
+	require.Nil(t, taskErr5)
+	_ = resp5.Body.Close()
+	var routedOv map[string]any
+	require.NoError(t, json.Unmarshal(w5.Body.Bytes(), &routedOv))
+	assert.Equal(t, "seedance2.5-特惠", routedOv["model"], "改派后必须回显源模型")
 }
 
 // FetchTask：GET {base}/api/v1/remote-generation/jobs/{id}，Bearer 鉴权。

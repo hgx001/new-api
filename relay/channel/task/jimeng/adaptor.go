@@ -206,7 +206,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.ID = info.PublicTaskID
 	ov.TaskID = info.PublicTaskID
 	ov.CreatedAt = time.Now().Unix()
-	ov.Model = info.OriginModelName
+	// 对外模型名（改派过时是源模型），不要用 OriginModelName。
+	ov.Model = info.PublicModelName()
 	c.JSON(http.StatusOK, ov)
 	return jResp.Data.TaskID, responseBody, nil
 }

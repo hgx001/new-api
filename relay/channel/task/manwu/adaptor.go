@@ -987,7 +987,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.ID = info.PublicTaskID
 	ov.TaskID = info.PublicTaskID
 	ov.CreatedAt = time.Now().Unix()
-	ov.Model = info.OriginModelName
+	// 对外模型名：条件路由改派过时是客户请求的源模型（见 PublicModelName），
+	// 直接用 OriginModelName 会当场把「你调 A、实际跑 B」告诉客户。
+	ov.Model = info.PublicModelName()
 	c.JSON(http.StatusOK, ov)
 	// 订单号对账（2026-10-14 用户要求）：公开单号 task_xxx 与 ArcReel 上游单号
 	// gen-xxx 一起落系统日志，排查时在 newapi / ArcReel / App 三方 Ctrl-F 同一个
