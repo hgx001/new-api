@@ -30,6 +30,23 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/user-agreement", controller.GetUserAgreement)
 		apiRouter.GET("/privacy-policy", controller.GetPrivacyPolicy)
 		apiRouter.GET("/about", controller.GetAbout)
+
+		// 条件路由的运维开关（暂停 / 恢复「按时长改派到豆包」那条规则）。
+		//
+		// 调用方是客户端软件（每个操作员机器上的一份安装包），所以**不用**
+		// AdminAuth：把管理员凭据放进客户端安装包，泄露一次等于交出整个后台。
+		// 改用单用途共享密钥（option VideoRouteMaintenanceKey），
+		// 只授权「暂停/恢复路由规则」这一件事，可随时轮换。
+		// 密钥未配置时接口返回 404（见 middleware/route_maintenance.go）。
+		videoRouteMaintenance := apiRouter.Group("/video-route/maintenance")
+		videoRouteMaintenance.Use(middleware.VideoRouteMaintenanceRateLimit())
+		videoRouteMaintenance.Use(middleware.VideoRouteMaintenanceAuth())
+		{
+			videoRouteMaintenance.GET("/doubao", controller.GetDoubaoRouteMaintenance)
+			videoRouteMaintenance.POST("/doubao/pause", controller.PauseDoubaoRoute)
+			videoRouteMaintenance.POST("/doubao/resume", controller.ResumeDoubaoRoute)
+		}
+
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
 		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)

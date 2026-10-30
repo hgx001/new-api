@@ -19,12 +19,22 @@ package seedanceroute_setting
 
 import (
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 )
 
 // OptionKey 是这份配置在 options 表里的键名。
 const OptionKey = "Seedance25TeHuiRoute30s"
+
+// MaintenanceKeyOption 是「条件路由运维开关」的共享密钥在 options 表里的键名。
+//
+// 为什么单独一个 option 而不是塞进 Policy：Policy 会被 Get() 返回、会被
+// MarshalJSONString 序列化进 common.OptionMap，密钥混在里面很容易随日志或
+// 调试输出泄露。单独一个键，只有鉴权中间件读它。
+//
+// 空值 = 运维接口关闭（返回 404），这是默认状态。
+const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 
 // Policy 是条件路由策略。
 //
@@ -55,6 +65,17 @@ type Policy struct {
 	RatioTargetModel string `json:"ratio_target_model,omitempty"`
 	// TriggerRatio 规则二的触发比例（如 "9:16"）。空 = 规则二不启用。
 	TriggerRatio string `json:"trigger_ratio,omitempty"`
+
+	// SecondsRulePausedUntil 规则一的暂停截止时间（Unix 秒）。0 = 未暂停。
+	//
+	// 为什么需要「到期时间」而不是一个布尔开关：目标链路（豆包官网）的额度是
+	// **按天**计的，用完当天不可用、次日 0 点自动恢复。用布尔开关就得有人记得
+	// 回来打开 —— 漏一次就会长期悄悄跑在另一条链路上，且没有任何报错。
+	// 用到期时间，到点自动恢复，不需要任何人值守。
+	//
+	// ⚠️ **只影响规则一**。不要用 Enabled 来表达「暂停」：
+	// Enabled 是两条规则的总开关，关掉会把「9:16 → wan3」也一起停掉。
+	SecondsRulePausedUntil int64 `json:"seconds_rule_paused_until,omitempty"`
 
 	// UpdatedAt 最近一次修改的 Unix 时间戳，0 表示从未改过。
 	UpdatedAt int64 `json:"updated_at"`
@@ -98,6 +119,22 @@ func MarshalJSONString() string {
 	return string(encoded)
 }
 
+// WithSecondsRulePausedUntil 返回一份「规则一暂停到 until」的策略副本。
+//
+// 纯函数，**不落库** —— 落库由调用方用 model.UpdateOption(OptionKey, json) 完成，
+// 走的是正常的 option 分发链路（updateOptionMap → UpdateFromJSONString）。
+// 把「怎么改」收敛在这里，controller 就不需要知道字段名，将来加字段也不用改两处。
+//
+// until 传 0 表示取消暂停（恢复）。
+func WithSecondsRulePausedUntil(until int64) Policy {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := clonePolicy(current)
+	out.SecondsRulePausedUntil = until
+	out.UpdatedAt = nowUnix()
+	return out
+}
+
 // UpdateFromJSONString 用管理员提交的 JSON 覆盖策略。
 //
 // 开启路由的**必要条件**：至少有一条规则配全。
@@ -126,14 +163,17 @@ func UpdateFromJSONString(jsonStr string) error {
 
 // IsEnabled 判断「规则一（时长）」当前是否生效。
 // 三个必要条件缺一不可 —— 与 UpdateFromJSONString 的校验口径保持一致，
-// 防止有人绕过 option 分发直接改内存状态。
+// 防止有人绕过 option 分发直接改内存状态。另外还要**不在暂停期内**。
 func IsEnabled() bool {
 	mu.RLock()
 	defer mu.RUnlock()
-	return secondsRuleReady(current)
+	return secondsRuleActive(current, nowUnix())
 }
 
 // IsRatioRouteEnabled 判断「规则二（比例）」当前是否生效。
+//
+// 不受 SecondsRulePausedUntil 影响：暂停的是「按时长改派到豆包」这一条，
+// 与「按比例改派到 wan3」是两件独立的事。
 func IsRatioRouteEnabled() bool {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -147,7 +187,24 @@ func IsRatioRouteEnabled() bool {
 func IsAnyRouteEnabled() bool {
 	mu.RLock()
 	defer mu.RUnlock()
-	return secondsRuleReady(current) || ratioRuleReady(current)
+	return secondsRuleActive(current, nowUnix()) || ratioRuleReady(current)
+}
+
+// IsSecondsRulePaused 报告规则一当前是否处于暂停期。
+func IsSecondsRulePaused() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return secondsRulePaused(current, nowUnix())
+}
+
+// SecondsRulePausedUntil 返回规则一的暂停截止时间（Unix 秒），0 表示未暂停。
+//
+// ⚠️ 返回的是**配置值**，不是「是否生效」—— 已过期的截止时间同样会原样返回。
+// 判断是否生效请用 IsSecondsRulePaused。
+func SecondsRulePausedUntil() int64 {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.SecondsRulePausedUntil
 }
 
 func secondsRuleReady(p Policy) bool {
@@ -156,6 +213,25 @@ func secondsRuleReady(p Policy) bool {
 		p.TargetModel != "" &&
 		p.TriggerSeconds > 0
 }
+
+// secondsRulePaused 判断当前是否处于规则一的暂停期。
+//
+// 用 `>` 而不是 `>=`：截止时间那一秒**已经恢复**。
+// 例：截止 1793404800，在 now=1793404800 时返回 false（不再暂停）。
+func secondsRulePaused(p Policy, now int64) bool {
+	return p.SecondsRulePausedUntil > now
+}
+
+// secondsRuleActive = 配全了 且 不在暂停期。
+func secondsRuleActive(p Policy, now int64) bool {
+	return secondsRuleReady(p) && !secondsRulePaused(p, now)
+}
+
+// nowUnix 是当前时间的 Unix 秒。
+//
+// 声明成变量而不是直接调 time.Now()，**只为单测可替换** ——
+// 测「到期自动恢复」不可能真的等一天。生产代码路径永远走默认实现。
+var nowUnix = func() int64 { return time.Now().Unix() }
 
 func ratioRuleReady(p Policy) bool {
 	return p.Enabled &&

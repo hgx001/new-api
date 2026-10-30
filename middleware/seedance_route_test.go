@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
@@ -786,5 +787,79 @@ func TestSeedanceRouteRatioOnlyPolicyStillWorks(t *testing.T) {
 	out := decodeBody(t, seen)
 	if out["model"] != testRatioTargetModel {
 		t.Fatalf("model = %v, want %s", out["model"], testRatioTargetModel)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 规则一的「带到期时间的暂停」（客户端「今日额度已用完」按钮的后端效果）
+// ─────────────────────────────────────────────────────────────
+
+// pauseSecondsRule 把规则一暂停到指定 Unix 秒。
+//
+// 这里不冻结时钟（setting 包内的测试已经精确覆盖了到期边界）：
+// 中间件层只关心「暂停中 → 不改写」与「已过期 → 照常改写」两种可观测行为，
+// 用真实的 now 加减偏移就够，反而少一层测试与时间的耦合。
+func pauseSecondsRule(t *testing.T, until int64) {
+	t.Helper()
+	patched := seedanceroute_setting.WithSecondsRulePausedUntil(until)
+	encoded, err := common.Marshal(patched)
+	if err != nil {
+		t.Fatalf("marshal patched policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update patched policy: %v", err)
+	}
+}
+
+func TestSeedanceRouteSecondsRulePausedFallsBackToSource(t *testing.T) {
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	pauseSecondsRule(t, time.Now().Unix()+3600)
+
+	if seedanceroute_setting.IsEnabled() {
+		t.Fatal("IsEnabled() = true, want false（暂停期内）")
+	}
+
+	// 30 秒请求在暂停期内必须**逐字节不变**地落到源链路（有赞）。
+	body := `{"model":"seedance2.5-特惠","seconds":"30","prompt":"a cat"}`
+	seen, originModel := runRoute(t, body)
+	if seen != body {
+		t.Fatalf("body changed while paused:\n got %s\nwant %s", seen, body)
+	}
+	if originModel != "" {
+		t.Fatalf("RouteOriginModel() = %q, want empty（没发生改派）", originModel)
+	}
+}
+
+func TestSeedanceRoutePauseDoesNotAffectRatioRule(t *testing.T) {
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	pauseSecondsRule(t, time.Now().Unix()+3600)
+
+	// 暂停只针对「按时长改派到豆包」，比例规则必须照常生效 ——
+	// 否则老板点一下「豆包没额度」，9:16 的优化也一起没了。
+	body := `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"}}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testRatioTargetModel {
+		t.Fatalf("model = %v, want %s（暂停不该影响比例规则）", out["model"], testRatioTargetModel)
+	}
+}
+
+func TestSeedanceRouteExpiredPauseRoutesAgain(t *testing.T) {
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	// 截止时间已过 1 秒 → 应视为已恢复，不需要任何人手动打开。
+	pauseSecondsRule(t, time.Now().Unix()-1)
+
+	if !seedanceroute_setting.IsEnabled() {
+		t.Fatal("IsEnabled() = false, want true（暂停已过期）")
+	}
+
+	body := `{"model":"seedance2.5-特惠","seconds":"30","prompt":"a cat"}`
+	seen, originModel := runRoute(t, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testTargetModel {
+		t.Fatalf("model = %v, want %s after pause expired", out["model"], testTargetModel)
+	}
+	if originModel != testSourceModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
 	}
 }

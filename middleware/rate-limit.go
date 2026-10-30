@@ -227,3 +227,13 @@ func SearchRateLimit() func(c *gin.Context) {
 	}
 	return userRateLimitFactory(common.SearchRateLimitNum, common.SearchRateLimitDuration, "SR")
 }
+
+// VideoRouteMaintenanceRateLimit 条件路由运维开关专用限流，按来源 IP 计数。
+//
+// 这个接口是共享密钥鉴权（不是用户登录），所以只能按 IP 限。
+// 必须挂在密钥校验**之前**：先限流再验密钥，爆破者每 IP 每分钟只有固定次数。
+// 阈值给得宽（30 次/分钟）：正常用量是「点一下按钮 + 偶尔查状态」，
+// 一天也就几次；而密钥本身是长随机串，这个阈值足以让爆破不可行。
+func VideoRouteMaintenanceRateLimit() func(c *gin.Context) {
+	return rateLimitFactory(30, 60, "VRM")
+}
