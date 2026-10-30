@@ -15,6 +15,13 @@ import (
 var upstreamAliasModels = map[string]bool{
 	"seedance2.5-特惠": true, // 上游是 wan3.0-video-prime（有赞渠道，2026-10-29 起）
 	"seedance2.5特惠版": true, // 同一模型的历史旧名
+	// 两跳链路（2026-10-30 加）：上游是 wan3.0-video 的 480P 原片。
+	//
+	// 为什么它比别的模型更该脱敏：出口 2 的 data 字段里挂着**上游 OSS 签名直链**
+	// （带 OSSAccessKeyId + Signature，24 小时内有效），而那条直链指向的是
+	// **还没做提升的 480P 原片** —— 用户能绕过本站直接下载到没提升的成片，
+	// 商业逻辑直接被击穿。遮掉它是「交付正确性」问题，不只是「藏货源」问题。
+	"wan3.0-720p-官网": true,
 }
 
 // upstreamNeutralWord 是替换后的中性词：既点明"来自上游"，又不暴露是谁。

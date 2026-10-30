@@ -72,6 +72,26 @@ func TestRedactUpstreamIdentity_历史旧名同样生效(t *testing.T) {
 		RedactUpstreamIdentity(`status_code=400, model aliyun:wan-3.0 does not support`, "seedance2.5特惠版"))
 }
 
+// 两跳链路模型（wan3.0-720p-官网）必须脱敏，
+// 原因比「藏货源」更硬：它的上游直链指向的是**还没做提升的 480P 原片**，
+// 用户拿到就能绕过本站直接下载到没提升的成片 —— 商业逻辑被击穿。
+func TestRedactUpstreamIdentity_两跳链路模型脱敏(t *testing.T) {
+	assert.True(t, IsUpstreamAliasModel("wan3.0-720p-官网"),
+		"两跳链路模型必须在脱敏名单里，否则上游 480P 原片直链会漏给用户")
+
+	raw := `成片地址 https://dashscope-a717.oss-accelerate.aliyuncs.com/1d/54/20261030/xxx.mp4 拉取失败：model wan3.0-video rejected`
+	got := RedactUpstreamText(raw, "wan3.0-720p-官网")
+	assert.NotContains(t, got, "dashscope", "上游存储域名不能漏")
+	assert.NotContains(t, got, "aliyuncs.com", "上游存储域名不能漏")
+	assert.NotContains(t, got, "https://", "上游地址整体摘掉")
+	assert.Contains(t, got, "拉取失败", "失败原因本身要保留")
+
+	// 上游模型名也要换掉 —— 它直接暴露了「我们卖的是 480P 原片」
+	assert.Equal(t,
+		`status_code=400, model 上游 not available`,
+		RedactUpstreamIdentity(`status_code=400, model wan3.0-video not available`, "wan3.0-720p-官网"))
+}
+
 func TestRedactUpstreamIdentity_非别名模型原样返回(t *testing.T) {
 	raw := `status_code=400, {"error":{"message":"model aliyun:wan-3.0 does not support"}}`
 	for _, modelName := range []string{"wan-3.0", "wan3.0-smart", "gpt-6-luna", "seedance-2.5", ""} {
