@@ -15,8 +15,23 @@ const (
 	// 改派（seedance2.5-特惠 → seedance-2-5 / wan3.0-720p-特惠）会把请求体的
 	// model 字段换成目标模型，于是 RelayInfo.OriginModelName 与 logs.model_name
 	// 都变成了目标模型 —— 客户在自己的日志里就会看到「我调 A，怎么记成 B」。
-	// 这个键把源模型名一路带到日志层，只用于**展示**，不参与计费。
+	// 这个键把源模型名一路带到日志层。
+	//
+	// **计费与展示都用它**（老板 2026-10-30 定稿）：客户请求哪个模型，就按哪个
+	// 模型的价格收 —— 改派只是内部调度，不改变对客价格。
+	// 取值入口是 RelayInfo.BillingModelName / service.taskBillingModelName，
+	// 不要直接读这个键去算钱。
 	ContextKeyRouteOriginModel ContextKey = "route_origin_model"
+
+	// ContextKeyRouteBillingSeconds 是条件路由改派时「源模型口径的计费秒数」。
+	//
+	// 为什么需要单独记：计费按源模型算，而源模型（seedance2.5-特惠）是按秒计价的；
+	// 改派到豆包后 adaptor 换成 manwu，它对按次模型返回 nil 倍率 —— 少了 seconds
+	// 这一项，30 秒的请求会只按 1 秒收钱。秒数在路由中间件里已经解析过（规则一
+	// 就是靠它判定的），记进 context 由 relay_task.go 补进 OtherRatios。
+	//
+	// 只在「目标 adaptor 没给出 seconds」时生效，不覆盖 adaptor 自己的判断。
+	ContextKeyRouteBillingSeconds ContextKey = "route_billing_seconds"
 
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"

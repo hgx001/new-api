@@ -29,23 +29,23 @@ import (
 
 // routeOriginModelKey 记录改派前的原始模型名。
 //
-// ⚠️ **只用于展示与审计，不要拿它回填 origin_model_name**。
+// **计费与展示都以它为优先**（老板 2026-10-30 定稿）：客户请求哪个模型，
+// 就按哪个模型的价格收。改派是我们为了省上游成本做的内部调度，
+// 不能让客户看到「我买 A，账单按 B 算」，也不能让对客价格随调度策略漂移。
 //
-// 计费链用的是 info.OriginModelName：
+// 计费链取值入口是 RelayInfo.BillingModelName()：
 //
-//	relay/helper/price.go:170  ratio_setting.GetModelPrice(info.OriginModelName, true)
+//	relay/helper/price.go  ratio_setting.GetModelPrice(info.BillingModelName(), true)
 //
-// 回填成源模型名 → 按**源模型的按秒价**计费（seedance2.5-特惠 ¥0.20/秒 × 30 = ¥6.00），
-// 而不是目标模型的按次价（seedance-2-5 ¥3.00）→ **路由的省钱效果直接归零**。
+// 所以 30 秒改派到豆包后，客户付的仍是 seedance2.5-特惠 的 ¥0.20/秒 × 30 = ¥6.00，
+// 而不是豆包的按次 ¥3.00。差额是内部调度收益，不体现在客户账单上。
 //
-// 任务属性 properties.origin_model_name 记「实际执行的模型」是**自洽且诚实**的：
-// 计费也是按它算的，两者对得上。
+// ⚠️ 但光有模型名不够：源模型按秒计价，而目标 adaptor（manwu）对按次模型
+// 返回 nil 倍率，没有 seconds 就会把 30 秒算成 1 秒。所以规则一命中时
+// 还要把秒数记进 ContextKeyRouteBillingSeconds（见 relay_task.go 第 5.5 步）。
 //
-// 但 **logs.model_name 必须对客户显示源模型名**（2026-10-30 老板拍板）：
-// 客户在自己日志里看到「调 seedance2.5-特惠、记成 wan3.0-720p-特惠」等于暴露
-// 了改派本身。实现见 constant.ContextKeyRouteOriginModel →
-// RelayInfo.RouteOriginModel → TaskPrivateData.RouteOriginModel →
-// 日志 other["route_origin_model"] → model.formatUserLogs 回写 ModelName。
+// properties.origin_model_name 记「实际执行的模型」是自洽且诚实的：
+// 它回答的是「这条任务在哪个链路上跑」，与「按谁收费」是两个问题。
 const routeOriginModelKey = string(constant.ContextKeyRouteOriginModel)
 
 // RouteOriginModel 返回改派前的原始模型名；没发生改派时返回空串。
@@ -59,6 +59,11 @@ func RouteOriginModel(c *gin.Context) string {
 //
 //	规则一（时长）：源模型 + 30 秒 → seedance-2-5（豆包，按次 ¥3.00）
 //	规则二（比例）：源模型 + 9:16（非 30 秒）→ wan3.0-720p-特惠（按秒 ¥0.20）
+//
+// 改派**只决定内部走哪条链路，不改变对客价格**：两条规则的计费都按源模型
+// （seedance2.5-特惠，¥0.20/秒）算，客户请求什么模型就按什么模型收。
+// 所以 30 秒这一单客户付 ¥6.00（0.20×30），内部走豆包 ¥3.00/次的成本 ——
+// 差价是调度收益，不进客户账单。
 //
 // 源/目标/触发值全部从 seedanceroute_setting 读，改配置不用改代码。
 //
@@ -106,6 +111,9 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && seconds == policy.TriggerSeconds {
 				if newBody, routed := prepareDoubaoRoute(c, body, policy); routed {
 					if applyRewrittenBody(c, newBody, policy.SourceModel) {
+						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
+						// 把判定命中的秒数记下来，交给 relay_task.go 补进 OtherRatios。
+						common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
 						c.Next()
 						return
 					}

@@ -598,7 +598,9 @@ func RelayTask(c *gin.Context) {
 			ModelRatio:      relayInfo.PriceData.ModelRatio,
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+			// 按次判定用**客户请求的源模型**：改派后计费仍按源模型的按秒价走，
+			// 不能因为目标链路是按次模型就把差额结算一并关掉。
+			PerCallBilling: common.StringsContains(constant.TaskPricePatches, relayInfo.BillingModelName()) || relayInfo.PriceData.UsePrice,
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

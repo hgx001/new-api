@@ -105,9 +105,8 @@ type RelayInfo struct {
 	OriginModelName        string
 	// RouteOriginModel 是条件路由改派**之前**用户真正请求的模型名（未改派时为空）。
 	//
-	// ⚠️ 只用于日志展示，**绝不能**参与计费：计费必须用 OriginModelName（= 实际执行的
-	// 目标模型），否则「30 秒 → 豆包按次 ¥3.00」会被算成源模型的 ¥0.20/秒。
-	// 见 middleware/seedance_route.go 里 routeOriginModelKey 的说明。
+	// 计费与展示都以它为优先（见 BillingModelName / PublicModelName）：
+	// 客户请求哪个模型就按哪个模型收费，改派只影响内部走哪条链路。
 	RouteOriginModel      string
 	RequestURLPath        string
 	RequestHeaders        map[string]string
@@ -201,10 +200,33 @@ type RelayInfo struct {
 // （{"id":"task_xxx","model":"wan3.0-720p-特惠",...}），比日志更显眼。
 // 用 OriginModelName 就是当场把改派告诉客户。
 //
-// ⚠️ 只用于对外展示，**绝不能用于计费**：计费必须用 OriginModelName
-// （= 实际执行的目标模型），否则「30 秒 → 豆包按次 ¥3.00」会被按源模型的
-// ¥0.20/秒 重算。
+// 与 BillingModelName 是同一个取值（展示口径 = 计费口径），但两个方法名表达的是
+// 两个不同的意图，别合并 —— 改计费口径时不该顺手改到展示。
 func (info *RelayInfo) PublicModelName() string {
+	if info == nil {
+		return ""
+	}
+	if info.RouteOriginModel != "" {
+		return info.RouteOriginModel
+	}
+	return info.OriginModelName
+}
+
+// BillingModelName 返回**计费**用的模型名：条件路由改派过时是用户请求的源模型，
+// 否则与 OriginModelName 相同。
+//
+// 为什么计费按源模型（老板 2026-10-30 定稿）：客户请求的是「seedance2.5-特惠」，
+// 就按 seedance2.5-特惠 的价格收。改派是我们为了省上游成本做的内部调度，
+// 不能让客户看到「我买 A，账单按 B 算」—— 也不能让价格随调度策略漂移。
+//
+// 与 OriginModelName 的分工：
+//   - OriginModelName    = **实际执行**的模型（目标模型）：选 adaptor、模型映射、
+//     退款/重算的归属、properties.origin_model_name 都用它
+//   - BillingModelName() = **算钱**用的模型（源模型）：只喂给
+//     ratio_setting.GetModelPrice / GetModelRatio
+//
+// 未改派时两者相等，所以非路由请求完全不受影响。
+func (info *RelayInfo) BillingModelName() string {
 	if info == nil {
 		return ""
 	}

@@ -20,7 +20,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
 	// 支持任务仅按次计费
-	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+	// 用 BillingModelName（= 客户请求的源模型）判定：改派到按次模型后，
+	// 计费仍是按源模型的按秒价，日志文案不能跟着变成「按次计费」。
+	if common.StringsContains(constant.TaskPricePatches, info.BillingModelName()) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
 		if len(info.PriceData.OtherRatios) > 0 {
@@ -154,7 +156,8 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 
 // taskModelName 从 BillingContext 或 Properties 中获取模型名称。
 //
-// ⚠️ 这是**计费用**的模型名（= 实际执行的目标模型），别拿它写日志展示。
+// ⚠️ 这是**实际执行**的模型名（= 改派后的目标模型），用于回答「这条任务在哪个
+// 链路上跑」。算钱请用 taskBillingModelName。
 func taskModelName(task *model.Task) string {
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
 		return bc.OriginModelName
@@ -162,17 +165,25 @@ func taskModelName(task *model.Task) string {
 	return task.Properties.OriginModelName
 }
 
-// taskLogModelName 返回写日志用的模型名：条件路由改派过时是**用户请求的源模型**，
-// 否则与 taskModelName 相同。
+// taskBillingModelName 返回**计费**用的模型名：条件路由改派过时是**用户请求的
+// 源模型**，否则与 taskModelName 相同。
 //
-// 只用于日志展示。计费（尤其是 RecalculateTaskQuotaByTokens 里的
-// ratio_setting.GetModelRatio）必须继续用 taskModelName —— 用源模型名会按
-// 源模型的价重算，把「30 秒 → 豆包按次 ¥3.00」算成 ¥0.20/秒。
-func taskLogModelName(task *model.Task) string {
+// 老板 2026-10-30 定稿：客户请求哪个模型就按哪个模型收费，改派只是内部调度。
+// 所以 30 秒改派到豆包后，重算/结算仍按 seedance2.5-特惠 的 ¥0.20/秒 走，
+// 不会漂到豆包的按次价。
+func taskBillingModelName(task *model.Task) string {
 	if task != nil && task.PrivateData.RouteOriginModel != "" {
 		return task.PrivateData.RouteOriginModel
 	}
 	return taskModelName(task)
+}
+
+// taskLogModelName 返回写日志用的模型名。
+//
+// 与计费口径一致（都是用户请求的源模型）：日志里显示的价必须能对上扣的钱，
+// 否则客户看到「seedance2.5-特惠 扣了 ¥6.00」却按别的模型重算，对不了账。
+func taskLogModelName(task *model.Task) string {
+	return taskBillingModelName(task)
 }
 
 // RefundTaskQuota 统一的任务失败退款逻辑。
@@ -281,7 +292,7 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		return
 	}
 
-	modelName := taskModelName(task)
+	modelName := taskBillingModelName(task)
 
 	// 获取模型价格和倍率
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)

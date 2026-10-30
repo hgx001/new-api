@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -54,6 +55,9 @@ func enableRoute(t *testing.T, source, target string, seconds int) {
 type routeRecorder struct {
 	body        string
 	originModel string
+	// billingSeconds 是中间件记下的「源模型口径计费秒数」（未记录时为 0）。
+	billingSeconds float64
+	hasBillingSec  bool
 }
 
 // newRouteEngine 建一个挂上条件路由中间件的引擎。
@@ -76,6 +80,7 @@ func newRouteEngine(rec *routeRecorder) *gin.Engine {
 		}
 		rec.body = string(raw)
 		rec.originModel = RouteOriginModel(c)
+		rec.billingSeconds, rec.hasBillingSec = common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSeconds)
 		c.String(200, "ok")
 	})
 	return engine
@@ -115,6 +120,62 @@ func runRouteRaw(t *testing.T, body string) (string, string) {
 		t.Fatalf("status = %d, want 200 (body=%s)", response.Code, response.Body.String())
 	}
 	return rec.body, rec.originModel
+}
+
+// runRouteFull 返回完整记录器（含中间件记下的计费秒数）。
+//
+// 与 runRoute 分开是为了不改动几十个既有用例的签名 —— 它们不关心计费口径。
+func runRouteFull(t *testing.T, body string) *routeRecorder {
+	t.Helper()
+	stubChannelAvailable(t, true)
+	rec := &routeRecorder{}
+	engine := newRouteEngine(rec)
+	request := httptest.NewRequest("POST", "/v1/video/generations", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	if response.Code != 200 {
+		t.Fatalf("status = %d, want 200 (body=%s)", response.Code, response.Body.String())
+	}
+	return rec
+}
+
+// 规则一命中时必须记下「源模型口径的计费秒数」。
+//
+// 计费已改为按客户请求的源模型算（按秒 ¥0.20），而目标 adaptor（manwu）对按次
+// 模型返回 nil 倍率。少了这个秒数，30 秒的请求会只按 1 秒收钱 —— 少收 29 秒。
+func TestSeedanceRouteRecordsBillingSecondsForPerCallTarget(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 30)
+
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":30,"prompt":"a cat"}`)
+	if !rec.hasBillingSec {
+		t.Fatalf("路由命中后没有记录计费秒数（key 缺失）")
+	}
+	if rec.billingSeconds != 30 {
+		t.Fatalf("计费秒数 = %v, want 30", rec.billingSeconds)
+	}
+}
+
+// 规则二（9:16 → wan3）不记计费秒数：目标 adaptor 自己会给 seconds，
+// 记了反而可能覆盖它的判断（relay_task.go 只在缺失时补）。
+func TestSeedanceRouteRatioRuleDoesNotForceBillingSeconds(t *testing.T) {
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
+	if rec.hasBillingSec {
+		t.Fatalf("比例规则不该记录计费秒数，却记成了 %v", rec.billingSeconds)
+	}
+}
+
+// 规则一没命中（时长不是 30）时也不能留下计费秒数，
+// 否则后续若因比例规则改派，会带着一个错的秒数去算钱。
+func TestSeedanceRouteNoBillingSecondsWhenSecondsRuleMisses(t *testing.T) {
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":"12","prompt":"a cat"}`)
+	if rec.hasBillingSec {
+		t.Fatalf("未命中时长规则却记录了计费秒数 %v", rec.billingSeconds)
+	}
 }
 
 func TestSeedanceRouteDisabledKeepsBodyByteIdentical(t *testing.T) {

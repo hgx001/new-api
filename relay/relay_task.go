@@ -144,9 +144,9 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
 	info.InitChannelMeta(c)
 
-	// 记录条件路由改派前的源模型名：**只用于日志展示**，计费仍走
-	// info.OriginModelName（= 改派后的目标模型），否则 30 秒 → 豆包按次
-	// ¥3.00 会被算成源模型的 ¥0.20/秒。详见 constant.ContextKeyRouteOriginModel。
+	// 记录条件路由改派前的源模型名：**计费与展示都以它为优先**。
+	// 客户请求哪个模型就按哪个模型收费（老板 2026-10-30 定稿），改派只是内部调度。
+	// 详见 constant.ContextKeyRouteOriginModel 与 RelayInfo.BillingModelName。
 	info.RouteOriginModel = common.GetContextKeyString(c, constant.ContextKeyRouteOriginModel)
 
 	// 1. 确定 platform → 创建适配器 → 验证请求
@@ -198,6 +198,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
+	// 5.5 改派过：补上「源模型口径的计费秒数」
+	//
+	// 计费已按客户请求的源模型算，而源模型（seedance2.5-特惠）是按秒计价的。
+	// 改派到豆包后 adaptor 换成 manwu，它对按次模型返回 nil 倍率 —— 没有 seconds，
+	// 30 秒的请求会只按 1 秒收钱（¥0.20 而不是 ¥6.00）。
+	applyRouteBillingSeconds(c, info)
+
 	// 6. 将 OtherRatios 应用到基础额度
 	//
 	// 必须先把所有倍率乘完再取整，不能边遍历边 int()：OtherRatios 是 map，
@@ -208,7 +215,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	//   seconds 先 → int(19178*5)=95990 → *0.30/0.28 = 102739
 	// 同一请求 3 次里出现了 102739、102739、102735 两个值，且每级截断误差会累积。
 	// service/task_billing.go 与 service/text_quota.go 都是单次累乘后取整，与此保持一致。
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+	if !common.StringsContains(constant.TaskPricePatches, info.BillingModelName()) {
 		info.PriceData.Quota = applyTaskOtherRatios(info.PriceData.Quota, info.PriceData.OtherRatios)
 	}
 
@@ -870,6 +877,30 @@ func replaceOpenAIVideoModel(raw []byte, publicModel string) []byte {
 		return raw
 	}
 	return encoded
+}
+
+// applyRouteBillingSeconds 给改派过的请求补上「源模型口径的计费秒数」。
+//
+// 为什么需要：计费按**客户请求的源模型**算（见 RelayInfo.BillingModelName），
+// 源模型按秒计价。而改派到豆包后 adaptor 换成 manwu，它对按次模型返回 nil 倍率 ——
+// 没有 seconds，30 秒的请求会只按 1 秒收钱（¥0.20 而不是 ¥6.00）。
+//
+// 秒数由路由中间件在判定命中时记进 context（就是它用来判定的那个值），
+// 这里只在 adaptor **没给** seconds 时补：
+//   - 比例规则（9:16 → wan3）的 adaptor 本来就会给 seconds，不会被覆盖
+//   - 未改派时直接跳过，非路由请求零影响
+func applyRouteBillingSeconds(c *gin.Context, info *relaycommon.RelayInfo) {
+	if info == nil || info.RouteOriginModel == "" {
+		return
+	}
+	if _, hasSeconds := info.PriceData.OtherRatios["seconds"]; hasSeconds {
+		return
+	}
+	seconds, ok := common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSeconds)
+	if !ok || seconds <= 0 {
+		return
+	}
+	info.PriceData.AddOtherRatio("seconds", seconds)
 }
 
 // applyTaskOtherRatios 把时长/分辨率等附加倍率乘到任务预扣额度上。
