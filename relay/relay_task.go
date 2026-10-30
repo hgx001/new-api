@@ -523,7 +523,9 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		"metadata": nil,
 		"status":   mapTaskStatusToSimple(task.Status),
 		"task_id":  task.TaskID,
-		"url":      task.GetResultURL(),
+		// url 走对外口径：GetResultURL() 在没有产物时会回退到 FailReason 原文，
+		// 那是失败原因不是下载地址，原样给下游等于换个字段报出真实上游。
+		"url": publicResultURL(task, task.GetResultURL()),
 	}
 	respBody, _ := common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
@@ -574,9 +576,10 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 // TaskModel2Dto 面向下游客户端：别名模型必须遮住真实上游。
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	out := buildTaskDto(task)
-	// 失败文案里的上游地址对所有模型一律摘掉：地址是最硬的渠道证据，
-	// 客户拿到就能直接访问上游。身份字样（aliyun/wan3）仍只对别名模型替换。
-	out.FailReason = model.RedactUpstreamAddress(out.FailReason)
+	// 文案脱敏对**所有模型**生效（老板口径：有渠道的直接说「上游」）：
+	// 地址一律摘掉，供应商词（youzan / aliyun / dashscope …）一律换成「上游」。
+	// 上游模型名只在别名模型下替换 —— 非别名模型提到客户自己买的模型名是正常的。
+	out.FailReason = model.RedactUpstreamText(out.FailReason, task.PublicModelName())
 	redactAliasTaskUpstream(out, task)
 	// 模型名单独兜一层，不受别名白名单约束：条件路由改派过就必须换回源模型名，
 	// 哪怕目标模型不是别名（规则一 → seedance-2-5 就不在白名单里）。
@@ -596,7 +599,38 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	if taskcommon.IsResultURLProxyMarker(out.ResultURL) {
 		out.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 	}
+	// result_url 兜底脱敏：GetResultURL() 在没有产物时会**回退到 FailReason 原文**，
+	// 而 FailReason 里带的是上游原文（"youzan wan3 rejected ... https://…"）。
+	// 那是失败原因，不是下载地址 —— 换个字段继续报出真实上游等于没脱敏。
+	//
+	// 成功任务的 result_url 是**交付地址**，不能动：客户要拿它下载成片，
+	// 摘了等于交付失败（非别名模型的直链切不切本站代理，见 pending 决策）。
+	out.ResultURL = publicResultURL(task, out.ResultURL)
 	return out
+}
+
+// publicResultURL 计算对外可见的成片地址。
+//
+// 分状态处理：
+//
+//   - 成功：原样保留。result_url 是客户下载成片的地址，摘掉等于交付失败。
+//     （别名模型的地址在 redactAliasTaskUpstream 里已改成本站 /content 代理，
+//     天然不含上游域名。）
+//   - 非成功：**置空**。GetResultURL() 在没有产物时会回退到 FailReason 原文，
+//     那是失败原因不是下载地址，留着等于换个字段继续报出真实上游
+//     （"youzan wan3 rejected ... https://dashscope-result.oss-*.aliyuncs.com/…"）。
+//     失败原因由 fail_reason 字段承载，那边已经脱敏过。
+//
+// 口径与别名模型一致（redactAliasTaskUpstream 对非成功任务也是置空），
+// 避免出现「别名模型藏了、非别名模型没藏」的差别待遇。
+func publicResultURL(task *model.Task, current string) string {
+	if task == nil {
+		return current
+	}
+	if task.Status == model.TaskStatusSuccess {
+		return current
+	}
+	return ""
 }
 
 // TaskModel2DtoForAdmin 面向管理员界面：保留上游原文，方便排查真实货源。
@@ -671,6 +705,7 @@ func redactAliasTaskUpstream(out *dto.TaskDto, task *model.Task) {
 	//   - 未完成 / 失败任务：置空。GetResultURL() 在没有产物时会回退到 FailReason，
 	//     而失败文案里带的是上游原文（"model aliyun:wan-3.0 ..."）—— 留在
 	//     「下载地址」字段里等于换个字段继续报出真实上游。失败原因由 fail_reason 承载。
+	//     （非别名模型走 TaskModel2Dto 里的 publicResultURL，同样置空。）
 	if task.Status == model.TaskStatusSuccess && out.ResultURL != "" && task.TaskID != "" {
 		out.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 	} else if task.Status != model.TaskStatusSuccess {
@@ -756,12 +791,16 @@ func redactAliasOpenAIVideo(task *model.Task, raw []byte) []byte {
 	// billing_amount）会原样返回给客户端 —— 客户用 OpenAI SDK 一眼就看到。
 	origin := task.PublicModelName()
 	if !model.IsUpstreamAliasModel(origin) {
-		// 非别名模型：只换模型名，别的不动。
+		// 非别名模型：换模型名 + 脱敏错误文案，别的不动。
 		//
 		// 为什么要单独处理：客户调 seedance2.5-特惠 被改派到 seedance-2-5 时，
 		// 源模型是别名（走重建分支）；但反过来 —— 客户直接调一个**非别名**模型、
 		// 而它恰好是改派目标时，Properties.OriginModelName 就是目标模型名，
 		// 直接返回会把改派说出去。
+		//
+		// 错误文案也要脱敏：各 adaptor 的 ConvertToOpenAIVideo 会把上游原文塞进
+		// error.message（"youzan wan3 rejected ... https://dashscope-result.oss-*.aliyuncs.com"），
+		// 那是上游渠道痕迹，对客户一律说「上游」。
 		return replaceOpenAIVideoModel(raw, origin)
 	}
 	video := task.ToOpenAIVideo()
@@ -791,11 +830,16 @@ func redactAliasOpenAIVideo(task *model.Task, raw []byte) []byte {
 	return encoded
 }
 
-// replaceOpenAIVideoModel 只把响应体里的 model 字段换成对外模型名，其余逐字保留。
+// replaceOpenAIVideoModel 只把响应体里的 model 字段换成对外模型名，
+// 并对错误文案做脱敏，其余逐字保留。
 //
 // 为什么需要它：非别名模型的 ConvertToOpenAIVideo 返回的是上游原始回执，
 // 不能整体重建（会丢掉客户端需要的字段），但其中的 "model" 字段在条件路由
 // 改派过时是**目标模型名** —— 直接返回等于告诉客户「你调 A、实际跑 B」。
+//
+// 为什么还要脱敏 error.message：各 adaptor 都会把上游失败原文塞进 error.message
+//（"youzan wan3 rejected ... https://dashscope-result.oss-*.aliyuncs.com"）。
+// 那是渠道痕迹，对客户一律说「上游」（老板口径 2026-10-30）。
 //
 // 解析失败就原样返回：绝不能因为脱敏把下游的响应体搞坏。
 func replaceOpenAIVideoModel(raw []byte, publicModel string) []byte {
@@ -806,10 +850,21 @@ func replaceOpenAIVideoModel(raw []byte, publicModel string) []byte {
 	if err := common.Unmarshal(raw, &video); err != nil {
 		return raw
 	}
-	if video.Model == publicModel {
+	changed := false
+	if video.Model != publicModel {
+		video.Model = publicModel
+		changed = true
+	}
+	if video.Error != nil && video.Error.Message != "" {
+		redacted := model.RedactUpstreamText(video.Error.Message, publicModel)
+		if redacted != video.Error.Message {
+			video.Error.Message = redacted
+			changed = true
+		}
+	}
+	if !changed {
 		return raw
 	}
-	video.Model = publicModel
 	encoded, err := common.Marshal(video)
 	if err != nil {
 		return raw

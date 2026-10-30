@@ -139,6 +139,30 @@ func TestRedactUpstreamText_非别名模型也摘渠道痕迹但保留模型名(
 	assert.Equal(t, "", RedactUpstreamText("", "seedance2.5-特惠"))
 }
 
+// 地址后面的标点不能被一起吞掉 —— 否则文案破相。
+//
+// 整段替换会把 "错误 (https://x.com/a.mp4)" 变成 "错误 ([地址已隐藏]"：
+// 括号不配对，客户看着像系统故障。标点要摘掉地址后原样留下。
+func TestRedactUpstreamAddress_保留尾部标点(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"括号包裹", "错误 (https://x.com/a.mp4)", "错误 ([地址已隐藏])"},
+		{"句末句号", "详见 https://x.com/a.mp4。", "详见 [地址已隐藏]。"},
+		{"逗号结尾", "地址 https://x.com/a.mp4, 请重试", "地址 [地址已隐藏], 请重试"},
+		{"问号结尾", "https://x.com/a.mp4?", "[地址已隐藏]?"},
+		{"右括号", "(https://x.com/a)", "([地址已隐藏])"},
+		{"无标点", "https://x.com/a", "[地址已隐藏]"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, RedactUpstreamAddress(c.raw))
+		})
+	}
+}
+
 func TestFormatUserLogs_错误日志对普通用户隐藏渠道名与上游字样(t *testing.T) {
 	logs := []*Log{
 		{

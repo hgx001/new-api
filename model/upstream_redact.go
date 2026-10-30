@@ -110,6 +110,18 @@ var upstreamModelPatterns = []*regexp.Regexp{
 // 下游文案里要**整个摘掉**（见 RedactUpstreamAddress）。
 var upstreamURLPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>\\]+`)
 
+// upstreamURLTrailingPunctuation 是地址末尾**不属于地址本身**的标点。
+//
+// 地址常常被写在括号里或句末：
+//
+//	"错误 (https://x.com/a.mp4)"、"详见 https://x.com/a.mp4。"
+//
+// 整段替换成 "[地址已隐藏]" 会把括号/句号一起吞掉，剩下 "([地址已隐藏]" ——
+// 括号不配对、文案破相，客户看着像系统故障。所以这些标点要**摘掉地址后原样留下**。
+const upstreamURLTrailingPunctuation = ".,;:!?)]}>\"'，。；：！？、）】》」』"
+
+var upstreamURLPunctuationPattern = regexp.MustCompile(`[` + regexp.QuoteMeta(upstreamURLTrailingPunctuation) + `]+$`)
+
 // upstreamURLPlaceholder 是被摘掉的上游地址的占位符。
 const upstreamURLPlaceholder = "[地址已隐藏]"
 
@@ -175,11 +187,21 @@ func RedactUpstreamIdentity(content string, modelName string) string {
 //
 // 为什么地址要单独提出来：地址是最硬的渠道证据 —— 客户拿到就能直接访问上游，
 // 甚至绕过我们。地址没有任何「客户需要留着」的理由，所以对所有模型一律摘。
+//
+// 尾部标点保留：地址后面的 ")" / "。" 不属于地址，摘地址时一并吞掉会让文案破相
+// （"([地址已隐藏]" 括号不配对）。
 func RedactUpstreamAddress(content string) string {
 	if content == "" {
 		return content
 	}
-	return upstreamURLPattern.ReplaceAllString(content, upstreamURLPlaceholder)
+	return upstreamURLPattern.ReplaceAllStringFunc(content, func(raw string) string {
+		// 把地址末尾的标点摘出来，替换后原样接回去
+		trimmed := upstreamURLPunctuationPattern.FindString(raw)
+		if trimmed == "" {
+			return upstreamURLPlaceholder
+		}
+		return upstreamURLPlaceholder + trimmed
+	})
 }
 
 // RedactUpstreamText 是下游文案脱敏的统一入口：

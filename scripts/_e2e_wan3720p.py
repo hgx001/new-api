@@ -1,4 +1,4 @@
-"""wan3.0-720p-官网 两跳链路真机验证（2026-10-30）。
+"""wan3.0-720p-特惠 两跳链路真机验证（2026-10-30）。
 
 老板授权「跑一条 2 秒」。
 
@@ -8,10 +8,10 @@
      否则用户付 480P 的钱却生成 720P，两跳形同虚设）
   3. 第二跳（MPS 2 倍提升）跑完，产物真的是 **720P**
   4. 交付地址能下到文件，且下到的确实是 720P
-  5. 扣费 = ¥0.25/秒 × 2 秒 = ¥0.50
+  5. 扣费 = ¥0.20/秒 × 2 秒 = ¥0.40
   6. 对外文案不暴露内部实现（超分/腾讯云/MPS/COS）
 
-成本：2 秒 × ¥0.25/秒 = ¥0.50 + 腾讯云提升费约 ¥0.013。
+成本：2 秒 × ¥0.20/秒 = ¥0.40 + 腾讯云提升费约 ¥0.013。
 
 用法：python scripts/_e2e_wan3720p.py
 """
@@ -27,7 +27,7 @@ import urllib.request
 SSH = ["ssh", "-p", "877", "ubuntu@119.29.253.97"]
 PG = "docker exec postgres psql -U root -d new-api -t -A"
 HOST = "https://api.heibaidao.cn"
-MODEL = "wan3.0-720p-官网"
+MODEL = "wan3.0-720p-特惠"
 
 ASSET_DIR = tempfile.mkdtemp(prefix="w3720p_")
 OUT_MP4 = os.path.join(ASSET_DIR, "out.mp4")
@@ -56,7 +56,7 @@ def request(method, path, token, body=None, timeout=120):
 
 
 def admin_token():
-    """只用管理员自己的令牌：测试产生的 ¥0.50 记在自己账上，不动客户余额。"""
+    """只用管理员自己的令牌：测试产生的 ¥0.40 记在自己账上，不动客户余额。"""
     row = sql("SELECT t.user_id || ' ' || t.key FROM tokens t "
               "JOIN users u ON u.id=t.user_id "
               "WHERE t.status=1 AND u.role>=10 AND u.deleted_at IS NULL "
@@ -173,11 +173,11 @@ def main():
     elif pp.get("stage") == "failed":
         failures.append(f"第二跳失败（回落到 480P 原片）：{pp.get('error')}")
 
-    # 计费：2 秒 × ¥0.25/秒 = ¥0.50
+    # 计费：2 秒 × ¥0.20/秒 = ¥0.40
     cny = int(quota) / 500000 * 7.3
-    print(f"[billing] quota={quota} → ¥{cny:.4f}（期望 ¥0.50 = 2s × ¥0.25）")
-    if not (0.48 <= cny <= 0.52):
-        failures.append(f"计费不是 ¥0.50：实际 ¥{cny:.4f}")
+    print(f"[billing] quota={quota} → ¥{cny:.4f}（期望 ¥0.40 = 2s × ¥0.20）")
+    if not (0.38 <= cny <= 0.42):
+        failures.append(f"计费不是 ¥0.40：实际 ¥{cny:.4f}")
 
     # ---- 成片取证 ----
     if result_url:

@@ -44,7 +44,9 @@ func TestTaskModel2DtoCarriesTextResultAndProxyURL(t *testing.T) {
 // ResultURL 的实际取值走 GetResultURL（PrivateData 优先、FailReason 兜底旧数据），
 // DTO 必须用同一个函数而不是直读字段，否则历史任务的产物地址会丢。
 func TestTaskModel2DtoUsesGetResultURLNotRawField(t *testing.T) {
-	task := &model.Task{TaskID: "task_old"}
+	// 成功任务才对外给成片地址 —— 非成功任务 GetResultURL() 会回退到 FailReason，
+	// 那是失败原因不是下载地址，对外一律置空（见 publicResultURL）。
+	task := &model.Task{TaskID: "task_old", Status: model.TaskStatusSuccess}
 	task.PrivateData.ResultURL = ""
 
 	// 旧任务没有 ResultURL，FailReason 里存着地址
@@ -55,6 +57,25 @@ func TestTaskModel2DtoUsesGetResultURLNotRawField(t *testing.T) {
 	// 两者都有时以 ResultURL 为准
 	task.PrivateData.ResultURL = "/v1/videos/task_old/content"
 	assert.Equal(t, "/v1/videos/task_old/content", TaskModel2Dto(task).ResultURL)
+}
+
+// 非成功任务的 result_url 必须置空：GetResultURL() 在没有产物时会回退到
+// FailReason 原文，而那是上游失败文案（带供应商词和上游地址）——
+// 留在「下载地址」字段里等于换个字段继续报出真实上游。
+func TestTaskModel2Dto非成功任务不外泄resultURL(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_failed_leak",
+		Status:     model.TaskStatusFailure,
+		FailReason: "youzan wan3 rejected the request (https://dashscope-result.oss-cn-beijing.aliyuncs.com/xx.mp4)",
+		Properties: model.Properties{OriginModelName: "gpt-4o"},
+	}
+
+	out := TaskModel2Dto(task)
+	assert.Empty(t, out.ResultURL, "失败任务的 result_url 不给客户")
+	// 失败原因由 fail_reason 承载，那边已经脱敏
+	assert.NotContains(t, out.FailReason, "youzan", "供应商词要换成「上游」")
+	assert.NotContains(t, out.FailReason, "aliyuncs.com", "上游地址要摘掉")
+	assert.Contains(t, out.FailReason, "上游", "对客户统一说「上游」")
 }
 
 // 对外状态取值是客户端轮询时看到的契约：SUCCESS/failed 必须明确区分，
@@ -188,8 +209,12 @@ func TestTaskModel2Dto非别名模型只摘渠道痕迹(t *testing.T) {
 	require.True(t, ok)
 	// 上游模型名换回对外模型名（这里是同一个名字，字段结构不变）
 	assert.Equal(t, "wan-3.0", props.UpstreamModelName)
-	// 非别名模型不替换身份字样：那是客户自己买的模型，遮了只会看不懂
-	assert.Contains(t, out.FailReason, "aliyun")
+	// 供应商词对**所有模型**都换成「上游」（老板口径 2026-10-30）：
+	// 上游报错里点名货源跟客户买的是哪个模型无关。
+	assert.NotContains(t, out.FailReason, "aliyun", "供应商词要换成「上游」")
+	assert.Contains(t, out.FailReason, "上游", "对客户统一说「上游」")
+	// 但客户自己买的模型名要留着（wan-3.0），遮了只会看不懂
+	assert.Contains(t, out.FailReason, "wan-3.0", "客户自己买的模型名保留")
 
 	// 渠道痕迹一律清掉
 	assert.Equal(t, 0, out.ChannelId, "渠道 ID 不给客户")
@@ -524,4 +549,64 @@ func TestRedactAliasOpenAIVideo非别名模型只换模型名(t *testing.T) {
 	assert.Equal(t, "seedance2.5-特惠", video.Model, "model 要换回源模型")
 	assert.Equal(t, "task_x", video.ID, "其它字段保留")
 	assert.NotEmpty(t, video.Status, "状态保留（dto 内部会规范化成 in_progress）")
+}
+
+// 非别名模型的 OpenAI Video 响应：错误文案里的渠道痕迹也要摘掉。
+//
+// 为什么单独钉：各 adaptor 的 ConvertToOpenAIVideo 会把上游失败原文塞进
+// error.message（"youzan wan3 rejected ... https://dashscope-result.oss-*.aliyuncs.com"）。
+// 上一轮只换了 model 字段，error.message 原样漏出 —— 客户一眼看到上游是谁。
+func TestRedactAliasOpenAIVideo非别名模型也脱敏错误文案(t *testing.T) {
+	raw := []byte(`{"id":"task_y","model":"gpt-4o","status":"failed","error":{"message":"youzan wan3 rejected the request: 积分不足 (https://dashscope-result.oss-cn-beijing.aliyuncs.com/xx.mp4)","code":"upstream_error"}}`)
+	task := &model.Task{
+		TaskID: "task_y",
+		Status: model.TaskStatusFailure,
+		Properties: model.Properties{
+			OriginModelName: "gpt-4o",
+		},
+	}
+
+	out := redactAliasOpenAIVideo(task, raw)
+	body := string(out)
+
+	assert.NotContains(t, body, "youzan", "供应商词要换成「上游」")
+	assert.NotContains(t, body, "aliyuncs.com", "上游地址要摘掉")
+	assert.Contains(t, body, "上游", "对客户统一说「上游」")
+	// 业务信息不能被抹掉，客户要知道为什么失败
+	assert.Contains(t, body, "积分不足", "失败原因要保留")
+	assert.Contains(t, body, "upstream_error", "错误码要保留")
+}
+
+// 序列化级断言：非别名模型的失败任务，整个响应体里不能出现任何渠道痕迹。
+func TestTaskModel2Dto非别名模型序列化后不含渠道痕迹(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_non_alias_leak",
+		ChannelId:  17,
+		Platform:   "63", // 有赞 Wan3 的渠道类型编号
+		Status:     model.TaskStatusFailure,
+		FailReason: "youzan wan3 rejected the request: 积分不足 (https://dashscope-result.oss-cn-beijing.aliyuncs.com/xx.mp4)",
+		Properties: model.Properties{
+			UpstreamModelName: "wan-3.0",
+			OriginModelName:   "gpt-4o",
+		},
+		Data: json.RawMessage(`{"billing_amount":1.8,"sourceUrl":"https://dashscope-result.oss-cn-beijing.aliyuncs.com/xx.mp4"}`),
+	}
+
+	body, err := json.Marshal(TaskModel2Dto(task))
+	require.NoError(t, err)
+
+	for _, banned := range []string{
+		"youzan",
+		"有赞",
+		"aliyun",
+		"aliyuncs.com",
+		"dashscope",
+		"billing_amount",
+		"sourceUrl",
+		"\"channel_id\":17",
+		"\"platform\":\"63\"",
+	} {
+		assert.NotContains(t, string(body), banned, "对外响应体不能出现渠道痕迹")
+	}
+	assert.Contains(t, string(body), "上游", "对客户统一说「上游」")
 }
