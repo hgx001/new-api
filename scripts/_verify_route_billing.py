@@ -133,27 +133,34 @@ def main():
     check("content 里带 seconds: 30", "seconds: 30" in content, f"got {content!r}")
 
     # ---------- 客户侧出口：日志接口 ----------
-    code, text = request("GET", "/api/log/self?p=0&page_size=5", token)
+    # ⚠️ /api/log/self 认的是**网页会话**（JWT），不认 API key。用 API key 调会拿到
+    # {"success":false,"message":"Unauthorized, invalid access token"}，
+    # 早期版本把它当成「可能有延迟」放过去了 —— 假阳性。这里显式区分。
+    code, text = request("GET", "/api/log/self?p=0&page_size=30", token)
     if code == 200:
         data = json.loads(text)
-        items = data.get("data") or []
-        if isinstance(items, dict):
-            items = items.get("items") or []
-        hit = None
-        for item in items:
-            if str(item.get("model_name")) == MODEL and int(item.get("quota") or 0) == quota:
-                hit = item
-                break
-        if hit:
-            blob = json.dumps(hit, ensure_ascii=False)
-            check("客户侧日志 model_name 是源模型", hit.get("model_name") == MODEL,
-                  f"got {hit.get('model_name')!r}")
-            check("客户侧看不到 route_target_model", "route_target_model" not in blob)
-            check("客户侧看不到 channel_name", not hit.get("channel_name"))
-            for banned in ("seedance-2-5", "doubao", "豆包", "manwu", "漫屋"):
-                check(f"客户侧不出现 {banned}", banned.lower() not in blob.lower())
+        if not data.get("success", True):
+            print(f"[skip] 日志接口需要网页会话，API key 无权：{data.get('message')}")
+            print("       客户侧视图由 model/log_test.go 的 formatUserLogs 用例覆盖")
         else:
-            print("[warn] 日志接口前 5 条里没找到本次记录（可能有延迟），跳过客户侧断言")
+            items = data.get("data") or []
+            if isinstance(items, dict):
+                items = items.get("items") or []
+            hit = None
+            for item in items:
+                if str(item.get("model_name")) == MODEL and int(item.get("quota") or 0) == quota:
+                    hit = item
+                    break
+            if hit:
+                blob = json.dumps(hit, ensure_ascii=False)
+                check("客户侧日志 model_name 是源模型", hit.get("model_name") == MODEL,
+                      f"got {hit.get('model_name')!r}")
+                check("客户侧看不到 route_target_model", "route_target_model" not in blob)
+                check("客户侧看不到 channel_name", not hit.get("channel_name"))
+                for banned in ("seedance-2-5", "doubao", "豆包", "manwu", "漫屋"):
+                    check(f"客户侧不出现 {banned}", banned.lower() not in blob.lower())
+            else:
+                print("[warn] 日志接口前 30 条里没找到本次记录，跳过客户侧断言")
     else:
         print(f"[warn] 日志接口 HTTP {code}: {text[:160]}")
 
