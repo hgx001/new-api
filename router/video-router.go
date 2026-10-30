@@ -18,7 +18,11 @@ func SetVideoRouter(router *gin.Engine) {
 
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
-	videoV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
+	// ⚠️ Seedance25TeHuiRoute30s **必须早于 Distribute()**：
+	// 渠道是在 Distribute 里读 body 的 model 字段选定的，条件路由靠改写 body
+	// 来改派模型（见 middleware/seedance_route.go 的说明）。
+	// 它内部对任何不确定的情况都「放弃路由」，不会挡客户的请求。
+	videoV1Router.Use(middleware.TokenAuth(), middleware.Seedance25TeHuiRoute30s(), middleware.Distribute())
 	{
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
