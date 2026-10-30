@@ -129,6 +129,7 @@ var userLogDroppedOtherKeys = []string{
 	"route_target_model",  // 条件路由改派的目标模型
 	"admin_info",          // 管理员排障信息（含 use_channel 候选链）
 	"audit_info",          // 操作审计（含 operator/route 信息）
+	"reason",              // 内部结算原因（如 "MegaAI 渠道 wan-3.0 上游实扣…"）
 }
 
 func formatUserLogs(logs []*Log, startIdx int) {
@@ -147,15 +148,19 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
 		}
-		if logs[i].Type == LogTypeError {
-			// 错误正文里的上游地址**对所有模型**一律摘掉：地址是最硬的渠道证据，
-			// 客户拿到就能直接访问上游。身份字样（aliyun / wan3）只对别名模型替换 ——
-			// 非别名模型报错里提到客户自己买的模型名是正常的。
-			// ModelName 已经是用户请求的源模型（条件路由改派时见 taskLogModelName），
-			// 所以这里的白名单判断天然按源模型口径走。
-			logs[i].Content = RedactUpstreamText(logs[i].Content, logs[i].ModelName)
-			logs[i].Content = RedactUpstreamAddress(logs[i].Content)
-		}
+		// 正文脱敏：**所有日志类型**都要做，不只是错误日志。
+		//
+		// 为什么：退款日志（type=6）的正文是内部成本核算说明，
+		// 里面写着"MegaAI 渠道 wan-3.0 30 秒 720p（上游 task_id=…）"——
+		// 那是运营手写的结算备注，客户在日志页一眼就能看到真实货源。
+		// 消费日志（type=2）同理（"操作 generate, 计算参数：seconds: 12.00"
+		// 这种还好，但历史上有过带渠道名的备注）。
+		//
+		// 口径：地址一律摘、供应商词一律换成「上游」（所有模型）；
+		// 上游模型名只在别名模型下替换 —— 非别名模型提到客户自己买的模型名是正常的。
+		// ModelName 已经是用户请求的源模型（条件路由改派时见 taskLogModelName），
+		// 所以这里的白名单判断天然按源模型口径走。
+		logs[i].Content = RedactUpstreamText(logs[i].Content, logs[i].ModelName)
 		logs[i].Other = common.MapToJsonStr(otherMap)
 	}
 	assignDisplayLogIds(logs, startIdx)
@@ -591,6 +596,18 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 const logSearchCountLimit = 10000
 
+// operatorCostLedgerTokenName 是运营内部成本台账的令牌名标记。
+//
+// 这类记录由运营手工写库（scripts/prod-log-*.sql），正文是内部核算明细，
+// 含上游任务号、上游内部 ID、上游成本与渠道名 —— 客户侧一律不给。
+const operatorCostLedgerTokenName = "OPERATOR-COST-ACCOUNTING"
+
+// operatorCostLedgerContentPrefix 是运营内部成本台账的正文前缀标记。
+//
+// 有些台账是跟着退款日志（type=6）一起写的，token_name 是正常的（auto / 1），
+// 只能靠正文前缀识别。
+const operatorCostLedgerContentPrefix = "OPERATOR-COST-ACCOUNTING"
+
 func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
@@ -598,6 +615,26 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	} else {
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
 	}
+
+	// 运营内部台账不给客户看。
+	//
+	// 为什么不能靠脱敏解决：这些记录是运营用 SQL 手写的成本核算台账，
+	// 正文是自由文本（"OPERATOR-COST-ACCOUNTING 用户明确允许的真实任务测试：
+	// MegaAI 渠道 wan-3.0 30 秒 720p（本站 task_xxx / 上游 task_id=xxx /
+	// 上游内部 vid_xxx）…billing_amount=1.8 CNY…"），
+	// 里面塞着上游任务号、上游内部 ID、上游成本与渠道名 ——
+	// 词表遮不干净（上游 task_id 是 UUID，规则里没有对应模式）。
+	//
+	// 两种形态都要拦：
+	//   · token_name = OPERATOR-COST-ACCOUNTING（运营用 SQL 写的台账）
+	//   · 正文以 OPERATOR-COST-ACCOUNTING 开头（跟着退款日志一起写的备注）
+	//
+	// 为什么能直接滤掉：这是**运营自己的记账**，客户看到没有任何意义，
+	// 客户侧的退款留痕（type=6 的退款日志）已经单独记着。
+	//
+	// 管理员走 GetAllLogs，不经过这里，排障时仍能看到全部原文。
+	tx = tx.Where("logs.token_name <> ?", operatorCostLedgerTokenName)
+	tx = tx.Where("logs.content NOT LIKE ?", operatorCostLedgerContentPrefix+"%")
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
 		return nil, 0, err

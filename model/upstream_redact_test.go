@@ -199,8 +199,13 @@ func TestFormatUserLogs_错误日志对普通用户隐藏渠道名与上游字�
 	assert.Contains(t, logs[1].Content, "wan-3.0")
 	assert.NotContains(t, logs[1].Other, "channel_name")
 
-	// 非错误日志：正文不在脱敏范围（消费日志只记参数，没有上游原文）
-	assert.Equal(t, "aliyun:wan-3.0", logs[2].Content)
+	// 非错误日志的正文**也要脱敏**（2026-10-30 老板定：有渠道的一律说「上游」）。
+	//
+	// 为什么扩到所有类型：真实库里退款日志（type=6）的正文是运营手写的
+	// 成本核算备注（"MegaAI 渠道 wan-3.0 30 秒 720p…"），消费日志（type=2）
+	// 也出现过带渠道名的备注 —— 只脱敏错误日志会漏。
+	assert.NotContains(t, logs[2].Content, "aliyun", "消费日志正文同样要换供应商词")
+	assert.Contains(t, logs[2].Content, "上游")
 }
 
 // 别名模型的错误日志正文里不能出现上游地址：上游站点域名（R2 域名 / 渠道域名）
@@ -270,7 +275,10 @@ func TestFormatUserLogs_别名模型的任务日志不暴露上游模型名(t *t
 
 	assert.NotContains(t, logs[0].Other, "upstream_model_name")
 	assert.NotContains(t, logs[0].Other, "is_model_mapped")
-	assert.Contains(t, logs[0].Other, "素材无法下载", "失败原因本身要保留")
+	// other["reason"] 是内部结算原因（"第 1 个 image 素材：素材无法下载，HTTP 404"），
+	// 客户侧一律不给 —— 它是运营/系统的记账备注，不是客户需要的失败原因
+	// （客户需要的失败原因在任务的 fail_reason 里，那边已经脱敏过）。
+	assert.NotContains(t, logs[0].Other, "reason", "内部结算原因不给客户")
 }
 
 // 条件路由改派过的任务：日志的 model_name 已经是用户请求的源模型，
