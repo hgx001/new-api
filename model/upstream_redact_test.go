@@ -275,10 +275,33 @@ func TestFormatUserLogs_别名模型的任务日志不暴露上游模型名(t *t
 
 	assert.NotContains(t, logs[0].Other, "upstream_model_name")
 	assert.NotContains(t, logs[0].Other, "is_model_mapped")
-	// other["reason"] 是内部结算原因（"第 1 个 image 素材：素材无法下载，HTTP 404"），
-	// 客户侧一律不给 —— 它是运营/系统的记账备注，不是客户需要的失败原因
-	// （客户需要的失败原因在任务的 fail_reason 里，那边已经脱敏过）。
-	assert.NotContains(t, logs[0].Other, "reason", "内部结算原因不给客户")
+	// other["reason"] 要**保留**（客户得知道为什么失败），但内容要脱敏。
+	//
+	// 真实库里的 reason 是 "生成结果疑似包含真人面部，未通过内容安全审核…" ——
+	// 客户被扣了钱又被退款，一刀切删掉等于让他对着空记录猜。
+	assert.Contains(t, logs[0].Other, "素材无法下载", "失败原因本身要保留，客户要看得懂")
+}
+
+// other["reason"] 保留但脱敏：失败原因要给客户看懂，上游痕迹要洗掉。
+//
+// 真实风险：有些 reason 是上游原文转述（"youzan wan3 rejected: 积分不足"），
+// 直接保留会把货源写进客户的退款记录里。
+func TestFormatUserLogs_reason保留但脱敏(t *testing.T) {
+	logs := []*Log{
+		{
+			Type:      LogTypeRefund,
+			ModelName: "seedance2.5-特惠",
+			Other:     `{"reason":"youzan wan3 rejected the request: 积分不足 (https://dashscope-result.oss-cn-beijing.aliyuncs.com/x.mp4)","task_id":"task_x"}`,
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	assert.Contains(t, logs[0].Other, "reason", "reason 字段要保留")
+	assert.Contains(t, logs[0].Other, "积分不足", "失败原因本身要保留")
+	assert.NotContains(t, logs[0].Other, "youzan", "供应商词要换成「上游」")
+	assert.NotContains(t, logs[0].Other, "aliyuncs.com", "上游地址要摘掉")
+	assert.Contains(t, logs[0].Other, "上游")
 }
 
 // 条件路由改派过的任务：日志的 model_name 已经是用户请求的源模型，

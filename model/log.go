@@ -129,7 +129,18 @@ var userLogDroppedOtherKeys = []string{
 	"route_target_model",  // 条件路由改派的目标模型
 	"admin_info",          // 管理员排障信息（含 use_channel 候选链）
 	"audit_info",          // 操作审计（含 operator/route 信息）
-	"reason",              // 内部结算原因（如 "MegaAI 渠道 wan-3.0 上游实扣…"）
+}
+
+// userLogRedactedOtherKeys 是客户日志里要**脱敏但保留**的 other 字段。
+//
+// 为什么不删：这些字段承载客户必须知道的信息。
+// 真实库里退款日志的 other["reason"] 是
+// "生成结果疑似包含真人面部，未通过内容安全审核，请更换或风格化相关素材后重试" ——
+// 客户被扣了钱又被退款，得知道为什么；一刀切删掉等于让他对着一条空记录猜。
+//
+// 但里面的上游痕迹要洗掉（万一 reason 里带了渠道名/上游地址）。
+var userLogRedactedOtherKeys = []string{
+	"reason", // 退款/差额结算原因
 }
 
 func formatUserLogs(logs []*Log, startIdx int) {
@@ -147,6 +158,12 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			}
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
+			// 保留但脱敏：客户需要看懂发生了什么，只是不能看出货源。
+			for _, key := range userLogRedactedOtherKeys {
+				if raw, ok := otherMap[key].(string); ok && raw != "" {
+					otherMap[key] = RedactUpstreamText(raw, logs[i].ModelName)
+				}
+			}
 		}
 		// 正文脱敏：**所有日志类型**都要做，不只是错误日志。
 		//
