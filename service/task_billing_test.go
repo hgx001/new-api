@@ -720,3 +720,22 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
+
+// taskLogModelName 只影响日志展示：改派过时返回用户请求的源模型，
+// 计费仍走 taskModelName（= 实际执行的目标模型）。
+func TestTaskLogModelName_条件路由改派(t *testing.T) {
+	routed := &model.Task{
+		Properties: model.Properties{OriginModelName: "wan3.0-720p-特惠"},
+		PrivateData: model.TaskPrivateData{
+			RouteOriginModel: "seedance2.5-特惠",
+			BillingContext:   &model.TaskBillingContext{OriginModelName: "wan3.0-720p-特惠"},
+		},
+	}
+	assert.Equal(t, "seedance2.5-特惠", taskLogModelName(routed), "日志用源模型名")
+	assert.Equal(t, "wan3.0-720p-特惠", taskModelName(routed), "计费仍用目标模型名")
+
+	plain := &model.Task{
+		Properties: model.Properties{OriginModelName: "seedance2.5-特惠"},
+	}
+	assert.Equal(t, "seedance2.5-特惠", taskLogModelName(plain), "未改派时与计费名一致")
+}

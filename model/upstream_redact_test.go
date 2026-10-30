@@ -3,7 +3,9 @@ package model
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRedactUpstreamIdentity_AliasModel(t *testing.T) {
@@ -122,9 +124,18 @@ func TestRedactUpstreamText_摘掉上游地址并脱敏身份(t *testing.T) {
 	assert.Contains(t, got, "拉取失败", "失败原因本身要保留，只清上游信息")
 }
 
-func TestRedactUpstreamText_非别名模型与空内容原样返回(t *testing.T) {
+// 非别名模型：地址照样摘、供应商词照样换成「上游」，但**模型名保留** ——
+// 客户自己买的模型名出现在报错里是正常的，替换了反而看不懂。
+// 口径见 RedactUpstreamText（2026-10-30 老板定：有渠道的直接说「上游」）。
+func TestRedactUpstreamText_非别名模型也摘渠道痕迹但保留模型名(t *testing.T) {
 	raw := `成片地址 https://cdn.example.com/wan3.0-720p/final.mp4 拉取失败：model aliyun:wan-3.0 rejected`
-	assert.Equal(t, raw, RedactUpstreamText(raw, "wan-3.0"), "非别名模型逐字不变")
+	got := RedactUpstreamText(raw, "wan-3.0")
+	assert.NotContains(t, got, "https://", "地址对所有模型都摘")
+	assert.NotContains(t, got, "aliyun", "供应商词对所有模型都换")
+	assert.Contains(t, got, "上游")
+	assert.Contains(t, got, "wan-3.0", "非别名模型：模型名保留，报错才看得懂")
+	assert.Contains(t, got, "拉取失败", "失败原因本身要保留")
+
 	assert.Equal(t, "", RedactUpstreamText("", "seedance2.5-特惠"))
 }
 
@@ -158,11 +169,13 @@ func TestFormatUserLogs_错误日志对普通用户隐藏渠道名与上游字�
 	assert.NotContains(t, logs[0].Other, "channel_name")
 	assert.NotContains(t, logs[0].Other, "admin_info")
 
-	// 其它模型：正文原样保留，但渠道名同样不能给普通用户看
-	assert.Contains(t, logs[1].Content, "aliyun")
+	// 其它模型：供应商词同样换成「上游」（有渠道的直接说上游），
+	// 但上游模型名保留 —— 那是客户自己买的模型族，替换了看不懂。
+	assert.NotContains(t, logs[1].Content, "aliyun")
+	assert.Contains(t, logs[1].Content, "wan-3.0")
 	assert.NotContains(t, logs[1].Other, "channel_name")
 
-	// 非错误日志：正文不在脱敏范围
+	// 非错误日志：正文不在脱敏范围（消费日志只记参数，没有上游原文）
 	assert.Equal(t, "aliyun:wan-3.0", logs[2].Content)
 }
 
@@ -206,8 +219,13 @@ func TestFormatUserLogs_别名模型的消费日志不暴露上游模型名(t *t
 	assert.NotContains(t, logs[0].Other, "upstream_model_name")
 	assert.NotContains(t, logs[0].Other, "is_model_mapped")
 
-	// 其它模型：映射信息照常展示（本来就对外公开）
-	assert.Contains(t, logs[1].Other, "upstream_model_name")
+	// 其它模型同样抹：upstream_model_name 是上游真实模型名，属于渠道痕迹。
+	// 口径见 model.userLogDroppedOtherKeys（2026-10-30 老板定：有渠道的一律过滤）。
+	assert.NotContains(t, logs[1].Other, "upstream_model_name")
+	assert.NotContains(t, logs[1].Other, "is_model_mapped")
+
+	// 渠道 ID 一律置 0，不给客户看走了哪条渠道。
+	assert.Equal(t, 0, logs[0].ChannelId)
 }
 
 // 任务类日志（线上实际存在的 type=6：只带 reason / task_id，正文为空）也要抹。
@@ -229,4 +247,76 @@ func TestFormatUserLogs_别名模型的任务日志不暴露上游模型名(t *t
 	assert.NotContains(t, logs[0].Other, "upstream_model_name")
 	assert.NotContains(t, logs[0].Other, "is_model_mapped")
 	assert.Contains(t, logs[0].Other, "素材无法下载", "失败原因本身要保留")
+}
+
+// 条件路由改派过的任务：日志的 model_name 已经是用户请求的源模型，
+// 实际执行的目标模型放在 other["route_target_model"] —— 只给管理员看。
+//
+// 2026-10-30 老板发现客户日志里出现 wan3.0-720p-特惠（他调的是 seedance2.5-特惠），
+// 等于把「被改派」这件事直接告诉客户。修法：写日志时用源模型名 + 目标名进 other，
+// 客户侧把 other 里的目标名抹掉。
+func TestFormatUserLogs_不暴露条件路由的目标模型(t *testing.T) {
+	logs := []*Log{
+		{
+			Type:      LogTypeConsume,
+			ModelName: "seedance2.5-特惠",
+			Content:   "操作 generate, 计算参数：seconds: 30.00",
+			Other:     `{"group_ratio":1,"is_task":true,"model_price":0.41,"request_path":"/v1/videos","route_target_model":"wan3.0-720p-特惠"}`,
+		},
+		{
+			Type:      LogTypeError,
+			ModelName: "seedance2.5-特惠",
+			Content:   `status_code=400, {"detail":"Failed to download https://api.example.com/a.png"}`,
+			Other:     `{"channel_id":12,"channel_name":"DashScope-Wan3","route_target_model":"wan3.0-720p-特惠","status_code":400}`,
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	for i := range logs {
+		assert.NotContains(t, logs[i].Other, "route_target_model",
+			"改派目标模型是管理员信息，不能给普通用户看")
+		assert.Equal(t, "seedance2.5-特惠", logs[i].ModelName,
+			"用户日志里的模型名必须是他请求的源模型")
+	}
+	assert.NotContains(t, logs[1].Other, "channel_name")
+	assert.NotContains(t, logs[1].Content, "api.example.com", "上游地址仍然要摘掉")
+}
+
+// 整个日志条目序列化后，一个渠道痕迹都不能剩。
+//
+// 按「序列化后的字符串」断言：客户是把整条日志 JSON 摊在浏览器里看的，
+// 任何一个字段漏出去都算泄露 —— 逐字段断言只能保证你想到的那些字段。
+// 口径见 userLogDroppedOtherKeys（2026-10-30 老板定：有渠道的一律过滤）。
+func TestFormatUserLogs序列化后不含任何渠道痕迹(t *testing.T) {
+	logs := []*Log{
+		{
+			Type:              LogTypeError,
+			ModelName:         "seedance2.5-特惠",
+			ChannelId:         12,
+			ChannelName:       "DashScope-Wan3",
+			UpstreamRequestId: "up-task-abc123",
+			Content:           `status_code=400, {"detail":"Failed to download https://api.example.com/a.png"}`,
+			Other:             `{"channel_id":12,"channel_name":"DashScope-Wan3","channel_type":12,"upstream_model_name":"wan3.0-video","is_model_mapped":true,"route_target_model":"wan3.0-720p-特惠","status_code":400,"request_path":"/v1/videos"}`,
+		},
+	}
+
+	formatUserLogs(logs, 0)
+	raw, err := common.Marshal(logs[0])
+	require.NoError(t, err)
+	body := string(raw)
+
+	for _, banned := range []string{
+		"\"channel\":12", // 渠道 ID（json tag 就叫 channel）
+		"DashScope",
+		"aliyun",
+		"wan3.0-video",
+		"up-task-abc123",
+		"route_target_model",
+		"api.example.com",
+	} {
+		assert.NotContains(t, body, banned, "对外日志不能出现渠道痕迹")
+	}
+	assert.Contains(t, body, "seedance2.5-特惠", "模型名用用户请求的源模型")
+	assert.Contains(t, body, "status_code", "错误码要留，客户靠它判断原因")
 }

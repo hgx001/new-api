@@ -113,37 +113,48 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 	}
 }
 
+// userLogDroppedOtherKeys 是客户日志里必须删掉的 other 字段 —— 全是渠道/上游痕迹。
+//
+// 口径（2026-10-30 老板定）：**凡是能看出走了哪个渠道、哪个上游的，一律过滤掉**。
+// 客户不需要知道我们内部怎么调度；知道了就能反推货源、比价、绕开我们直接对接。
+// 管理员走 GetAllLogs，不经过这里，排障时仍能看到全部原文。
+var userLogDroppedOtherKeys = []string{
+	"channel_id",          // 渠道 ID：一看编号就能对上渠道
+	"channel_name",        // 渠道名（"DashScope-Wan3" 这种直接点名货源）
+	"channel_type",        // 渠道类型编号
+	"channel",             // 部分链路写成 channel
+	"upstream_request_id", // 上游任务号：能拿去上游后台查
+	"upstream_model_name", // 上游模型名（"wan-3.0"）
+	"is_model_mapped",     // 有没有做模型映射：本身就是改派/映射的痕迹
+	"route_target_model",  // 条件路由改派的目标模型
+	"admin_info",          // 管理员排障信息（含 use_channel 候选链）
+	"audit_info",          // 操作审计（含 operator/route 信息）
+}
+
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
+		// 渠道信息一律不给客户：ID 置 0、名字清空、上游任务号清空。
+		// 前端日志页的渠道列本来就是 admin only，普通用户置 0 不影响展示。
+		logs[i].ChannelId = 0
 		logs[i].ChannelName = ""
+		logs[i].UpstreamRequestId = ""
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
-			// Remove admin-only debug fields.
-			delete(otherMap, "admin_info")
-			// Remove operation-audit details (operator/route info), admin-only.
-			delete(otherMap, "audit_info")
+			for _, key := range userLogDroppedOtherKeys {
+				delete(otherMap, key)
+			}
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
-			if logs[i].Type == LogTypeError {
-				// 渠道名只对管理员可见：普通用户的错误日志里不该出现渠道名。
-				// 管理员走 GetAllLogs，不经过这里，排查时仍能看到原名。
-				delete(otherMap, "channel_name")
-			}
-			if IsUpstreamAliasModel(logs[i].ModelName) {
-				// 别名模型：消费日志的 Model Mapping 面板会把 upstream_model_name
-				// 直接显示给用户（"实际模型"），等于告诉用户真实上游是谁 —— 抹掉。
-				// 管理员走 GetAllLogs，仍能看到真实上游名。
-				if _, ok := otherMap["upstream_model_name"]; ok {
-					delete(otherMap, "upstream_model_name")
-					delete(otherMap, "is_model_mapped")
-				}
-			}
 		}
 		if logs[i].Type == LogTypeError {
-			// 对外别名模型：错误日志里不能出现上游/供应商字样，更不能出现上游地址
-			//（R2 域名 / 渠道域名本身就是货源证据），否则等于告诉用户真实货源。
+			// 错误正文里的上游地址**对所有模型**一律摘掉：地址是最硬的渠道证据，
+			// 客户拿到就能直接访问上游。身份字样（aliyun / wan3）只对别名模型替换 ——
+			// 非别名模型报错里提到客户自己买的模型名是正常的。
+			// ModelName 已经是用户请求的源模型（条件路由改派时见 taskLogModelName），
+			// 所以这里的白名单判断天然按源模型口径走。
 			logs[i].Content = RedactUpstreamText(logs[i].Content, logs[i].ModelName)
+			logs[i].Content = RedactUpstreamAddress(logs[i].Content)
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 	}

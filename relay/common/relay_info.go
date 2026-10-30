@@ -103,25 +103,31 @@ type RelayInfo struct {
 	UsePrice               bool
 	RelayMode              int
 	OriginModelName        string
-	RequestURLPath         string
-	RequestHeaders         map[string]string
-	ShouldIncludeUsage     bool
-	DisablePing            bool // 是否禁止向下游发送自定义 Ping
-	ClientWs               *websocket.Conn
-	TargetWs               *websocket.Conn
-	InputAudioFormat       string
-	OutputAudioFormat      string
-	RealtimeTools          []dto.RealTimeTool
-	IsFirstRequest         bool
-	AudioUsage             bool
-	ReasoningEffort        string
-	UserSetting            dto.UserSetting
-	UserEmail              string
-	UserQuota              int
-	RelayFormat            types.RelayFormat
-	SendResponseCount      int
-	ReceivedResponseCount  int
-	FinalPreConsumedQuota  int // 最终预消耗的配额
+	// RouteOriginModel 是条件路由改派**之前**用户真正请求的模型名（未改派时为空）。
+	//
+	// ⚠️ 只用于日志展示，**绝不能**参与计费：计费必须用 OriginModelName（= 实际执行的
+	// 目标模型），否则「30 秒 → 豆包按次 ¥3.00」会被算成源模型的 ¥0.20/秒。
+	// 见 middleware/seedance_route.go 里 routeOriginModelKey 的说明。
+	RouteOriginModel      string
+	RequestURLPath        string
+	RequestHeaders        map[string]string
+	ShouldIncludeUsage    bool
+	DisablePing           bool // 是否禁止向下游发送自定义 Ping
+	ClientWs              *websocket.Conn
+	TargetWs              *websocket.Conn
+	InputAudioFormat      string
+	OutputAudioFormat     string
+	RealtimeTools         []dto.RealTimeTool
+	IsFirstRequest        bool
+	AudioUsage            bool
+	ReasoningEffort       string
+	UserSetting           dto.UserSetting
+	UserEmail             string
+	UserQuota             int
+	RelayFormat           types.RelayFormat
+	SendResponseCount     int
+	ReceivedResponseCount int
+	FinalPreConsumedQuota int // 最终预消耗的配额
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
 	// 必须在提交前锁定全额。

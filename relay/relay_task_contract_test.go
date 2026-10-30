@@ -19,10 +19,10 @@ import (
 // 任一环断了，jimeng-video-reverse 会「任务成功但结果为空」——不报错、不退款、用户只看到空。
 func TestTaskModel2DtoCarriesTextResultAndProxyURL(t *testing.T) {
 	task := &model.Task{
-		ID:       7,
-		TaskID:   "task_abc",
-		UserId:   36,
-		Status:   model.TaskStatusSuccess,
+		ID:         7,
+		TaskID:     "task_abc",
+		UserId:     36,
+		Status:     model.TaskStatusSuccess,
 		FailReason: "",
 		PrivateData: model.TaskPrivateData{
 			ResultURL:  "/v1/videos/task_abc/content",
@@ -84,11 +84,11 @@ func TestDetectVideoFormatFallsBackToMP4(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cases := map[string]string{
-				"畸形 JSON":      `{`,
+				"畸形 JSON":       `{`,
 				"无 response":    `{"foo":1}`,
-				"videos 非数组":   `{"response":{"videos":"x"}}`,
+				"videos 非数组":    `{"response":{"videos":"x"}}`,
 				"videos 为空":     `{"response":{"videos":[]}}`,
-				"首元素非对象":     `{"response":{"videos":[1,2]}}`,
+				"首元素非对象":        `{"response":{"videos":[1,2]}}`,
 				"mimeType 非字符串": `{"response":{"videos":[{"mimeType":123}]}}`,
 				"mimeType 为空":   `{"response":{"videos":[{"mimeType":""}]}}`,
 			}
@@ -167,10 +167,13 @@ func TestTaskModel2DtoForAdminKeepsUpstream(t *testing.T) {
 	assert.NotNil(t, out.Data, "上游回执留给管理员")
 }
 
-// 非别名模型：一切照旧，遮字样只会让报错更难读。
-func TestTaskModel2DtoNonAliasModelKeepsEverything(t *testing.T) {
+// 非别名模型：报错字样照旧（遮了只会更难读），但**渠道痕迹一样要清**。
+// 口径见 redactChannelInfo（2026-10-30 老板定：有渠道的一律过滤或说成「上游」）。
+func TestTaskModel2Dto非别名模型只摘渠道痕迹(t *testing.T) {
 	task := &model.Task{
-		TaskID: "task_wan30",
+		TaskID:    "task_wan30",
+		ChannelId: 12,
+		Platform:  "12",
 		Properties: model.Properties{
 			UpstreamModelName: "wan-3.0",
 			OriginModelName:   "wan-3.0",
@@ -182,9 +185,15 @@ func TestTaskModel2DtoNonAliasModelKeepsEverything(t *testing.T) {
 	out := TaskModel2Dto(task)
 	props, ok := out.Properties.(model.Properties)
 	require.True(t, ok)
+	// 上游模型名换回对外模型名（这里是同一个名字，字段结构不变）
 	assert.Equal(t, "wan-3.0", props.UpstreamModelName)
+	// 非别名模型不替换身份字样：那是客户自己买的模型，遮了只会看不懂
 	assert.Contains(t, out.FailReason, "aliyun")
-	assert.NotNil(t, out.Data)
+
+	// 渠道痕迹一律清掉
+	assert.Equal(t, 0, out.ChannelId, "渠道 ID 不给客户")
+	assert.Equal(t, "上游", out.Platform, "渠道类型编号对外说成「上游」")
+	assert.Nil(t, out.Data, "上游原始回执（含成本与直链）不给客户")
 }
 
 // 上游成片直链的形状（真机回执里的原样）：R2 域名 + hailuo-video 货源目录 + 签名参数。
@@ -356,4 +365,122 @@ func TestRedactAliasOpenAIVideoNonAliasKeepsRaw(t *testing.T) {
 	}
 
 	assert.Equal(t, raw, redactAliasOpenAIVideo(task, raw), "非别名模型逐字不变")
+}
+
+// 条件路由改派（规则二：9:16 → wan3.0-720p-特惠）后，任务列表里的模型名
+// 必须是用户请求的源模型。客户在 /api/task/self 里看到
+// "origin_model_name": "wan3.0-720p-特惠" 就等于知道了改派本身。
+func TestTaskModel2Dto条件路由改派不暴露目标模型(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_routed_916",
+		Status: model.TaskStatusSuccess,
+		Properties: model.Properties{
+			UpstreamModelName: "wan3.0-video",
+			OriginModelName:   "wan3.0-720p-特惠", // 改派后的目标模型
+		},
+		PrivateData: model.TaskPrivateData{
+			RouteOriginModel: "seedance2.5-特惠", // 用户真正请求的
+		},
+	}
+
+	out := TaskModel2Dto(task)
+	props, ok := out.Properties.(model.Properties)
+	require.True(t, ok)
+	assert.Equal(t, "seedance2.5-特惠", props.OriginModelName,
+		"客户看到的模型名必须是他请求的源模型")
+	assert.NotContains(t, props.OriginModelName, "wan3.0", "目标模型名不能出现在对外字段")
+}
+
+// 规则一改派（30 秒 → seedance-2-5）时目标模型**不在**别名白名单里。
+// 别名脱敏必须以用户请求的源模型为开关，否则改派一次就把整条脱敏链绕过去了：
+// data 里的上游 OSS 签名直链、fail_reason 里的上游文案会原样漏给下游。
+func TestTaskModel2Dto改派到非别名目标仍按别名口径脱敏(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_routed_30s",
+		Status: model.TaskStatusFailure,
+		Properties: model.Properties{
+			UpstreamModelName: "doubao-seedance-2-5",
+			OriginModelName:   "seedance-2-5", // 目标不在 upstreamAliasModels 里
+		},
+		PrivateData: model.TaskPrivateData{
+			RouteOriginModel: "seedance2.5-特惠",
+		},
+		FailReason: "任务失败：model doubao:seedance-2-5 参考图下载失败 https://arcreel.heibaidao.cn/x.png",
+		Data:       json.RawMessage(`{"sourceUrl":"https://arcreel.heibaidao.cn/raw.mp4","billing_amount":3.0}`),
+	}
+
+	out := TaskModel2Dto(task)
+	props, ok := out.Properties.(model.Properties)
+	require.True(t, ok)
+	assert.Equal(t, "seedance2.5-特惠", props.OriginModelName)
+
+	assert.Nil(t, out.Data, "data 里的上游直链不能漏给下游（改派不能绕过别名白名单）")
+	assert.NotContains(t, out.FailReason, "doubao")
+	assert.NotContains(t, out.FailReason, "seedance-2-5")
+	assert.NotContains(t, out.FailReason, "arcreel.heibaidao.cn", "上游地址要摘掉")
+}
+
+// GET /v1/videos/{id} 的 model 字段同样不能暴露改派目标：
+// 客户用 OpenAI SDK 拉任务，一眼就能看到 "model": "wan3.0-720p-特惠"。
+func TestRedactAliasOpenAIVideo改派后model用源模型名(t *testing.T) {
+	raw := []byte(`{"id":"task_r","model":"wan3.0-720p-特惠","status":"succeeded"}`)
+	task := &model.Task{
+		TaskID: "task_r",
+		Status: model.TaskStatusSuccess,
+		Properties: model.Properties{
+			UpstreamModelName: "wan3.0-video",
+			OriginModelName:   "wan3.0-720p-特惠",
+		},
+		PrivateData: model.TaskPrivateData{
+			RouteOriginModel: "seedance2.5-特惠",
+		},
+	}
+
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(redactAliasOpenAIVideo(task, raw), &video))
+	assert.Equal(t, "seedance2.5-特惠", video.Model, "对外 model 必须是源模型")
+	assert.Equal(t, "task_r", video.TaskID)
+}
+
+// 整个任务 DTO 序列化后，一个渠道痕迹都不能剩。
+//
+// 为什么按「序列化后的字符串」断言而不是逐字段：下游是从整个响应体里翻的，
+// 任何一个字段漏出去都算泄露 —— 逐字段断言只能保证你想到的那些字段。
+// 口径见 redactChannelInfo（2026-10-30 老板定：有渠道的一律过滤或说成「上游」）。
+func TestTaskModel2Dto序列化后不含任何渠道痕迹(t *testing.T) {
+	task := &model.Task{
+		TaskID:    "task_probe",
+		ChannelId: 12,
+		Platform:  "12",
+		Status:    model.TaskStatusFailure,
+		Properties: model.Properties{
+			UpstreamModelName: "wan3.0-video",
+			OriginModelName:   "wan3.0-720p-特惠",
+		},
+		PrivateData: model.TaskPrivateData{
+			RouteOriginModel: "seedance2.5-特惠",
+		},
+		FailReason: "任务失败：Failed to download https://api.example.com/a.png model aliyun:wan3.0",
+		Data:       json.RawMessage(`{"billing_amount":1.8,"sourceUrl":"https://upstream.example.com/raw.mp4"}`),
+	}
+
+	raw, err := common.Marshal(TaskModel2Dto(task))
+	require.NoError(t, err)
+	body := string(raw)
+
+	for _, banned := range []string{
+		"\"channel_id\":12", // 渠道 ID
+		"DashScope",         // 渠道名
+		"aliyun",            // 供应商
+		"wan3.0-video",      // 上游真实模型名
+		"billing_amount",    // 上游成本
+		"sourceUrl",         // 上游原片直链
+		"upstream.example.com",
+		"api.example.com", // 上游地址
+	} {
+		assert.NotContains(t, body, banned, "对外响应体不能出现渠道痕迹")
+	}
+	// 该保留的还是要保留
+	assert.Contains(t, body, "seedance2.5-特惠", "模型名用用户请求的源模型")
+	assert.Contains(t, body, "task_probe", "任务号要留")
 }

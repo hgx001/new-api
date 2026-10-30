@@ -10,6 +10,14 @@ const (
 	ContextKeyOriginalModel    ContextKey = "original_model"
 	ContextKeyRequestStartTime ContextKey = "request_start_time"
 
+	// ContextKeyRouteOriginModel 是「条件路由改派前」用户真正请求的模型名。
+	//
+	// 改派（seedance2.5-特惠 → seedance-2-5 / wan3.0-720p-特惠）会把请求体的
+	// model 字段换成目标模型，于是 RelayInfo.OriginModelName 与 logs.model_name
+	// 都变成了目标模型 —— 客户在自己的日志里就会看到「我调 A，怎么记成 B」。
+	// 这个键把源模型名一路带到日志层，只用于**展示**，不参与计费。
+	ContextKeyRouteOriginModel ContextKey = "route_origin_model"
+
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
 	ContextKeyTokenKey               ContextKey = "token_key"

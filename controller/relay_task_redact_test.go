@@ -53,7 +53,8 @@ func TestRespondTaskErrorDropsAliasModelUpstreamAddress(t *testing.T) {
 	assert.Contains(t, taskErr.Message, "invalid token", "错误原因本身要保留")
 }
 
-// 非别名模型：上游原文照常回给客户端（错误信息要可读，遮了只会更难排查）。
+// 非别名模型：供应商词照样换成「上游」（有渠道的直接说上游），
+// 但上游模型名保留 —— 那是客户自己买的模型族，替换了报错就看不明白了。
 func TestRespondTaskErrorKeepsNonAliasMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -61,9 +62,15 @@ func TestRespondTaskErrorKeepsNonAliasMessage(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(w)
 	ctx.Set("original_model", "wan-3.0")
 
-	raw := `{"error":{"message":"model aliyun:wan-3.0 does not support"}}`
-	taskErr := &dto.TaskError{Code: "fail_to_fetch_task", Message: raw, StatusCode: 400}
+	taskErr := &dto.TaskError{
+		Code:       "fail_to_fetch_task",
+		Message:    `{"error":{"message":"model aliyun:wan-3.0 does not support"}}`,
+		StatusCode: 400,
+	}
 	respondTaskError(ctx, taskErr)
 
-	assert.Equal(t, raw, taskErr.Message)
+	assert.NotContains(t, taskErr.Message, "aliyun", "供应商名不能给客户")
+	assert.Contains(t, taskErr.Message, "上游")
+	assert.Contains(t, taskErr.Message, "wan-3.0", "非别名模型：模型名保留")
+	assert.Contains(t, taskErr.Message, "does not support", "错误原因本身要保留")
 }

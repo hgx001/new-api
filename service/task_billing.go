@@ -50,9 +50,17 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	// 条件路由改派过：日志的 model_name 用**用户请求的源模型**，
+	// 真正执行的目标模型放进 other（管理员可见、客户侧由 formatUserLogs 抹掉）。
+	// 否则客户会看到「我调 A，怎么记成 B」—— 等于把改派本身暴露给他。
+	logModelName := info.OriginModelName
+	if info.RouteOriginModel != "" {
+		logModelName = info.RouteOriginModel
+		other["route_target_model"] = info.OriginModelName
+	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
-		ModelName: info.OriginModelName,
+		ModelName: logModelName,
 		TokenName: tokenName,
 		Quota:     info.PriceData.Quota,
 		Content:   logContent,
@@ -136,15 +144,35 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = props.UpstreamModelName
 	}
+	// 条件路由改派过：把实际执行的目标模型放进 other，供管理员排查；
+	// 客户侧的 model_name 走 taskLogModelName（= 他请求的源模型）。
+	if task.PrivateData.RouteOriginModel != "" {
+		other["route_target_model"] = props.OriginModelName
+	}
 	return other
 }
 
 // taskModelName 从 BillingContext 或 Properties 中获取模型名称。
+//
+// ⚠️ 这是**计费用**的模型名（= 实际执行的目标模型），别拿它写日志展示。
 func taskModelName(task *model.Task) string {
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
 		return bc.OriginModelName
 	}
 	return task.Properties.OriginModelName
+}
+
+// taskLogModelName 返回写日志用的模型名：条件路由改派过时是**用户请求的源模型**，
+// 否则与 taskModelName 相同。
+//
+// 只用于日志展示。计费（尤其是 RecalculateTaskQuotaByTokens 里的
+// ratio_setting.GetModelRatio）必须继续用 taskModelName —— 用源模型名会按
+// 源模型的价重算，把「30 秒 → 豆包按次 ¥3.00」算成 ¥0.20/秒。
+func taskLogModelName(task *model.Task) string {
+	if task != nil && task.PrivateData.RouteOriginModel != "" {
+		return task.PrivateData.RouteOriginModel
+	}
+	return taskModelName(task)
 }
 
 // RefundTaskQuota 统一的任务失败退款逻辑。
@@ -173,7 +201,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 		LogType:   model.LogTypeRefund,
 		Content:   "",
 		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
+		ModelName: taskLogModelName(task),
 		Quota:     quota,
 		TokenId:   task.PrivateData.TokenId,
 		Group:     task.Group,
@@ -236,7 +264,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		LogType:   logType,
 		Content:   reason,
 		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
+		ModelName: taskLogModelName(task),
 		Quota:     logQuota,
 		TokenId:   task.PrivateData.TokenId,
 		Group:     task.Group,

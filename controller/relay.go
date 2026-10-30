@@ -377,6 +377,13 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		if c.Request != nil && c.Request.URL != nil {
 			other["request_path"] = c.Request.URL.Path
 		}
+		// 条件路由改派过：日志的 model_name 用**用户请求的源模型**，
+		// 实际执行的目标模型放进 other（管理员可见、客户侧由 formatUserLogs 抹掉）。
+		// 否则客户在错误日志里看到「调 A 报 B 的错」，等于暴露改派本身。
+		if routeOrigin := common.GetContextKeyString(c, constant.ContextKeyRouteOriginModel); routeOrigin != "" {
+			other["route_target_model"] = modelName
+			modelName = routeOrigin
+		}
 		other["error_type"] = err.GetErrorType()
 		other["error_code"] = err.GetErrorCode()
 		other["status_code"] = err.StatusCode
@@ -643,7 +650,17 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	// 别名模型：上游原文（"model aliyun:wan-3.0 does not support ..."）不能直接回给客户端，
 	// 否则等于告诉用户真实上游是谁；上游地址（渠道域名 / 存储域名）同样不能给。
 	// 只在出口层改写，重试与 AutoBan 判定读到的仍是原文。
-	taskErr.Message = model.RedactUpstreamText(taskErr.Message, c.GetString("original_model"))
+	//
+	// 开关按**用户请求的源模型**判断，不是改派后的目标模型：规则一改派到
+	// seedance-2-5 时目标不在别名白名单里，用目标判断会整段跳过脱敏，
+	// 上游原文与地址就原样回给客户端了。
+	redactModel := c.GetString("original_model")
+	if routeOrigin := common.GetContextKeyString(c, constant.ContextKeyRouteOriginModel); routeOrigin != "" {
+		redactModel = routeOrigin
+	}
+	taskErr.Message = model.RedactUpstreamText(taskErr.Message, redactModel)
+	// 地址对所有模型一律摘：地址是最硬的渠道证据，客户拿到就能直接访问上游。
+	taskErr.Message = model.RedactUpstreamAddress(taskErr.Message)
 	c.JSON(taskErr.StatusCode, taskErr)
 }
 

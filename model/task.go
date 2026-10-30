@@ -109,6 +109,12 @@ type TaskPrivateData struct {
 	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	NodeName       string              `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志而非最后查询节点
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	// RouteOriginModel 是条件路由改派前用户真正请求的模型名（未改派时为空）。
+	//
+	// 为什么记在 PrivateData：它只用于**日志展示**（客户在自己日志里应当看到
+	// 他调的模型名，而不是被改派后的目标名），不属于对外契约，也不参与计费。
+	// 退款/差额结算发生在轮询阶段，那时已经拿不到 gin.Context，只能从任务里读。
+	RouteOriginModel string `json:"route_origin_model,omitempty"`
 	// PostProcess 保存「上游成片 → 二次加工」的状态（2026-10-29）。
 	//
 	// 为什么需要：部分模型是**两跳**链路（官网先生成 480P，再交给云端增强服务出 720P）。
@@ -223,6 +229,11 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 		}
 		if relayInfo.OriginModelName != "" {
 			properties.OriginModelName = relayInfo.OriginModelName
+		}
+		// 条件路由改派过的请求：把用户真正请求的模型名一并存下来，
+		// 退款/结算阶段写日志时用它展示（见 service.taskLogModelName）。
+		if relayInfo.RouteOriginModel != "" {
+			privateData.RouteOriginModel = relayInfo.RouteOriginModel
 		}
 	}
 
@@ -565,6 +576,27 @@ func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) int64 {
 	_ = query.Count(&total).Error
 	return total
 }
+
+// PublicModelName 返回**对外展示**的模型名：条件路由改派过时是用户真正请求的源模型，
+// 否则与 Properties.OriginModelName 相同。
+//
+// 为什么单独开一个方法：改派之后 Properties.OriginModelName 存的是**目标模型**
+// （wan3.0-720p-特惠 / seedance-2-5），那是内部执行口径。把它直接给客户，等于告诉
+// 客户「你调 A，我们实际拿 B 跑的」—— 改派本身被暴露，定价差也被暴露。
+//
+// ⚠️ 只用于对外展示与脱敏判定，**绝不能用于计费**：计费必须用
+// service.taskModelName（= 目标模型），否则「30 秒 → 豆包按次 ¥3.00」
+// 会被按源模型的 ¥0.20/秒 重算。
+func (t *Task) PublicModelName() string {
+	if t == nil {
+		return ""
+	}
+	if t.PrivateData.RouteOriginModel != "" {
+		return t.PrivateData.RouteOriginModel
+	}
+	return t.Properties.OriginModelName
+}
+
 func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo := dto.NewOpenAIVideo()
 	openAIVideo.ID = t.TaskID

@@ -29,7 +29,7 @@ import (
 
 // routeOriginModelKey 记录改派前的原始模型名。
 //
-// ⚠️ **只用于审计，不要拿它回填 origin_model_name**。
+// ⚠️ **只用于展示与审计，不要拿它回填 origin_model_name**。
 //
 // 计费链用的是 info.OriginModelName：
 //
@@ -39,9 +39,14 @@ import (
 // 而不是目标模型的按次价（seedance-2-5 ¥3.00）→ **路由的省钱效果直接归零**。
 //
 // 任务属性 properties.origin_model_name 记「实际执行的模型」是**自洽且诚实**的：
-// 计费也是按它算的，两者对得上。客户看到 model 变成 seedance-2-5 会困惑
-// （他明明调的是特惠），这属于产品文案层面的决策，见设计稿「待老板拍板」第 1 条。
-const routeOriginModelKey = "route_origin_model"
+// 计费也是按它算的，两者对得上。
+//
+// 但 **logs.model_name 必须对客户显示源模型名**（2026-10-30 老板拍板）：
+// 客户在自己日志里看到「调 seedance2.5-特惠、记成 wan3.0-720p-特惠」等于暴露
+// 了改派本身。实现见 constant.ContextKeyRouteOriginModel →
+// RelayInfo.RouteOriginModel → TaskPrivateData.RouteOriginModel →
+// 日志 other["route_origin_model"] → model.formatUserLogs 回写 ModelName。
+const routeOriginModelKey = string(constant.ContextKeyRouteOriginModel)
 
 // RouteOriginModel 返回改派前的原始模型名；没发生改派时返回空串。
 func RouteOriginModel(c *gin.Context) string {

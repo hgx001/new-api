@@ -144,6 +144,11 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
 	info.InitChannelMeta(c)
 
+	// 记录条件路由改派前的源模型名：**只用于日志展示**，计费仍走
+	// info.OriginModelName（= 改派后的目标模型），否则 30 秒 → 豆包按次
+	// ¥3.00 会被算成源模型的 ¥0.20/秒。详见 constant.ContextKeyRouteOriginModel。
+	info.RouteOriginModel = common.GetContextKeyString(c, constant.ContextKeyRouteOriginModel)
+
 	// 1. 确定 platform → 创建适配器 → 验证请求
 	platform := constant.TaskPlatform(c.GetString("platform"))
 	if platform == "" {
@@ -569,7 +574,16 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 // TaskModel2Dto 面向下游客户端：别名模型必须遮住真实上游。
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	out := buildTaskDto(task)
+	// 失败文案里的上游地址对所有模型一律摘掉：地址是最硬的渠道证据，
+	// 客户拿到就能直接访问上游。身份字样（aliyun/wan3）仍只对别名模型替换。
+	out.FailReason = model.RedactUpstreamAddress(out.FailReason)
 	redactAliasTaskUpstream(out, task)
+	// 模型名单独兜一层，不受别名白名单约束：条件路由改派过就必须换回源模型名，
+	// 哪怕目标模型不是别名（规则一 → seedance-2-5 就不在白名单里）。
+	redactRouteOriginModel(out, task)
+	// 渠道痕迹最后清：channel_id / platform / upstream_model_name 都是货源线索，
+	// 客户不需要知道任务跑在哪条渠道上。
+	redactChannelInfo(out, task)
 	// 内部占位符 → 本站 /content 代理地址。
 	//
 	// 为什么必须换：占位符（cos-proxy://…）是**内部协议**，客户端拿到没法下载。
@@ -628,7 +642,13 @@ func buildTaskDto(task *model.Task) *dto.TaskDto {
 // 只在出口层（DTO 构造）做：数据库里保留原文，管理员排障仍能看到真实上游；
 // 换渠道重试与 AutoBan 判定读的是上游原文，不受影响。
 func redactAliasTaskUpstream(out *dto.TaskDto, task *model.Task) {
-	origin := task.Properties.OriginModelName
+	// 口径按**用户请求的源模型**判断，不是改派后的目标模型。
+	//
+	// 为什么：条件路由把 seedance2.5-特惠 改派到 seedance-2-5（规则一）时，
+	// 目标模型不在 upstreamAliasModels 里 —— 用 OriginModelName 判断会直接 return，
+	// 于是 data（含上游 OSS 签名直链）、fail_reason、result_url 全部原样漏给下游。
+	// 用户请求的既然是别名，对外就该按别名口径遮，改派一次不能把白名单绕过去。
+	origin := task.PublicModelName()
 	if !model.IsUpstreamAliasModel(origin) {
 		return
 	}
@@ -638,7 +658,8 @@ func redactAliasTaskUpstream(out *dto.TaskDto, task *model.Task) {
 	out.Properties = props
 	// fail_reason：上游失败文案脱敏 —— 字样换成中性词，上游地址整个摘掉。
 	// 交付地址已改走本站代理，文案里再留一个上游地址没有任何用途。
-	out.FailReason = model.RedactUpstreamText(task.FailReason, origin)
+	// 基于 out.FailReason（已在入口摘过一遍地址），不是 task.FailReason。
+	out.FailReason = model.RedactUpstreamText(out.FailReason, origin)
 	// data：上游原始回执整体不给下游 —— 里面有上游任务号、上游成本和上游地址，
 	// 都不是下游该知道的；前端只用 data 渲染 Suno 音频片段，视频任务不依赖它。
 	out.Data = nil
@@ -657,6 +678,65 @@ func redactAliasTaskUpstream(out *dto.TaskDto, task *model.Task) {
 	}
 }
 
+// redactRouteOriginModel 把对外可见的模型名换回用户真正请求的源模型。
+//
+// 为什么需要独立一层（不并进 redactAliasTaskUpstream）：
+// 那个函数以「源模型是不是别名」为开关，而模型名这一项**无论是不是别名**都必须换 ——
+// 将来若把路由规则挂到别的模型上，也不会因为不在白名单里就把改派泄露出去。
+//
+// 覆盖 properties.origin_model_name：客户在任务列表（/api/task/self）里直接看得到它，
+// 那是他最容易发现「我调 A 却被记成 B」的地方。
+func redactRouteOriginModel(out *dto.TaskDto, task *model.Task) {
+	if task == nil || task.PrivateData.RouteOriginModel == "" {
+		return
+	}
+	props := task.Properties
+	props.OriginModelName = task.PrivateData.RouteOriginModel
+	out.Properties = props
+}
+
+// redactChannelInfo 清掉任务 DTO 里的渠道痕迹。
+//
+// 口径（2026-10-30 老板定）：**有渠道的，对外一律说「上游」或者干脆不给**。
+// 客户不需要知道任务跑在哪条渠道上 —— 知道了他就能反推货源、比价、
+// 甚至绕过我们直接找上游。
+//
+//   - channel_id：一看编号就能对上渠道，置 0。
+//   - platform：其实是**渠道类型编号**（"63" = 有赞 Wan3），直接换成「上游」。
+//     为什么不置空：前端任务日志列要拿它做 i18n 显示（t(log.platform)），
+//     清空会显示成空白；suno 保留原值 —— 那是公开产品线，且前端按
+//     log.platform === 'suno' 判断要不要渲染音频播放器。
+//   - properties.upstream_model_name：上游真实模型名（"wan-3.0"），
+//     换回对外模型名，字段结构保持不变。
+func redactChannelInfo(out *dto.TaskDto, task *model.Task) {
+	// Suno / Midjourney 的 data 是**交付物**（音频片段 / 图片），必须留；
+	// 其余（视频任务）的 data 是上游原始回执，前端不读，清掉。
+	keepsData := out.Platform == string(constant.TaskPlatformSuno) ||
+		out.Platform == string(constant.TaskPlatformMidjourney)
+	out.ChannelId = 0
+	if out.Platform != string(constant.TaskPlatformSuno) {
+		out.Platform = "上游"
+	}
+	if !keepsData {
+		// data 存的是**上游完整响应体**（task_polling.go: task.Data = responseBody），
+		// 里面有上游任务号、上游成本 billing_amount、上游成片直链、480P 原片 sourceUrl
+		// —— 全是渠道痕迹。前端只在 Suno 音频场景读它（task-logs-columns.tsx 按
+		// platform === 'suno' 判断），视频任务不依赖，整体清掉。
+		out.Data = nil
+	}
+	if task == nil {
+		return
+	}
+	// 从 out 上取（不是 task.Properties）：前面 redactRouteOriginModel 已经把
+	// OriginModelName 换回源模型了，从 task 重新取会把那次改写覆盖掉。
+	props, ok := out.Properties.(model.Properties)
+	if !ok {
+		return
+	}
+	props.UpstreamModelName = task.PublicModelName()
+	out.Properties = props
+}
+
 // redactAliasOpenAIVideo 把别名模型的 OpenAI Video 响应体换成对外口径。
 //
 // 为什么必须换（不能只脱敏字样）：OpenAI Video API 的取任务响应
@@ -672,11 +752,17 @@ func redactAliasTaskUpstream(out *dto.TaskDto, task *model.Task) {
 //
 // 非别名模型逐字返回原响应体：它们的回执本来就是对外的，遮了只会让客户端拿不到信息。
 func redactAliasOpenAIVideo(task *model.Task, raw []byte) []byte {
-	origin := task.Properties.OriginModelName
+	// 同 redactAliasTaskUpstream：按**用户请求的源模型**判断是否别名。
+	// 否则规则一改派到 seedance-2-5 后白名单失效，上游回执（model / url /
+	// billing_amount）会原样返回给客户端 —— 客户用 OpenAI SDK 一眼就看到。
+	origin := task.PublicModelName()
 	if !model.IsUpstreamAliasModel(origin) {
 		return raw
 	}
 	video := task.ToOpenAIVideo()
+	// model：ToOpenAIVideo 取的是 Properties.OriginModelName（= 改派后的目标模型），
+	// 必须换回源模型名，否则 GET /v1/videos/{id} 直接把改派结果告诉客户端。
+	video.Model = origin
 	// 兼容字段 task_id：上游回执里放的是**上游任务号**，必须换成对外任务号。
 	video.TaskID = task.TaskID
 	// ToOpenAIVideo() 预置的 url 取的是原始直链（非成功任务还会回退到 FailReason），
