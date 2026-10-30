@@ -282,6 +282,7 @@ func migrateDB() error {
 		&VpnOrder{},
 		&QuotaData{},
 		&Task{},
+		&TaskLog{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},

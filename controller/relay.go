@@ -17,8 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/channel/task/manwu"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
@@ -598,10 +598,39 @@ func RelayTask(c *gin.Context) {
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
+		} else {
+			// 提交快照落库：tasks 表只存最终状态，事后追查「这次请求带了什么」
+			// （尤其参考图到底有没有发出去）只能靠这条记录。
+			model.AddTaskLog(task.TaskID, result.UpstreamTaskID,
+				model.TaskLogStageSubmit, model.TaskLogLevelInfo,
+				"task submitted", buildTaskSubmitSnapshot(c, relayInfo, result.Quota))
 		}
 	}
 
 	if taskErr != nil {
+		// 失败也留一条：重试会换 channel 再来一次，只有这里能看出
+		// 「哪几次尝试、分别死在哪个渠道、上游原文是什么」。
+		//
+		// 校验阶段（例如参考图不可用）就失败时还没有公开 task id，
+		// 用 request id 兜底 —— 否则这类 400 在库里完全没有痕迹。
+		logTaskId := relayInfo.PublicTaskID
+		if logTaskId == "" {
+			if requestId := c.GetString(common.RequestIdKey); requestId != "" {
+				logTaskId = "req:" + requestId
+			}
+		}
+		model.AddTaskLog(logTaskId, "",
+			model.TaskLogStageSubmit, model.TaskLogLevelError,
+			taskErr.Message, map[string]any{
+				"status_code":     taskErr.StatusCode,
+				"error_code":      taskErr.Code,
+				"local_error":     taskErr.LocalError,
+				"channel_id":      relayInfo.ChannelId,
+				"channel_type":    channelTypeOf(relayInfo),
+				"model":           relayInfo.OriginModelName,
+				"attempt":         len(c.GetStringSlice("use_channel")),
+				"task_id_missing": relayInfo.PublicTaskID == "",
+			})
 		respondTaskError(c, taskErr)
 	}
 }

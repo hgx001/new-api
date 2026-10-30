@@ -352,6 +352,8 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			taskRoute.GET("/self", middleware.UserAuth(), controller.GetUserTask)
 			taskRoute.GET("/", middleware.AdminAuth(), controller.GetAllTask)
+			// 任务执行流水（提交快照/重试失败/状态迁移），排障用，仅管理员可见。
+			taskRoute.GET("/logs", middleware.AdminAuth(), controller.GetTaskLogs)
 		}
 
 		vendorRoute := apiRouter.Group("/vendors")

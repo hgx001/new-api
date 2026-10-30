@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -238,6 +239,35 @@ type TaskPollSummary struct {
 	NullTasksFailed  int `json:"null_tasks_failed"`
 }
 
+// lastTaskLogPruneAt 记录上次清理任务流水的时间（秒）。
+// 用 atomic 而不是 sync.Once：进程常驻多天，要按天重复清，不是只清一次。
+var lastTaskLogPruneAt atomic.Int64
+
+// pruneTaskLogsIfDue 每天最多清一次过期任务流水，避免 task_logs 无限增长 ——
+// 这张表随任务量线性增长，不设上限等于给自己埋一次磁盘写满。
+// 挂在轮询入口：轮询本来就按周期跑，不额外起 goroutine。
+func pruneTaskLogsIfDue(ctx context.Context) {
+	now := time.Now().Unix()
+	last := lastTaskLogPruneAt.Load()
+	if last != 0 && now-last < 24*3600 {
+		return
+	}
+	if !lastTaskLogPruneAt.CompareAndSwap(last, now) {
+		// 另一个实例刚抢到，跳过。
+		return
+	}
+	before := now - int64(model.TaskLogRetentionDays)*24*3600
+	deleted, err := model.DeleteTaskLogsBefore(before, 1000)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("prune task logs failed: %s", err.Error()))
+		return
+	}
+	if deleted > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("prune task logs: deleted %d rows older than %d days",
+			deleted, model.TaskLogRetentionDays))
+	}
+}
+
 // RunTaskPollingOnce performs one async-task (Suno/video) polling pass
 // synchronously. It honors ctx cancellation (the system-task runner cancels it
 // when the lease is lost) and, when report is non-nil, reports progress as
@@ -253,6 +283,7 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 	}
 
 	common.SysLog("任务进度轮询开始")
+	pruneTaskLogsIfDue(ctx)
 	sweepTimedOutTasks(ctx)
 	allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
 	summary.UnfinishedTasks = len(allTasks)
@@ -718,6 +749,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 				if perr != nil {
 					logger.LogWarn(ctx, fmt.Sprintf(
 						"Task %s post process poll failed: %s", taskId, perr.Error()))
+					model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePostProcess,
+						model.TaskLogLevelError, "post process poll failed: "+perr.Error(), nil)
 					// 查询失败不等于失败：保持处理中，下轮再试。
 					postProcessPending = true
 					break
@@ -726,6 +759,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 					postProcessPending = true
 					break
 				}
+				model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePostProcess,
+					model.TaskLogLevelInfo, "post process done", nil)
 				// done=true：后处理已到终态（成功或回落原片），继续往下走置 SUCCESS。
 				// 此时 ResultURL 已由 PollPostProcess 写好（成功=加工后产物，
 				// 失败=回落原片），不能再被上游 URL 覆盖。
@@ -737,11 +772,15 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 					// 接管了但出错：保持处理中，下轮重试，**不退款、不判失败**。
 					logger.LogWarn(ctx, fmt.Sprintf(
 						"Task %s post process submit failed: %s", taskId, perr.Error()))
+					model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePostProcess,
+						model.TaskLogLevelError, "post process submit failed: "+perr.Error(), nil)
 					postProcessPending = true
 					break
 				}
 				if handled {
 					// 已提交后处理，产物还没好：保持处理中。
+					model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePostProcess,
+						model.TaskLogLevelInfo, "post process submitted", nil)
 					postProcessPending = true
 					break
 				}
@@ -802,6 +841,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
+	// statusChanged/statusPersisted 用于在 CAS 成功之后才写流水：
+	// 另一个进程已经推进过状态时，这里并没有真的发生迁移，记了就是假证据。
+	statusChanged := snap.Status != task.Status
+	statusPersisted := false
 	if isDone && snap.Status != task.Status {
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {
@@ -812,14 +855,35 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned by another process, skip billing", task.TaskID))
 			shouldRefund = false
 			shouldSettle = false
+		} else {
+			statusPersisted = true
 		}
 	} else if !snap.Equal(task.Snapshot()) {
 		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
+		} else {
+			statusPersisted = statusChanged
 		}
 	} else {
 		// No changes, skip update
 		logger.LogDebug(ctx, "No update needed for task %s", task.TaskID)
+	}
+
+	if statusChanged && statusPersisted {
+		level := model.TaskLogLevelInfo
+		if task.Status == model.TaskStatusFailure {
+			level = model.TaskLogLevelError
+		}
+		model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePoll, level,
+			fmt.Sprintf("status %s -> %s", snap.Status, task.Status),
+			map[string]any{
+				"from":        snap.Status,
+				"to":          task.Status,
+				"progress":    task.Progress,
+				"fail_reason": task.FailReason,
+				"settle":      shouldSettle,
+				"refund":      shouldRefund,
+			})
 	}
 
 	if shouldSettle {

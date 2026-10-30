@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -100,6 +101,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	media, err := buildWan3Media(req)
 	if err != nil {
 		return service.TaskErrorWrapper(err, "invalid_input_reference", http.StatusBadRequest)
+	}
+	// 参考图必须在建单前确认抓得到：上游是「直传 URL、生成时才下载」，
+	// 坏链接会让用户白等一两分钟才收到 InvalidParameter，甚至出现
+	// 「成片成功但完全没有参考图」。详见 media_probe.go。
+	if err := validateReferenceImageURLs(media); err != nil {
+		return service.TaskErrorWrapper(err, "invalid_input_reference", http.StatusBadRequest)
+	}
+	if len(media) > 0 {
+		// 留痕：事后排查「这张图到底有没有随请求发出去」时，
+		// 库里的 properties 不存 media，只能靠这条日志对上任务时间。
+		logger.LogInfo(c, fmt.Sprintf("wan3 media accepted: %s", describeMedia(media)))
 	}
 	total := 0
 	totalReal := 0.0
