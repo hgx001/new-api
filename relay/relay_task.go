@@ -737,27 +737,32 @@ func redactChannelInfo(out *dto.TaskDto, task *model.Task) {
 	out.Properties = props
 }
 
-// redactAliasOpenAIVideo 把别名模型的 OpenAI Video 响应体换成对外口径。
+// redactAliasOpenAIVideo 把 OpenAI Video 响应体换成对外口径。
 //
-// 为什么必须换（不能只脱敏字样）：OpenAI Video API 的取任务响应
-// （GET /v1/videos/{task_id}）走各渠道的 ConvertToOpenAIVideo，megabyai 那里返回的
-// 是**上游原始回执**，里面同时有：
+// 分两层：
 //
-//   - "model": "wan-3.0" → 直接点名真实上游
-//   - "url" / "metadata.final_video_url" → 上游成片直链（上游存储域名 + 货源目录）
-//   - "billing_amount" / "billing_quota" → 上游成本
+//	① 模型名换回源模型 —— **所有模型**都做。条件路由改派过就必须换，
+//	   否则 GET /v1/videos/{id} 直接把改派结果告诉客户端。
+//	② 上游回执重建（url / task_id / 成本 / error）—— 只对**别名模型**做。
+//	   别名模型的 ConvertToOpenAIVideo 返回的是上游原始回执，里面有
+//	   "model": "wan-3.0"、"url"（上游成片直链）、"billing_amount"（上游成本）。
+//	   任何一项漏出去，别名就白起了。
 //
-// 任何一项漏出去，别名就白起了。所以这里按对外口径**重建**响应体：
-// 成片地址给本站 /content 代理（代理回源上游，行为不变）。
-//
-// 非别名模型逐字返回原响应体：它们的回执本来就是对外的，遮了只会让客户端拿不到信息。
+// 非别名模型除模型名外逐字返回原响应体：它们的回执本来就是对外的，
+// 遮了只会让客户端拿不到信息。
 func redactAliasOpenAIVideo(task *model.Task, raw []byte) []byte {
 	// 同 redactAliasTaskUpstream：按**用户请求的源模型**判断是否别名。
 	// 否则规则一改派到 seedance-2-5 后白名单失效，上游回执（model / url /
 	// billing_amount）会原样返回给客户端 —— 客户用 OpenAI SDK 一眼就看到。
 	origin := task.PublicModelName()
 	if !model.IsUpstreamAliasModel(origin) {
-		return raw
+		// 非别名模型：只换模型名，别的不动。
+		//
+		// 为什么要单独处理：客户调 seedance2.5-特惠 被改派到 seedance-2-5 时，
+		// 源模型是别名（走重建分支）；但反过来 —— 客户直接调一个**非别名**模型、
+		// 而它恰好是改派目标时，Properties.OriginModelName 就是目标模型名，
+		// 直接返回会把改派说出去。
+		return replaceOpenAIVideoModel(raw, origin)
 	}
 	video := task.ToOpenAIVideo()
 	// model：ToOpenAIVideo 取的是 Properties.OriginModelName（= 改派后的目标模型），
@@ -781,6 +786,32 @@ func redactAliasOpenAIVideo(task *model.Task, raw []byte) []byte {
 	encoded, err := common.Marshal(video)
 	if err != nil {
 		// 兜底：编不出来就退回原文，绝不把下游的响应体搞坏
+		return raw
+	}
+	return encoded
+}
+
+// replaceOpenAIVideoModel 只把响应体里的 model 字段换成对外模型名，其余逐字保留。
+//
+// 为什么需要它：非别名模型的 ConvertToOpenAIVideo 返回的是上游原始回执，
+// 不能整体重建（会丢掉客户端需要的字段），但其中的 "model" 字段在条件路由
+// 改派过时是**目标模型名** —— 直接返回等于告诉客户「你调 A、实际跑 B」。
+//
+// 解析失败就原样返回：绝不能因为脱敏把下游的响应体搞坏。
+func replaceOpenAIVideoModel(raw []byte, publicModel string) []byte {
+	if publicModel == "" {
+		return raw
+	}
+	var video dto.OpenAIVideo
+	if err := common.Unmarshal(raw, &video); err != nil {
+		return raw
+	}
+	if video.Model == publicModel {
+		return raw
+	}
+	video.Model = publicModel
+	encoded, err := common.Marshal(video)
+	if err != nil {
 		return raw
 	}
 	return encoded

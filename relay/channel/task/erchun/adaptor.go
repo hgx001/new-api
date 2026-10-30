@@ -642,7 +642,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 
 	modelName := PublicModel
 	if info != nil && info.OriginModelName != "" {
-		modelName = info.OriginModelName
+		modelName = info.PublicModelName()
 	}
 	publicID := ""
 	if info != nil && info.TaskRelayInfo != nil {

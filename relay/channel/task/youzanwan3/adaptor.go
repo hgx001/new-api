@@ -879,7 +879,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	modelName := ""
 	if info != nil {
 		publicID = info.PublicTaskID
-		modelName = info.OriginModelName
+		modelName = info.PublicModelName()
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"id":         publicID,

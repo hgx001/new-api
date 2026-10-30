@@ -341,7 +341,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	out := gin.H{
 		"id":         info.PublicTaskID,
 		"object":     "video",
-		"model":      info.OriginModelName,
+		"model":      info.PublicModelName(),
 		"status":     "queued",
 		"progress":   0,
 		"created_at": now,

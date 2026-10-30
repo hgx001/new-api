@@ -195,6 +195,7 @@ func resolveResolution(req relaycommon.TaskSubmitReq) string {
 // 会直接生成 720P，两跳链路形同虚设（多花一倍生成费，还拿不到成片提升的效果）。
 //
 // ⚠️ 只有这个模型名走这条逻辑；其余模型名（官网原生 720P/1080P、标准版）
+//
 //	的分辨率照旧由用户请求决定。
 func resolveGenerationResolution(req relaycommon.TaskSubmitReq, info *relaycommon.RelayInfo) string {
 	if info != nil && isOfficial720PModel(info.OriginModelName) {
@@ -614,7 +615,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	publicID := ""
 	modelName := ""
 	if info != nil {
-		modelName = info.OriginModelName
+		modelName = info.PublicModelName()
 		if info.TaskRelayInfo != nil {
 			publicID = info.PublicTaskID
 		}
@@ -715,14 +716,14 @@ func (a *TaskAdaptor) GetChannelName() string {
 //
 // ⚠️ 成片地址的口径：
 //
-//   · 两跳链路（wan3.0-720p-特惠）下，库里的 ResultURL 是**内部占位符**
-//     （cos-proxy://…），客户端拿到没法下载；而且上游直链是 **480P 原片**，
-//     而用户买到的是 720P —— 给上游直链等于交付了错的产物。
-//     → 换成本站 /content 代理地址，由代理解析占位符后 302 到临时直链。
+//	· 两跳链路（wan3.0-720p-特惠）下，库里的 ResultURL 是**内部占位符**
+//	  （cos-proxy://…），客户端拿到没法下载；而且上游直链是 **480P 原片**，
+//	  而用户买到的是 720P —— 给上游直链等于交付了错的产物。
+//	  → 换成本站 /content 代理地址，由代理解析占位符后 302 到临时直链。
 //
-//   · 单跳链路（wan3.0-video 等）下，ResultURL 是上游 OSS 签名直链，
-//     客户端直连下载最快（走本站代理反而要多经一次本机 3Mbps 出口，30MB 要 87 秒）。
-//     → 原样给直链。
+//	· 单跳链路（wan3.0-video 等）下，ResultURL 是上游 OSS 签名直链，
+//	  客户端直连下载最快（走本站代理反而要多经一次本机 3Mbps 出口，30MB 要 87 秒）。
+//	  → 原样给直链。
 //
 // 这两条都由 taskcommon.PublicResultURL 统一裁决，不在本文件里各写一套。
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
@@ -764,6 +765,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 // taskVideoStatus 决定对外报告的任务状态。
 //
 // ⚠️ 两跳链路**不能**用上游回执里的状态（2026-10-30 修）：
+//
 //	上游回执（task.Data）在第一跳成功的那一刻就冻结了 —— 里面写的 TaskStatus
 //	是 "SUCCEEDED"，指的是「第一跳生成完了」，不是「整条链路完了」。
 //

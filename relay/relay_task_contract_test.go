@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -483,4 +484,44 @@ func TestTaskModel2Dto序列化后不含任何渠道痕迹(t *testing.T) {
 	// 该保留的还是要保留
 	assert.Contains(t, body, "seedance2.5-特惠", "模型名用用户请求的源模型")
 	assert.Contains(t, body, "task_probe", "任务号要留")
+}
+
+// 提交响应（POST /v1/videos）的 model 字段同样不能暴露改派目标。
+//
+// 为什么单独钉：提交响应是客户**第一眼**看到的东西 ——
+// {"id":"task_xxx","model":"wan3.0-720p-特惠","status":"queued"}
+// 比日志更显眼，客户根本不用翻日志就能发现改派。
+func TestRelayInfoPublicModelName_改派后用源模型名(t *testing.T) {
+	info := &relaycommon.RelayInfo{
+		OriginModelName:  "wan3.0-720p-特惠", // 改派后的目标模型
+		RouteOriginModel: "seedance2.5-特惠", // 用户真正请求的
+	}
+	assert.Equal(t, "seedance2.5-特惠", info.PublicModelName(),
+		"提交响应的 model 必须是用户请求的源模型")
+
+	// 未改派时与 OriginModelName 一致
+	plain := &relaycommon.RelayInfo{OriginModelName: "wan3.0-720p-特惠"}
+	assert.Equal(t, "wan3.0-720p-特惠", plain.PublicModelName())
+}
+
+// 非别名模型的 OpenAI Video 响应：只换 model，其余逐字保留。
+// 客户端要靠 url / progress 等字段，不能整体重建。
+func TestRedactAliasOpenAIVideo非别名模型只换模型名(t *testing.T) {
+	raw := []byte(`{"id":"task_x","model":"seedance-2-5","status":"processing","progress":30}`)
+	task := &model.Task{
+		TaskID: "task_x",
+		Status: model.TaskStatusInProgress,
+		Properties: model.Properties{
+			OriginModelName: "seedance-2-5",
+		},
+		PrivateData: model.TaskPrivateData{
+			RouteOriginModel: "seedance2.5-特惠",
+		},
+	}
+
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(redactAliasOpenAIVideo(task, raw), &video))
+	assert.Equal(t, "seedance2.5-特惠", video.Model, "model 要换回源模型")
+	assert.Equal(t, "task_x", video.ID, "其它字段保留")
+	assert.NotEmpty(t, video.Status, "状态保留（dto 内部会规范化成 in_progress）")
 }

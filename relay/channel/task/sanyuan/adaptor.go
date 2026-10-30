@@ -127,7 +127,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 // 满血档固定 30 秒（与原 youzan prime 的对外语义一致：传其它值被忽略）。
 //
 // **req.Seconds 是必须的回退路径**：下游按 OpenAI video 形状传的是 {"seconds":"7"}
-//（字符串），落到 TaskSubmitReq.Seconds 而不是 Duration。漏读 Seconds 会静默按
+// （字符串），落到 TaskSubmitReq.Seconds 而不是 Duration。漏读 Seconds 会静默按
 // 默认 5 秒建单 —— 二春渠道 2026-10-06 首次真机验证就是这么多收了 2.5 倍。
 func resolveDuration(req relaycommon.TaskSubmitReq, profile *modelProfile) (int, error) {
 	if profile.FixedDuration > 0 {
@@ -563,7 +563,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 
 	modelName := PublicModel
 	if info != nil && info.OriginModelName != "" {
-		modelName = info.OriginModelName
+		modelName = info.PublicModelName()
 	}
 	publicID := ""
 	if info != nil && info.TaskRelayInfo != nil {

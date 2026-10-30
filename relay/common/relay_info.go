@@ -194,6 +194,26 @@ type RelayInfo struct {
 	*TaskRelayInfo
 }
 
+// PublicModelName 返回**对外展示**的模型名：条件路由改派过时是用户真正请求的
+// 源模型，否则与 OriginModelName 相同。
+//
+// 为什么 adaptor 的提交响应必须用它：提交响应是客户**第一眼**看到的东西
+// （{"id":"task_xxx","model":"wan3.0-720p-特惠",...}），比日志更显眼。
+// 用 OriginModelName 就是当场把改派告诉客户。
+//
+// ⚠️ 只用于对外展示，**绝不能用于计费**：计费必须用 OriginModelName
+// （= 实际执行的目标模型），否则「30 秒 → 豆包按次 ¥3.00」会被按源模型的
+// ¥0.20/秒 重算。
+func (info *RelayInfo) PublicModelName() string {
+	if info == nil {
+		return ""
+	}
+	if info.RouteOriginModel != "" {
+		return info.RouteOriginModel
+	}
+	return info.OriginModelName
+}
+
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
