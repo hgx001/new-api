@@ -27,15 +27,35 @@ import (
 const OptionKey = "Seedance25TeHuiRoute30s"
 
 // Policy 是条件路由策略。
+//
+// 目前有**两条独立规则**，共用 Enabled 总开关与 SourceModel：
+//
+//	规则一（时长）：SourceModel + TriggerSeconds 秒 → TargetModel
+//	               seedance2.5-特惠 + 30 秒 → seedance-2-5（豆包按次 ¥3.00）
+//	规则二（比例）：SourceModel + TriggerRatio 比例 → RatioTargetModel
+//	               seedance2.5-特惠 + 9:16 → wan3.0-720p-特惠（¥0.20/秒）
+//
+// **优先级：规则一先判**（老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」）。
+// 即 30 秒 + 9:16 走豆包；只有非 30 秒的 9:16 才走 wan3。
+//
+// ⚠️ 规则二的字段**全部 omitempty 且可为空**：旧的生产 option JSON 里没有它们，
+// 解析后为空 → 规则二不生效 → 行为与改造前逐字节一致。这是硬要求，
+// 因为改这份配置的人不一定同步改 SQL。
 type Policy struct {
 	// Enabled 总开关。false = 完全不路由，全部走源模型（默认，行为不变）。
 	Enabled bool `json:"enabled"`
-	// SourceModel 源模型名（对外名，客户请求里写的那个）。
+	// SourceModel 源模型名（对外名，客户请求里写的那个）。两条规则共用。
 	SourceModel string `json:"source_model"`
-	// TargetModel 目标模型名（对外名）。
+	// TargetModel 目标模型名（对外名），规则一用。
 	TargetModel string `json:"target_model"`
-	// TriggerSeconds 触发时长（秒）。**只有等于该值才路由**。
+	// TriggerSeconds 触发时长（秒）。**只有等于该值才路由**，规则一用。
 	TriggerSeconds int `json:"trigger_seconds"`
+
+	// RatioTargetModel 规则二的目标模型名。空 = 规则二不启用。
+	RatioTargetModel string `json:"ratio_target_model,omitempty"`
+	// TriggerRatio 规则二的触发比例（如 "9:16"）。空 = 规则二不启用。
+	TriggerRatio string `json:"trigger_ratio,omitempty"`
+
 	// UpdatedAt 最近一次修改的 Unix 时间戳，0 表示从未改过。
 	UpdatedAt int64 `json:"updated_at"`
 }
@@ -46,10 +66,12 @@ type Policy struct {
 // Get() 返回这里的内容，中间件直接放行 —— 行为与改造前逐字节一致。
 func defaultPolicy() Policy {
 	return Policy{
-		Enabled:        false,
-		SourceModel:    "",
-		TargetModel:    "",
-		TriggerSeconds: 0,
+		Enabled:          false,
+		SourceModel:      "",
+		TargetModel:      "",
+		TriggerSeconds:   0,
+		RatioTargetModel: "",
+		TriggerRatio:     "",
 	}
 }
 
@@ -78,8 +100,11 @@ func MarshalJSONString() string {
 
 // UpdateFromJSONString 用管理员提交的 JSON 覆盖策略。
 //
-// 开启路由的**必要条件**：源模型名、目标模型名、触发时长三者都要有值。
-// 缺任何一项就当作没开（Enabled 置 false）—— 宁可不开也不要半开，
+// 开启路由的**必要条件**：至少有一条规则配全。
+//   - 规则一配全 = 源模型名 + 目标模型名 + 触发时长三者都有值；
+//   - 规则二配全 = 源模型名 + 比例目标模型 + 触发比例三者都有值。
+//
+// 一条都没配全就当作没开（Enabled 置 false）—— 宁可不开也不要半开，
 // 半开的状态（比如 target_model 为空）会把请求改写成一个空模型名，线上直接全挂。
 func UpdateFromJSONString(jsonStr string) error {
 	var parsed Policy
@@ -87,7 +112,9 @@ func UpdateFromJSONString(jsonStr string) error {
 		return err
 	}
 	if parsed.Enabled {
-		if parsed.SourceModel == "" || parsed.TargetModel == "" || parsed.TriggerSeconds <= 0 {
+		secondsReady := parsed.SourceModel != "" && parsed.TargetModel != "" && parsed.TriggerSeconds > 0
+		ratioReady := parsed.SourceModel != "" && parsed.RatioTargetModel != "" && parsed.TriggerRatio != ""
+		if !secondsReady && !ratioReady {
 			parsed.Enabled = false
 		}
 	}
@@ -97,16 +124,44 @@ func UpdateFromJSONString(jsonStr string) error {
 	return nil
 }
 
-// IsEnabled 判断当前是否需要做条件路由。
+// IsEnabled 判断「规则一（时长）」当前是否生效。
 // 三个必要条件缺一不可 —— 与 UpdateFromJSONString 的校验口径保持一致，
 // 防止有人绕过 option 分发直接改内存状态。
 func IsEnabled() bool {
 	mu.RLock()
 	defer mu.RUnlock()
-	return current.Enabled &&
-		current.SourceModel != "" &&
-		current.TargetModel != "" &&
-		current.TriggerSeconds > 0
+	return secondsRuleReady(current)
+}
+
+// IsRatioRouteEnabled 判断「规则二（比例）」当前是否生效。
+func IsRatioRouteEnabled() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return ratioRuleReady(current)
+}
+
+// IsAnyRouteEnabled 判断是否有**任意一条**规则生效。
+//
+// 中间件早退必须用这个，不能用 IsEnabled —— 只配了比例规则时
+// IsEnabled 是 false，用它会直接跳过整个中间件，比例规则永远不生效。
+func IsAnyRouteEnabled() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return secondsRuleReady(current) || ratioRuleReady(current)
+}
+
+func secondsRuleReady(p Policy) bool {
+	return p.Enabled &&
+		p.SourceModel != "" &&
+		p.TargetModel != "" &&
+		p.TriggerSeconds > 0
+}
+
+func ratioRuleReady(p Policy) bool {
+	return p.Enabled &&
+		p.SourceModel != "" &&
+		p.RatioTargetModel != "" &&
+		p.TriggerRatio != ""
 }
 
 func clonePolicy(p Policy) Policy {

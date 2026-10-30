@@ -61,7 +61,7 @@ type routeRecorder struct {
 func newRouteEngine(rec *routeRecorder) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	engine.Use(Seedance25TeHuiRoute30s())
+	engine.Use(Seedance25TeHuiRoute())
 	engine.POST("/v1/video/generations", func(c *gin.Context) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
@@ -80,8 +80,29 @@ func newRouteEngine(rec *routeRecorder) *gin.Engine {
 	return engine
 }
 
+// stubChannelAvailable 覆盖「目标模型是否有可用渠道」的探针。
+//
+// 真实实现要读渠道缓存或查数据库，单测里没有这些环境。
+// 默认让所有用例都走「渠道可用」，需要验预检行为的用例自己覆盖成 false。
+func stubChannelAvailable(t *testing.T, available bool) {
+	t.Helper()
+	previous := channelAvailabilityProbe
+	channelAvailabilityProbe = func(*gin.Context, string) bool { return available }
+	t.Cleanup(func() { channelAvailabilityProbe = previous })
+}
+
 // runRoute 把一个请求体灌进引擎，返回下游 handler 看到的请求体与来源模型名。
+//
+// 默认按「目标渠道可用」跑 —— 绝大多数用例关心的是改写逻辑，
+// 不是渠道预检。要验预检行为请用 runRouteRaw 并自行 stub。
 func runRoute(t *testing.T, body string) (string, string) {
+	t.Helper()
+	stubChannelAvailable(t, true)
+	return runRouteRaw(t, body)
+}
+
+// runRouteRaw 不做任何渠道探针假设，直接跑一遍。
+func runRouteRaw(t *testing.T, body string) (string, string) {
 	t.Helper()
 	rec := &routeRecorder{}
 	engine := newRouteEngine(rec)
@@ -434,7 +455,7 @@ func TestSeedanceRouteSkipsRemixPath(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	engine.Use(Seedance25TeHuiRoute30s())
+	engine.Use(Seedance25TeHuiRoute())
 	var seenBody string
 	engine.POST("/v1/videos/:video_id/remix", func(c *gin.Context) {
 		storage, err := common.GetBodyStorage(c)
@@ -463,7 +484,7 @@ func TestSeedanceRouteSkipsNonJSONContentType(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	engine.Use(Seedance25TeHuiRoute30s())
+	engine.Use(Seedance25TeHuiRoute())
 	var seenBody string
 	engine.POST("/v1/video/generations", func(c *gin.Context) {
 		storage, err := common.GetBodyStorage(c)
@@ -507,5 +528,263 @@ func TestSeedanceRouteIncompletePolicyStaysDisabled(t *testing.T) {
 	seen, _ := runRoute(t, body)
 	if seen != body {
 		t.Fatalf("body changed with incomplete policy:\n got %s\nwant %s", seen, body)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 规则二：比例路由（seedance2.5-特惠 + 9:16 → wan3.0-720p-特惠）
+// ─────────────────────────────────────────────────────────────
+
+const testRatioTargetModel = "wan3.0-720p-特惠"
+
+// enableBothRules 同时打开时长规则与比例规则，测试结束时恢复原状。
+func enableBothRules(t *testing.T, secondsTarget string, seconds int, ratioTarget string, ratio string) {
+	t.Helper()
+	previous := seedanceroute_setting.Get()
+	payload := map[string]interface{}{
+		"enabled":            true,
+		"source_model":       testSourceModel,
+		"target_model":       secondsTarget,
+		"trigger_seconds":    seconds,
+		"ratio_target_model": ratioTarget,
+		"trigger_ratio":      ratio,
+	}
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+}
+
+func decodeBody(t *testing.T, body string) map[string]interface{} {
+	t.Helper()
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &out); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	return out
+}
+
+func TestSeedanceRouteRatioRoutesNon30sToWan3(t *testing.T) {
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	// 15 秒 + 9:16：时长规则不命中（15≠30），比例规则命中 → 走 wan3。
+	body := `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"},"prompt":"a cat"}`
+	seen, originModel := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	if out["model"] != testRatioTargetModel {
+		t.Fatalf("model = %v, want %s (body=%s)", out["model"], testRatioTargetModel, seen)
+	}
+	if out["prompt"] != "a cat" {
+		t.Fatalf("prompt = %v, want a cat", out["prompt"])
+	}
+	// 时长必须原样保留 —— wan3 支持 2~30 秒逐秒，不能被改成 30。
+	if out["seconds"] != "15" {
+		t.Fatalf("seconds = %v, want 15", out["seconds"])
+	}
+	metadata, ok := out["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("metadata missing in %s", seen)
+	}
+	if metadata["ratio"] != "9:16" {
+		t.Fatalf("metadata.ratio = %v, want 9:16", metadata["ratio"])
+	}
+	if originModel != testSourceModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
+	}
+}
+
+func TestSeedanceRouteSecondsRuleWinsOverRatio(t *testing.T) {
+	// 老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」：
+	// 30 秒 + 9:16 必须走豆包，不能走 wan3。
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"ratio":"9:16"}}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	if out["model"] != testTargetModel {
+		t.Fatalf("model = %v, want %s（30 秒必须优先走豆包）", out["model"], testTargetModel)
+	}
+}
+
+func TestSeedanceRouteRatioFromAspectRatioAndSize(t *testing.T) {
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"metadata aspect_ratio", `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"aspect_ratio":"9:16"}}`},
+		{"top level ratio", `{"model":"seedance2.5-特惠","seconds":"10","ratio":"9:16"}`},
+		{"size 720x1280", `{"model":"seedance2.5-特惠","seconds":"10","size":"720x1280"}`},
+		{"size 480x854 (480P 竖屏)", `{"model":"seedance2.5-特惠","seconds":"10","size":"480x854"}`},
+		{"full-width colon", `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"9：16"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, _ := runRoute(t, tc.body)
+			out := decodeBody(t, seen)
+			if out["model"] != testRatioTargetModel {
+				t.Fatalf("model = %v, want %s (body=%s)", out["model"], testRatioTargetModel, seen)
+			}
+		})
+	}
+}
+
+func TestSeedanceRouteRatioSkipsOtherRatios(t *testing.T) {
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"16:9", `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"16:9"}}`},
+		{"1:1", `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"1:1"}}`},
+		{"adaptive", `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"adaptive"}}`},
+		{"no ratio", `{"model":"seedance2.5-特惠","seconds":"10"}`},
+		{"other model", `{"model":"wan3.0-video","seconds":"10","metadata":{"ratio":"9:16"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, originModel := runRoute(t, tc.body)
+			if seen != tc.body {
+				t.Fatalf("body changed but should not route:\n got %s\nwant %s", seen, tc.body)
+			}
+			if originModel != "" {
+				t.Fatalf("RouteOriginModel() = %q, want empty", originModel)
+			}
+		})
+	}
+}
+
+func TestSeedanceRouteRatioSkipsExplicit1080P(t *testing.T) {
+	// 目标模型固定交付 720P（480P 生成 + 提升），要 1080P 时路由过去等于降级交付。
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"top level resolution", `{"model":"seedance2.5-特惠","seconds":"10","resolution":"1080P","metadata":{"ratio":"9:16"}}`},
+		{"metadata resolution", `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"9:16","resolution":"1080P"}}`},
+		{"size 1920x1080", `{"model":"seedance2.5-特惠","seconds":"10","size":"1920x1080","metadata":{"ratio":"9:16"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, _ := runRoute(t, tc.body)
+			if seen != tc.body {
+				t.Fatalf("body changed but should not route:\n got %s\nwant %s", seen, tc.body)
+			}
+		})
+	}
+}
+
+func TestSeedanceRouteRatioKeepsMediaUntouched(t *testing.T) {
+	// wan3 渠道的 buildWan3Media 素材优先级与源链路一致（顶层 media > metadata.media），
+	// 所以**不需要**转换格式 —— 原样保留即可，绝不能像豆包规则那样改写成 input_reference。
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"9:16"},"media":[{"type":"reference_image","url":"https://example.com/a.png"}]}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	if out["model"] != testRatioTargetModel {
+		t.Fatalf("model = %v, want %s", out["model"], testRatioTargetModel)
+	}
+	if _, ok := out["input_reference"]; ok {
+		t.Fatalf("must not convert media to input_reference for wan3 (body=%s)", seen)
+	}
+	media, ok := out["media"].([]interface{})
+	if !ok || len(media) != 1 {
+		t.Fatalf("media lost: %v (body=%s)", out["media"], seen)
+	}
+	entry, _ := media[0].(map[string]interface{})
+	if entry["url"] != "https://example.com/a.png" {
+		t.Fatalf("media url = %v", entry["url"])
+	}
+}
+
+func TestSeedanceRouteSkipsWhenTargetChannelUnavailable(t *testing.T) {
+	// 中间件改写 body 之后，重试只会用同一个模型名重选渠道，不会退回源模型。
+	// 所以目标模型没渠道时必须**不路由**，让请求自然落回源链路 ——
+	// 否则 Distribute 会直接 503，客户撞错误。
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	stubChannelAvailable(t, false)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"seconds rule", `{"model":"seedance2.5-特惠","seconds":"30"}`},
+		{"ratio rule", `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"9:16"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, originModel := runRouteRaw(t, tc.body)
+			if seen != tc.body {
+				t.Fatalf("body changed but target channel unavailable:\n got %s\nwant %s", seen, tc.body)
+			}
+			if originModel != "" {
+				t.Fatalf("RouteOriginModel() = %q, want empty", originModel)
+			}
+		})
+	}
+}
+
+func TestSeedanceRouteLegacyPolicyKeepsRatioRuleOff(t *testing.T) {
+	// 旧的生产 option JSON 没有 ratio_target_model / trigger_ratio。
+	// 解析后比例规则必须**不生效** —— 否则等于在没批准的情况下上线一条新路由。
+	previous := seedanceroute_setting.Get()
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+	legacy := `{"enabled":true,"source_model":"seedance2.5-特惠","target_model":"seedance-2-5","trigger_seconds":30}`
+	if err := seedanceroute_setting.UpdateFromJSONString(legacy); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	if seedanceroute_setting.IsRatioRouteEnabled() {
+		t.Fatal("IsRatioRouteEnabled() = true, want false for legacy policy")
+	}
+
+	body := `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"9:16"}}`
+	seen, _ := runRoute(t, body)
+	if seen != body {
+		t.Fatalf("body changed with legacy policy:\n got %s\nwant %s", seen, body)
+	}
+}
+
+func TestSeedanceRouteRatioOnlyPolicyStillWorks(t *testing.T) {
+	// 只配比例规则、不配时长规则时，中间件也必须正常工作。
+	// 早退条件若写成 IsEnabled()，这里会直接跳过整个中间件（比例规则永不生效）。
+	previous := seedanceroute_setting.Get()
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+	ratioOnly := `{"enabled":true,"source_model":"seedance2.5-特惠","ratio_target_model":"wan3.0-720p-特惠","trigger_ratio":"9:16"}`
+	if err := seedanceroute_setting.UpdateFromJSONString(ratioOnly); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	if !seedanceroute_setting.IsAnyRouteEnabled() {
+		t.Fatal("IsAnyRouteEnabled() = false, want true when ratio rule configured")
+	}
+	if seedanceroute_setting.IsEnabled() {
+		t.Fatal("IsEnabled() = true, want false when seconds rule not configured")
+	}
+
+	body := `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"9:16"}}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testRatioTargetModel {
+		t.Fatalf("model = %v, want %s", out["model"], testRatioTargetModel)
 	}
 }
