@@ -113,3 +113,39 @@ func TestValidateGenerationLimitIsLocalBadRequest(t *testing.T) {
 	require.True(t, taskErr.LocalError, "必须是本地错误，不扣费、不建单、不触发 AutoBan")
 	require.Equal(t, "invalid_input_reference", taskErr.Code)
 }
+
+// 超限文案必须**原样**透传给下游：客户要能一眼看懂该怎么改。
+//
+// 反例（2026-10-31 实测）：错误被套上内部前缀后，下游看到的是
+//
+//	probe reference video duration failed: 参考视频时长 32.39 秒超过 15 秒上限
+//
+// 前半截是内部实现细节，客户读不懂，还会误以为是我们这边故障。
+// 所以「素材超限」必须与「探测失败」分成两类，只有后者保留技术前缀。
+func TestReferenceLimitErrorsAreClientFacing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// ① 单条超限（32 秒 > 15 秒）
+	_, err := probeReferenceVideoSeconds(dataURLVideo(32), "")
+	require.Error(t, err)
+	require.True(t, isReferenceLimitError(err), "单条超限必须被标记成素材超限")
+	require.Contains(t, err.Error(), "参考视频时长")
+	require.NotContains(t, err.Error(), "probe reference video duration failed")
+
+	// ② 合计超限（9 + 9 = 18 秒 > 15 秒）
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	media := []relaycommon.TaskMedia{
+		{Type: "reference_video", URL: dataURLVideo(9)},
+		{Type: "reference_video", URL: dataURLVideo(9)},
+	}
+	err = (&TaskAdaptor{}).setReferenceVideoSeconds(context, media)
+	require.Error(t, err)
+	require.True(t, isReferenceLimitError(err), "合计超限必须被标记成素材超限")
+	require.Contains(t, err.Error(), "参考视频总时长")
+	require.NotContains(t, err.Error(), "probe reference video duration failed")
+
+	// ③ 探测失败**不能**被误标成超限 —— 否则技术前缀被丢掉，运维查不到根因
+	_, err = probeReferenceVideoSeconds("", "")
+	require.Error(t, err)
+	require.False(t, isReferenceLimitError(err), "空地址是探测失败，不是素材超限")
+}

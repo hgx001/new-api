@@ -181,10 +181,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	// 参考视频按秒加价（生成秒数 + 参考视频总秒数），秒数在这里探测并塞进 context，
 	// 由 EstimateBilling 读出来并入计费。必须放在预扣之前：EstimateBilling 没有
 	// 错误返回值，那时才发现解析不了就只能按 0 秒收钱（静默少收）。
+	//
+	// 超限（单条 / 合计）的文案已经是给客户看的中文提示，**原样透传**；
+	// 只有探测失败才套技术前缀 —— 否则下游会看到
+	// 「probe reference video duration failed: 参考视频时长 32.39 秒超过 15 秒上限」，
+	// 前半截是内部实现细节，客户读不懂还会以为是我们故障。
 	if refErr := a.setReferenceVideoSeconds(c, media); refErr != nil {
+		if !isReferenceLimitError(refErr) {
+			refErr = errors.Wrap(refErr, "probe reference video duration failed")
+		}
 		return service.TaskErrorWrapperLocal(
-			errors.Wrap(refErr, "probe reference video duration failed"),
-			"invalid_input_reference", http.StatusBadRequest)
+			refErr, "invalid_input_reference", http.StatusBadRequest)
 	}
 	// 有参考视频时生成时长也要受限（老板 2026-10-31 定）。
 	//
@@ -245,7 +252,7 @@ func (a *TaskAdaptor) setReferenceVideoSeconds(c *gin.Context, media []relaycomm
 	// 合计上限：上游官方约束「参考视频总时长 ≤ 15 秒」（与 wan3.0-video-官网同源）。
 	// 单条各 15 秒但总共 70 秒的组合同样会被上游拒，本地提前拦。
 	if total > maxTotalReferenceVideoSeconds {
-		return errors.Errorf("参考视频总时长 %d 秒超过 %d 秒上限，请裁剪后重试",
+		return newReferenceLimitError("参考视频总时长 %d 秒超过 %d 秒上限，请裁剪后重试",
 			total, maxTotalReferenceVideoSeconds)
 	}
 	if total > 0 {
