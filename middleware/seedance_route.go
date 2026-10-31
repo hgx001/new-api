@@ -235,7 +235,9 @@ func prepareWan3Route(c *gin.Context, body map[string]interface{}, policy seedan
 	// → 400，而他改传 16:9（不改派）同样的素材是能跑的 —— 表现成「这个模型时好时坏」。
 	// 生产实例：2026-10-31 01:10，logs id=9379，参考视频 32.39 秒。
 	//
-	// 代价：带参考视频的 9:16 请求会多一次视频头部下载（moov 在头部时几十 KB）。
+	// 代价：带参考视频的 9:16 请求会多一次视频下载。moov 在头部时几十 KB 即可
+	// 拿到 mvhd，但在尾部时要下全文件（探测上限 64MB）—— 所以 wan3 包给单条
+	// 10 秒、整组 30 秒的超时预算，超时按「预检不通过」处理，交回源链路。
 	// 不带参考视频的请求（绝大多数）不触发，零开销。
 	if outOfRange, reason := wan3ReferenceVideosOutOfRange(body); outOfRange {
 		logger.LogInfo(c, "条件路由跳过 wan3，交回源链路："+reason)
@@ -257,7 +259,7 @@ func wan3ReferenceVideosOutOfRange(body map[string]interface{}) (bool, string) {
 	if len(urls) == 0 {
 		return false, ""
 	}
-	totalSeconds, realSeconds, err := wan3.ProbeReferenceVideos(urls)
+	_, realSeconds, err := wan3.ProbeReferenceVideos(urls)
 	if err != nil {
 		// 单条超 15 秒也走这里：probeReferenceVideoSeconds 内部已校验单条上限，
 		// 超限时返回的是 "exceeds the 15s per-video limit" 错误，不是网络错误。
@@ -265,7 +267,6 @@ func wan3ReferenceVideosOutOfRange(body map[string]interface{}) (bool, string) {
 		// 以为是下载不通，实际多半是视频本身超限。
 		return true, "参考视频预检不通过：" + err.Error()
 	}
-	_ = totalSeconds // 计费口径的整秒由 wan3 adaptor 自己算，这里只做范围判定
 	if realSeconds > float64(wan3.MaxReferenceVideoTotalSeconds)+routeDurationEpsilon {
 		return true, fmt.Sprintf("参考视频合计 %.2f 秒超过 %d 秒上限",
 			realSeconds, wan3.MaxReferenceVideoTotalSeconds)
@@ -310,18 +311,78 @@ func routeGenerationSeconds(body map[string]interface{}) int {
 
 // collectReferenceVideos 收集请求里的参考视频 URL 列表。
 //
-// 优先级与 wan3 的 buildWan3Media **完全一致**（顶层 media 非空就只看顶层，
-// 否则看 metadata.media）—— 优先级错了会漏判：源链路只用顶层 media 里的视频，
-// 我们却去读 metadata.media，就会对着一个根本不会被提交的视频做时长校验。
+// ⚠️ 必须与 wan3 的 buildWan3Media **逐条对齐**，否则挡板会判错方向。
+// buildWan3Media 的优先级是：
+//
+//	顶层 media 非空      → 只看顶层（哪怕里面全是图片）
+//	否则 metadata.media 非空 → 只看 metadata
+//	否则 legacy images / image / input_reference，按地址扩展名推断类型
+//
+// 写成「顶层 media 里有视频才看顶层」是错的：顶层 media 只有图片、
+// metadata.media 里挂着视频时，实际提交给 wan3 的只有那些图片（视频根本不发），
+// 我们却会去探测 metadata 里的视频，把一条本来合规的请求挡掉。
+//
+// 反过来漏掉 legacy 分支同样危险：客户用 images:["a.mp4"] 传视频时，
+// buildWan3Media 会把它推断成 reference_video 发给上游，这里却看不见它 ——
+// 挡板失效，超长视频照样被改派到 wan3 撞 400（就是这次要修的那个故障）。
 func collectReferenceVideos(body map[string]interface{}) []string {
-	if videos := referenceVideosFromMedia(body["media"]); len(videos) > 0 {
-		return videos
+	if media, ok := body["media"].([]interface{}); ok && len(media) > 0 {
+		return referenceVideosFromMedia(media)
 	}
 	metadata, _ := body["metadata"].(map[string]interface{})
 	if metadata != nil {
-		return referenceVideosFromMedia(metadata["media"])
+		if media, ok := metadata["media"].([]interface{}); ok && len(media) > 0 {
+			return referenceVideosFromMedia(media)
+		}
+	}
+	return legacyReferenceVideos(body)
+}
+
+// legacyReferenceVideos 按 buildWan3Media 的 legacy 规则挑出视频地址：
+// images 优先，其次 image，再次 input_reference；类型由地址推断。
+func legacyReferenceVideos(body map[string]interface{}) []string {
+	legacy := stringListValue(body["images"])
+	if len(legacy) == 0 {
+		legacy = stringListValue(body["image"])
+	}
+	if len(legacy) == 0 {
+		legacy = stringListValue(body["input_reference"])
+	}
+	var videos []string
+	for _, url := range legacy {
+		if isLegacyVideoURL(url) {
+			videos = append(videos, url)
+		}
+	}
+	return videos
+}
+
+// stringListValue 把字符串或字符串数组统一成 []string（丢掉空串）。
+func stringListValue(value interface{}) []string {
+	switch typed := value.(type) {
+	case string:
+		if trimmed := strings.TrimSpace(typed); trimmed != "" {
+			return []string{trimmed}
+		}
+	case []interface{}:
+		var out []string
+		for _, item := range typed {
+			out = append(out, stringListValue(item)...)
+		}
+		return out
 	}
 	return nil
+}
+
+// isLegacyVideoURL 与 wan3 的 inferLegacyMediaType 同口径：
+// 只认 data:video/ 前缀与 .mp4 / .mov 后缀（忽略查询串）。
+func isLegacyVideoURL(url string) bool {
+	lower := strings.ToLower(strings.TrimSpace(url))
+	if strings.HasPrefix(lower, "data:video/") {
+		return true
+	}
+	path := strings.Split(lower, "?")[0]
+	return strings.HasSuffix(path, ".mp4") || strings.HasSuffix(path, ".mov")
 }
 
 // referenceVideosFromMedia 从一个 media 数组里挑出 reference_video 的地址。

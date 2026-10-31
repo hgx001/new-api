@@ -210,3 +210,55 @@ func TestSeedanceRouteRoutesWan3WithShortReferenceVideo(t *testing.T) {
 	assert.Equal(t, testRatioTargetModel, out["model"])
 	assert.Equal(t, testSourceModel, originModel)
 }
+
+// 下面三条锁住「解析口径必须与 buildWan3Media 一致」——
+// 这是审查时发现的两个真缺陷，不锁住就会复发。
+
+func TestCollectReferenceVideos_TopLevelImagesHideMetadataVideos(t *testing.T) {
+	// 顶层 media 有图片 → buildWan3Media 只用顶层，metadata.media 里的视频
+	// **根本不会被提交**。挡板若去探测它，会把合规请求误挡。
+	body := map[string]interface{}{
+		"media": []interface{}{map[string]interface{}{
+			"type": "reference_image", "url": "https://example.com/a.png",
+		}},
+		"metadata": map[string]interface{}{
+			"media": []interface{}{map[string]interface{}{
+				"type": "reference_video", "url": refTestVideoDataURL(32),
+			}},
+		},
+	}
+	assert.Empty(t, collectReferenceVideos(body),
+		"顶层 media 非空时不该再看 metadata.media —— 那段视频不会被提交")
+}
+
+func TestCollectReferenceVideos_LegacyImagesVideo(t *testing.T) {
+	// 客户用 legacy images 传 .mp4，buildWan3Media 会推断成 reference_video
+	// 发给上游。挡板看不见它就会漏挡，超长视频照样撞 400。
+	for _, key := range []string{"images", "image", "input_reference"} {
+		body := map[string]interface{}{key: "https://example.com/ref.mp4"}
+		videos := collectReferenceVideos(body)
+		require.Len(t, videos, 1, "%s 里的 .mp4 必须被识别成参考视频", key)
+		assert.Equal(t, "https://example.com/ref.mp4", videos[0])
+	}
+}
+
+func TestCollectReferenceVideos_LegacyImagesIgnoresPictures(t *testing.T) {
+	body := map[string]interface{}{
+		"images": []interface{}{"https://example.com/a.png", "https://example.com/b.mp4?x=1"},
+	}
+	videos := collectReferenceVideos(body)
+	require.Len(t, videos, 1, "只挑视频，图片不算；查询串不影响后缀判定")
+	assert.Equal(t, "https://example.com/b.mp4?x=1", videos[0])
+}
+
+func TestWan3ReferenceVideosOutOfRange_LegacyImagesOver15s(t *testing.T) {
+	// 端到端确认 legacy 路径也参与范围判定：images 里塞一段 32 秒视频。
+	body := map[string]interface{}{
+		"model":   testSourceModel,
+		"seconds": "5",
+		"images":  []interface{}{refTestVideoDataURL(32)},
+	}
+	out, reason := wan3ReferenceVideosOutOfRange(body)
+	assert.True(t, out, "legacy images 里的超长视频必须挡住改派")
+	assert.Contains(t, reason, "15")
+}

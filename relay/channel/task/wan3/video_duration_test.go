@@ -1,6 +1,7 @@
 package wan3
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"fmt"
@@ -8,10 +9,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -347,4 +350,34 @@ func TestEstimateBillingIgnoresZeroReferenceVideoSeconds(t *testing.T) {
 		"seconds": 5,
 		"size":    2.0,
 	}, adaptor.EstimateBilling(context, &relaycommon.RelayInfo{OriginModelName: "wan3.0-video"}))
+}
+
+// 超时保护：生产 RELAY_TIMEOUT 默认为 0（http.Client 无 Timeout），
+// 一个「连得上但一直不吐数据」的地址会让 Body.Read 无限阻塞。
+// 条件路由中间件的探测跑在请求最前面，必须能被 ctx 打断。
+func TestProbeReferenceVideoHonorsContextTimeout(t *testing.T) {
+	// 连上就挂住，不写任何字节 —— 模拟慢速/恶意地址。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	fetchSetting := system_setting.GetFetchSetting()
+	prevProtection, prevPrivate := fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp
+	fetchSetting.EnableSSRFProtection = false
+	fetchSetting.AllowPrivateIp = true
+	t.Cleanup(func() {
+		fetchSetting.EnableSSRFProtection = prevProtection
+		fetchSetting.AllowPrivateIp = prevPrivate
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := probeReferenceVideoSecondsContext(ctx, server.URL+"/ref.mp4")
+	elapsed := time.Since(start)
+
+	require.Error(t, err, "超时必须返回错误，不能无限挂住")
+	assert.Less(t, elapsed, 3*time.Second, "应当在 ctx 预算内返回，实际 %v", elapsed)
 }

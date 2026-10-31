@@ -1,12 +1,14 @@
 package wan3
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"io"
 	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/service"
@@ -109,6 +111,16 @@ type probedVideo struct {
 // 单个时长必须落在官方区间 [1, 15] 秒 —— 超限或过短都在本地拒：
 // 上游会拒，但那时本站已经按超限秒数预扣了钱。
 func probeReferenceVideoSeconds(rawURL string) (probedVideo, error) {
+	return probeReferenceVideoSecondsContext(context.Background(), rawURL)
+}
+
+// probeReferenceVideoSecondsContext 是带取消能力的探测实现。
+//
+// 为什么需要 ctx：service.GetHttpClient 在 RELAY_TIMEOUT=0（生产默认）时
+// **不设 Timeout**，一个「连得上但一直不吐数据」的地址会让 Body.Read 无限阻塞。
+// adaptor 里探测至少还有请求级超时兜底，而条件路由中间件的探测跑在请求最前面，
+// 挂住就是整个请求挂住，所以中间件那条路径必须自带超时。
+func probeReferenceVideoSecondsContext(ctx context.Context, rawURL string) (probedVideo, error) {
 	rawURL = strings.TrimSpace(rawURL)
 	lower := strings.ToLower(rawURL)
 	switch {
@@ -119,7 +131,7 @@ func probeReferenceVideoSeconds(rawURL string) (probedVideo, error) {
 		}
 		return probedSeconds(data)
 	case strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://"):
-		data, err := downloadReferenceVideoPrefix(rawURL)
+		data, err := downloadReferenceVideoPrefix(ctx, rawURL)
 		if err != nil {
 			return probedVideo{}, err
 		}
@@ -162,7 +174,7 @@ func decodeDataURLPrefix(rawURL string) ([]byte, error) {
 
 // downloadReferenceVideoPrefix 流式下载并边拉边找 mvhd：moov 在头部时提前命中即断，
 // 在尾部时最多拉 probeDownloadCapBytes。
-func downloadReferenceVideoPrefix(rawURL string) ([]byte, error) {
+func downloadReferenceVideoPrefix(ctx context.Context, rawURL string) ([]byte, error) {
 	fetchSetting := system_setting.GetFetchSetting()
 	if err := common.ValidateURLWithFetchSetting(rawURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
 		return nil, errors.Wrap(err, "reference video URL blocked")
@@ -174,7 +186,7 @@ func downloadReferenceVideoPrefix(rawURL string) ([]byte, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -222,6 +234,20 @@ const MaxReferenceVideoTotalSeconds = maxReferenceVideoTotalSeconds
 // 本站计费秒数（生成 + 参考视频）与上游 usage.duration 是同一个数。
 const MaxTotalDurationWithVideo = maxTotalDurationWithVideo
 
+// 探测预算。为什么必须有：service.GetHttpClient 在 RELAY_TIMEOUT=0（生产默认）
+// 时**不设 Timeout**，一个「连得上但一直不吐数据」的地址会让 Body.Read 无限阻塞。
+// adaptor 里探测至少还有请求级超时兜底，而条件路由中间件的探测跑在请求最前面，
+// 挂住就是整个请求挂住，所以那条路径必须自带超时。
+//
+// 分两级而不是一个总预算：客户可以传最多 5 段参考视频，共用一个总超时会让
+// 第 5 段几乎没时间可用（前面几段吃光了预算），把合规请求误判成探测失败。
+const (
+	// probePerReferenceVideoTimeout 是单条参考视频的下载预算。
+	probePerReferenceVideoTimeout = 10 * time.Second
+	// probeReferenceVideosTimeout 是整组的上限，防止 5 条各耗 10 秒。
+	probeReferenceVideosTimeout = 30 * time.Second
+)
+
 // ProbeReferenceVideos 探测一组参考视频的总时长，供条件路由中间件在**改派前**预检。
 //
 // 为什么中间件需要它：wan3 对参考视频有两条硬限制（单条 ≤15 秒、总量 ≤15 秒、
@@ -235,11 +261,21 @@ const MaxTotalDurationWithVideo = maxTotalDurationWithVideo
 // 同一条请求走 16:9（不改派）本来是可以成功的 —— 这是路由造成的功能退化。
 //
 // 返回值：totalSeconds 是计费口径（四舍五入整秒）的合计，realSeconds 是真实合计
-// （用于 15 秒总量校验）。**任一视频探测失败都返回 error**：调用方必须保守地
-// 放弃改派 —— 探测不出时长时无法判断是否会超限，宁可走贵一点但能跑的源链路。
+// （用于 15 秒总量校验）。**任一视频探测失败或整体超时都返回 error**：
+// 调用方必须保守地放弃改派 —— 探测不出时长时无法判断是否会超限，
+// 宁可走贵一点但能跑的源链路。
+//
+// ⚠️ 成本：这里会真的下载视频（moov 在尾部时要下全文件），而 wan3 adaptor 的
+// validate 阶段**还会再探测一次**。之所以不复用结果：两边解析出的素材列表
+// 必须完全一致才能共用，而 buildWan3Media 还要过 validateWan3Media（数量/组合
+// 校验），一旦有偏差就会把计费秒数算错 —— 宁可多下一次，也不冒算错钱的风险。
 func ProbeReferenceVideos(urls []string) (totalSeconds int, realSeconds float64, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), probeReferenceVideosTimeout)
+	defer cancel()
 	for _, raw := range urls {
-		probed, probeErr := probeReferenceVideoSeconds(raw)
+		itemCtx, itemCancel := context.WithTimeout(ctx, probePerReferenceVideoTimeout)
+		probed, probeErr := probeReferenceVideoSecondsContext(itemCtx, raw)
+		itemCancel()
 		if probeErr != nil {
 			return 0, 0, probeErr
 		}
