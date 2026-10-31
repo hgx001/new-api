@@ -714,4 +714,67 @@ describe('tutorials model guide content', () => {
       '旧名不该有独立小节'
     )
   })
+
+  // 回归守卫：MiniMax-M3 / M3.1 的输出价 2026-10-31 由 ¥6.00 涨到 ¥60.00 / 1M。
+  //
+  // 为什么要钉死：这条文案**曾经写错过 66 倍**（写 ¥0.09，实际是 ¥6.00）。
+  // 客户看到的清单和真实扣费对不上，是最容易引发投诉和信任问题的一类 bug。
+  // 所以这里从倍率**反推**应有价格，而不是硬编码 ¥60.00 ——
+  // 以后谁改了 setting/ratio_setting 里的倍率却忘了改文案，本用例立刻失败。
+  //
+  // 换算口径与后端一致：
+  //   quota = tokens × ratio；¥ = quota ÷ QuotaPerUnit × USDExchangeRate
+  //   → 1M tokens 的价格 = 1e6 × ratio ÷ 500000 × 7.3 = ratio × 14.6
+  //   QuotaPerUnit    = 500 * 1000 = 500000（$0.002 / 1K tokens）
+  //   USDExchangeRate = 7.3
+  const QUOTA_PER_UNIT = 500 * 1000
+  const USD_EXCHANGE_RATE = 7.3
+  const yuanPerMillion = (ratio: number) =>
+    (ratio * 1_000_000 * USD_EXCHANGE_RATE) / QUOTA_PER_UNIT
+
+  test('MiniMax-M3 / M3.1 文档价格与后端倍率一致', () => {
+    // 与 setting/ratio_setting/model_ratio.go 的 defaultCompletionRatio 保持一致
+    const MODEL_RATIO = 0.015103
+    const COMPLETION_RATIO = 4.10959
+
+    const input = yuanPerMillion(MODEL_RATIO)
+    const output = yuanPerMillion(COMPLETION_RATIO)
+
+    // 倍率本身要符合「输出价是原 ¥6.00 的 10 倍」
+    assert.equal(Math.round(output), 60, `输出价应为 ¥60.00 / 1M，实际算出 ¥${output}`)
+    assert.equal(Math.round(input * 100) / 100, 0.22, `输入价应为 ¥0.22 / 1M，实际算出 ¥${input}`)
+
+    // MiniMax 系列只有「可用模型总览」里的清单条目，没有独立小节，
+    // 所以在总览章节内按整行匹配。
+    const overviewSection = sections.find((section) => section.id === 'models-overview')
+    assert.ok(overviewSection, '缺少 models-overview 章节')
+    const overview = JSON.stringify(overviewSection)
+
+    assert.equal(
+      overview.includes(`MiniMax-M3｜文本｜输入 ¥${input.toFixed(2)} / 1M，输出 ¥${output.toFixed(2)} / 1M`),
+      true,
+      `MiniMax-M3 文档价应与倍率一致（输入 ¥${input.toFixed(2)} / 输出 ¥${output.toFixed(2)}）`
+    )
+    assert.equal(
+      overview.includes(
+        `MiniMax-M3.1｜文本｜输入 ¥${input.toFixed(2)} / 1M，输出 ¥${output.toFixed(2)} / 1M`
+      ),
+      true,
+      `MiniMax-M3.1 文档价应与倍率一致（输入 ¥${input.toFixed(2)} / 输出 ¥${output.toFixed(2)}）`
+    )
+  })
+
+  // M2.7 与 M3 / M3.1 **不再同价**（2026-10-31 只上调了 M3 / M3.1 的输出价），
+  // 兼容清单里的「与 MiniMax-M3 同价」必须同步改掉，否则又是一条错误指引。
+  test('MiniMax-M2.7 不再声称与 M3 同价', () => {
+    const overviewSection = sections.find((section) => section.id === 'models-overview')
+    assert.ok(overviewSection, '缺少 models-overview 章节')
+    const text = JSON.stringify(overviewSection)
+    assert.equal(text.includes('MiniMax-M2.7'), true, '兼容清单里要保留 M2.7')
+    assert.equal(
+      text.includes('MiniMax-M2.7：与 MiniMax-M3 同价'),
+      false,
+      'M2.7 的输出价未随 M3 上调，不能再写「与 MiniMax-M3 同价」'
+    )
+  })
 })
