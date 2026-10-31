@@ -259,8 +259,11 @@ func wan3ReferenceVideosOutOfRange(body map[string]interface{}) (bool, string) {
 	}
 	totalSeconds, realSeconds, err := wan3.ProbeReferenceVideos(urls)
 	if err != nil {
-		// 单个视频超 15 秒也会走到这里（probeReferenceVideoSeconds 内部已校验单条上限）。
-		return true, "参考视频探测失败：" + err.Error()
+		// 单条超 15 秒也走这里：probeReferenceVideoSeconds 内部已校验单条上限，
+		// 超限时返回的是 "exceeds the 15s per-video limit" 错误，不是网络错误。
+		// 所以文案用中性表述，具体原因由 err 带出 —— 写成「探测失败」会让运维
+		// 以为是下载不通，实际多半是视频本身超限。
+		return true, "参考视频预检不通过：" + err.Error()
 	}
 	_ = totalSeconds // 计费口径的整秒由 wan3 adaptor 自己算，这里只做范围判定
 	if realSeconds > float64(wan3.MaxReferenceVideoTotalSeconds)+routeDurationEpsilon {

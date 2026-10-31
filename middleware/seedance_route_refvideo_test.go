@@ -145,7 +145,7 @@ func TestWan3ReferenceVideosOutOfRange_UnprobeableVideoSkipsRoute(t *testing.T) 
 	}
 	out, reason := wan3ReferenceVideosOutOfRange(body)
 	assert.True(t, out, "探测失败必须保守地挡住改派")
-	assert.Contains(t, reason, "探测失败")
+	assert.Contains(t, reason, "预检不通过")
 }
 
 // ---- 单测：素材优先级 ----
