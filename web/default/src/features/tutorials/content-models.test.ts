@@ -94,7 +94,7 @@ describe('tutorials model guide content', () => {
       '¥0.23/秒',
       '¥0.10/s',
       '¥1.00 / 次',
-      '¥3.00 / 次',
+      '¥5.00 / 次',
     ]) {
       assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
     }

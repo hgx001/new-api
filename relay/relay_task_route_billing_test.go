@@ -27,8 +27,8 @@ import (
 const (
 	// 源模型 seedance2.5-特惠：¥0.20/秒 → ModelPrice 0.027397260273972605
 	routeSourceBaseQuota = 13698
-	// 目标模型 seedance-2-5：¥3.00/次 → ModelPrice 0.410958904109589
-	routeTargetFlatQuota = 205479
+	// 目标模型 seedance-2-5：¥5.00/次 → ModelPrice 0.6849315068493151
+	routeTargetFlatQuota = 342465
 )
 
 func newRouteBillingCtx(seconds float64) *gin.Context {
@@ -62,7 +62,7 @@ func TestApplyRouteBillingSeconds_ThirtySecondsBillsSourceModel(t *testing.T) {
 	quota := applyTaskOtherRatios(info.PriceData.Quota, info.PriceData.OtherRatios)
 	assert.Equal(t, routeSourceBaseQuota*30, quota, "30 秒 = 13698 × 30 = 410940（¥6.00）")
 	// 反向断言：绝不能落到目标模型的按次价。
-	assert.NotEqual(t, routeTargetFlatQuota, quota, "不能按豆包的按次价 ¥3.00 收")
+	assert.NotEqual(t, routeTargetFlatQuota, quota, "不能按豆包的按次价 ¥5.00 收")
 }
 
 // adaptor 已经给了 seconds（比例规则 → wan3）时不覆盖它的判断。

@@ -117,7 +117,7 @@ export function getWan3SampleResolution(modelName: string): string | null {
  */
 export function isPerSecondModel(model: PricingModel): boolean {
   const name = model.model_name ?? ''
-  // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥3/次），不命中。
+  // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥5/次），不命中。
   if (name.startsWith('seedance-2-0')) {
     return true
   }

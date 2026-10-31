@@ -141,7 +141,7 @@ const (
 //   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，时长固定 10 秒，按次计费）
 //   - seedance-2.5：dola 官网 Seedance 2.5（远端视频，固定 30 秒 / 720p，按次计费）
 //   - seedance-2-5：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒四档，
-//     按次计费 ¥3.0/次）。公开名是短名（2026-10-08 用户定稿，2026-10-12 去掉
+//     按次计费 ¥5.0/次）。公开名是短名（2026-10-08 用户定稿，2026-10-12 去掉
 //     db- 前缀），转发 ArcReel 前翻译成官网档位真名 doubao-seedance-2-5-260628
 //     （见 modelSpec.UpstreamModel）；与 dola 的 seedance-2.5 同名不同站，**互不通用**
 //   - seedance-2-0-fast：豆包官网 Seedance 2.0 Fast（远端视频，5-15 秒逐秒可选，
