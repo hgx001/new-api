@@ -16,7 +16,16 @@ import (
 	"gorm.io/gorm"
 )
 
+// applyExplicitLogTextFilter 给日志的文本列加过滤条件。
+//
+// 2026-11-01 起统一 TrimSpace：前端筛选框不会自动去空格，从别处粘贴
+// 「seedance2.5-特惠 」「 seedance2.5-特惠」这种带首尾空格的值时，
+// 等值匹配一条都命中不了 —— 用户看到「未查询到日志」，但数据其实在库里
+// （线上实例：同一个模型名带一个前导空格，命中 0 条；去掉空格命中 4 条）。
+//
+// 只做 trim，不改匹配语义：带 % 走通配，不带 % 走等值。
 func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm.DB, error) {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return tx, nil
 	}
@@ -28,6 +37,60 @@ func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm
 		return tx.Where(condition, pattern), nil
 	}
 	return tx.Where(column+" = ?", value), nil
+}
+
+// applyLogModelNameFilter 是模型名专用的过滤：按「包含」匹配。
+//
+// 为什么模型名要单独一套：模型名普遍是长串（wan3.0-video-prime、
+// seedance2.5-特惠），筛选框是自由文本输入而不是下拉，让用户逐字敲全名
+// 才查得到不现实 —— 敲「seedance」应当看到所有 seedance 系模型。
+//
+// 与等值匹配的关系：全名是自身的子串，所以「输全名」的结果与等值完全一致，
+// 不会改变既有用法；只有「输一部分」才会多出结果，这正是搜索该有的行为。
+//
+// 带 % 时仍按高级通配处理（与其它文本列口径一致，且沿用同一套
+// 「连续 %% 拒绝 / 最多 2 个 %」校验）。
+//
+// 列表（GetAllLogs / GetUserLogs）与统计（SumUsedQuota）必须共用本函数，
+// 否则会出现「列表 3 条、统计 0 元」这种对不上的现象。
+func applyLogModelNameFilter(tx *gorm.DB, modelName string) (*gorm.DB, error) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return tx, nil
+	}
+	// 列名统一带表前缀：GetAllLogs / GetUserLogs / SumUsedQuota 三处查询都以
+	// logs 为唯一表，带前缀在 SQLite / Postgres / ClickHouse 上都成立。
+	if strings.Contains(modelName, "%") {
+		return applyExplicitLogTextFilter(tx, "logs.model_name", modelName)
+	}
+	return applyLogContainsFilter(tx, "logs.model_name", modelName)
+}
+
+// applyLogContainsFilter 把值包成 %value% 的包含匹配。
+//
+// 转义规则跟通配模式保持一致（! 为 ESCAPE 字符，_ 需要转义），
+// 只是两端的 % 由我们补，而不是让用户手写。
+func applyLogContainsFilter(tx *gorm.DB, column string, value string) (*gorm.DB, error) {
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		pattern := "%" + escapeClickHouseLikeLiteral(value) + "%"
+		return tx.Where(column+" LIKE ?", pattern), nil
+	}
+	pattern := "%" + escapeLikeLiteral(value) + "%"
+	return tx.Where(column+" LIKE ? ESCAPE '!'", pattern), nil
+}
+
+// escapeLikeLiteral 转义 LIKE 里对字面量有特殊含义的字符（! 为 ESCAPE 字符）。
+func escapeLikeLiteral(input string) string {
+	input = strings.ReplaceAll(input, "!", "!!")
+	input = strings.ReplaceAll(input, "_", "!_")
+	return input
+}
+
+// escapeClickHouseLikeLiteral 同 escapeLikeLiteral，但 ClickHouse 用反斜杠做 ESCAPE。
+func escapeClickHouseLikeLiteral(input string) string {
+	input = strings.ReplaceAll(input, `\`, `\\`)
+	input = strings.ReplaceAll(input, `_`, `\_`)
+	return input
 }
 
 func buildLogLikeCondition(column string, value string) (string, string, error) {
@@ -525,19 +588,19 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
 
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
+	if tx, err = applyLogModelNameFilter(tx, modelName); err != nil {
 		return nil, 0, err
 	}
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", username); err != nil {
 		return nil, 0, err
 	}
-	if tokenName != "" {
+	if tokenName = strings.TrimSpace(tokenName); tokenName != "" {
 		tx = tx.Where("logs.token_name = ?", tokenName)
 	}
-	if requestId != "" {
+	if requestId = strings.TrimSpace(requestId); requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
 	}
-	if upstreamRequestId != "" {
+	if upstreamRequestId = strings.TrimSpace(upstreamRequestId); upstreamRequestId != "" {
 		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
 	}
 	if startTimestamp != 0 {
@@ -653,16 +716,16 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	tx = tx.Where("logs.token_name <> ?", operatorCostLedgerTokenName)
 	tx = tx.Where("logs.content NOT LIKE ?", operatorCostLedgerContentPrefix+"%")
 
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
+	if tx, err = applyLogModelNameFilter(tx, modelName); err != nil {
 		return nil, 0, err
 	}
-	if tokenName != "" {
+	if tokenName = strings.TrimSpace(tokenName); tokenName != "" {
 		tx = tx.Where("logs.token_name = ?", tokenName)
 	}
-	if requestId != "" {
+	if requestId = strings.TrimSpace(requestId); requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
 	}
-	if upstreamRequestId != "" {
+	if upstreamRequestId = strings.TrimSpace(upstreamRequestId); upstreamRequestId != "" {
 		tx = tx.Where("logs.upstream_request_id = ?", upstreamRequestId)
 	}
 	if startTimestamp != 0 {
@@ -671,7 +734,7 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 	if endTimestamp != 0 {
 		tx = tx.Where("logs.created_at <= ?", endTimestamp)
 	}
-	if group != "" {
+	if group = strings.TrimSpace(group); group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
 	}
 	err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error
@@ -711,7 +774,7 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "username", username); err != nil {
 		return stat, err
 	}
-	if tokenName != "" {
+	if tokenName = strings.TrimSpace(tokenName); tokenName != "" {
 		tx = tx.Where("token_name = ?", tokenName)
 		rpmTpmQuery = rpmTpmQuery.Where("token_name = ?", tokenName)
 	}
@@ -721,17 +784,17 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	if endTimestamp != 0 {
 		tx = tx.Where("created_at <= ?", endTimestamp)
 	}
-	if tx, err = applyExplicitLogTextFilter(tx, "model_name", modelName); err != nil {
+	if tx, err = applyLogModelNameFilter(tx, modelName); err != nil {
 		return stat, err
 	}
-	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "model_name", modelName); err != nil {
+	if rpmTpmQuery, err = applyLogModelNameFilter(rpmTpmQuery, modelName); err != nil {
 		return stat, err
 	}
 	if channel != 0 {
 		tx = tx.Where("channel_id = ?", channel)
 		rpmTpmQuery = rpmTpmQuery.Where("channel_id = ?", channel)
 	}
-	if group != "" {
+	if group = strings.TrimSpace(group); group != "" {
 		tx = tx.Where(logGroupCol+" = ?", group)
 		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
 	}

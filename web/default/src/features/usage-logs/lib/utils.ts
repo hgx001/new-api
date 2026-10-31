@@ -45,6 +45,19 @@ import type {
 // ============================================================================
 
 /**
+ * 把任意筛选值归一成「trim 后的字符串」，空串返回 undefined。
+ *
+ * 为什么需要：筛选框是自由文本，粘贴时容易带上首尾空格（线上实例
+ * `model=+seedance2.5-特惠`），后端做等值/包含匹配时空格会一起参与比较，
+ * 结果一条都查不到。空串归一成 undefined 还能让 URL 与请求都不带空参数。
+ */
+function trimmedText(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  const trimmed = String(value).trim()
+  return trimmed ? trimmed : undefined
+}
+
+/**
  * Check if log type is displayable (has detailed info)
  */
 export function isDisplayableLogType(type: number): boolean {
@@ -196,24 +209,34 @@ export function buildApiParams(config: {
   }
 
   // Build base params from search params
+  //
+  // 文本筛选一律 trim：URL 可能是别人分享的、也可能带着粘贴时混进来的空格
+  // （线上实例 `model=+seedance2.5-特惠` 就是这么来的）。后端也会 trim 一次，
+  // 这里先做是为了让请求本身干净、抓包和日志里不出现可疑的空格。
   const params: GetLogsParams = {
     p: page,
     page_size: pageSize,
     ...(searchParams.type ? { type: processType(searchParams.type) } : {}),
-    ...(searchParams.model ? { model_name: String(searchParams.model) } : {}),
-    ...(searchParams.token ? { token_name: String(searchParams.token) } : {}),
-    ...(searchParams.group ? { group: String(searchParams.group) } : {}),
+    ...(trimmedText(searchParams.model)
+      ? { model_name: trimmedText(searchParams.model) }
+      : {}),
+    ...(trimmedText(searchParams.token)
+      ? { token_name: trimmedText(searchParams.token) }
+      : {}),
+    ...(trimmedText(searchParams.group)
+      ? { group: trimmedText(searchParams.group) }
+      : {}),
     ...(isAdmin && searchParams.channel
       ? { channel: Number(searchParams.channel) || 0 }
       : {}),
-    ...(isAdmin && searchParams.username
-      ? { username: String(searchParams.username) }
+    ...(isAdmin && trimmedText(searchParams.username)
+      ? { username: trimmedText(searchParams.username) }
       : {}),
-    ...(searchParams.requestId
-      ? { request_id: String(searchParams.requestId) }
+    ...(trimmedText(searchParams.requestId)
+      ? { request_id: trimmedText(searchParams.requestId) }
       : {}),
-    ...(searchParams.upstreamRequestId
-      ? { upstream_request_id: String(searchParams.upstreamRequestId) }
+    ...(trimmedText(searchParams.upstreamRequestId)
+      ? { upstream_request_id: trimmedText(searchParams.upstreamRequestId) }
       : {}),
     ...buildTimeRangeParams(searchParams, false),
   }
@@ -228,19 +251,19 @@ export function buildApiParams(config: {
           params.type = processType(value)
           break
         case 'model_name':
-          params.model_name = String(value)
+          if (trimmedText(value)) params.model_name = trimmedText(value)
           break
         case 'token_name':
-          params.token_name = String(value)
+          if (trimmedText(value)) params.token_name = trimmedText(value)
           break
         case 'group':
-          params.group = String(value)
+          if (trimmedText(value)) params.group = trimmedText(value)
           break
         case 'channel':
           if (isAdmin) params.channel = Number(value) || 0
           break
         case 'username':
-          if (isAdmin) params.username = String(value)
+          if (isAdmin && trimmedText(value)) params.username = trimmedText(value)
           break
       }
     })

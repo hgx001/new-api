@@ -32,6 +32,12 @@ import type {
 // Filter Building Functions
 // ============================================================================
 
+/** 去掉首尾空白，空串归一成 undefined（这样 URL 里就不会出现 `model=+xxx`）。 */
+function trimText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
 /**
  * Build search params from filters based on log category
  */
@@ -48,16 +54,26 @@ export function buildSearchParams(
   switch (logCategory) {
     case 'common': {
       const commonFilters = filters as CommonLogFilters
+      // 文本筛选项一律 trim 后再写进 URL。
+      //
+      // 2026-11-01 线上问题：从别处粘贴模型名时带上了前导空格，URL 变成
+      // `model=+seedance2.5-特惠`，后端等值匹配命中 0 条，页面显示
+      // 「未查询到日志」—— 而输入框里根本看不出那个空格。
+      // 前端先 trim，URL 干净、分享出去也不会带着空格。
+      const model = trimText(commonFilters.model)
+      const token = trimText(commonFilters.token)
+      const group = trimText(commonFilters.group)
+      const username = trimText(commonFilters.username)
+      const requestId = trimText(commonFilters.requestId)
+      const upstreamRequestId = trimText(commonFilters.upstreamRequestId)
       return {
         ...baseParams,
-        ...(commonFilters.model && { model: commonFilters.model }),
-        ...(commonFilters.token && { token: commonFilters.token }),
-        ...(commonFilters.group && { group: commonFilters.group }),
-        ...(commonFilters.username && { username: commonFilters.username }),
-        ...(commonFilters.requestId && { requestId: commonFilters.requestId }),
-        ...(commonFilters.upstreamRequestId && {
-          upstreamRequestId: commonFilters.upstreamRequestId,
-        }),
+        ...(model && { model }),
+        ...(token && { token }),
+        ...(group && { group }),
+        ...(username && { username }),
+        ...(requestId && { requestId }),
+        ...(upstreamRequestId && { upstreamRequestId }),
       }
     }
     case 'drawing': {
