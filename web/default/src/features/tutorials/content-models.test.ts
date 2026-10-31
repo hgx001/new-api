@@ -715,34 +715,46 @@ describe('tutorials model guide content', () => {
     )
   })
 
-  // 回归守卫：MiniMax-M3 / M3.1 的输出价 2026-10-31 由 ¥6.00 涨到 ¥60.00 / 1M。
+  // 回归守卫：MiniMax-M3 / M3.1 的输出价 2026-10-31 上调 10 倍
+  // （¥0.09/1M → ¥0.91/1M）。
   //
-  // 为什么要钉死：这条文案**曾经写错过 66 倍**（写 ¥0.09，实际是 ¥6.00）。
+  // 为什么要钉死：这条文案**曾经写错过 66 倍**（写 ¥0.09，真实是 ¥0.91）。
   // 客户看到的清单和真实扣费对不上，是最容易引发投诉和信任问题的一类 bug。
-  // 所以这里从倍率**反推**应有价格，而不是硬编码 ¥60.00 ——
+  // 所以这里从倍率**反推**应有价格，而不是硬编码 ¥0.91 ——
   // 以后谁改了 setting/ratio_setting 里的倍率却忘了改文案，本用例立刻失败。
   //
-  // 换算口径与后端一致：
-  //   quota = tokens × ratio；¥ = quota ÷ QuotaPerUnit × USDExchangeRate
-  //   → 1M tokens 的价格 = 1e6 × ratio ÷ 500000 × 7.3 = ratio × 14.6
-  //   QuotaPerUnit    = 500 * 1000 = 500000（$0.002 / 1K tokens）
-  //   USDExchangeRate = 7.3
+  // 换算口径必须与后端 service/text_quota.go 和前端 features/pricing/lib/price.ts
+  // 三方一致（这三处算错任何一个，文档价就会和真实扣费脱节）：
+  //   quota = (输入 tokens + 输出 tokens × completion_ratio) × model_ratio × group_ratio
+  //   ¥ = quota ÷ QuotaPerUnit × USDExchangeRate
+  //   → 1M tokens 的价格 = model_ratio × 1e6 ÷ 500000 × 7.3 = model_ratio × 14.6
+  //   → 输入价 = model_ratio × 14.6
+  //   → 输出价 = model_ratio × completion_ratio × 14.6
+  //   注意输出侧**还要再乘一次 model_ratio**，这是最容易漏掉的一步。
   const QUOTA_PER_UNIT = 500 * 1000
   const USD_EXCHANGE_RATE = 7.3
   const yuanPerMillion = (ratio: number) =>
     (ratio * 1_000_000 * USD_EXCHANGE_RATE) / QUOTA_PER_UNIT
 
   test('MiniMax-M3 / M3.1 文档价格与后端倍率一致', () => {
-    // 与 setting/ratio_setting/model_ratio.go 的 defaultCompletionRatio 保持一致
+    // 与 setting/ratio_setting/model_ratio.go 的默认值保持一致
     const MODEL_RATIO = 0.015103
     const COMPLETION_RATIO = 4.10959
+    // 调价前的输出倍率，用于验证「正好 10 倍」
+    const COMPLETION_RATIO_OLD = 0.410959
 
     const input = yuanPerMillion(MODEL_RATIO)
-    const output = yuanPerMillion(COMPLETION_RATIO)
+    const output = yuanPerMillion(MODEL_RATIO * COMPLETION_RATIO)
+    const outputOld = yuanPerMillion(MODEL_RATIO * COMPLETION_RATIO_OLD)
 
-    // 倍率本身要符合「输出价是原 ¥6.00 的 10 倍」
-    assert.equal(Math.round(output), 60, `输出价应为 ¥60.00 / 1M，实际算出 ¥${output}`)
+    // 倍率本身要符合「输出价在原价基础上涨 10 倍」
+    assert.equal(
+      Math.round((output / outputOld) * 100) / 100,
+      10,
+      `输出价应为原价的 10 倍（原 ¥${outputOld.toFixed(4)} → 现 ¥${output.toFixed(4)}）`
+    )
     assert.equal(Math.round(input * 100) / 100, 0.22, `输入价应为 ¥0.22 / 1M，实际算出 ¥${input}`)
+    assert.equal(Math.round(output * 100) / 100, 0.91, `输出价应为 ¥0.91 / 1M，实际算出 ¥${output}`)
 
     // MiniMax 系列只有「可用模型总览」里的清单条目，没有独立小节，
     // 所以在总览章节内按整行匹配。

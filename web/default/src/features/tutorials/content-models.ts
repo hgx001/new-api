@@ -24,8 +24,8 @@ import type { TutorialSection } from './content'
 // ----------------------------------------------------------------------------
 
 const MODEL_OVERVIEW_ITEMS = [
-  'MiniMax-M3｜文本｜输入 ¥0.22 / 1M，输出 ¥60.00 / 1M',
-  'MiniMax-M3.1｜文本｜输入 ¥0.22 / 1M，输出 ¥60.00 / 1M（与 MiniMax-M3 同价，实际转发到上游 MiniMax-M3）',
+  'MiniMax-M3｜文本｜输入 ¥0.22 / 1M，输出 ¥0.91 / 1M',
+  'MiniMax-M3.1｜文本｜输入 ¥0.22 / 1M，输出 ¥0.91 / 1M（与 MiniMax-M3 同价，实际转发到上游 MiniMax-M3）',
   'gpt-6-luna｜文本｜输入 ¥0.94 / 1M，输出 ¥7.50 / 1M',
   'gpt-6-sol｜文本｜输入 ¥18.75 / 1M，输出 ¥150.00 / 1M',
   'gpt-6.1-sol｜文本｜输入 ¥18.75 / 1M，输出 ¥150.00 / 1M（与 gpt-6-sol 同价）',
@@ -49,7 +49,7 @@ const MODEL_OVERVIEW_ITEMS = [
 const COMPAT_MODEL_ITEMS = [
   'gpt-5.6-luna：等价 gpt-6-luna，同价（老 Key 无需改代码）',
   'gpt-5.6-sol：等价 gpt-6-sol，同价',
-  'MiniMax-M2.7：输入价与 MiniMax-M3 相同，输出价较低（¥6.00 / 1M）；2026-10-31 起 MiniMax-M3 / M3.1 输出价已上调，两者不再同价',
+  'MiniMax-M2.7：输入价与 MiniMax-M3 相同，输出价较低（¥0.09 / 1M）；2026-10-31 起 MiniMax-M3 / M3.1 输出价已上调 10 倍，两者不再同价',
   'wan3.0-720p-官网：wan3.0-720p-特惠 的旧名（2026-10-30 改名），同价同链路，仅为老代码兼容而保留',
 ]
 

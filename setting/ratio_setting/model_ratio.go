@@ -104,9 +104,10 @@ var defaultModelRatio = map[string]float64{
 	// ⚠️ 必须显式登记：getHardcodedCompletionModelRatio 只兜底「补全倍率 8」，
 	// 输入侧倍率不会按前缀回落（GetModelRatio 精确查表），不登记就是「无价格可用」。
 	"gpt-6.1-sol":                             1.28424,
-	// MiniMax-M3 / M3.1 输入价：¥0.2205 / 1M tokens。
+	// MiniMax-M3 / M3.1 输入价：¥0.2205 / 1M tokens（本轮未调）。
 	// 换算：model_ratio = 1e6 × ¥0.2205 ÷ (500000 × 7.3) = 0.015103
 	// ⚠️ 与 M3.1 同价的原因同上：M3.1 实际转发到上游 M3，共用同一份上游成本。
+	// ⚠️ 官方 MiniMax-M3 输入价 ¥4.20/1M，本平台仍低于官方 19 倍。
 	"MiniMax-M3":                              0.015103,
 	"MiniMax-M3.1":                            0.015103, // 同 MiniMax-M3：实际转发到上游 M3，同价
 	// gpt-5.6 旧名保留为兼容别名（渠道 model_mapping 转发到 gpt-6），
@@ -402,23 +403,26 @@ var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 
 var defaultCompletionRatio = map[string]float64{
-	// MiniMax-M3 / M3.1 输出价：¥60.00 / 1M tokens。
+	// MiniMax-M3 / M3.1 输出价：¥0.9062 / 1M tokens。
 	//
-	// 换算：completion_ratio = 1e6 × ¥60.00 ÷ (QuotaPerUnit × USDExchangeRate)
-	//                              = 1e6 × 60 ÷ (500000 × 7.3) = 4.10959
+	// 换算（与 service/text_quota.go、前端 features/pricing/lib/price.ts 三方一致）：
+	//   ¥ / 1M tokens = model_ratio × completion_ratio × 1e6 ÷ QuotaPerUnit × USDExchangeRate
+	//                = model_ratio × completion_ratio × 14.6
+	//   旧 0.410959 → ¥0.0906/1M ；新 4.10959 → ¥0.9062/1M（正好 10 倍）
 	//
-	// 2026-10-31 老板定：输出价在原 ¥6.00 基础上**涨 10 倍**。
+	// 2026-10-31 老板定：输出价在原价基础上涨 10 倍。
 	//
 	// ⚠️ 官方价对照（platform.minimax.cn/docs/pricing/overview，2026-10-31 实测）：
 	//   MiniMax-M3（≤512k 输入 tokens、标准服务）官方输出 ¥21.00/1M，
-	//   本平台 ¥60.00/1M = 官方价的 2.86 倍，**高于成本、有利润**。
-	//   （输入价仍为 ¥0.2205/1M，官方 ¥4.20/1M —— 输入侧本轮未调。）
+	//   本平台 ¥0.9062/1M 仍**远低于**官方价（官方是本平台的 23 倍）。
+	//   即：涨价 10 倍后仍远低于官方成本线，**涨价主要是修正此前偏低的口径**，
+	//   而不是追求与官方对齐。输入侧同样仍低于官方（¥0.2205 vs ¥4.20）。
 	//
 	// ⚠️ 为什么 M3.1 要跟 M3 一起改、不能只改一个：
 	//   渠道 model_mapping 是 {"MiniMax-M3.1": "MiniMax-M3"}，即 M3.1 **实际转发
 	//   到上游 M3**（日志 upstream_model_name="MiniMax-M3" 可证）。两者共用同一份
 	//   上游成本，若只改一个，客户改个模型名就能按 1 倍或 10 倍计费 —— 套利漏洞。
-	"MiniMax-M3":     4.10959, // ¥60.00 / 1M tokens
+	"MiniMax-M3":     4.10959, // ¥0.9062 / 1M tokens
 	"MiniMax-M3.1":   4.10959, // 同 MiniMax-M3：实际转发到上游 M3，同价
 	"gpt-4-gizmo-*":  2,
 	"gpt-4o-gizmo-*": 3,

@@ -58,10 +58,15 @@ func TestDefaultModelRatioOpus55Removed(t *testing.T) {
 	require.NotContains(t, defaultCompletionRatio, "opus-5.5")
 }
 
-// MiniMax-M3 / M3.1 的定价（2026-10-31 老板定：输出价在原 ¥6.00 基础上涨 10 倍）。
+// MiniMax-M3 / M3.1 的定价（2026-10-31 老板定：输出价在原价基础上涨 10 倍）。
 //
-// 换算：¥ = ratio × 1e6 ÷ QuotaPerUnit × USDExchangeRate = ratio × 14.6
-//   输入 0.015103 → ¥0.2205/1M；输出 4.10959 → ¥60.00/1M
+// 换算（与 service/text_quota.go、前端 features/pricing/lib/price.ts 三方一致）：
+//   ¥ / 1M tokens = model_ratio × 1e6 ÷ QuotaPerUnit × USDExchangeRate
+//                = model_ratio × 1e6 ÷ 500000 × 7.3 = model_ratio × 14.6
+//   输入价 = model_ratio × 14.6                    = 0.015103 × 14.6 = ¥0.2205/1M
+//   输出价 = model_ratio × completion_ratio × 14.6
+//          旧: 0.015103 × 0.410959 × 14.6 = ¥0.0906/1M
+//          新: 0.015103 × 4.10959  × 14.6 = ¥0.9062/1M   ← 正好 10 倍
 //
 // ⚠️ M3 与 M3.1 必须同价：渠道 model_mapping 是 {"MiniMax-M3.1": "MiniMax-M3"}，
 // M3.1 实际转发到上游 M3，共用同一份上游成本。只改一个就是套利漏洞。
@@ -73,7 +78,7 @@ func TestDefaultModelRatioMiniMaxM31MatchesM3Price(t *testing.T) {
 		require.True(t, ok, "%s must have an explicit input price", name)
 		require.Equal(t, 0.015103, ratio, "%s input ratio must stay at ¥0.22/1M", name)
 		require.Equal(t, 4.10959, GetCompletionRatio(name),
-			"%s output ratio must be ¥60.00/1M (10x the old ¥6.00)", name)
+			"%s output ratio must be 10x the old one (¥0.0906 → ¥0.9062 / 1M)", name)
 	}
 }
 
