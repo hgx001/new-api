@@ -186,7 +186,46 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			errors.Wrap(refErr, "probe reference video duration failed"),
 			"invalid_input_reference", http.StatusBadRequest)
 	}
+	// 有参考视频时生成时长也要受限（老板 2026-10-31 定）。
+	//
+	// 为什么放在这里而不是探测函数里：生成时长与参考视频时长是两条独立的限制，
+	// 但都必须在校验阶段（预扣之前）拒掉 —— 不然会走完「建单 → 预扣 → 上游拒绝
+	// → 退款」，客户白占一次余额还要等退款，且失败提示是上游那句看不懂的
+	// 「参数或参考素材不符合要求」。
+	//
+	// 只在**有参考视频**时生效：无参考视频时 30 秒生成是正常的（渠道 17 的
+	// wan3.0-video 就支持），不能一刀切砍掉。
+	if genErr := validateGenerationSecondsWithReferenceVideo(c, media, resolveDurationForModel(req, req.Model)); genErr != nil {
+		return genErr
+	}
 	return nil
+}
+
+// validateGenerationSecondsWithReferenceVideo 校验「有参考视频时的生成时长上限」。
+//
+// 返回 *dto.TaskError（400 本地错误）而不是普通 error：本地错误不扣费、
+// 不建单、也不触发渠道 AutoBan/重试 —— 客户改完素材重试即可。
+func validateGenerationSecondsWithReferenceVideo(c *gin.Context, media []relaycommon.TaskMedia, generation int) *dto.TaskError {
+	if !hasReferenceVideo(media) {
+		return nil
+	}
+	if generation <= maxGenerationSecondsWithVideo {
+		return nil
+	}
+	return service.TaskErrorWrapperLocal(
+		errors.Errorf("有参考视频时生成时长不能超过 %d 秒，当前 %d 秒，请缩短生成时长或去掉参考视频",
+			maxGenerationSecondsWithVideo, generation),
+		"invalid_input_reference", http.StatusBadRequest)
+}
+
+// hasReferenceVideo 判断素材里有没有参考视频。
+func hasReferenceVideo(media []relaycommon.TaskMedia) bool {
+	for _, item := range media {
+		if item.Type == "reference_video" {
+			return true
+		}
+	}
+	return false
 }
 
 // setReferenceVideoSeconds 探测所有 reference_video 素材的时长，累加后写入 context。
@@ -202,6 +241,12 @@ func (a *TaskAdaptor) setReferenceVideoSeconds(c *gin.Context, media []relaycomm
 			return err
 		}
 		total += seconds
+	}
+	// 合计上限：上游官方约束「参考视频总时长 ≤ 15 秒」（与 wan3.0-video-官网同源）。
+	// 单条各 15 秒但总共 70 秒的组合同样会被上游拒，本地提前拦。
+	if total > maxTotalReferenceVideoSeconds {
+		return errors.Errorf("参考视频总时长 %d 秒超过 %d 秒上限，请裁剪后重试",
+			total, maxTotalReferenceVideoSeconds)
 	}
 	if total > 0 {
 		c.Set(refVideoSecondsContextKey, total)

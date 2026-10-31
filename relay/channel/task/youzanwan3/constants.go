@@ -127,4 +127,44 @@ const (
 	// 单条口径，没有任何证据表明它限制多条合计。多拦会误伤「两条各 10 秒」
 	// 这类本来能跑的请求。等出现总量超限的真实错误再加。
 	maxReferenceVideoSeconds = 15
+
+	// maxTotalReferenceVideoSeconds 是**多条**参考视频时长合计的上限（秒）。
+	//
+	// 与 wan3.0-video-官网同源同模型，官方《万相3.0-视频生成API参考》写明
+	// 「参考视频最多 5 段、总时长不大于 15 秒」。有赞 prime 是同一套万相 3.0
+	// 后端，网关限制一致（上游单条错误文案里的「最长允许 15 秒」也印证了这点）。
+	//
+	// 为什么加：本地只拦单条的话，「5 条各 14 秒」= 70 秒能一路走完
+	// 「建单 → 预扣 → 上游拒绝 → 退款」，与单条超限是同一类浪费。
+	// 合计超 15 秒必然超单条限制的量级，属于确定的违规。
+	maxTotalReferenceVideoSeconds = 15
+
+	// maxGenerationSecondsWithVideo 是「有参考视频时」生成时长的上限（秒）。
+	//
+	// 上游的官方约束是「输入视频总时长 + 输出视频时长不超过 30 秒」，而参考视频
+	// 单条就上限 15 秒 —— 所以「15 秒参考 + 15 秒生成」正好卡在 30 秒边界。
+	// 老板 2026-10-31 定：「有参考视频的时候，生成的视频也要小于 15 秒」。
+	//
+	// 为什么用 15 而不是 30：与参考视频上限同值，口径统一；且真实失败样本
+	// （tasks id=967~982）全是 30 秒生成 + 31.6 秒参考，按同值拦截最早、最省。
+	// 边界取**闭区间**：15 秒生成是允许的（15+15=30 正好不超上游上限）。
+	maxGenerationSecondsWithVideo = 15
+)
+
+// 导出的限制值，供条件路由中间件（middleware/seedance_route.go）在**改派前**
+// 用同一套口径预检。
+//
+// 为什么需要导出：源链路（youzanwan3）与改派目标链路（wan3.0-720p-特惠 → wan3 包）
+// 会被同一个「seedance2.5-特惠」请求命中。如果两条链路的限制不一致，同一份素材
+// 会出现「16:9 被拒、9:16 能跑」或反过来的「时好时坏」现象 —— 客户看到的是
+// 同一个模型同样的参数，时不时就失败一次。
+//
+// 口径统一为：单条参考视频 ≤15 秒、合计 ≤15 秒、生成时长（有参考视频时）≤15 秒。
+const (
+	// MaxReferenceVideoSeconds 是单条参考视频的时长上限（秒）。
+	MaxReferenceVideoSeconds = maxReferenceVideoSeconds
+	// MaxTotalReferenceVideoSeconds 是多条参考视频时长合计的上限（秒）。
+	MaxTotalReferenceVideoSeconds = maxTotalReferenceVideoSeconds
+	// MaxGenerationSecondsWithVideo 是有参考视频时生成时长的上限（秒）。
+	MaxGenerationSecondsWithVideo = maxGenerationSecondsWithVideo
 )

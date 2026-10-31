@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/wan3"
+	"github.com/QuantumNous/new-api/relay/channel/task/youzanwan3"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -255,7 +256,7 @@ func prepareWan3Route(c *gin.Context, body map[string]interface{}, policy seedan
 //
 // 返回 true 表示**不能改派**（交回源链路），reason 是给日志看的原因。
 //
-// 三个失败都按「不改派」处理 —— 与整个中间件的失败原则一致：
+// 四个失败都按「不改派」处理 —— 与整个中间件的失败原则一致：
 // 任何一步不确定就放弃路由，绝不挡客户。这里尤其如此：
 // 探测失败意味着无法判断会不会超限，而改派过去一旦超限就是一次必然的 400。
 func wan3ReferenceVideosOutOfRange(body map[string]interface{}) (bool, string) {
@@ -279,6 +280,18 @@ func wan3ReferenceVideosOutOfRange(body map[string]interface{}) (bool, string) {
 	if realSeconds+float64(generation) > float64(wan3.MaxTotalDurationWithVideo)+routeDurationEpsilon {
 		return true, fmt.Sprintf("参考视频 %.2f 秒 + 生成 %d 秒超过 %d 秒上限",
 			realSeconds, generation, wan3.MaxTotalDurationWithVideo)
+	}
+	// 生成时长上限与**源链路**对齐（老板 2026-10-31 定：有参考视频时生成也要 ≤15 秒）。
+	//
+	// 为什么必须在这里也拦：源链路 youzanwan3 有这条限制，而改派目标链路 wan3 只有
+	// 「输入+输出 ≤30 秒」。不拦就会出现「同一份素材、同样参数，16:9 被源链路拒、
+	// 9:16 改派后能跑」—— 客户看到的是「这个模型时好时坏」。
+	//
+	// 拦下来之后交回源链路：源链路的 validate 阶段会给出中文提示
+	//「有参考视频时生成时长不能超过 15 秒」，客户能看懂该改什么。
+	if generation > youzanwan3.MaxGenerationSecondsWithVideo {
+		return true, fmt.Sprintf("有参考视频时生成 %d 秒超过 %d 秒上限",
+			generation, youzanwan3.MaxGenerationSecondsWithVideo)
 	}
 	return false, ""
 }
