@@ -250,3 +250,25 @@ func TestSetReferenceVideoSecondsFailsLoud(t *testing.T) {
 	_, exists := context.Get(refVideoSecondsContextKey)
 	require.False(t, exists)
 }
+
+// 上游硬限制：单条参考视频最长 15 秒。
+//
+// 2026-10-31 12:24 起上游开始明确拒绝，原文：
+//
+//	参考素材时长过长：当前为 31.609 秒，最长允许 15 秒
+//
+// 本地此前只校验 >0 秒，超长素材能一路走完「建单 → 预扣 → 上游拒绝 → 退款」，
+// 客户在 12:24~13:07 重试了 14 次。这条测试锁住本地拦截。
+func TestProbeReferenceVideoSecondsRejectsOver15s(t *testing.T) {
+	_, err := probeReferenceVideoSeconds(dataURLVideo(31.609), "")
+	require.Error(t, err, "31.609 秒必须本地拒绝，不能等上游")
+	require.Contains(t, err.Error(), "15")
+
+	_, err = probeReferenceVideoSeconds(dataURLVideo(15.02), "")
+	require.Error(t, err, "超过 15 秒一律拒绝（与 wan3 口径一致）")
+
+	// 15 秒整必须放行：官方区间是 [1, 15]，闭区间。
+	seconds, err := probeReferenceVideoSeconds(dataURLVideo(15), "")
+	require.NoError(t, err, "15 秒整是允许的，不能误伤")
+	require.Equal(t, 15, seconds)
+}

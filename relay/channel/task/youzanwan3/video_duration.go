@@ -67,6 +67,16 @@ func probeReferenceVideoSeconds(rawURL, proxy string) (int, error) {
 	if seconds <= durationEpsilon {
 		return 0, errors.Errorf("reference video duration %.3fs is not billable", seconds)
 	}
+	// 上游硬限制：单条参考视频最长 15 秒（2026-10-31 实测原文：
+	// 「参考素材时长过长：当前为 31.609 秒，最长允许 15 秒」）。
+	//
+	// 必须本地拦：不拦的话请求会一路走到「建单 → 预扣费 → 上游拒绝 → 退款」，
+	// 客户白占一次余额、等几分钟退款，还看不出该怎么改。本地 400 是
+	// TaskErrorWrapperLocal，既不扣费也不触发渠道 AutoBan。
+	if seconds > float64(maxReferenceVideoSeconds)+durationEpsilon {
+		return 0, errors.Errorf("参考视频时长 %.2f 秒超过 %d 秒上限，请裁剪后重试",
+			seconds, maxReferenceVideoSeconds)
+	}
 	// 与上游取整口径对齐：上游生成的成片天然带约 20ms 尾巴，四舍五入而非向上
 	// 取整，否则每个参考视频都白多收 1 秒。
 	return int(math.Round(seconds)), nil
