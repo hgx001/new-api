@@ -209,3 +209,42 @@ func downloadReferenceVideoPrefix(rawURL string) ([]byte, error) {
 	}
 	return buf, nil
 }
+
+// MaxReferenceVideoTotalSeconds 是官方允许的**参考视频总时长**上限（秒）。
+//
+// 官方《万相3.0-视频生成API参考》：reference_video 最多 5 段，
+// **单个 [1, 15] 秒，总时长不大于 15 秒**。
+const MaxReferenceVideoTotalSeconds = maxReferenceVideoTotalSeconds
+
+// MaxTotalDurationWithVideo 是「输入视频总时长 + 输出视频时长」的上限（秒）。
+//
+// 官方同一条约束：**有视频输入时，输入视频总时长 + 输出视频时长不超过 30 秒**。
+// 本站计费秒数（生成 + 参考视频）与上游 usage.duration 是同一个数。
+const MaxTotalDurationWithVideo = maxTotalDurationWithVideo
+
+// ProbeReferenceVideos 探测一组参考视频的总时长，供条件路由中间件在**改派前**预检。
+//
+// 为什么中间件需要它：wan3 对参考视频有两条硬限制（单条 ≤15 秒、总量 ≤15 秒、
+// 输入+输出 ≤30 秒），超限会在提交阶段直接 400。而改派发生在**选渠道之前** ——
+// 中间件不知道这些限制，就会把「源链路本来能跑」的请求扔给 wan3，客户白等一次
+// 还看不懂失败原因。生产实例（2026-10-31 01:10，logs id=9379）：
+//
+//	status_code=400, probe reference video duration failed:
+//	reference video duration 32.39s exceeds the 15s per-video limit
+//
+// 同一条请求走 16:9（不改派）本来是可以成功的 —— 这是路由造成的功能退化。
+//
+// 返回值：totalSeconds 是计费口径（四舍五入整秒）的合计，realSeconds 是真实合计
+// （用于 15 秒总量校验）。**任一视频探测失败都返回 error**：调用方必须保守地
+// 放弃改派 —— 探测不出时长时无法判断是否会超限，宁可走贵一点但能跑的源链路。
+func ProbeReferenceVideos(urls []string) (totalSeconds int, realSeconds float64, err error) {
+	for _, raw := range urls {
+		probed, probeErr := probeReferenceVideoSeconds(raw)
+		if probeErr != nil {
+			return 0, 0, probeErr
+		}
+		totalSeconds += probed.seconds
+		realSeconds += probed.realSeconds
+	}
+	return totalSeconds, realSeconds, nil
+}

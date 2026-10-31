@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"strconv"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/wan3"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -224,7 +227,121 @@ func prepareWan3Route(c *gin.Context, body map[string]interface{}, policy seedan
 		return nil, false
 	}
 
+	// 参考视频挡板：wan3 比源链路（有赞）严格得多，超限会在提交阶段 400。
+	//
+	// 源链路（youzanwan3）只限制参考视频**数量**（最多 5 段），不限制时长；
+	// wan3 限制单条 ≤15 秒、总时长 ≤15 秒、且「输入视频总时长 + 输出视频时长 ≤30 秒」。
+	// 不在这里挡，客户传一段 30 秒的参考视频就会：9:16 被改派 → wan3 提交时 probe 报错
+	// → 400，而他改传 16:9（不改派）同样的素材是能跑的 —— 表现成「这个模型时好时坏」。
+	// 生产实例：2026-10-31 01:10，logs id=9379，参考视频 32.39 秒。
+	//
+	// 代价：带参考视频的 9:16 请求会多一次视频头部下载（moov 在头部时几十 KB）。
+	// 不带参考视频的请求（绝大多数）不触发，零开销。
+	if outOfRange, reason := wan3ReferenceVideosOutOfRange(body); outOfRange {
+		logger.LogInfo(c, "条件路由跳过 wan3，交回源链路："+reason)
+		return nil, false
+	}
+
 	return rewriteBodyForWan3(body, policy), true
+}
+
+// wan3ReferenceVideosOutOfRange 判断请求里的参考视频是否超出 wan3 的硬限制。
+//
+// 返回 true 表示**不能改派**（交回源链路），reason 是给日志看的原因。
+//
+// 三个失败都按「不改派」处理 —— 与整个中间件的失败原则一致：
+// 任何一步不确定就放弃路由，绝不挡客户。这里尤其如此：
+// 探测失败意味着无法判断会不会超限，而改派过去一旦超限就是一次必然的 400。
+func wan3ReferenceVideosOutOfRange(body map[string]interface{}) (bool, string) {
+	urls := collectReferenceVideos(body)
+	if len(urls) == 0 {
+		return false, ""
+	}
+	totalSeconds, realSeconds, err := wan3.ProbeReferenceVideos(urls)
+	if err != nil {
+		// 单个视频超 15 秒也会走到这里（probeReferenceVideoSeconds 内部已校验单条上限）。
+		return true, "参考视频探测失败：" + err.Error()
+	}
+	_ = totalSeconds // 计费口径的整秒由 wan3 adaptor 自己算，这里只做范围判定
+	if realSeconds > float64(wan3.MaxReferenceVideoTotalSeconds)+routeDurationEpsilon {
+		return true, fmt.Sprintf("参考视频合计 %.2f 秒超过 %d 秒上限",
+			realSeconds, wan3.MaxReferenceVideoTotalSeconds)
+	}
+	generation := routeGenerationSeconds(body)
+	if realSeconds+float64(generation) > float64(wan3.MaxTotalDurationWithVideo)+routeDurationEpsilon {
+		return true, fmt.Sprintf("参考视频 %.2f 秒 + 生成 %d 秒超过 %d 秒上限",
+			realSeconds, generation, wan3.MaxTotalDurationWithVideo)
+	}
+	return false, ""
+}
+
+// routeDurationEpsilon 是浮点比较容差，与 wan3 包内部的 durationEpsilon 同值。
+//
+// mvhd 的 duration/timescale 除法会带出 15.0000000001 这种尾巴，
+// 严格大于会把「刚好 15 秒」误判成超限。
+const routeDurationEpsilon = 1e-6
+
+// routeGenerationSeconds 取请求的**生成时长**，口径与 wan3 的 resolveDuration 一致。
+//
+// 必须钳制：不传时长时上游默认 5 秒（不是 0，也不是 30）。用 0 会让
+// 「参考视频 15 秒 + 默认 5 秒 = 20 ≤ 30」这类本该放行的请求被误挡；
+// 用 30 会让所有带参考视频的请求都被挡。
+func routeGenerationSeconds(body map[string]interface{}) int {
+	const (
+		routeMinDuration     = 2
+		routeMaxDuration     = 30
+		routeDefaultDuration = 5
+	)
+	seconds, ok := extractRequestSeconds(body)
+	if !ok || seconds <= 0 {
+		return routeDefaultDuration
+	}
+	if seconds < routeMinDuration {
+		return routeMinDuration
+	}
+	if seconds > routeMaxDuration {
+		return routeMaxDuration
+	}
+	return seconds
+}
+
+// collectReferenceVideos 收集请求里的参考视频 URL 列表。
+//
+// 优先级与 wan3 的 buildWan3Media **完全一致**（顶层 media 非空就只看顶层，
+// 否则看 metadata.media）—— 优先级错了会漏判：源链路只用顶层 media 里的视频，
+// 我们却去读 metadata.media，就会对着一个根本不会被提交的视频做时长校验。
+func collectReferenceVideos(body map[string]interface{}) []string {
+	if videos := referenceVideosFromMedia(body["media"]); len(videos) > 0 {
+		return videos
+	}
+	metadata, _ := body["metadata"].(map[string]interface{})
+	if metadata != nil {
+		return referenceVideosFromMedia(metadata["media"])
+	}
+	return nil
+}
+
+// referenceVideosFromMedia 从一个 media 数组里挑出 reference_video 的地址。
+func referenceVideosFromMedia(value interface{}) []string {
+	media, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	var videos []string
+	for _, item := range media {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		mediaType, _ := entry["type"].(string)
+		if strings.TrimSpace(mediaType) != "reference_video" {
+			continue
+		}
+		if url, ok := entry["url"].(string); ok && strings.TrimSpace(url) != "" {
+			videos = append(videos, strings.TrimSpace(url))
+		}
+	}
+	return videos
 }
 
 // channelAvailabilityProbe 判断「目标模型在当前分组下是否还有可用渠道」。
