@@ -127,10 +127,36 @@ func TestWan3ReferenceVideosOutOfRange_GenerationPlusReferenceOver30s(t *testing
 
 func TestWan3ReferenceVideosOutOfRange_Exactly30sPasses(t *testing.T) {
 	// 10 + 20 = 30 正好压线，不能因为浮点尾巴被误判。
+	//
+	// ⚠️ 但生成 20 秒会被**源链路**的「有参考视频时生成 ≤15 秒」拒（老板
+	// 2026-10-31 定）。所以改派也必须一并挡掉 —— 否则同一份素材 16:9 被拒、
+	// 9:16 能跑，客户看到的是「这个模型时好时坏」。
+	//
+	// 挡下后交回源链路，源链路的 validate 会给中文提示。
 	body := refTestBody("20", 10)
 	out, reason := wan3ReferenceVideosOutOfRange(body)
-	assert.False(t, out, "刚好 30 秒应当放行")
+	assert.True(t, out, "生成 20 秒超过源链路的 15 秒上限，必须挡住改派")
+	assert.Contains(t, reason, "15")
+}
+
+// 生成时长 ≤15 秒且「参考+生成 ≤30 秒」时应当放行改派。
+//
+// 这是两条限制同时满足的唯一区间（参考 ≤15、生成 ≤15）。
+func TestWan3ReferenceVideosOutOfRange_WithinBothLimitsPasses(t *testing.T) {
+	body := refTestBody("15", 15)
+	out, reason := wan3ReferenceVideosOutOfRange(body)
+	assert.False(t, out, "参考 15 秒 + 生成 15 秒应当放行")
 	assert.Empty(t, reason)
+}
+
+// 有参考视频时生成时长超 15 秒必须挡住改派（与源链路口径一致）。
+func TestWan3ReferenceVideosOutOfRange_GenerationOver15sBlocksRoute(t *testing.T) {
+	// 参考视频 2 秒（合规），生成 20 秒 —— 参考+生成只有 22 秒，wan3 的
+	// 30 秒限制过得去，但源链路的「生成 ≤15 秒」过不去。
+	body := refTestBody("20", 2)
+	out, reason := wan3ReferenceVideosOutOfRange(body)
+	assert.True(t, out, "有参考视频时生成 20 秒必须挡住改派")
+	assert.Contains(t, reason, "15")
 }
 
 func TestWan3ReferenceVideosOutOfRange_UnprobeableVideoSkipsRoute(t *testing.T) {
