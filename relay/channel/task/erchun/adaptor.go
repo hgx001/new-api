@@ -2,6 +2,7 @@ package erchun
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -69,8 +70,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return nil
 	}
-	if _, mediaErr := buildMedia(req); mediaErr != nil {
+	if media, mediaErr := buildMedia(req); mediaErr != nil {
 		return service.TaskErrorWrapperLocal(mediaErr, "invalid_request", http.StatusBadRequest)
+	} else if guardErr := checkReferenceVideoSeconds(media); guardErr != nil {
+		return service.TaskErrorWrapperLocal(guardErr, "invalid_input_reference", http.StatusBadRequest)
 	}
 	if _, resErr := resolveResolution(req); resErr != nil {
 		return service.TaskErrorWrapperLocal(resErr, "invalid_resolution", http.StatusBadRequest)
@@ -254,7 +257,31 @@ func validateMedia(media []relaycommon.TaskMedia) error {
 	return nil
 }
 
-// ---------------------------------------------------------------- 计费
+// checkReferenceVideoSeconds 校验参考视频单条时长不超过统一上限（15 秒）。
+//
+// 为什么在本地拦：超长素材提交后要走完「建单 → 预扣费 → 上游拒绝 → 等轮询退款」，
+// 客户白占一次余额、等几分钟，还看不出该怎么改。本地 400 既不扣费也不 AutoBan。
+// 上限口径由 taskcommon.MaxReferenceVideoSeconds 统一（所有支持参考视频的渠道同一条线）。
+func checkReferenceVideoSeconds(media []relaycommon.TaskMedia) error {
+	var videos []string
+	for _, item := range media {
+		if strings.TrimSpace(item.Type) == "reference_video" {
+			videos = append(videos, item.URL)
+		}
+	}
+	if len(videos) == 0 {
+		return nil
+	}
+	client, err := service.GetHttpClientWithProxy("")
+	if err != nil {
+		return errors.Wrap(err, "new http client failed")
+	}
+	unmeasured, err := taskcommon.EnforceReferenceVideoMaxSeconds(context.Background(), videos, taskcommon.MaxReferenceVideoSeconds, client)
+	if len(unmeasured) > 0 {
+		common.SysLog(fmt.Sprintf("erchun 参考视频时长无法探测，放行（无法判断是否超限）：%v", unmeasured))
+	}
+	return err
+}
 
 // EstimateBilling 按秒计费，base = ModelPrice 的每秒单价，只乘 seconds。
 //

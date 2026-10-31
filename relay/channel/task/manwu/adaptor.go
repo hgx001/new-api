@@ -737,6 +737,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if vErr != nil {
 			return service.TaskErrorWrapperLocal(vErr, "invalid_input_reference", http.StatusBadRequest)
 		}
+		// 主视频单条时长 ≤15 秒：编辑链路的输出时长「跟随主视频」，主视频超长时
+		// 上游要么拒、要么按超长时长跑；本地先探测，别让客户白等一轮退款。
+		//
+		// 只作用于**编辑**（生成）链路：kindReverse 的视频反解是「从长视频里提取
+		// 提示词」，长素材是正当输入，不受这条闸门约束。
+		if guardErr := checkWanEditReferenceVideoSeconds(videos); guardErr != nil {
+			return service.TaskErrorWrapperLocal(guardErr, "invalid_input_reference", http.StatusBadRequest)
+		}
 		norm.Videos = videos
 		if len(images) > wanMaxEditImages {
 			return service.TaskErrorWrapperLocal(
@@ -1366,6 +1374,27 @@ func resolveReferenceVideos(req clientRequest) ([]string, error) {
 		return nil, fmt.Errorf("video edit requires exactly one reference video, got %d", len(videos))
 	}
 	return videos, nil
+}
+
+// checkWanEditReferenceVideoSeconds 校验编辑链路的主视频单条时长 ≤15 秒。
+//
+// 为什么只作用于编辑链路：万相编辑的输出时长「跟随主视频」，主视频超长会让上游
+// 要么直接拒（客户白等一轮退款）、要么按超长时长跑（成本与报价脱节）。
+// 而 kindReverse 的视频反解是「从长视频里提取提示词」，长素材是正当输入，
+// 给它加 15 秒限制会直接废掉这个能力 —— 所以刻意不放在 resolveVideos 里。
+func checkWanEditReferenceVideoSeconds(videos []string) error {
+	if len(videos) == 0 {
+		return nil
+	}
+	client, err := service.GetHttpClientWithProxy("")
+	if err != nil {
+		return fmt.Errorf("new http client failed: %s", err.Error())
+	}
+	unmeasured, err := taskcommon.EnforceReferenceVideoMaxSeconds(context.Background(), videos, taskcommon.MaxReferenceVideoSeconds, client)
+	if len(unmeasured) > 0 {
+		common.SysLog(fmt.Sprintf("manwu 编辑链路参考视频时长无法探测，放行（无法判断是否超限）：%v", unmeasured))
+	}
+	return err
 }
 
 // doubaoDefaultDuration 与 Worker 侧 DOUBAO_DEFAULT_DURATION（5s 档）一致。

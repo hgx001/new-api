@@ -115,7 +115,7 @@ func seedChannel(t *testing.T, id int) {
 }
 
 func makeTask(userId, channelId, quota, tokenId int, billingSource string, subscriptionId int) *model.Task {
-	return &model.Task{
+	task := &model.Task{
 		TaskID:    "task_" + time.Now().Format("150405.000"),
 		UserId:    userId,
 		ChannelId: channelId,
@@ -139,6 +139,13 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 			},
 		},
 	}
+	// 必须真的落库：RefundTaskQuota 的幂等抢占（ClaimTaskRefund）是
+	// 「把 tasks.refunded_at 从 0 原子改成非 0」，没有真实行就抢不到。
+	// 生产里任务在退款时一定有 id，测试不落库反而测不到真实路径。
+	if err := model.DB.Create(task).Error; err != nil {
+		panic("failed to seed task: " + err.Error())
+	}
+	return task
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +300,70 @@ func TestRefundTaskQuota_NoToken(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
+}
+
+// 幂等：同一笔预扣只能被退一次。
+//
+// 这条锁的是老板 2026-10-31 提的那个问题：「会不会有人反复提交失败来取钱」。
+// 正常失败退款是「原路退回」，净额为 0，刷不出钱；真正会亏的是**同一笔被退两次**
+// —— 那才是白拿。Suno 批处理那条路径历史上既没有 CAS、又是先退款后落库，
+// 落库失败重试或多实例并发就会退两次。这里用数据层的原子抢占兜住。
+func TestRefundTaskQuotaIsIdempotent(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, channelID = 5, 5
+	const initQuota, preConsumed = 10000, 3000
+
+	seedUser(t, userID, initQuota)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, 0, BillingSourceWallet, 0)
+
+	RefundTaskQuota(ctx, task, "first refund")
+	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.Equal(t, int64(1), countLogs(t))
+
+	// 同一个 task 对象再退一次：内存里的 Quota 还在，但数据层已标记退款。
+	RefundTaskQuota(ctx, task, "duplicate refund")
+	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID), "重复退款必须被挡住")
+	assert.Equal(t, int64(1), countLogs(t), "重复退款不能多记一条流水")
+
+	// 换一个「重新从库里读出来」的对象也一样（模拟另一个进程/下一轮轮询）。
+	reloaded := &model.Task{}
+	require.NoError(t, model.DB.First(reloaded, task.ID).Error)
+	assert.NotZero(t, reloaded.RefundedAt)
+	RefundTaskQuota(ctx, reloaded, "refund from another process")
+	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID), "跨进程也必须幂等")
+	assert.Equal(t, int64(1), countLogs(t))
+}
+
+// 抢占标记的语义：抢到 → 别人抢不到 → 释放后又能抢到。
+//
+// 第三条是「退款失败要能重试」的保障：抢到了但钱没退成时必须把标记放回去，
+// 否则这笔预扣就永远退不了了（客户吃亏，且没人会发现）。
+func TestClaimTaskRefundSemantics(t *testing.T) {
+	truncate(t)
+
+	const userID, channelID = 6, 6
+	seedUser(t, userID, 10000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 2000, 0, BillingSourceWallet, 0)
+
+	won, err := model.ClaimTaskRefund(task.ID, 111)
+	require.NoError(t, err)
+	assert.True(t, won, "第一次抢占必须成功")
+
+	won, err = model.ClaimTaskRefund(task.ID, 222)
+	require.NoError(t, err)
+	assert.False(t, won, "已退款的任务不能被再次抢占")
+
+	require.NoError(t, model.ReleaseTaskRefund(task.ID))
+
+	won, err = model.ClaimTaskRefund(task.ID, 333)
+	require.NoError(t, err)
+	assert.True(t, won, "释放后必须能重新抢占")
 }
 
 // ===========================================================================
@@ -503,7 +574,6 @@ func TestCASGuardedRefund_Win(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Status = model.TaskStatus(model.TaskStatusInProgress)
-	require.NoError(t, model.DB.Create(task).Error)
 
 	simulatePollBilling(ctx, task, model.TaskStatus(model.TaskStatusFailure), 0)
 
@@ -536,7 +606,6 @@ func TestCASGuardedRefund_Lose(t *testing.T) {
 	// Create task with IN_PROGRESS in DB
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Status = model.TaskStatus(model.TaskStatusInProgress)
-	require.NoError(t, model.DB.Create(task).Error)
 
 	// Simulate another process already transitioning to FAILURE
 	model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("status", model.TaskStatusFailure)
@@ -568,7 +637,6 @@ func TestCASGuardedSettle_Win(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Status = model.TaskStatus(model.TaskStatusInProgress)
-	require.NoError(t, model.DB.Create(task).Error)
 
 	simulatePollBilling(ctx, task, model.TaskStatus(model.TaskStatusSuccess), actualQuota)
 
@@ -598,7 +666,6 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 	task := makeTask(userID, channelID, preConsumed, 0, BillingSourceWallet, 0)
 	task.Status = model.TaskStatus(model.TaskStatusInProgress)
 	task.Progress = "20%"
-	require.NoError(t, model.DB.Create(task).Error)
 
 	// Simulate a non-terminal poll update (still IN_PROGRESS, progress changed)
 	simulatePollBilling(ctx, task, model.TaskStatus(model.TaskStatusInProgress), 0)

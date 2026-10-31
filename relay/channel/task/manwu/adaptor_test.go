@@ -1,6 +1,7 @@
 package manwu
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -1602,4 +1604,84 @@ func TestParseTaskResultPassesThroughOfficialQuote(t *testing.T) {
 	res2, err := a.ParseTaskResult([]byte(`{"jobId":"job-2","status":"failed","error":` + strconv.Quote(paywall) + `,"errorCode":"quota_exhausted"}`))
 	require.NoError(t, err)
 	assert.Equal(t, paywall, res2.Reason)
+}
+
+// ---------------------------------------------------------------------------
+// 参考视频时长闸门（2026-10-31 老板要求：所有支持视频参考的模型 ≤15 秒）
+// ---------------------------------------------------------------------------
+
+// refVideoTestMP4 拼出 ftyp + moov(mvhd) 的最小可解析结构，用来给探测端喂真实时长。
+func refVideoTestMP4(t *testing.T, seconds float64) []byte {
+	t.Helper()
+	payload := []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2}
+	var ts [4]byte
+	binary.BigEndian.PutUint32(ts[:], 1000)
+	payload = append(payload, ts[:]...)
+	var d [4]byte
+	binary.BigEndian.PutUint32(d[:], uint32(seconds*1000))
+	payload = append(payload, d[:]...)
+	tail := make([]byte, 80)
+	binary.BigEndian.PutUint32(tail[0:4], 0x00010000)
+	binary.BigEndian.PutUint32(tail[76:80], 1)
+	payload = append(payload, tail...)
+
+	box := func(kind string, body []byte) []byte {
+		out := make([]byte, 8, 8+len(body))
+		binary.BigEndian.PutUint32(out[0:4], uint32(8+len(body)))
+		copy(out[4:8], kind)
+		return append(out, body...)
+	}
+	out := box("ftyp", []byte("isom\x00\x00\x02\x00isomiso2"))
+	return append(out, box("moov", box("mvhd", payload))...)
+}
+
+// serveRefVideo 起一个只吐这段 MP4 的本地服务器，并关掉 SSRF 保护让 127.0.0.1 能过。
+func serveRefVideo(t *testing.T, seconds float64) string {
+	t.Helper()
+	fetch := system_setting.GetFetchSetting()
+	orig := *fetch
+	fetch.EnableSSRFProtection = false
+	t.Cleanup(func() { *fetch = orig })
+
+	body := refVideoTestMP4(t, seconds)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL + "/clip.mp4"
+}
+
+// 编辑链路的主视频必须 ≤15 秒：输出时长「跟随主视频」，超长素材上游要么拒、
+// 要么按超长时长跑，成本与报价脱节。本地 400 不扣费、不 AutoBan。
+func TestWanEditRejectsReferenceVideoOver15s(t *testing.T) {
+	url := serveRefVideo(t, 20)
+
+	c, info, a := postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"把背景换成雪山","videos":[%q]}`, ModelWan27Edit, url))
+	taskErr := a.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr, "20 秒主视频必须本地拒绝")
+	assert.Equal(t, "invalid_input_reference", taskErr.Code)
+	assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+	assert.True(t, taskErr.LocalError, "必须是本地错误：不扣费、不触发渠道 AutoBan")
+	assert.Contains(t, taskErr.Message, "15")
+}
+
+// 15 秒整必须放行：官方区间是闭区间，不能误伤。
+func TestWanEditAllowsReferenceVideoExactly15s(t *testing.T) {
+	url := serveRefVideo(t, 15)
+
+	c, info, a := postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"把背景换成雪山","videos":[%q]}`, ModelWan27Edit, url))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+}
+
+// 视频反解是「从长视频里提取提示词」，长素材是正当输入 ——
+// 给它套 15 秒限制会直接废掉这个能力，所以闸门刻意只装在编辑链路上。
+func TestVideoReverseIsNotSubjectToRefVideoDurationLimit(t *testing.T) {
+	url := serveRefVideo(t, 20)
+
+	c, info, a := postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"input_reference":[%q]}`, ModelReverse, url))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info),
+		"反解链路不得受 15 秒闸门约束")
 }

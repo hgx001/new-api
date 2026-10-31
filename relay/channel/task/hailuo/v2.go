@@ -1,13 +1,16 @@
 package hailuo
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 )
@@ -237,7 +240,37 @@ func validateV2Request(req *relaycommon.TaskSubmitReq, spec V2ModelSpec) *dto.Ta
 	if err := validateV2Media(req); err != nil {
 		return taskErrBadRequest(err.Error())
 	}
+	// 参考视频单条时长上限（全渠道统一 15 秒）：超长素材提交后要走完
+	// 「建单 → 预扣费 → 上游拒绝 → 等退款」，客户白占一次余额还看不懂原因。
+	if err := checkV2ReferenceVideoSeconds(req); err != nil {
+		return taskErrBadRequest(err.Error())
+	}
 	return nil
+}
+
+// checkV2ReferenceVideoSeconds 探测并校验参考视频时长。
+//
+// 只校验 reference_video：first_frame / last_frame 是图片，没有时长概念；
+// 参考音频也不在这道闸门的范围内（音频时长与视频时长不是同一个约束）。
+func checkV2ReferenceVideoSeconds(req *relaycommon.TaskSubmitReq) error {
+	var videos []string
+	for _, it := range collectV2Media(req) {
+		if it.role == roleReferenceVideo && it.kind == "video" {
+			videos = append(videos, it.url)
+		}
+	}
+	if len(videos) == 0 {
+		return nil
+	}
+	client, err := service.GetHttpClientWithProxy("")
+	if err != nil {
+		return fmt.Errorf("new http client failed: %s", err.Error())
+	}
+	unmeasured, err := taskcommon.EnforceReferenceVideoMaxSeconds(context.Background(), videos, taskcommon.MaxReferenceVideoSeconds, client)
+	if len(unmeasured) > 0 {
+		common.SysLog(fmt.Sprintf("hailuo 参考视频时长无法探测，放行（无法判断是否超限）：%v", unmeasured))
+	}
+	return err
 }
 
 func taskErrBadRequest(msg string) *dto.TaskError {

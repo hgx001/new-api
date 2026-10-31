@@ -2,10 +2,12 @@ package doubao
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -118,7 +120,76 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
 	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	if taskErr := relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+	// 参考视频单条时长上限（全渠道统一 15 秒）。豆包的参考视频藏在
+	// metadata.content[].video_url 里，只能从 metadata 挖出来。
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	if guardErr := checkMetadataReferenceVideoSeconds(req.Metadata); guardErr != nil {
+		return service.TaskErrorWrapperLocal(guardErr, "invalid_input_reference", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// checkMetadataReferenceVideoSeconds 校验 metadata.content 里的参考视频时长。
+//
+// 为什么在本地拦：超长素材提交后要走完「建单 → 预扣费 → 上游拒绝 → 等轮询退款」，
+// 客户白占一次余额、等几分钟，还看不出该怎么改。本地 400 既不扣费也不 AutoBan。
+func checkMetadataReferenceVideoSeconds(metadata map[string]interface{}) error {
+	videos := metadataVideoURLs(metadata)
+	if len(videos) == 0 {
+		return nil
+	}
+	client, err := service.GetHttpClientWithProxy("")
+	if err != nil {
+		return errors.Wrap(err, "new http client failed")
+	}
+	unmeasured, err := taskcommon.EnforceReferenceVideoMaxSeconds(context.Background(), videos, taskcommon.MaxReferenceVideoSeconds, client)
+	if len(unmeasured) > 0 {
+		common.SysLog(fmt.Sprintf("doubao 参考视频时长无法探测，放行（无法判断是否超限）：%v", unmeasured))
+	}
+	return err
+}
+
+// metadataVideoURLs 从 metadata.content 里挖出所有视频地址。
+//
+// 两种写法都要认：官方契约是 {"type":"video_url","video_url":{"url":"..."}}，
+// 但客户端手搓请求时常写成 {"type":"video_url","video_url":"https://..."}。
+// 只认一种会漏掉一半流量，闸门等于没装。
+func metadataVideoURLs(metadata map[string]interface{}) []string {
+	if metadata == nil {
+		return nil
+	}
+	contentSlice, ok := metadata["content"].([]interface{})
+	if !ok {
+		return nil
+	}
+	var urls []string
+	for _, item := range contentSlice {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		raw, ok := itemMap["video_url"]
+		if !ok {
+			continue
+		}
+		switch v := raw.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				urls = append(urls, v)
+			}
+		case map[string]interface{}:
+			if u, ok := v["url"].(string); ok && strings.TrimSpace(u) != "" {
+				urls = append(urls, u)
+			}
+		}
+	}
+	return urls
 }
 
 // BuildRequestURL constructs the upstream URL.

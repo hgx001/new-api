@@ -188,15 +188,42 @@ func taskLogModelName(task *model.Task) string {
 
 // RefundTaskQuota 统一的任务失败退款逻辑。
 // 当异步任务失败时，将预扣的 quota 退还给用户（支持钱包和订阅），并退还令牌额度。
+//
+// **幂等**：同一笔预扣只会被退一次。抢占走 model.ClaimTaskRefund（把
+// tasks.refunded_at 从 0 原子改成当前时间），与调用方是否做了状态机 CAS 无关。
+//
+// 为什么必须自己保证幂等，而不是指望调用方：退款是「无条件加钱」的动作，
+// 重复执行就是平台净损失。三个调用点里 Suno 那条批处理既没有 CAS、又是
+// 「先退款后落库」，落库失败重试或两实例并发都会重复退款。之前生产上没出事，
+// 只因为 Suno 渠道没有流量 —— 这是运气，不是设计。
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
+	if task == nil {
+		return
+	}
 	quota := task.Quota
 	if quota == 0 {
+		return
+	}
+
+	// 0. 原子抢占退款权：抢不到说明已经退过了，直接返回。
+	now := common.GetTimestamp()
+	won, claimErr := model.ClaimTaskRefund(task.ID, now)
+	if claimErr != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("抢占退款权失败 task %s: %s", task.TaskID, claimErr.Error()))
+		return
+	}
+	if !won {
+		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 已退款，跳过重复退款", task.TaskID))
 		return
 	}
 
 	// 1. 退还资金来源（钱包或订阅）
 	if err := taskAdjustFunding(task, -quota); err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("退还资金来源失败 task %s: %s", task.TaskID, err.Error()))
+		// 钱没退成，抢占标记必须放回去，否则这笔就永远退不了了。
+		if relErr := model.ReleaseTaskRefund(task.ID); relErr != nil {
+			logger.LogError(ctx, fmt.Sprintf("释放退款权失败 task %s: %s", task.TaskID, relErr.Error()))
+		}
 		return
 	}
 
@@ -218,6 +245,8 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 		Group:     task.Group,
 		Other:     other,
 	})
+
+	task.RefundedAt = now
 }
 
 // RecalculateTaskQuota 通用的异步差额结算。

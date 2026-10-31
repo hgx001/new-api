@@ -109,8 +109,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
 	}
-	if _, _, _, err := buildWan30Media(req); err != nil {
+	if _, videos, _, err := buildWan30Media(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
+	} else if guardErr := checkWan30ReferenceVideoSeconds(videos); guardErr != nil {
+		return service.TaskErrorWrapperLocal(guardErr, "invalid_input_reference", http.StatusBadRequest)
 	}
 	// 解析出的档位写进 context：EstimateBilling 复用它，
 	// 保证「计费档位」与「实际下发档位」永远是同一个值。

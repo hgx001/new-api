@@ -1,6 +1,7 @@
 package megabyai
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -9,7 +10,9 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -274,6 +277,26 @@ func buildWan30Media(req relaycommon.TaskSubmitReq) ([]string, []string, []strin
 		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference audios", wan30MaxReferenceAudios)
 	}
 	return images, videos, audios, nil
+}
+
+// checkWan30ReferenceVideoSeconds 校验参考视频单条时长不超过统一上限（15 秒）。
+//
+// 上游 wan-3.0 本身就是万相 3.0 系，官方限制是「单个 [1,15] 秒」；本站在提交前
+// 探测一次，避免客户白等一轮「建单 → 预扣 → 上游拒绝 → 退款」。
+// 上限口径统一由 taskcommon.MaxReferenceVideoSeconds 定义，与 wan3 / 有赞链路同一条线。
+func checkWan30ReferenceVideoSeconds(videos []string) error {
+	if len(videos) == 0 {
+		return nil
+	}
+	client, err := service.GetHttpClientWithProxy("")
+	if err != nil {
+		return fmt.Errorf("new http client failed: %s", err.Error())
+	}
+	unmeasured, err := taskcommon.EnforceReferenceVideoMaxSeconds(context.Background(), videos, taskcommon.MaxReferenceVideoSeconds, client)
+	if len(unmeasured) > 0 {
+		common.SysLog(fmt.Sprintf("megabyai 参考视频时长无法探测，放行（无法判断是否超限）：%v", unmeasured))
+	}
+	return err
 }
 
 // validateWan30MaterialURL 参考素材必须是上游能自己抓取的公网 http(s) URL。

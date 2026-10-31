@@ -42,24 +42,26 @@ const (
 )
 
 type Task struct {
-	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
-	CreatedAt  int64                 `json:"created_at" gorm:"index"`
-	UpdatedAt  int64                 `json:"updated_at"`
-	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
-	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId     int                   `json:"user_id" gorm:"index"`
-	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
-	ChannelId  int                   `json:"channel_id" gorm:"index"`
-	Quota      int                   `json:"quota"`
-	Action     string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
-	Status     TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
-	FailReason string                `json:"fail_reason"`
-	SubmitTime int64                 `json:"submit_time" gorm:"index"`
-	StartTime  int64                 `json:"start_time" gorm:"index"`
-	FinishTime int64                 `json:"finish_time" gorm:"index"`
-	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
-	Properties Properties            `json:"properties" gorm:"type:json"`
-	Username   string                `json:"username,omitempty" gorm:"-"`
+	ID        int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
+	CreatedAt int64                 `json:"created_at" gorm:"index"`
+	UpdatedAt int64                 `json:"updated_at"`
+	TaskID    string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
+	Platform  constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
+	UserId    int                   `json:"user_id" gorm:"index"`
+	Group     string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
+	ChannelId int                   `json:"channel_id" gorm:"index"`
+	Quota     int                   `json:"quota"`
+	// 预扣费退款时间（秒级时间戳，0 / NULL = 未退款）。幂等抢占用，见 ClaimTaskRefund。
+	RefundedAt int64      `json:"refunded_at,omitempty" gorm:"index"`
+	Action     string     `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
+	Status     TaskStatus `json:"status" gorm:"type:varchar(20);index"` // 任务状态
+	FailReason string     `json:"fail_reason"`
+	SubmitTime int64      `json:"submit_time" gorm:"index"`
+	StartTime  int64      `json:"start_time" gorm:"index"`
+	FinishTime int64      `json:"finish_time" gorm:"index"`
+	Progress   string     `json:"progress" gorm:"type:varchar(20);index"`
+	Properties Properties `json:"properties" gorm:"type:json"`
+	Username   string     `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
@@ -487,6 +489,42 @@ func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+// ClaimTaskRefund 原子抢占任务的「退款权」。
+//
+// 返回 (true, nil)：本次调用抢到了，调用方应当继续退款；
+// 返回 (false, nil)：别的进程已经退过（或正在退），调用方必须什么都不做。
+//
+// 为什么需要它：退款是「无条件加钱」的动作，一旦被重复执行就是平台净损失。
+// 状态机 CAS（UpdateWithStatus）只保证「状态迁移发生一次」，并不保证
+// 「退款发生一次」—— 调用方顺序写错（先退款后落库）、落库失败重试、
+// 多实例并发跑到同一批任务，都会绕开它。这里把幂等性沉到数据层。
+//
+// COALESCE 是必须的：refunded_at 是后加的列，历史行是 NULL 而不是 0，
+// 直接写 refunded_at = 0 匹配不到它们 —— 那会让历史任务永远退不了款。
+func ClaimTaskRefund(id int64, now int64) (bool, error) {
+	if id <= 0 {
+		return false, nil
+	}
+	result := DB.Model(&Task{}).
+		Where("id = ? AND COALESCE(refunded_at, 0) = 0", id).
+		Update("refunded_at", now)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+// ReleaseTaskRefund 在退款实际失败时把抢占标记放回去，让下一轮还能重试。
+//
+// 只在「抢到了但钱没退成」时调用（例如资金来源调整报错）。抢到并退成功之后
+// 绝不能调用，否则幂等性就没了。
+func ReleaseTaskRefund(id int64) error {
+	if id <= 0 {
+		return nil
+	}
+	return DB.Model(&Task{}).Where("id = ?", id).Update("refunded_at", 0).Error
 }
 
 // TaskBulkUpdate performs an unconditional bulk UPDATE by upstream task_id strings.
