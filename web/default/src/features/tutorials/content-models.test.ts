@@ -203,6 +203,36 @@ describe('tutorials model guide content', () => {
     )
   })
 
+  // 回归守卫：seedance2.5-特惠 的参考视频时长约束（2026-10-31 老板定）。
+  //
+  // 上游网关会拒超限素材（错误码 MEDIA_DURATION_INVALID，原文
+  //「参考素材时长过长：当前为 31.609 秒，最长允许 15 秒」）。本地已改成
+  // validate 阶段直接 400（不建单不扣费），所以文档必须写明这三个上限，
+  // 否则客户按「时长 2–30 秒」理解、带个 30 秒参考视频就撞墙。
+  //
+  // 口径（relay/channel/task/youzanwan3/constants.go）：
+  //	· 单条参考视频 ≤15 秒
+ //	· 多条合计 ≤15 秒
+  //	· 有参考视频时生成时长 ≤15 秒
+  test('documents tehui reference-video duration limits', () => {
+    const section = getModelSectionText('model-seedance25-tehui')
+    assert.equal(
+      section.includes('单条 ≤15 秒、多条合计 ≤15 秒'),
+      true,
+      'seedance2.5-特惠 缺参考视频时长上限说明'
+    )
+    assert.equal(
+      section.includes('有参考视频时生成时长也须 ≤15 秒'),
+      true,
+      'seedance2.5-特惠 缺「带参考视频时生成时长上限」说明'
+    )
+    assert.equal(
+      section.includes('超限直接拒绝（不建单不扣费）'),
+      true,
+      'seedance2.5-特惠 必须写明超限不建单不扣费'
+    )
+  })
+
   // 回归守卫：wan3.0-720p-特惠 的成片要经过一道**内部**加工（云端 2 倍提升），
   // 但对外只能让客户知道「这个模型出 720P、¥0.20/秒」。
   // 2026-10-29 老板明确要求：卡片与文档描述里**不写超分相关的字样** ——
