@@ -591,4 +591,127 @@ describe('tutorials model guide content', () => {
       assert.equal(anchorIds.has(id), true, `dangling anchor ${entry.href}`)
     }
   })
+
+  // 回归守卫：有赞链路的 wan3.0-video / wan3.0-video-prime（2026-10-28 接入）
+  // 同样把参考视频秒数并入计费（relay/channel/task/youzanwan3/adaptor.go 的
+  // EstimateBilling：带 reference_video 时 seconds += refSeconds）。
+  //
+  // 2026-10-31 之前文档只给 seedance2.5-特惠 写了这条，另两个同源模型没写 ——
+  // 客户按「只按生成秒数收」估算，实际账单多出一截，属于定价口径不一致。
+  // 三个模型的口径必须逐字一致，故用同一个用例钉死。
+  test('documents wan3.0-video / prime reference-video billing and limits', () => {
+    for (const [anchor, label] of [
+      ['model-wan30-video', 'wan3.0-video'],
+      ['model-wan30-video-prime', 'wan3.0-video-prime'],
+    ] as const) {
+      const section = getModelSectionText(anchor)
+      assert.equal(
+        section.includes('参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」'),
+        true,
+        `${label} 缺参考视频加秒计费说明`
+      )
+      assert.equal(
+        section.includes('无法解析时长的参考视频会被拒绝'),
+        true,
+        `${label} 必须写明时长解析失败会拒单（按 0 秒收钱等于漏收）`
+      )
+      assert.equal(
+        section.includes('单条 ≤15 秒、合计 ≤15 秒'),
+        true,
+        `${label} 缺参考视频时长上限说明`
+      )
+      assert.equal(
+        section.includes('有参考视频时生成时长也须 ≤15 秒'),
+        true,
+        `${label} 缺「带参考视频时生成时长上限」说明`
+      )
+    }
+  })
+
+  // 回归守卫：Nano Banana Pro 是异步任务模型，只挂 /v1/videos。
+  // 2026-10-15 起累计 8 次客户调用全打在 /v1/images/generations 上，全部 404 ——
+  // 文档当时只写了「图片（按张）」，没写入口，客户自然按 OpenAI 习惯猜。
+  test('Nano Banana Pro 写清入口是 /v1/videos 而不是 /v1/images/generations', () => {
+    const section = getModelSectionText('model-nano-banana-pro')
+    assert.equal(
+      section.includes('/v1/images/generations'),
+      true,
+      '必须点名 /v1/images/generations 会失败，否则客户会继续按 OpenAI 习惯猜'
+    )
+    assert.equal(section.includes('404'), true, '必须写明错误是 404')
+    assert.equal(
+      section.includes('走 /v1/videos 异步任务'),
+      true,
+      '必须写明真正的入口'
+    )
+    // 图片接口章节也要有一句指路，客户第一眼是看那里
+    const imageApi = sections.find((s) => s.id === 'image-api')
+    assert.ok(imageApi, '缺少 image-api 章节')
+    assert.equal(
+      JSON.stringify(imageApi).includes('Nano Banana Pro 不走这个接口'),
+      true,
+      '图片生成接口章节必须提示 Nano Banana Pro 走另一条路'
+    )
+  })
+
+  // 回归守卫：参数速查表必须覆盖所有在售模型。
+  // 加模型时最容易忘的就是这张表 —— 而它恰恰是客户接入时第一个看的。
+  test('参数速查表 covers every model sold on the video/image endpoint', () => {
+    let cheatsheet = ''
+    for (const section of sections) {
+      if (section.id !== 'video-model-params') continue
+      const nodes = section.content ?? []
+      const start = nodes.findIndex(
+        (node) => node.type === 'heading' && node.id === 'video-params-cheatsheet'
+      )
+      assert.notEqual(start, -1, '缺少参数速查表小节')
+      const list = nodes.slice(start).find((node) => node.type === 'list')
+      assert.ok(list, '参数速查表没有内容')
+      cheatsheet = JSON.stringify(list)
+    }
+    assert.notEqual(cheatsheet, '', '缺少 video-model-params 章节')
+
+    for (const model of [
+      'wan3.0-video',
+      'wan3.0-video-prime',
+      'seedance2.5-特惠',
+      'wan3.0-video-官网',
+      'wan3.0-720p-特惠',
+      'autodl:minimax-h3-u24',
+      'seedance-2.0',
+      'seedance-2-0-fast',
+      'seedance-2-5',
+      'gemini-web-video',
+      'wan2.7-图生',
+      'wan2.7-编辑',
+      'jimeng-video-reverse',
+      'Nano Banana Pro',
+    ]) {
+      assert.equal(cheatsheet.includes(model), true, `参数速查表缺 ${model}`)
+    }
+  })
+
+  // 回归守卫：wan3.0-720p-官网 是 2026-10-30 改名的**旧名**，只在
+  // relay/channel/task/wan3/constants.go 里保留可调用（Official720PModelNameLegacy），
+  // 不进模型广场。文档把它写进「兼容与隐藏模型」即可，**不能**再给它单独开一节、
+  // 也不能出现在模型总览里 —— 否则等于两个名字卖同一份货。
+  test('wan3.0-720p-官网 只作为旧名出现在兼容清单', () => {
+    assert.equal(
+      sectionsJson.includes('wan3.0-720p-官网'),
+      true,
+      '旧名可调用，兼容清单里要写明，否则老代码报错时查不到原因'
+    )
+    const overviewSection = sections.find((section) => section.id === 'models-overview')
+    assert.ok(overviewSection, '缺少 models-overview 章节')
+    const overview = JSON.stringify(overviewSection)
+    // 总览区里出现「wan3.0-720p-官网」必须紧跟在「兼容与隐藏模型」之后
+    const legacyIndex = overview.indexOf('wan3.0-720p-官网')
+    const compatIndex = overview.indexOf('兼容与隐藏模型')
+    assert.equal(legacyIndex > compatIndex, true, '旧名不能出现在模型总览的在售清单里')
+    assert.equal(
+      overview.includes('model-wan30-720p-guanwang'),
+      false,
+      '旧名不该有独立小节'
+    )
+  })
 })
