@@ -126,3 +126,64 @@ func TestRedactMediaURLStripsSignature(t *testing.T) {
 		redactMediaURL("https://api.example.com/api/rpc/video.png?tk=secret&Expires=1"))
 	assert.Equal(t, "(relative url)", redactMediaURL(""))
 }
+
+// 首帧/尾帧和参考图一样，都是「上游直传 URL、生成时才下载」，
+// 拉不到同样要白等一两分钟。2026-11-01 线上两单都是 first_frame 指向
+// 境外图床（tmpfiles.org / catbox.moe），探测被跳过，直接进了上游。
+func TestValidateReferenceImageURLsChecksFirstFrame(t *testing.T) {
+	disableSSRF(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	media := []relaycommon.TaskMedia{
+		{Type: "first_frame", URL: server.URL + "/opening.png"},
+	}
+	err := validateReferenceImageURLs(media)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "first frame #1")
+}
+
+func TestValidateReferenceImageURLsChecksLastFrame(t *testing.T) {
+	disableSSRF(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	media := []relaycommon.TaskMedia{
+		{Type: "first_frame", URL: "data:image/png;base64,iVBORw0KGgo="},
+		{Type: "last_frame", URL: server.URL + "/ending.png"},
+	}
+	err := validateReferenceImageURLs(media)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "last frame #2")
+}
+
+func TestValidateReferenceImageURLsAcceptsReachableFirstFrame(t *testing.T) {
+	disableSSRF(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		if r.Method == http.MethodHead {
+			return
+		}
+		_, _ = w.Write(pngMagic)
+	}))
+	defer server.Close()
+
+	media := []relaycommon.TaskMedia{
+		{Type: "first_frame", URL: server.URL + "/opening.png"},
+		{Type: "last_frame", URL: server.URL + "/ending.png"},
+	}
+	require.NoError(t, validateReferenceImageURLs(media))
+}
+
+// 音频/视频不该走图片探测：探测只看 Content-Type 是不是 image/*，
+// 误加进去会把正常请求全拒掉。
+func TestValidateReferenceImageURLsIgnoresAudio(t *testing.T) {
+	media := []relaycommon.TaskMedia{
+		{Type: "driving_audio", URL: "https://example.invalid/voice.mp3"},
+	}
+	require.NoError(t, validateReferenceImageURLs(media))
+}

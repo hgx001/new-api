@@ -54,15 +54,42 @@ func validateReferenceImageURLs(media []relaycommon.TaskMedia) error {
 	ctx, cancel := context.WithTimeout(context.Background(), referenceImageProbeTotalTimeout)
 	defer cancel()
 	for index, item := range media {
-		if item.Type != "reference_image" {
+		if !isImageMediaType(item.Type) {
 			continue
 		}
 		if err := probeReferenceImage(ctx, item.URL); err != nil {
-			return fmt.Errorf("reference image #%d (%s) is not usable: %w",
-				index+1, redactMediaURL(item.URL), err)
+			return fmt.Errorf("%s #%d (%s) is not usable: %w",
+				imageMediaLabel(item.Type), index+1, redactMediaURL(item.URL), err)
 		}
 	}
 	return nil
+}
+
+// isImageMediaType 判断这一项是不是「图片」，即需要下载校验的那类。
+//
+// first_frame / last_frame 必须算进来：上游对它们的处理和参考图完全一样
+// （直传 URL、生成阶段才下载）。2026-11-01 线上两单都是首帧指向境外图床，
+// 因为这里只认 reference_image 而跳过了探测，坏链接直接进上游，
+// 用户白等 21 秒到 3 分钟才收到 `Failed to download`。
+func isImageMediaType(mediaType string) bool {
+	switch mediaType {
+	case "reference_image", "first_frame", "last_frame":
+		return true
+	default:
+		return false
+	}
+}
+
+// imageMediaLabel 让报错能直接指出是哪一种图，而不是一律说成参考图。
+func imageMediaLabel(mediaType string) string {
+	switch mediaType {
+	case "first_frame":
+		return "first frame"
+	case "last_frame":
+		return "last frame"
+	default:
+		return "reference image"
+	}
 }
 
 // probeReferenceImage 探测单张参考图：data URL 本地校验，
