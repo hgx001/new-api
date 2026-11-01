@@ -308,10 +308,12 @@ func checkWan30ReferenceVideoSeconds(videos []string) error {
 func validateWan30MaterialURL(kind, raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("%s must be a public http(s) URL, got %q", kind, raw)
+		// ⚠️ 脱敏后再回显：raw 可能是 base64 data URL，原样回显等于把整张图片
+		// 的字节流写进 400 响应体与网关日志。
+		return fmt.Errorf("%s must be a public http(s) URL, got %s", kind, taskcommon.RedactMaterialURL(raw))
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("%s must be a public http(s) URL, got %q", kind, raw)
+		return fmt.Errorf("%s must be a public http(s) URL, got %s", kind, taskcommon.RedactMaterialURL(raw))
 	}
 	return nil
 }

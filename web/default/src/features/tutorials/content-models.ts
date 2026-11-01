@@ -68,11 +68,12 @@ const VIDEO_COMMON_FIELDS = [
   'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链。⚠️ 这几个字段在有赞 wan3.0-video / wan3.0-video-prime 上一律被标记为 reference_image（往里塞 .mp4 会被当图片送上游），只有 wan3.0-video-官网 会按 URL 后缀推断类型',
   '参考图字段名（漫屋链路模型：Nano Banana Pro、seedance-2.0、seedance-2-5、seedance-2-0-fast、gemini-web-video、wan2.7-图生 / wan2.7-编辑）：input_reference / inputReference / images / image / image_url / imageUrl / image_urls / imageUrls / reference_image / referenceImage / reference_images / referenceImages / input_images / inputImages 都能识别。⚠️ 只取**第一个有值的字段**，不会合并 —— 同时传 images 和 image_urls 时只认 images，另一个被丢弃',
   '⚠️ 提示词引用校验（漫屋链路模型）：提示词里写了「图1 / 图片1 / Image 1」这类标记时，标记数量不能超过实际传入张数，否则提交前直接 400（reason=reference_image_coverage_mismatch），不建单不扣费。多传图不报错，少传图必报错',
-  'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio。⚠️ 有赞 wan3.0-video / wan3.0-video-prime / 官网 传参考视频、参考音频只有这一条路',
+  'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio / first_frame（首帧）/ last_frame（尾帧）。⚠️ 有赞 wan3.0-video / wan3.0-video-prime / 官网 传参考视频、参考音频只有这一条路',
+  'media 的数量上限（wan3 系）：参考图 ≤10、参考视频 ≤5、参考音频 ≤5，合计 ≤20；first_frame 与 last_frame 各最多 1 张，且**不能与参考图/参考视频/参考音频混用**（混用直接 400，不消耗费用）。⚠️ 有赞 wan3.0-video / wan3.0-video-prime / seedance2.5-特惠 的上游已取消首尾帧，传入直接 400，请改用 reference_image；wan3.0-video-官网 与 wan3.0-720p-特惠 仍支持首尾帧',
   '顶层 audios / audio：⚠️ 仅 autodl:minimax-h3-u24 生效。wan3 系不读这两个字段，传了会被静默丢弃——不报错、不计入上限、任务照跑，请改用 media 数组',
   'metadata：兜底传参，支持 metadata.resolution、metadata.ratio、metadata.media。⚠️ metadata.audio（是否生成音轨）只对 wan3.0-video-官网 生效，有赞 wan3.0-video / wan3.0-video-prime 不读这个字段（传了被静默丢弃）',
   '⚠️ 「传图片给视频模型」的三种写法（任选其一，优先级 media > metadata.media > 旧字段）：① media 里 type=reference_image；② metadata.media（同样格式）；③ images / input_reference / image。后者会被一律标记为参考图，不会按后缀推断类型；autodl:minimax-h3-u24 的 images 是必填，缺失直接 400',
-  '⚠️ 首尾帧是图片的一种特殊类型：在 media 里用 type=first_frame / last_frame。⚠️ 有赞 wan3.0-video / wan3.0-video-prime 的上游已取消首尾帧，传入直接 400（不消耗费用），请改用 reference_image；官网渠道仍支持，各最多 1 张，且首尾帧不能与普通参考图/视频/音频混用（混用直接 400，不消耗费用）',
+  '⚠️ 首尾帧是图片的一种特殊类型：在 media 里用 type=first_frame / last_frame，各最多 1 张。⚠️ 有赞 wan3.0-video / wan3.0-video-prime 的上游已取消首尾帧，传入直接 400（不消耗费用），请改用 reference_image；官网渠道仍支持，且首尾帧不能与普通参考图/视频/音频混用（混用直接 400，不消耗费用）',
 ]
 
 const VIDEO_STATUS_ITEMS = [
@@ -83,12 +84,18 @@ const VIDEO_STATUS_ITEMS = [
 ]
 
 const MEDIA_RULE_ITEMS = [
-  '必须是公网可访问的 HTTPS 直链，不接受内网地址、http://、本地路径与 base64',
-  '图片：PNG / JPG / BMP / WEBP，单张 ≤20MB，单边 240–8000 像素；带透明通道会自动压白底',
+  '图片有三种传法：① 内联 base64（data URL）；② 公网 http(s) 直链；③ 上游若还支持文件上传则走 multipart。⚠️ base64 只有 wan3 系（wan3.0-video / wan3.0-video-prime / wan3.0-video-官网 / wan3.0-720p-特惠 / seedance2.5-特惠）支持；漫屋链路模型（seedance-2.0 / seedance-2-5 / seedance-2-0-fast / gemini-web-video / Nano Banana Pro / wan2.7-图生 / wan2.7-编辑 / jimeng-video-reverse）只收公网 http(s) URL，传 base64 直接 400（不建单、不扣费）',
+  '内联 base64（推荐首选）：格式 data:{MIME_type};base64,{base64_data}，例如 data:image/png;base64,iVBORw0KGgo...。不需要任何公网图床，也不受图床可达性与速度影响，是最稳的写法',
+  'base64 图片限制：单张解码后 ≤20MB，宽高 [240, 8000] 像素，宽高比 1:8 ~ 8:1；格式 PNG / JPG / BMP / WEBP；base64 约为原图的 4/3，请求体上限默认 128MB',
+  '公网 URL：必须是公网可访问的 http(s) 直链，不接受内网地址、localhost、本地路径；带鉴权、防盗链或会跳转到登录页的地址一律无效',
+  '图片：PNG / JPG / BMP / WEBP，单张 ≤20MB，单边 240–8000 像素。⚠️ 上游不接受带透明通道的 PNG（渲染会出问题）：有赞 wan3 系会在上传前自动压白底，wan3.0-video-官网 / wan3.0-720p-特惠 不会转换格式，请自行先转成 RGB 再提交',
   '参考视频：单个 1–15 秒、合计 ≤15 秒，官网与有赞渠道都在本地强制校验，超限直接 400（不建单、不扣费）；带参考视频时「生成时长」另有上限，见各模型条目',
   '参考视频时长由网关下载文件头解析：解析不出时长的素材（URL 打不开、不是真正的 MP4/MOV、鉴权失效）会被直接拒绝（不建单、不扣费），因为按 0 秒计费会漏收',
   '参考音频：单个 1–15 秒、合计 ≤15 秒、单条 ≤15MB（音频时长不在本地校验，由上游拒绝）',
-  '素材 URL 需在提交后至少 90 秒内保持可访问',
+  '⚠️ 2026-11-01 起，wan3 系提交前由网关代下载并转存图片：传入的公网图片 URL 会先被网关拉下来、转存到网关自带的暂存图床，再把自家地址交给上游。上游因此不再需要访问你的图床，只要网关能打开你的地址即可',
+  '代下载有 30 秒单图上限，超时即拒单（400，指明是哪张图拉不到）。实测部分境外免费图床达不到这个要求：tmpfiles.org 连不上、litter.catbox.moe 单次要 88 秒 —— 请换用国内可直连的图床，或直接改用 base64',
+  '转存失败在提交阶段就返回 400，不再出现「提交成功、生成阶段才失败、白等 1~3 分钟」的情况；转存发生在预扣费之前，拒单不扣费',
+  '漫屋链路模型不走代下载转存：图片 URL 由 ArcReel 侧在任务提交后拉取，素材 URL 需在提交后至少 90 秒内保持可访问',
   '图床防盗链或签名过期会导致任务失败，建议使用稳定的公网地址',
 ]
 
@@ -129,6 +136,7 @@ const ERROR_ITEMS = [
 const FAQ_ITEMS = [
   '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时（近 30 天生产均值）——Nano Banana Pro 约 1 分钟，wan3.0-video-prime 约 2.5 分钟，seedance2.5-特惠 约 3 分钟，wan3.0-720p-特惠 约 3 分钟，wan3.0-video 约 4 分钟，wan3.0-video-官网 约 8 分钟，gemini-web-video 约 2.5 分钟，jimeng-video-reverse 30 秒视频约 90 秒，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型）',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
+  '素材拉不到时先看报错：wan3 系若报「first frame #1 ... is not usable」或「download failed」，是图片 URL 网关打不开（提交阶段就会拒单、不扣费），请换国内可直连图床或改用 base64 内联；漫屋链路模型若在生成阶段报拉取失败，说明素材 URL 在提交后 90 秒内失效，需要换更稳定的图床',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
   '提示词审核：含敏感内容会被上游拦截，失败会自动退款，改写提示词即可',
   '参数容错：分辨率大小写均可；时长超范围会被就近取档或截断（固定档位模型除外）',
@@ -379,18 +387,60 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           children: [{ type: 'strong', value: '图生视频（锁定首帧）' }],
         },
         {
+          type: 'hint',
+          children: [
+            '⚠️ 首尾帧仅 wan3.0-video-官网 / wan3.0-720p-特惠 支持。有赞 wan3.0-video / wan3.0-video-prime / seedance2.5-特惠 的上游已取消首尾帧，传入直接 400（不消耗费用），请改用 reference_image 做图生视频。',
+          ],
+        },
+        {
           type: 'codeBlock',
           lang: 'bash',
           value: `curl ${videoUrl} \\
   -H "Authorization: Bearer $NEW_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "wan3.0-video",
+    "model": "wan3.0-video-官网",
     "prompt": "让画面里的橘猫跳下窗台走向镜头",
     "duration": 5,
     "resolution": "720P",
     "media": [{"type": "first_frame", "url": "https://your-cdn.com/cat.png"}]
   }'`,
+        },
+        {
+          type: 'paragraph',
+          children: [{ type: 'strong', value: '图片内联 base64（首选，免图床）' }],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            'wan3 系支持把图片以 ',
+            { type: 'code', value: 'data:{MIME_type};base64,{base64_data}' },
+            ' 直接内联在 ',
+            { type: 'code', value: 'media' },
+            ' 的 url 字段里，',
+            '不需要任何公网图床，也不受图床可达性与速度影响。',
+            '这是上游官方支持的正规用法，不是变通。',
+          ],
+        },
+        {
+          type: 'codeBlock',
+          lang: 'bash',
+          value: `curl ${videoUrl} \\
+  -H "Authorization: Bearer $NEW_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "wan3.0-video-官网",
+    "prompt": "让画面里的橘猫跳下窗台走向镜头",
+    "duration": 5,
+    "resolution": "720P",
+    "media": [{"type": "first_frame", "url": "data:image/png;base64,iVBORw0KGgo..."}]
+  }'`,
+        },
+        {
+          type: 'hint',
+          children: [
+            'base64 图片限制：单张解码后 ≤20MB，宽高 [240, 8000] 像素，格式 PNG / JPG / BMP / WEBP。base64 约为原图的 4/3，请求体上限默认 128MB。⚠️ base64 只有 wan3 系支持，漫屋链路模型（seedance / Nano Banana Pro / wan2.7 / gemini-web-video 等）只收公网 http(s) URL，传 base64 直接 400。',
+          ],
         },
         {
           type: 'paragraph',
@@ -417,7 +467,13 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'hint',
           children: [
-            '有赞 wan3.0-video / wan3.0-video-prime 与官网渠道的参考视频、参考音频只能走 media（或 metadata.media，格式相同）这一条路，顶层 audios / audio 会被静默丢弃；images 旧字段一律按参考图处理。素材 URL 须为公网 HTTPS 直链，要求见「参考素材要求」。',
+            '有赞 wan3.0-video / wan3.0-video-prime 与官网渠道的参考视频、参考音频只能走 media（或 metadata.media，格式相同）这一条路，顶层 audios / audio 会被静默丢弃；images 旧字段一律按参考图处理。素材 URL 须为公网 http(s) 直链，要求见「参考素材要求」。',
+          ],
+        },
+        {
+          type: 'hint',
+          children: [
+            '⚠️ 2026-11-01 起，wan3 系提交前由网关代下载并转存图片：传入的公网图片 URL 会先被网关拉下来、转存到网关自带的暂存图床，再把自家地址交给上游 —— 上游因此不再需要访问你的图床。代下载有 30 秒单图上限，超时即拒单（400）；转存失败也在提交阶段就拒单，不会出现「提交成功、生成阶段才失败」的情况。仍建议优先用 base64。',
           ],
         },
       ],

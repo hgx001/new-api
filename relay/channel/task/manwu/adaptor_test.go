@@ -1685,3 +1685,24 @@ func TestVideoReverseIsNotSubjectToRefVideoDurationLimit(t *testing.T) {
 	require.Nil(t, a.ValidateRequestAndSetAction(c, info),
 		"反解链路不得受 15 秒闸门约束")
 }
+
+// 素材被拒时，错误信息里不能出现 base64 图片的字节流。
+//
+// 2026-11-01 实测发现：assertHTTPURL 用 %q 原样回显素材，
+// 客户端传 base64 时整张图片的字节流被写进了 400 响应体与网关日志 ——
+// 日志里等于落了一份用户的图片原文件。
+func TestReferenceRejectionDoesNotLeakDataURLPayload(t *testing.T) {
+	payload := strings.Repeat("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU2", 60)
+	body := fmt.Sprintf(`{"model":%q,"prompt":"x","input_reference":["data:image/png;base64,%s"]}`,
+		ModelWan27I2V, payload)
+
+	c, info, a := postVideoCtx(t, body)
+	taskErr := a.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+
+	assert.NotContains(t, taskErr.Message, payload, "错误信息泄露了 base64 图片内容")
+	assert.NotContains(t, taskErr.Message, "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU2",
+		"错误信息泄露了 base64 图片内容")
+	assert.Contains(t, taskErr.Message, "data:image/png",
+		"错误信息仍应指出素材是 data URL，方便客户定位")
+}

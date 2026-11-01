@@ -1775,7 +1775,9 @@ func resolveImageCount(req clientRequest) (int, error) {
 func assertHTTPURL(raw, label string) error {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("%s must be an http(s) URL, got %q", label, raw)
+		// ⚠️ 必须脱敏：raw 可能是 base64 data URL，原样回显等于把整张图片的
+		// 字节流写进 400 响应体与网关日志（实测确认过）。
+		return fmt.Errorf("%s must be an http(s) URL, got %s", label, taskcommon.RedactMaterialURL(raw))
 	}
 	return nil
 }

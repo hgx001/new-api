@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -158,7 +160,7 @@ func ProbeReferenceVideoDuration(ctx context.Context, rawURL string, client *htt
 			return 0, err
 		}
 	default:
-		return 0, errors.Errorf("reference video url must be a public http(s) URL or a data URL, got %q", truncateForLog(rawURL))
+		return 0, errors.Errorf("reference video url must be a public http(s) URL or a data URL, got %s", RedactMaterialURL(rawURL))
 	}
 
 	seconds, ok := ParseMP4Seconds(data)
@@ -287,4 +289,36 @@ func truncateForLog(raw string) string {
 		return raw
 	}
 	return raw[:limit] + "..."
+}
+
+// RedactMaterialURL 把素材地址压成能安全写进错误信息与日志的摘要。
+//
+// 为什么不能直接 %q 回显原值：素材可能是 base64 data URL（内联图片），
+// 原样回显会把整张图片的字节流写进 400 响应体和网关日志 ——
+// 日志里等于落了一份用户的图片原文件，既撑爆日志又等于泄露素材。
+//
+// data URL 一律压成 "data:<mime>;base64,<n bytes>"；普通 URL 去掉
+// query string（签名参数不该进日志），再按长度截断。
+func RedactMaterialURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if strings.HasPrefix(strings.ToLower(trimmed), "data:") {
+		comma := strings.Index(trimmed, ",")
+		if comma < 0 {
+			return "(malformed data url)"
+		}
+		mime := trimmed[:comma]
+		if idx := strings.Index(mime, ";"); idx >= 0 {
+			mime = mime[:idx]
+		}
+		if len(mime) > 64 {
+			mime = mime[:64]
+		}
+		return fmt.Sprintf("%s;base64,<%d bytes>", mime, len(trimmed[comma+1:]))
+	}
+	if parsed, err := url.Parse(trimmed); err == nil && parsed.Scheme != "" {
+		parsed.RawQuery = ""
+		parsed.Fragment = ""
+		return truncateForLog(parsed.String())
+	}
+	return truncateForLog(trimmed)
 }

@@ -224,7 +224,7 @@ curl https://api.heibaidao.cn/v1/videos \
   -H "Authorization: Bearer sk-xxxxxxxx" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "wan3.0-video",
+    "model": "wan3.0-video-官网",
     "prompt": "镜头缓慢推进",
     "media": [
       {"type": "first_frame", "url": "data:image/png;base64,iVBORw0KGgo..."}
@@ -238,12 +238,19 @@ curl https://api.heibaidao.cn/v1/videos \
 - 上游限制：单张 **不超过 20MB**，宽高 [240, 8000] 像素，宽高比 1:8 ~ 8:1
 - 格式：JPEG / JPG / PNG（**不支持透明通道**）/ BMP / WEBP
 - 请求体会变大（base64 约为原图的 4/3），网关请求体上限默认 128MB
+- ⚠️ **base64 只有 wan3 系支持**：wan3.0-video / wan3.0-video-prime / wan3.0-video-官网 /
+  wan3.0-720p-特惠 / seedance2.5-特惠。漫屋链路模型（seedance-2.0 / seedance-2-5 /
+  seedance-2-0-fast / gemini-web-video / Nano Banana Pro / wan2.7-图生 / wan2.7-编辑 /
+  jimeng-video-reverse）只收公网 http(s) URL，传 base64 直接 400（不建单、不扣费）
+- ⚠️ **首尾帧仅 wan3.0-video-官网 / wan3.0-720p-特惠 支持**：有赞 wan3.0-video /
+  wan3.0-video-prime / seedance2.5-特惠 的上游已取消首尾帧，传入直接 400，
+  请改用 `reference_image` 做图生视频
 
 ### 4.3 次选：传公网 URL
 
 ```json
 {
-  "model": "wan3.0-video",
+  "model": "wan3.0-video-官网",
   "prompt": "镜头缓慢推进",
   "media": [
     {"type": "first_frame", "url": "https://your-cdn.example.com/shot.png"}
