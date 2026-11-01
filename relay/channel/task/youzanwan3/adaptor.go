@@ -964,6 +964,29 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	return client.Do(request)
 }
 
+// normalizeFailureReason 把上游的**兜底**错误码换成客户能行动的说法。
+//
+// 只动兜底码，具体错误一律原样透传：
+//   - CONTENT_REJECTED / MEDIA_DURATION_INVALID / MEDIA_PARAMETER_INVALID 这些码
+//     本身就是「该怎么改」的指引，替换掉反而让客户无从下手。
+//   - TASK_ERROR 是上游自己都定位不到的兜底码，原话是「错误请重试」
+//     「未知错误，请重新尝试」——客户读到会以为是自己参数写错了，
+//     于是反复改 prompt、改分辨率、改时长，其实什么都不用改，等几分钟重投即可。
+//
+// 原始错误不会被丢掉：上游的完整响应一直存在 tasks.data 里（含 errorCode 与
+// errorMessage），运营排查时随时能翻出来，所以这里不需要再记一条日志。
+func normalizeFailureReason(errorCode, reason string) string {
+	if strings.EqualFold(strings.TrimSpace(errorCode), upstreamCatchAllErrorCode) {
+		return reasonUpstreamBusy
+	}
+	// 老协议（扁平 error 字段）会把 code 与 message 拼成「CODE: message」，
+	// 没有独立的 errorCode 可读，这里按前缀再兜一次。
+	if strings.HasPrefix(strings.TrimSpace(reason), upstreamCatchAllErrorCode) {
+		return reasonUpstreamBusy
+	}
+	return reason
+}
+
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var response taskResponse
 	if err := common.Unmarshal(respBody, &response); err != nil {
@@ -1005,7 +1028,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		// 不映射成失败的话会落进 default 继续报 IN_PROGRESS，用户的钱就卡在预扣里。
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = firstNonEmpty(reason, reasonContentModeration)
+		result.Reason = normalizeFailureReason(response.Task.ErrorCode, firstNonEmpty(reason, reasonContentModeration))
 	default:
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress

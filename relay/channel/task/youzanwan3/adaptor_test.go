@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/youzanwan3_setting"
 	"github.com/gin-gonic/gin"
@@ -261,6 +262,65 @@ func TestParseTaskResultKeepsLegacyFlatShape(t *testing.T) {
 	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","error":null,"result":null}`))
 	require.NoError(t, err)
 	require.Equal(t, "内容审核不通过", result.Reason)
+}
+
+// 回归守卫：上游兜底错误码 TASK_ERROR 不能原样透传给客户。
+//
+// 2026-10-31 实证：三单 720P 纯文生（2/2/5 秒，同一 prompt）在 21:57:37 同批提交后
+// 全部返回 TASK_ERROR「错误请重试」，而**完全相同**的 prompt 与参数在 21:54:03 和
+// 22:00:42 都成功出片。参数、时长、内容审核全部排除，属于上游内部偶发失败。
+//
+// 原话「错误请重试」会让客户以为是自己参数写错，反复改 prompt / 分辨率 / 时长重试，
+// 实际上什么都不用改，等几分钟重投即可。所以兜底码统一换成中性文案。
+//
+// 但**只动兜底码**：专属码（内容审核、素材时长、参数不合法）本身就是「该怎么改」的
+// 指引，替换掉反而让客户无从下手。
+func TestParseTaskResultMapsCatchAllErrorToActionableReason(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	// 兜底码 + 上游原话 → 中性文案
+	catchAll, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"TASK_ERROR","errorMessage":"错误请重试"}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, catchAll.Status)
+	require.Equal(t, taskcommon.ReasonUpstreamFailure, catchAll.Reason)
+
+	// 兜底码的另一种话术，同样要归一
+	unknown, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"TASK_ERROR","errorMessage":"未知错误，请重新尝试"}}`))
+	require.NoError(t, err)
+	require.Equal(t, taskcommon.ReasonUpstreamFailure, unknown.Reason)
+
+	// 只有 errorCode 没有 message 的兜底码也要归一，不能把 "TASK_ERROR" 直接甩给客户
+	codeOnly, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"TASK_ERROR"}}`))
+	require.NoError(t, err)
+	require.Equal(t, taskcommon.ReasonUpstreamFailure, codeOnly.Reason)
+
+	// 老协议把 code 与 message 拼成一个字符串，没有独立 errorCode 可读，按前缀兜
+	legacy, err := adaptor.ParseTaskResult([]byte(`{"status":"failed","error":"TASK_ERROR: 错误请重试"}`))
+	require.NoError(t, err)
+	require.Equal(t, taskcommon.ReasonUpstreamFailure, legacy.Reason)
+
+	// 专属码必须原样保留 —— 它们告诉客户「改哪里」
+	for _, tc := range []struct {
+		body string
+		want string
+	}{
+		{`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"CONTENT_REJECTED","errorMessage":"生成结果疑似包含真人面部，未通过内容安全审核，请更换或风格化相关素材后重试"}}`,
+			"生成结果疑似包含真人面部，未通过内容安全审核，请更换或风格化相关素材后重试"},
+		{`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"MEDIA_DURATION_INVALID","errorMessage":"参考素材时长过长：当前为 31.609 秒，最长允许 15 秒"}}`,
+			"参考素材时长过长：当前为 31.609 秒，最长允许 15 秒"},
+		{`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"MEDIA_PARAMETER_INVALID","errorMessage":"参数或参考素材不符合要求，请检查提示词、分辨率、时长、画幅和素材类型后重试"}}`,
+			"参数或参考素材不符合要求，请检查提示词、分辨率、时长、画幅和素材类型后重试"},
+	} {
+		result, err := adaptor.ParseTaskResult([]byte(tc.body))
+		require.NoError(t, err)
+		require.Equal(t, tc.want, result.Reason, "专属错误码不能被兜底文案覆盖：%s", tc.body)
+	}
+
+	// 成功路径不受影响
+	ok, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"succeeded","videoUrl":"https://oss.example/v.mp4"}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, ok.Status)
+	require.Empty(t, ok.Reason)
 }
 
 // 有赞的 error 有两种形态，且 status 还有 refunded 终态。任一处理不对，

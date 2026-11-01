@@ -1,5 +1,9 @@
 package youzanwan3
 
+import (
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+)
+
 const ChannelName = "Youzan Wan3"
 
 const (
@@ -84,6 +88,22 @@ const (
 	// reasonContentModeration 是无理由失败的统一口径：任务已运行一段时间
 	// 才失败、且上游未返回任何原因时，归因为内容审核不通过。
 	reasonContentModeration = "内容审核不通过"
+
+	// upstreamCatchAllErrorCode 是上游的**兜底**错误码。
+	//
+	// 上游的错误码是分层的：能定位的问题都有专属码
+	// （CONTENT_REJECTED / MEDIA_DURATION_INVALID / MEDIA_PARAMETER_INVALID），
+	// 落到 TASK_ERROR 就说明上游自己也不知道原因。
+	//
+	// 2026-10-31 实证：三单 720P 纯文生（2/2/5 秒，同一 prompt），21:57:37 同批提交
+	// 后全部返回 TASK_ERROR「错误请重试」；而**完全相同**的 prompt 与参数在
+	// 21:54:03 和 22:00:42 都成功出片 —— 参数、时长、内容审核全部排除，
+	// 属于上游侧偶发内部失败（上游同时把 ⚡ 释放了，billingState=released）。
+	upstreamCatchAllErrorCode = "TASK_ERROR"
+
+	// reasonUpstreamBusy 是兜底码的对客文案，与漫屋渠道共用同一句，
+	// 保证客户在同一个平台里看到的说法一致（见 taskcommon.ReasonUpstreamFailure）。
+	reasonUpstreamBusy = taskcommon.ReasonUpstreamFailure
 
 	// videoModel 三档（480P/720P/1080P）同价，缺省取最低档 480P。
 	defaultResolution = "480P"

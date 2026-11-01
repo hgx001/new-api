@@ -127,7 +127,8 @@ const (
 	// taskcommon.ReasonContentModeration**——那是「无理由失败统一归内容审核」的旧口径，
 	// 会把 Worker 失联/服务端回收/超时这类基础设施问题谎报成内容违规，客户拿着错的
 	// 方向去改提示词，白折腾一轮。2026-10-18 用户拍板改成中性文案。
-	reasonUnknownFailure = "上游生成失败（未提供具体原因），请稍后重试或联系客服"
+	// 文案与有赞渠道共用 taskcommon.ReasonUpstreamFailure，保证同一平台内口径一致。
+	reasonUnknownFailure = taskcommon.ReasonUpstreamFailure
 	// reasonDirectUploadUnsupported：全渠道都不收 multipart 文件。参考素材必须是
 	// ArcReel 能回源的公网 URL（图片 URL、dola/gemini 的参考图 URL、反解的视频 URL），
 	// 因此这条拒绝对四个模型都成立，不能写成只讲反解。
