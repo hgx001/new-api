@@ -86,13 +86,23 @@ deploy/deploy-backend.sh --dry-run <sha>    # 只打印将执行的命令
 新提交常规走 bundle 直传，随后 fetch fallback 生效：
 
 ```bash
-# 本地（Git Bash）：把待发 commit 打包（<base> 为服务器已有的基点，可省略打全量）
-git bundle create newapi-<sha>.bundle <full-sha> ^<base>
+# 本地（Git Bash）：把待发 commit 打包（<base> 为服务器已有的基点）
+git bundle create newapi-<sha>.bundle refs/heads/main ^<base>
 scp -P 877 newapi-<sha>.bundle ubuntu@119.29.253.97:/tmp/
 
 # 服务器：导入 bundle，之后正常执行部署脚本
-cd /home/ubuntu/new-api-src && git fetch /tmp/newapi-<sha>.bundle
+cd /home/ubuntu/new-api-src && git fetch /tmp/newapi-<sha>.bundle refs/heads/main:refs/remotes/bundle/main
 ```
+
+两点必须注意，否则会卡住：
+
+- **bundle 的第一个参数必须是 ref 名，不能只给裸 SHA。** git 2.55 对
+  `git bundle create x.bundle <sha> ^<base>` 会直接报
+  `fatal: Refusing to create empty bundle`（2026-11-01 在 Windows 上实测）。
+  写成 `refs/heads/main ^<base>` 就正常，增量包通常只有几 KB。
+- **服务器侧 fetch 要显式写 ref 映射。** 不带 ref 时 git 会去找远端 `HEAD`，
+  而 bundle 里没有 HEAD，报 `couldn't find remote ref HEAD`。目标用
+  `refs/remotes/bundle/main` 而不是 `refs/heads/main`，避免动到 checkout 的分支。
 
 ## 回滚
 
