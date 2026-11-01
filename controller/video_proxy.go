@@ -212,6 +212,32 @@ func VideoProxy(c *gin.Context) {
 			c.Writer.WriteHeader(http.StatusFound)
 			return
 		}
+	case constant.ChannelTypeXinbi:
+		// 心笔 Model Router 的成片有两种来源，与 wan3 同构：
+		//
+		// 1. 成片提升后的产物（在腾讯云 COS 里）：ResultURL 是
+		//    cos-proxy://bucket/region/path 标记，需要现签临时直链。
+		//    本渠道默认走这条路（480P → 提升 720P 是商品定义）。
+		// 2. 没配 MPS 或提升失败时回落到上游原片：ResultURL 是上游的稳定
+		//    下载直链（token 在 URL 里，3 天有效），直接 302 过去即可，
+		//    不要带渠道密钥 —— 那是给第三方 CDN 的。
+		//
+		// ⚠️ 漏了 cos-proxy 这一支的后果实测过：下游拿到
+		//    「unsupported protocol: cos-proxy」403，成片完全取不到。
+		videoURL = task.GetResultURL()
+		if bucket, region, objectPath, ok := taskwan3.ParseCOSProxyMarker(videoURL); ok {
+			signed, perr := taskwan3.PresignCOSURL(c.Request.Context(), bucket, region, objectPath)
+			if perr != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf(
+					"Failed to presign COS url for task %s: %s", taskID, perr.Error()))
+				videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
+				return
+			}
+			c.Writer.Header().Set("Cache-Control", "no-cache")
+			c.Writer.Header().Set("Location", signed)
+			c.Writer.WriteHeader(http.StatusFound)
+			return
+		}
 	case constant.ChannelTypeErchun:
 		// 二春：成片在 /v1/tasks/{task_id}/content，必须带渠道密钥才能取。
 		// adaptor 因此不吐上游地址（ParseTaskResult 留空 Url，由轮询落成站内代理路径）。
