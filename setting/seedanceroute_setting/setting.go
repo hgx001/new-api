@@ -38,23 +38,33 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 
 // Policy 是条件路由策略。
 //
-// 目前有**两条独立规则**，共用 Enabled 总开关与 SourceModel：
+// 目前有**三条独立规则**，共用 Enabled 总开关与 SourceModel：
 //
+//	规则三（首尾帧）：SourceModel + media 含 first_frame/last_frame → FramesTargetModel
+//	               seedance2.5-特惠 + 首尾帧 → wan3.0-720p-特惠
 //	规则一（时长）：SourceModel + TriggerSeconds 秒 → TargetModel
 //	               seedance2.5-特惠 + 30 秒 → seedance-2-5（豆包按次 ¥5.00）
 //	规则二（比例）：SourceModel + TriggerRatio 比例 → RatioTargetModel
 //	               seedance2.5-特惠 + 9:16 → wan3.0-720p-特惠（¥0.20/秒）
 //
-// **优先级：规则一先判**（老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」）。
-// 即 30 秒 + 9:16 走豆包；只有非 30 秒的 9:16 才走 wan3。
+// **优先级：规则三最先判，然后规则一，最后规则二。**
 //
-// ⚠️ 规则二的字段**全部 omitempty 且可为空**：旧的生产 option JSON 里没有它们，
-// 解析后为空 → 规则二不生效 → 行为与改造前逐字节一致。这是硬要求，
+//	规则一/二之间：老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」，
+//	  即 30 秒 + 9:16 走豆包，只有非 30 秒的 9:16 才走 wan3。
+//
+//	规则三为什么必须排在最前：源链路（youzan wan3）**已经彻底不收首尾帧**
+//	  （2026-10-28 上游取消 firstFrameAssetId/lastFrameAssetId），带首尾帧的请求
+//	  打到源模型必然 400；而规则一的目标（漫屋）**也不支持首尾帧**。
+//	  所以「带首尾帧」的请求只有 wan3 直连能跑，这个约束优先级高于时长/比例
+//	  的成本优化 —— 否则 30 秒的首尾帧请求会被规则一改派到漫屋，直接失败。
+//
+// ⚠️ 规则二/三的字段**全部 omitempty 且可为空**：旧的生产 option JSON 里没有它们，
+// 解析后为空 → 对应规则不生效 → 行为与改造前逐字节一致。这是硬要求，
 // 因为改这份配置的人不一定同步改 SQL。
 type Policy struct {
 	// Enabled 总开关。false = 完全不路由，全部走源模型（默认，行为不变）。
 	Enabled bool `json:"enabled"`
-	// SourceModel 源模型名（对外名，客户请求里写的那个）。两条规则共用。
+	// SourceModel 源模型名（对外名，客户请求里写的那个）。三条规则共用。
 	SourceModel string `json:"source_model"`
 	// TargetModel 目标模型名（对外名），规则一用。
 	TargetModel string `json:"target_model"`
@@ -65,6 +75,12 @@ type Policy struct {
 	RatioTargetModel string `json:"ratio_target_model,omitempty"`
 	// TriggerRatio 规则二的触发比例（如 "9:16"）。空 = 规则二不启用。
 	TriggerRatio string `json:"trigger_ratio,omitempty"`
+
+	// FramesTargetModel 规则三的目标模型名。空 = 规则三不启用。
+	//
+	// 触发条件没有可配的值：**请求 media 里出现 first_frame / last_frame 就命中**。
+	// 首尾帧是能力约束不是调度偏好，不存在「阈值」可调。
+	FramesTargetModel string `json:"frames_target_model,omitempty"`
 
 	// SecondsRulePausedUntil 规则一的暂停截止时间（Unix 秒）。0 = 未暂停。
 	//
@@ -87,12 +103,13 @@ type Policy struct {
 // Get() 返回这里的内容，中间件直接放行 —— 行为与改造前逐字节一致。
 func defaultPolicy() Policy {
 	return Policy{
-		Enabled:          false,
-		SourceModel:      "",
-		TargetModel:      "",
-		TriggerSeconds:   0,
-		RatioTargetModel: "",
-		TriggerRatio:     "",
+		Enabled:           false,
+		SourceModel:       "",
+		TargetModel:       "",
+		TriggerSeconds:    0,
+		RatioTargetModel:  "",
+		TriggerRatio:      "",
+		FramesTargetModel: "",
 	}
 }
 
@@ -139,7 +156,8 @@ func WithSecondsRulePausedUntil(until int64) Policy {
 //
 // 开启路由的**必要条件**：至少有一条规则配全。
 //   - 规则一配全 = 源模型名 + 目标模型名 + 触发时长三者都有值；
-//   - 规则二配全 = 源模型名 + 比例目标模型 + 触发比例三者都有值。
+//   - 规则二配全 = 源模型名 + 比例目标模型 + 触发比例三者都有值；
+//   - 规则三配全 = 源模型名 + 首尾帧目标模型两者都有值（触发条件不可配）。
 //
 // 一条都没配全就当作没开（Enabled 置 false）—— 宁可不开也不要半开，
 // 半开的状态（比如 target_model 为空）会把请求改写成一个空模型名，线上直接全挂。
@@ -149,9 +167,7 @@ func UpdateFromJSONString(jsonStr string) error {
 		return err
 	}
 	if parsed.Enabled {
-		secondsReady := parsed.SourceModel != "" && parsed.TargetModel != "" && parsed.TriggerSeconds > 0
-		ratioReady := parsed.SourceModel != "" && parsed.RatioTargetModel != "" && parsed.TriggerRatio != ""
-		if !secondsReady && !ratioReady {
+		if !secondsRuleReady(parsed) && !ratioRuleReady(parsed) && !framesRuleReady(parsed) {
 			parsed.Enabled = false
 		}
 	}
@@ -180,14 +196,27 @@ func IsRatioRouteEnabled() bool {
 	return ratioRuleReady(current)
 }
 
+// IsFramesRouteEnabled 判断「规则三（首尾帧）」当前是否生效。
+//
+// 同样不受 SecondsRulePausedUntil 影响 —— 暂停只针对「按时长改派到豆包」。
+// 首尾帧改派是**能力兜底**（源链路根本跑不了首尾帧），不能因为豆包额度用完
+// 就跟着停掉，否则带首尾帧的请求会直接 400。
+func IsFramesRouteEnabled() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return framesRuleReady(current)
+}
+
 // IsAnyRouteEnabled 判断是否有**任意一条**规则生效。
 //
-// 中间件早退必须用这个，不能用 IsEnabled —— 只配了比例规则时
-// IsEnabled 是 false，用它会直接跳过整个中间件，比例规则永远不生效。
+// 中间件早退必须用这个，不能用 IsEnabled —— 只配了比例/首尾帧规则时
+// IsEnabled 是 false，用它会直接跳过整个中间件，那两条规则永远不生效。
 func IsAnyRouteEnabled() bool {
 	mu.RLock()
 	defer mu.RUnlock()
-	return secondsRuleActive(current, nowUnix()) || ratioRuleReady(current)
+	return secondsRuleActive(current, nowUnix()) ||
+		ratioRuleReady(current) ||
+		framesRuleReady(current)
 }
 
 // IsSecondsRulePaused 报告规则一当前是否处于暂停期。
@@ -238,6 +267,16 @@ func ratioRuleReady(p Policy) bool {
 		p.SourceModel != "" &&
 		p.RatioTargetModel != "" &&
 		p.TriggerRatio != ""
+}
+
+// framesRuleReady 判断规则三是否配全。
+//
+// 比另外两条少一个条件：**没有「触发值」可配**。首尾帧是能力约束，
+// 请求里出现 first_frame/last_frame 就命中，不存在阈值。
+func framesRuleReady(p Policy) bool {
+	return p.Enabled &&
+		p.SourceModel != "" &&
+		p.FramesTargetModel != ""
 }
 
 func clonePolicy(p Policy) Policy {

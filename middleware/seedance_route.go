@@ -59,12 +59,20 @@ func RouteOriginModel(c *gin.Context) string {
 
 // Seedance25TeHuiRoute 在满足条件时把请求改派到另一个对外模型。
 //
-// 两条规则，**时长规则优先**（老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」）：
+// 三条规则，**首尾帧最先判，其次时长，最后比例**：
 //
-//	规则一（时长）：源模型 + 30 秒 → seedance-2-5（豆包，按次 ¥5.00）
-//	规则二（比例）：源模型 + 9:16（非 30 秒）→ wan3.0-720p-特惠（按秒 ¥0.20）
+//	规则三（首尾帧）：源模型 + media 含 first_frame/last_frame → wan3.0-720p-特惠
+//	规则一（时长）：  源模型 + 30 秒 → seedance-2-5（豆包，按次 ¥5.00）
+//	规则二（比例）：  源模型 + 9:16（非 30 秒）→ wan3.0-720p-特惠（按秒 ¥0.20）
 //
-// 改派**只决定内部走哪条链路，不改变对客价格**：两条规则的计费都按源模型
+// 规则三为什么排最前：源链路 youzan wan3 **已彻底不收首尾帧**（2026-10-28 上游
+// 取消 firstFrameAssetId/lastFrameAssetId），而规则一的目标（漫屋）也不支持首尾帧。
+// 「带首尾帧」的请求只有 wan3 直连能跑 —— 这是能力约束，优先级高于时长/比例的
+// 成本优化。排在规则一之后就漏了「30 秒 + 首尾帧」这个组合（会被改派到漫屋必挂）。
+//
+// 规则一/二之间仍是**时长优先**（老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」）。
+//
+// 改派**只决定内部走哪条链路，不改变对客价格**：三条规则的计费都按源模型
 // （seedance2.5-特惠，¥0.20/秒）算，客户请求什么模型就按什么模型收。
 // 所以 30 秒这一单客户付 ¥6.00（0.20×30），内部走豆包 ¥5.00/次的成本 ——
 // 差价是调度收益，不进客户账单。
@@ -72,7 +80,7 @@ func RouteOriginModel(c *gin.Context) string {
 // 源/目标/触发值全部从 seedanceroute_setting 读，改配置不用改代码。
 //
 // 不路由的情形（**都不是错误**，一律放行原请求）：
-//   - 开关关闭（默认）或两条规则都没配全
+//   - 开关关闭（默认）或三条规则都没配全
 //   - 模型名不匹配
 //   - 时长规则：时长不等于触发值（含不传时长 → 默认 5 秒）
 //   - 时长规则：带了参考视频 / 参考音频（豆包链路不支持，见 hasUnsupportedMedia）
@@ -110,7 +118,23 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			return
 		}
 
-		// ── 规则一（时长）优先 ──
+		// ── 规则三（首尾帧）最优先 ──
+		//
+		// 必须排在时长/比例规则之前：源链路 youzan wan3 已彻底不收首尾帧
+		// （2026-10-28 上游取消 firstFrameAssetId/lastFrameAssetId），而规则一的
+		// 目标（漫屋）同样不支持首尾帧。所以「带首尾帧」的请求只有 wan3 直连能跑，
+		// 这个能力约束优先级高于时长/比例的成本优化 —— 否则 30 秒的首尾帧请求
+		// 会被规则一改派到漫屋，直接失败。
+		if seedanceroute_setting.IsFramesRouteEnabled() && hasFrameMedia(body) {
+			if newBody, routed := prepareFramesRoute(c, body, policy); routed {
+				if applyRewrittenBody(c, newBody, policy.SourceModel) {
+					c.Next()
+					return
+				}
+			}
+		}
+
+		// ── 规则一（时长）──
 		if seedanceroute_setting.IsEnabled() {
 			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && seconds == policy.TriggerSeconds {
 				if newBody, routed := prepareDoubaoRoute(c, body, policy); routed {
@@ -125,7 +149,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			}
 		}
 
-		// ── 规则二（比例）：规则一没命中才走这里 ──
+		// ── 规则二（比例）：前两条都没命中才走这里 ──
 		if seedanceroute_setting.IsRatioRouteEnabled() {
 			if matchesTriggerRatio(body, policy.TriggerRatio) {
 				if newBody, routed := prepareWan3Route(c, body, policy); routed {
@@ -250,6 +274,131 @@ func prepareWan3Route(c *gin.Context, body map[string]interface{}, policy seedan
 	}
 
 	return rewriteBodyForWan3(body, policy), true
+}
+
+// prepareFramesRoute 组装「带首尾帧 → wan3 直连」的请求体。
+//
+// 第二个返回值 false = 放弃路由（放行原请求）。
+//
+// 与规则二（比例）的关键差别：**不改比例**。规则二是「把请求钉成 9:16」，
+// 而首尾帧请求的画幅由用户自己定（16:9 / 9:16 / 1:1 都可能），
+// 这里只把能解析到的比例**原样落到 metadata.ratio**，不能覆盖成触发值。
+//
+// 为什么不做 1080P 挡板（规则二有）：wan3.0-720p-特惠 只交付 720P，用户要 1080P
+// 时路由过去等于降级。但源链路对带首尾帧的请求是**必然 400**
+// （youzan wan3 no longer supports first_frame/last_frame），
+// 挡下来只会把「降级出片」换成「彻底失败」—— 两害相权，路由过去并记日志。
+func prepareFramesRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy) (map[string]interface{}, bool) {
+	if !channelAvailabilityProbe(c, policy.FramesTargetModel) {
+		return nil, false
+	}
+	if wants1080P(body) {
+		// 不挡，但要留痕：降级交付是可观测的，不是静默的。
+		logger.LogInfo(c, "条件路由：首尾帧请求指定 1080P，目标链路只交付 720P")
+	}
+	return rewriteBodyForFramesRoute(body, policy.FramesTargetModel), true
+}
+
+// rewriteBodyForFramesRoute 只把 model 换成目标模型，其余字段原样保留。
+//
+// 为什么不像 rewriteBodyForWan3 那样强制写 metadata.ratio：那条规则要把请求
+// 钉成触发比例（9:16），而首尾帧规则没有触发比例 —— 覆盖用户画幅是错的。
+func rewriteBodyForFramesRoute(body map[string]interface{}, target string) map[string]interface{} {
+	out := make(map[string]interface{}, len(body)+1)
+	for key, value := range body {
+		if key == "model" {
+			continue
+		}
+		out[key] = value
+	}
+	out["model"] = target
+
+	// 比例：源链路 youzanwan3 与目标链路 wan3 都只认 metadata.ratio /
+	// metadata.aspect_ratio，顶层同名字段会被静默丢弃。用户若把比例写在顶层
+	// （或只给了 size），改派后就会丢画幅 —— 这里把它落进 metadata.ratio。
+	// 解析不到就什么都不写，让 wan3 用自己的默认值，绝不凭空造一个比例。
+	if ratio, ok := resolveRequestRatio(body); ok {
+		metadata := make(map[string]interface{})
+		if existing, ok := body["metadata"].(map[string]interface{}); ok {
+			for key, value := range existing {
+				metadata[key] = value
+			}
+		}
+		metadata["ratio"] = ratio
+		out["metadata"] = metadata
+	}
+	return out
+}
+
+// hasFrameMedia 判断请求里是否带了首尾帧（media[].type = first_frame / last_frame）。
+//
+// 读取优先级与源链路 youzanwan3 的 buildMedia 完全一致：
+// 顶层 media > metadata.media > metadata.input.media。
+//
+// **不看旧版扁平字段**（images / image / input_reference）：它们只能表达参考图，
+// 在源链路里一律被当成 reference_image，表达不了首尾帧。
+func hasFrameMedia(body map[string]interface{}) bool {
+	for _, item := range collectMediaItems(body) {
+		switch strings.TrimSpace(item.Type) {
+		case "first_frame", "last_frame":
+			return true
+		}
+	}
+	return false
+}
+
+// mediaItem 只解析判定需要的 type 字段。
+//
+// 刻意不 import relay/common 的 TaskMedia：中间件只需要类型名，
+// 引进来会把 middleware 和 relay 包的依赖方向绑得更紧（也更容易撞 import 环）。
+type mediaItem struct {
+	Type string `json:"type"`
+}
+
+// collectMediaItems 按源链路的优先级取出 media 列表。
+//
+// 解析失败返回 nil（调用方视为「没有首尾帧」→ 不路由），与整个中间件
+// 「任何一步不确定就放弃路由」的原则一致。
+//
+// ⚠️ 逐条按 interface{} 解析而不是直接 unmarshal 成 []mediaItem：media 数组里
+// **允许混入裸字符串**（等价于 reference_image）。若整体反序列化成结构体切片，
+// 一条字符串就会让整组解析失败 → 漏判首尾帧 → 带首尾帧的请求被打回源链路必挂。
+func collectMediaItems(body map[string]interface{}) []mediaItem {
+	raw, ok := body["media"]
+	if !ok || raw == nil {
+		metadata, _ := body["metadata"].(map[string]interface{})
+		if metadata == nil {
+			return nil
+		}
+		raw, ok = metadata["media"]
+		if !ok || raw == nil {
+			if input, inputOK := metadata["input"].(map[string]interface{}); inputOK {
+				raw = input["media"]
+			}
+		}
+	}
+	if raw == nil {
+		return nil
+	}
+	encoded, err := common.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var entries []interface{}
+	if err := common.Unmarshal(encoded, &entries); err != nil {
+		return nil
+	}
+	items := make([]mediaItem, 0, len(entries))
+	for _, entry := range entries {
+		// 裸字符串（或任何非对象条目）表达不了首尾帧，跳过即可，不影响其它条目。
+		object, isObject := entry.(map[string]interface{})
+		if !isObject {
+			continue
+		}
+		kind, _ := object["type"].(string)
+		items = append(items, mediaItem{Type: kind})
+	}
+	return items
 }
 
 // wan3ReferenceVideosOutOfRange 判断请求里的参考视频是否超出 wan3 的硬限制。

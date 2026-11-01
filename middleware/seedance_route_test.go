@@ -924,3 +924,220 @@ func TestSeedanceRouteExpiredPauseRoutesAgain(t *testing.T) {
 		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────
+// 规则三：首尾帧路由（seedance2.5-特惠 + first_frame/last_frame → wan3.0-720p-特惠）
+//
+// 背景（2026-11-01）：源链路 youzan wan3 已彻底不收首尾帧
+// （2026-10-28 上游取消 firstFrameAssetId/lastFrameAssetId），带首尾帧的请求
+// 打到源模型必然 400；规则一的目标（漫屋）也不支持首尾帧。所以带首尾帧的请求
+// 只能走 wan3 直连。
+// ─────────────────────────────────────────────────────────────
+
+const testFramesTargetModel = "wan3.0-720p-特惠"
+
+// enableAllRules 打开全部三条规则，测试结束时恢复原状。
+func enableAllRules(t *testing.T, secondsTarget string, seconds int, ratioTarget, ratio, framesTarget string) {
+	t.Helper()
+	previous := seedanceroute_setting.Get()
+	payload := map[string]interface{}{
+		"enabled":             true,
+		"source_model":        testSourceModel,
+		"target_model":        secondsTarget,
+		"trigger_seconds":     seconds,
+		"ratio_target_model":  ratioTarget,
+		"trigger_ratio":       ratio,
+		"frames_target_model": framesTarget,
+	}
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+}
+
+func TestSeedanceRouteFramesGoToWan3(t *testing.T) {
+	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+
+	// 16:9 + 首帧：比例规则不命中（9:16≠16:9），首尾帧规则必须接住。
+	body := `{"model":"seedance2.5-特惠","seconds":"10","prompt":"a cat","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
+	seen, originModel := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	if out["model"] != testFramesTargetModel {
+		t.Fatalf("model = %v, want %s (body=%s)", out["model"], testFramesTargetModel, seen)
+	}
+	if out["seconds"] != "10" {
+		t.Fatalf("seconds = %v, want 10（首尾帧不改时长）", out["seconds"])
+	}
+	if out["prompt"] != "a cat" {
+		t.Fatalf("prompt = %v, want a cat", out["prompt"])
+	}
+	// 首尾帧必须原样带过去 —— 这正是改派的目的。
+	media, ok := out["media"].([]interface{})
+	if !ok || len(media) != 1 {
+		t.Fatalf("media missing in %s", seen)
+	}
+	first, _ := media[0].(map[string]interface{})
+	if first["type"] != "first_frame" {
+		t.Fatalf("media[0].type = %v, want first_frame", first["type"])
+	}
+	if originModel != testSourceModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q（计费按源模型）", originModel, testSourceModel)
+	}
+}
+
+func TestSeedanceRouteFramesBeatSecondsRule(t *testing.T) {
+	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+
+	// 30 秒 + 首帧：时长规则本来会命中（改派到漫屋），但漫屋不支持首尾帧，
+	// 必须让首尾帧规则先接住 —— 否则这一单必然失败。
+	body := `{"model":"seedance2.5-特惠","seconds":"30","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	if out["model"] != testFramesTargetModel {
+		t.Fatalf("model = %v, want %s（首尾帧优先于时长规则）", out["model"], testFramesTargetModel)
+	}
+}
+
+func TestSeedanceRouteFramesKeepsUserRatio(t *testing.T) {
+	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+
+	// 顶层 16:9 + 首帧：改派后比例必须仍是 16:9，绝不能被改成触发值 9:16。
+	body := `{"model":"seedance2.5-特惠","ratio":"16:9","media":[{"type":"last_frame","url":"https://x/b.png"}]}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	if out["model"] != testFramesTargetModel {
+		t.Fatalf("model = %v, want %s", out["model"], testFramesTargetModel)
+	}
+	metadata, ok := out["metadata"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("metadata missing in %s", seen)
+	}
+	if metadata["ratio"] != "16:9" {
+		t.Fatalf("metadata.ratio = %v, want 16:9（用户画幅不能被触发值覆盖）", metadata["ratio"])
+	}
+}
+
+func TestSeedanceRouteFramesInMetadataMedia(t *testing.T) {
+	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+
+	// 首尾帧也可能写在 metadata.media 里（源链路同样认这个位置）。
+	body := `{"model":"seedance2.5-特惠","metadata":{"media":[{"type":"first_frame","url":"https://x/a.png"}]}}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testFramesTargetModel {
+		t.Fatalf("model = %v, want %s (body=%s)", out["model"], testFramesTargetModel, seen)
+	}
+}
+
+func TestSeedanceRouteFramesInMetadataInputMedia(t *testing.T) {
+	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+
+	// 第三种位置：metadata.input.media（youzanwan3 的 metadataMedia 也读这里）。
+	body := `{"model":"seedance2.5-特惠","metadata":{"input":{"media":[{"type":"last_frame","url":"https://x/b.png"}]}}}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testFramesTargetModel {
+		t.Fatalf("model = %v, want %s (body=%s)", out["model"], testFramesTargetModel, seen)
+	}
+}
+
+func TestSeedanceRouteReferenceImageNotTreatedAsFrames(t *testing.T) {
+	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+
+	// 纯参考图不是首尾帧：16:9 的参考图请求不该被规则三接走，
+	// 也不该被规则二接走（9:16 不匹配）→ 逐字节不变。
+	body := `{"model":"seedance2.5-特惠","ratio":"16:9","media":[{"type":"reference_image","url":"https://x/a.png"}]}`
+	seen, originModel := runRoute(t, body)
+	if seen != body {
+		t.Fatalf("body changed for reference_image:\n got %s\nwant %s", seen, body)
+	}
+	if originModel != "" {
+		t.Fatalf("RouteOriginModel() = %q, want empty", originModel)
+	}
+}
+
+func TestSeedanceRouteFramesDetectedInMixedMedia(t *testing.T) {
+	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+
+	// media 数组里允许混入裸字符串（等价 reference_image）。整体反序列化成结构体
+	// 切片会因为那条字符串失败 → 漏判首尾帧。必须逐条解析才认得出首帧。
+	body := `{"model":"seedance2.5-特惠","media":["https://x/ref.png",{"type":"first_frame","url":"https://x/a.png"}]}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testFramesTargetModel {
+		t.Fatalf("model = %v, want %s（混合 media 里的首帧必须被识别）", out["model"], testFramesTargetModel)
+	}
+}
+
+func TestSeedanceRouteFramesRuleOffWhenTargetEmpty(t *testing.T) {
+	// 只配时长+比例规则（旧的生产配置）→ 首尾帧请求必须逐字节不变，
+	// 行为与改造前完全一致。这是「加字段不影响存量配置」的硬要求。
+	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","ratio":"16:9","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
+	seen, _ := runRoute(t, body)
+	if seen != body {
+		t.Fatalf("body changed with frames rule off:\n got %s\nwant %s", seen, body)
+	}
+}
+
+func TestSeedanceRouteFramesSkipWhenNoChannel(t *testing.T) {
+	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	stubChannelAvailable(t, false)
+
+	// 目标渠道不可用 → 不路由（放行原请求）。中间件永远不挡客户。
+	body := `{"model":"seedance2.5-特惠","ratio":"16:9","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
+	seen, _ := runRouteRaw(t, body)
+	if seen != body {
+		t.Fatalf("body changed when target channel unavailable:\n got %s\nwant %s", seen, body)
+	}
+}
+
+func TestSeedanceRouteFramesOnlyConfigEnablesMiddleware(t *testing.T) {
+	// 只配首尾帧规则（时长/比例都没配全）→ IsAnyRouteEnabled 必须为 true，
+	// 否则中间件在入口就早退，规则三永远不生效。
+	previous := seedanceroute_setting.Get()
+	payload := map[string]interface{}{
+		"enabled":             true,
+		"source_model":        testSourceModel,
+		"frames_target_model": testFramesTargetModel,
+	}
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+
+	if !seedanceroute_setting.IsAnyRouteEnabled() {
+		t.Fatal("IsAnyRouteEnabled() = false，中间件会早退，规则三永远不生效")
+	}
+	if !seedanceroute_setting.IsFramesRouteEnabled() {
+		t.Fatal("IsFramesRouteEnabled() = false, want true")
+	}
+	if seedanceroute_setting.IsEnabled() {
+		t.Fatal("IsEnabled() = true，时长规则没配全不该生效")
+	}
+
+	body := `{"model":"seedance2.5-特惠","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testFramesTargetModel {
+		t.Fatalf("model = %v, want %s", out["model"], testFramesTargetModel)
+	}
+}

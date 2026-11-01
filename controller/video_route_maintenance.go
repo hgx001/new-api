@@ -156,6 +156,7 @@ func doubaoRouteState() gin.H {
 		"paused_until":         until,
 		"seconds_rule_enabled": seedanceroute_setting.IsEnabled(),
 		"ratio_rule_enabled":   seedanceroute_setting.IsRatioRouteEnabled(),
+		"frames_rule_enabled":  seedanceroute_setting.IsFramesRouteEnabled(),
 	}
 	if until > 0 {
 		state["paused_until_text"] = time.Unix(until, 0).In(beijingZone).Format("2006-01-02 15:04:05")
