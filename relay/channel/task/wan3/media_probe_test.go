@@ -127,6 +127,28 @@ func TestRedactMediaURLStripsSignature(t *testing.T) {
 	assert.Equal(t, "(relative url)", redactMediaURL(""))
 }
 
+// base64 data URL 里整张图片都在字符串里，原样落日志等于把用户图片写进日志文件
+// （describeMedia 的 "wan3 media accepted:" 那行会打全量）。redactMediaURL 之前
+// 只处理 http(s) 的 query string，data URL 的 scheme 是 "data"、query 为空，
+// 于是 payload 一字不漏地透了出去。2026-11-01 随 base64 通道上线前修掉。
+func TestRedactMediaURLRedactsDataURL(t *testing.T) {
+	redacted := redactMediaURL("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+	assert.NotContains(t, redacted, "iVBORw0KGgo")
+	assert.Contains(t, redacted, "data:image/png")
+	// 只保留可读摘要，不留 payload
+	assert.Contains(t, redacted, "base64")
+	assert.Less(t, len(redacted), 120)
+}
+
+func TestDescribeMediaDoesNotLeakDataURLPayload(t *testing.T) {
+	media := []relaycommon.TaskMedia{
+		{Type: "first_frame", URL: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="},
+	}
+	line := describeMedia(media)
+	assert.NotContains(t, line, "iVBORw0KGgo")
+	assert.Contains(t, line, "first_frame")
+}
+
 // 首帧/尾帧和参考图一样，都是「上游直传 URL、生成时才下载」，
 // 拉不到同样要白等一两分钟。2026-11-01 线上两单都是 first_frame 指向
 // 境外图床（tmpfiles.org / catbox.moe），探测被跳过，直接进了上游。

@@ -102,6 +102,19 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapper(err, "invalid_input_reference", http.StatusBadRequest)
 	}
+	// 代下载转存：把客户图床的 URL 换成自家 staging 暂存图床的地址。
+	//
+	// 为什么必须在探测之前做：探测只证明「**我们**能打开这个地址」，
+	// 不代表「**上游**能打开」。客户用境外图床（tmpfiles.org / catbox.moe）时，
+	// 探测能过、上游却拉不到，任务会在生成阶段以 Failed to download 失败，
+	// 用户白等 1~3 分钟。转存后交给上游的是自家地址，上游一定能打开。
+	//
+	// 转存失败即拒单：先扣了钱再退款不如当场拒单，且失败信息能直指
+	// 「哪张图拉不到」，比上游的 Failed to download 可读得多。
+	media, taskErr := a.relocateMediaForUpstream(c, media)
+	if taskErr != nil {
+		return taskErr
+	}
 	// 参考图必须在建单前确认抓得到：上游是「直传 URL、生成时才下载」，
 	// 坏链接会让用户白等一两分钟才收到 InvalidParameter，甚至出现
 	// 「成片成功但完全没有参考图」。详见 media_probe.go。
@@ -508,6 +521,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	media, err := buildWan3Media(req)
 	if err != nil {
 		return nil, err
+	}
+	// validate 阶段已把图片 URL 转存成自家 staging 地址，这里取用。
+	//
+	// ⚠️ 必须取转存后的版本：buildWan3Media 每次都从原始请求重建 media，
+	// 直接用它等于把客户的境外图床地址又交给上游，转存白做了。
+	if relocated, ok := c.Get(relocatedMediaContextKey); ok {
+		if list, ok := relocated.([]relaycommon.TaskMedia); ok && len(list) > 0 {
+			media = list
+		}
 	}
 	prompt := normalizeWan3Prompt(strings.TrimSpace(req.Prompt))
 	if prompt == "" && len(media) == 0 {

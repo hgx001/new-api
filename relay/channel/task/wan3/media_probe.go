@@ -261,8 +261,17 @@ func describeMedia(media []relaycommon.TaskMedia) string {
 
 // redactMediaURL 去掉 URL 的查询串再写日志/报错。
 // 客户的参考图链接普遍带签名（tk=...），原样落日志等于把取图凭证写进日志。
+//
+// data URL 是另一类敏感：整张图片（base64）都在字符串里。原实现只清 query string，
+// 而 data URL 的 query 本来就是空，payload 一字不漏地透进日志（describeMedia 的
+// "wan3 media accepted:" 那行）。base64 通道上线后首尾帧会走这条路，所以这里
+// 对 data scheme 单独处理：只留 MIME 与长度摘要，不留任何 payload。
 func redactMediaURL(rawURL string) string {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	trimmed := strings.TrimSpace(rawURL)
+	if strings.HasPrefix(strings.ToLower(trimmed), "data:") {
+		return redactDataURL(trimmed)
+	}
+	parsed, err := url.Parse(trimmed)
 	if err != nil {
 		return "(unparsable url)"
 	}
@@ -272,4 +281,27 @@ func redactMediaURL(rawURL string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+// redactDataURL 把 data URL 压成 "data:<mime>;base64,<n bytes>" 的摘要。
+// mime 从头段原样取（限长），长度按 payload 字节数给，便于排查时确认图有多大。
+func redactDataURL(rawURL string) string {
+	comma := strings.Index(rawURL, ",")
+	if comma < 0 {
+		return "(malformed data url)"
+	}
+	header := rawURL[:comma]
+	payload := rawURL[comma+1:]
+	// 头段只保留 mime（去掉 ;base64 之后的参数），并限长防畸形输入撑爆日志。
+	mime := header
+	if idx := strings.Index(mime, ";"); idx >= 0 {
+		mime = mime[:idx]
+	}
+	if len(mime) > 64 {
+		mime = mime[:64]
+	}
+	if !strings.HasPrefix(strings.ToLower(mime), "data:") {
+		return "(malformed data url)"
+	}
+	return fmt.Sprintf("%s;base64,<%d bytes>", mime, len(payload))
 }

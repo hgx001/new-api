@@ -4,7 +4,7 @@
 - **Base URL**：`https://api.heibaidao.cn/v1`
 - **鉴权方式**：`Authorization: Bearer sk-xxxxxxxx`（也可用 `x-api-key` 头，仅 `/v1/messages`、`/v1/models` 路径生效）
 - **兼容性**：OpenAI 兼容为主，另提供 Gemini 与 Anthropic 入口（见 §2）
-- **最近更新**：2026-10-19 新增余额查询接口（见 §3）
+- **最近更新**：2026-11-01 新增视频任务图片素材传参说明（见 §4）
 
 ---
 
@@ -47,6 +47,8 @@ curl https://api.heibaidao.cn/v1/models \
 | `GET /v1/dashboard/billing/quota` | **余额查询**（只读，无需参数），见 §3 |
 | `POST /v1/messages` | Anthropic 兼容入口（带 `x-api-key` + `anthropic-version` 头时也可用） |
 | `POST /v1beta/models/*` | Gemini 兼容入口 |
+
+> 视频任务的图片素材（首帧 / 尾帧 / 参考图）怎么传，见 §4。
 
 对话示例：
 
@@ -197,7 +199,89 @@ while True:
 
 ---
 
-## 4. 余额不足时的行为（调用模型接口时）
+## 4. 视频任务：图片素材怎么传
+
+以通义万相 wan3（`wan3.0-video`）为例。图片素材通过请求体的 `media` 数组传入，
+每个元素是 `{"type": ..., "url": ...}`。
+
+### 4.1 media 的 type 取值
+
+| type | 含义 | 数量上限 |
+|---|---|---|
+| `first_frame` | 首帧 | 1 |
+| `last_frame` | 尾帧 | 1 |
+| `reference_image` | 参考图 | 10 |
+| `reference_video` | 参考视频 | 5 |
+| `reference_audio` | 参考音频 | 5 |
+
+**首尾帧与参考类素材互斥**：`first_frame` / `last_frame` 不能与 `reference_image` /
+`reference_video` / `reference_audio` 混用，混用直接返回 400。
+
+### 4.2 首选：传 base64 data URL（推荐）
+
+```bash
+curl https://api.heibaidao.cn/v1/videos \
+  -H "Authorization: Bearer sk-xxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "wan3.0-video",
+    "prompt": "镜头缓慢推进",
+    "media": [
+      {"type": "first_frame", "url": "data:image/png;base64,iVBORw0KGgo..."}
+    ]
+  }'
+```
+
+图片直接以 `data:{MIME_type};base64,{base64_data}` 内联，**不需要任何公网图床**。
+
+- 这是上游官方支持的正规用法，不是变通
+- 上游限制：单张 **不超过 20MB**，宽高 [240, 8000] 像素，宽高比 1:8 ~ 8:1
+- 格式：JPEG / JPG / PNG（**不支持透明通道**）/ BMP / WEBP
+- 请求体会变大（base64 约为原图的 4/3），网关请求体上限默认 128MB
+
+### 4.3 次选：传公网 URL
+
+```json
+{
+  "model": "wan3.0-video",
+  "prompt": "镜头缓慢推进",
+  "media": [
+    {"type": "first_frame", "url": "https://your-cdn.example.com/shot.png"}
+  ]
+}
+```
+
+传 URL 时有三条硬约束，**任一不满足任务必然失败**：
+
+1. **三方可达**：你的客户端、网关、**上游机房**都要能打开这个地址。
+   上游是在**生成阶段**才去下载图片的，不是在提交时。
+2. **公网可访问**：不能是内网地址、localhost 或带鉴权跳转到登录页的地址。
+3. **稳定可达**：实测部分境外免费图床（`tmpfiles.org`、`litter.catbox.moe` 等）
+   在上游机房会连接失败或耗时数十秒，任务会以 `Failed to download` 失败。
+
+> **2026-11-01 起，网关会在提交前代下载并转存**：传入的公网图片 URL 由网关
+> 先拉下来、转存到网关自带的暂存图床，再把这个自家地址交给上游。
+> 因此上游不再需要访问你的图床——只要**网关能打开**你的地址即可。
+> 转存失败会在提交阶段直接返回 400 并指明是哪张图拉不到，
+> 不会再出现「提交成功、生成阶段才失败、白等 1~3 分钟」的情况。
+>
+> 仍然建议优先用 base64（§4.2）：它不受三方可达性约束，是最稳的写法。
+
+### 4.4 其他参数
+
+| 字段 | 说明 |
+|---|---|
+| `prompt` | 提示词。与素材至少要有一个 |
+| `duration` | 生成时长（秒）。wan3 最长 30 秒 |
+| `resolution` | `480p` / `720p` / `1080p` |
+| `aspect_ratio` | `adaptive` / `16:9` / `4:3` / `1:1` / `3:4` / `9:16` |
+
+建单是异步的：`POST /v1/videos` 返回任务 ID，用 `GET /v1/videos/{task_id}` 轮询状态，
+产物走 `GET /v1/videos/{task_id/content`。
+
+---
+
+## 5. 余额不足时的行为（调用模型接口时）
 
 - **你自己这把 key 的余额不足**：请求返回 **403**，`error.message` 形如 `用户额度不足, 剩余额度: ¥X`。这个错误发生在选渠道之前，不会扣费、不会调用上游
 - **中转侧某个上游渠道余额不足**：网关会自动切换到同模型的下一个可用渠道，下游无感知；渠道被自动禁用后需等管理员恢复
@@ -205,19 +289,22 @@ while True:
 
 ---
 
-## 5. 注意事项
+## 6. 注意事项
 
 1. **模型列表里有少量历史遗留名字不可调用**：`/v1/models` 目前会列出少量已下架的 `gpt-5.x` 旧名，调用返回 503 `model_not_found` 且**不扣费**。以下游实际测试结果为准，别把列表当可用性承诺；发现某个模型调不通请联系管理员确认
 2. **别把 `remain_token` 当唯一余额**：不限量令牌它是 `null`；限额令牌它可能大于钱包余额。统一用 `effective_remain`
 3. **金额单位是 quota 不是元**：程序内一律用 `effective_remain`（quota），要展示再除以 `quota_per_unit`（或直接用 `display_remain`）
 4. **令牌不限制来源 IP**：key 在任何 IP 都能访问全部接口（含余额查询）；需要限 IP 请在网关层（nginx / CDN）做
-5. **视频类任务是异步的**：`POST /v1/videos` 建单后轮询 `GET /v1/videos/{task_id}` 取状态，产物走 `GET /v1/videos/{task_id}/content`；反解类参考视频只收公网 `http(s)` URL
+5. **视频类任务是异步的**：`POST /v1/videos` 建单后轮询 `GET /v1/videos/{task_id}` 取状态，产物走 `GET /v1/videos/{task_id}/content`
+6. **图片素材优先传 base64**：见 §4.2。传公网 URL 时受三方可达性约束，境外免费图床尤其容易失败
+7. **PNG 不能带透明通道**：上游会拒绝，带透明通道的图请先转成 RGB 再提交
 
 ---
 
-## 6. 变更记录
+## 7. 变更记录
 
 | 日期 | 变更 |
 |---|---|
+| 2026-11-01 | 新增 §4 视频任务图片素材传参说明；网关新增提交前代下载转存，坏链接提交即拒单 |
 | 2026-10-19 | 新增 `GET /v1/dashboard/billing/quota` 余额查询接口（§3），供下游自助监控余额 |
 | — | OpenAI 兼容对话 / 模型列表 / Gemini 入口 / Anthropic 入口 |
