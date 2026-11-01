@@ -176,7 +176,9 @@ export function RouteSwitchCard({ channelModels }: RouteSwitchCardProps) {
             checked={view.on}
             disabled={busyNow}
             onCheckedChange={handleToggle}
-            className='h-6! w-11! data-[size=default]:h-6! data-[size=default]:w-11!'
+            // 默认的 data-checked 跟随主题 primary（亮色下是黑的），
+            // 在一个绿色卡片里看着像「没开」。这里强制绿/灰两色。
+            className='h-6! w-11! data-checked:bg-emerald-600! data-[size=default]:h-6! data-[size=default]:w-11!'
             aria-label={t('Cross-model routing')}
           />
           {busyNow ? (
