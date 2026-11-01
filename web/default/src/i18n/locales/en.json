@@ -5251,7 +5251,16 @@
     "Failed to update routing policy": "Failed to update routing policy",
     "Please pick a valid deadline": "Please pick a valid deadline",
     "Deadline must be in the future": "Deadline must be in the future",
-    "Routing paused": "Routing paused"
+    "Routing paused": "Routing paused",
+    "Routing is on": "On",
+    "Routing is off": "Off",
+    "Turn on now": "Turn on now",
+    "Keep it off for 30 days": "Keep it off for 30 days",
+    "Routing is off for 30 days": "Routing is off for 30 days",
+    "Off until {{time}}, then back on automatically": "Off until {{time}}, then back on automatically",
+    "Off until you turn it back on": "Off until you turn it back on",
+    "Auto-paused: {{reason}}. Back on at {{time}}": "Auto-paused: {{reason}}. Back on at {{time}}",
+    "Auto-paused: {{reason}}": "Auto-paused: {{reason}}"
   },
   "Integration Tutorial": "Integration Tutorial",
   "Claude Code Installation": "Claude Code Installation",

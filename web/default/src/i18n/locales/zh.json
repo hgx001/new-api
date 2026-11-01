@@ -5251,7 +5251,16 @@
     "Failed to update routing policy": "更新路由策略失败",
     "Please pick a valid deadline": "请选择有效的截止时间",
     "Deadline must be in the future": "截止时间必须在未来",
-    "Routing paused": "改派已暂停"
+    "Routing paused": "改派已暂停",
+    "Routing is on": "已开启",
+    "Routing is off": "已关闭",
+    "Turn on now": "立即开启",
+    "Keep it off for 30 days": "一直关着（30 天）",
+    "Routing is off for 30 days": "改派已关闭（30 天）",
+    "Off until {{time}}, then back on automatically": "已关闭，{{time}} 自动恢复",
+    "Off until you turn it back on": "已关闭，需手动开启",
+    "Auto-paused: {{reason}}. Back on at {{time}}": "额度用完已自动关闭：{{reason}}，{{time}} 自动恢复",
+    "Auto-paused: {{reason}}": "额度用完已自动关闭：{{reason}}"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",
