@@ -23,7 +23,9 @@ func MarshalJSONStringOf(p Policy) string {
 		`","trigger_seconds":` + itoa(p.TriggerSeconds) +
 		`,"ratio_target_model":"` + p.RatioTargetModel +
 		`","trigger_ratio":"` + p.TriggerRatio +
-		`","seconds_rule_paused_until":` + itoa64(p.SecondsRulePausedUntil) + `}`
+		`","seconds_rule_paused_until":` + itoa64(p.SecondsRulePausedUntil) +
+		`,"pause_source":"` + p.PauseSource +
+		`","pause_reason":"` + p.PauseReason + `"}`
 }
 
 // itoa64 把 int64 转成十进制字符串（不引 strconv，与 itoa 保持一致的手写风格）。
