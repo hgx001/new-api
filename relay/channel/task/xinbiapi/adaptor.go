@@ -79,7 +79,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if _, err := resolveRatio(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
 	}
-	// 档位锁定：对外只卖 720P（上游生成 480P + 提升）。
+	// 档位锁定：对外只卖 720P。
 	// 客户端显式要 480P/1080P 必须报错，不能静默改档 —— 那是「收 720P 的钱给 1080P 的承诺」。
 	if raw := strings.TrimSpace(req.Resolution); raw != "" && !strings.EqualFold(raw, deliveredResolution) {
 		return service.TaskErrorWrapperLocal(
@@ -326,8 +326,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 // resolveResultURL 把任务详情换成一条**可直接抓取**的成片地址。
 //
-// 必须返回公网可达的直链而不是「带 Bearer 的端点」：这条地址还要交给
-// 腾讯 MPS 做超分，MPS 那边没有我们的渠道密钥。
+// 必须返回公网可达的直链而不是「带 Bearer 的端点」：这条地址后面还要交给
+// 交付链路的下游处理（腾讯 MPS），那边没有我们的渠道密钥。
 // 上游的 downloadUrl 是 3 天有效的稳定链接（token 在 URL 里），正好满足。
 func (a *TaskAdaptor) resolveResultURL(detail taskDetail) (string, error) {
 	// 详情里直接带地址就用（形状不确定，先认几种常见键）。
@@ -410,11 +410,14 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
-// ────────────────────────────── 超分（两跳）──────────────────────────────
-
-// AfterUpstreamSuccess 在 480P 成片出来后接管，提交 720P 提升。
+// ────────────────────────────── 交付前画质增强 ──────────────────────────────
 //
-// 复用 wan3 的实现：超分与上游是谁无关，只要有一条可抓取的 480P 地址。
+// ⚠️ 内部实现细节，对外一律表述为「原生 720P」（见 constants.go 的
+//    ModelNamePayPerCall 注释）。不要在模型描述、渠道备注、错误信息里提到它。
+
+// AfterUpstreamSuccess 在成片出来后接管，提交交付前的画质增强。
+//
+// 复用 wan3 的实现：这一步与上游是谁无关，只要有一条可抓取的源片地址。
 // 模型名白名单在本渠道内判，避免把别家渠道的模型卷进来。
 func (a *TaskAdaptor) AfterUpstreamSuccess(ctx context.Context, task *model.Task, upstreamURL string) (bool, error) {
 	if task == nil || !needsSuperResolution(task.Properties.OriginModelName) {
@@ -440,7 +443,10 @@ var _ interface {
 
 // ────────────────────────────── 工具 ──────────────────────────────
 
-// resolveDuration 统一 duration / seconds 两种写法。
+// resolveDuration 统一 duration / seconds 两种写法，并强制固定时长。
+//
+// 本模型只卖 30 秒：不传就按 30 秒；传了别的值直接报错。
+// 不做「就近吸附」—— 用户要 5 秒却按 30 秒计费，是比报错更糟的体验。
 func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
 	duration := req.Duration
 	if duration == 0 {
@@ -455,13 +461,13 @@ func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
 		}
 	}
 	if duration == 0 {
-		duration = defaultDuration
+		return fixedDuration, nil
 	}
-	if duration < minDuration || duration > maxDuration {
-		return 0, fmt.Errorf("duration must be between %d and %d for %s, got %d",
-			minDuration, maxDuration, ModelNamePayPerCall, duration)
+	if duration != fixedDuration {
+		return 0, fmt.Errorf("%s has a fixed duration of %d seconds, got %d",
+			ModelNamePayPerCall, fixedDuration, duration)
 	}
-	return duration, nil
+	return fixedDuration, nil
 }
 
 // resolveRatio 取画面比例：metadata.ratio 优先，其次 size 恰好是比例写法时。

@@ -35,11 +35,11 @@ func TestResolveDuration(t *testing.T) {
 		want    int
 		wantErr bool
 	}{
-		{name: "显式 duration", req: relaycommon.TaskSubmitReq{Duration: 2}, want: 2},
-		{name: "缺省用默认 5 秒", req: relaycommon.TaskSubmitReq{}, want: 5},
-		{name: "seconds 字符串", req: relaycommon.TaskSubmitReq{Seconds: "8"}, want: 8},
-		{name: "低于下限", req: relaycommon.TaskSubmitReq{Duration: 1}, wantErr: true},
-		{name: "高于上限", req: relaycommon.TaskSubmitReq{Duration: 31}, wantErr: true},
+		{name: "显式 30 秒", req: relaycommon.TaskSubmitReq{Duration: 30}, want: 30},
+		{name: "缺省按固定 30 秒", req: relaycommon.TaskSubmitReq{}, want: 30},
+		{name: "seconds 字符串 30", req: relaycommon.TaskSubmitReq{Seconds: "30"}, want: 30},
+		{name: "传 2 秒被拒（固定时长）", req: relaycommon.TaskSubmitReq{Duration: 2}, wantErr: true},
+		{name: "传 5 秒被拒（固定时长）", req: relaycommon.TaskSubmitReq{Duration: 5}, wantErr: true},
 		{name: "seconds 非数字", req: relaycommon.TaskSubmitReq{Seconds: "abc"}, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -119,7 +119,7 @@ func TestBuildRequestBodyShape(t *testing.T) {
 	a := newAdaptor()
 	c := newTestContext(t, relaycommon.TaskSubmitReq{
 		Prompt:   "雨后的青石板小巷",
-		Duration: 2,
+		Duration: 30,
 		Metadata: map[string]interface{}{"ratio": "16:9"},
 		Images:   []string{"https://cdn.example.com/ref.png"},
 	})
@@ -133,7 +133,7 @@ func TestBuildRequestBodyShape(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &decoded))
 
 	assert.Equal(t, upstreamModel, decoded["model"], "必须固定发上游别名，不信任渠道映射")
-	assert.Equal(t, float64(2), decoded["duration"])
+	assert.Equal(t, float64(fixedDuration), decoded["duration"], "固定 30 秒，缺省也显式下发")
 	metadata, ok := decoded["metadata"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, generationResolution, metadata["resolution"], "生成档位恒为 480P")
