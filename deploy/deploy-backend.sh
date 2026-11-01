@@ -69,6 +69,23 @@ while :; do
   fi
   alive=$(ssh -p "$PORT" "$HOST" "pgrep -f '[b]ackend-remote.sh' >/dev/null && echo yes || echo no")
   if [ "$alive" != "yes" ]; then
+    # 竞态兜底：远端脚本写完 FINAL_SHA 就退出，而上一轮的 cat 可能拿到的是它退出前的
+    # 快照（末几行还没刷出来）。2026-11-01 实测——49d51cf2 这次部署远端日志明明有
+    # HEALTH_OK 和 FINAL_SHA，本地却因为「进程已退出 + 快照里没有终态标记」报了失败。
+    # 进程退出后日志就不会再变，这里补读一次再下结论。
+    final=$(ssh -p "$PORT" "$HOST" "cat '$REMOTE_LOG' 2>/dev/null || true")
+    final_total=$(printf '%s\n' "$final" | wc -l)
+    if [ "$final_total" -gt "$seen" ]; then
+      printf '%s\n' "$final" | tail -n +$((seen + 1))
+    fi
+    if printf '%s\n' "$final" | grep -q 'FINAL_SHA:'; then
+      echo "[deploy] 部署完成"
+      exit 0
+    fi
+    if printf '%s\n' "$final" | grep -q 'ABORT:'; then
+      echo "[deploy] 部署失败（见 $REMOTE_LOG）" >&2
+      exit 1
+    fi
     echo "[deploy] 远端部署脚本已退出但没有终态标记，判定为失败（见 $REMOTE_LOG）" >&2
     exit 1
   fi
