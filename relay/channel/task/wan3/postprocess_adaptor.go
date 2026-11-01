@@ -67,7 +67,9 @@ func SubmitSuperResolution(ctx context.Context, task *model.Task, upstreamURL st
 	}
 
 	// 成片的**目标输出档位**固定 720P（输入恒为 480P，见 official720PGenerationResolution）。
-	pp, err := submitPostProcess(ctx, upstreamURL, official720POutputResolution)
+	// 第三个参数是产物文件名种子：必须按任务唯一，否则不同任务的 720P 会写到同一个
+	// COS 对象上互相覆盖（心笔渠道的成片 basename 恒为 content，实测已撞车）。
+	pp, err := submitPostProcess(ctx, upstreamURL, official720POutputResolution, task.TaskID)
 	if err != nil {
 		// 提交失败：回落原片，**不让用户任务失败**。
 		//

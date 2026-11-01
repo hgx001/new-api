@@ -327,6 +327,11 @@ type mpsSuperResRequest struct {
 	Region string
 	// OutputDir 输出目录（单层，形如 /mps_api_test/）。
 	OutputDir string
+	// OutputObjectPath 产物文件名（相对 OutputDir，含扩展名）。
+	//
+	// 必须按任务唯一：留空时腾讯云用输入 URL 的 basename 命名，
+	// 心笔渠道的输入恒为 ".../content"，会导致所有任务写到同一个对象上。
+	OutputObjectPath string
 	// Width / Height 输出分辨率（2 倍超分）。
 	Width  int
 	Height int
@@ -362,6 +367,24 @@ type mpsSuperResResult struct {
 //  4. Definition=0 时走 RawParameter.EnhanceConfig.VideoEnhance.SuperResolution；
 //  5. 超分与大模型增强**互斥**，同时配会失败。
 func (c *mpsClient) submitSuperRes(ctx context.Context, req mpsSuperResRequest) (string, error) {
+	payload := buildSuperResPayload(req)
+
+	resp, err := c.call(ctx, mpsActionProcessMedia, payload)
+	if err != nil {
+		return "", err
+	}
+	if resp.Response.TaskId == "" {
+		return "", fmt.Errorf("mps ProcessMedia returned empty TaskId")
+	}
+	return resp.Response.TaskId, nil
+}
+
+// buildSuperResPayload 组装 ProcessMedia 的请求体。
+//
+// 单独抽出来是为了让单测能直接断言请求体结构 —— 尤其是 OutputObjectPath：
+// 它一旦丢了，就会退化成「所有任务写同一个 COS 对象」的静默覆盖，
+// 而这种错**不会报错**，只会让用户拿到别人的片子。
+func buildSuperResPayload(req mpsSuperResRequest) map[string]any {
 	superResType := req.SuperResolutionType
 	if superResType != "hq" {
 		superResType = "lq"
@@ -396,7 +419,41 @@ func (c *mpsClient) submitSuperRes(ctx context.Context, req mpsSuperResRequest) 
 		"ResolutionAdaptive": "open",
 	}
 
-	payload := map[string]any{
+	transcodeTask := map[string]any{
+		"Definition": 0,
+		"RawParameter": map[string]any{
+			"Container":    "mp4",
+			"VideoTemplate": videoTemplate,
+			"AudioTemplate": map[string]any{
+				"Codec":        "aac",
+				"Bitrate":      64,
+				"SampleRate":   44100,
+				"AudioChannel": 2,
+			},
+			"EnhanceConfig": map[string]any{
+				"VideoEnhance": map[string]any{
+					// ⚠️ 超分与大模型增强互斥，这里只配超分
+					"SuperResolution": map[string]any{
+						"Switch": "ON",
+						"Type":   superResType,
+						"Size":   2,
+					},
+				},
+			},
+		},
+	}
+	// OutputObjectPath 指定产物文件名（相对 OutputDir）。
+	//
+	// ⚠️ 不指定时腾讯云拿**输入 URL 的文件名**当产物名。这在心笔渠道上会撞车：
+	//	它的成片地址是 .../v1/media/files/{id}/content，basename 恒为 "content"，
+	//	于是每个任务的产物都叫 content_transcode_0.mp4 —— 后一个任务直接把
+	//	前一个任务的 720P 覆盖掉（实测已发生：两个不同用户的成片指向同一个对象）。
+	//	所以调用方必须给一个按任务唯一的名字。
+	if strings.TrimSpace(req.OutputObjectPath) != "" {
+		transcodeTask["OutputObjectPath"] = req.OutputObjectPath
+	}
+
+	return map[string]any{
 		"InputInfo": map[string]any{
 			// ⚠️ 大写 "URL"
 			"Type": "URL",
@@ -416,42 +473,11 @@ func (c *mpsClient) submitSuperRes(ctx context.Context, req mpsSuperResRequest) 
 		"MediaProcessTask": map[string]any{
 			// ⚠️ 是数组
 			"TranscodeTaskSet": []any{
-				map[string]any{
-					"Definition": 0,
-					"RawParameter": map[string]any{
-						"Container":    "mp4",
-						"VideoTemplate": videoTemplate,
-						"AudioTemplate": map[string]any{
-							"Codec":        "aac",
-							"Bitrate":      64,
-							"SampleRate":   44100,
-							"AudioChannel": 2,
-						},
-						"EnhanceConfig": map[string]any{
-							"VideoEnhance": map[string]any{
-								// ⚠️ 超分与大模型增强互斥，这里只配超分
-								"SuperResolution": map[string]any{
-									"Switch": "ON",
-									"Type":   superResType,
-									"Size":   2,
-								},
-							},
-						},
-					},
-				},
+				transcodeTask,
 			},
 		},
 		"SessionId": req.SessionID,
 	}
-
-	resp, err := c.call(ctx, mpsActionProcessMedia, payload)
-	if err != nil {
-		return "", err
-	}
-	if resp.Response.TaskId == "" {
-		return "", fmt.Errorf("mps ProcessMedia returned empty TaskId")
-	}
-	return resp.Response.TaskId, nil
 }
 
 // describeSuperRes 查询超分任务状态。

@@ -59,10 +59,13 @@ func needsSuperResolution(originModelName string) bool {
 // resolution 是**目标输出档位**（不是输入档位）：输入恒为 480P（见
 // official720PGenerationResolution），输出恒为 720P（见 official720POutputResolution）。
 //
+// objectNameHint 用来生成**按任务唯一**的产物文件名，调用方传任务 ID。
+// 传空也能跑（退化成时间戳），但产物名就失去可追溯性。
+//
 // 返回值：
 //   - pp != nil 且 err == nil：已提交，pp 里有后处理任务 ID，轮询时继续跟进；
 //   - pp == nil：不需要后处理（或配置不可用），调用方直接按原流程置成功。
-func submitPostProcess(ctx context.Context, sourceURL string, resolution string) (*model.TaskPostProcess, error) {
+func submitPostProcess(ctx context.Context, sourceURL string, resolution string, objectNameHint string) (*model.TaskPostProcess, error) {
 	cfg := tencentmps_setting.Get()
 	if !tencentmps_setting.IsConfigured() {
 		// 没配 MPS 就不做后处理 —— 行为与改造前完全一致。
@@ -90,6 +93,7 @@ func submitPostProcess(ctx context.Context, sourceURL string, resolution string)
 		Bucket:               cfg.Bucket,
 		Region:               cfg.Region,
 		OutputDir:            cfg.OutputDir,
+		OutputObjectPath:     superResObjectName(objectNameHint),
 		Width:                width,
 		Height:               height,
 		BitrateKbps:          cfg.OutputBitrateKbps,
@@ -134,6 +138,36 @@ func superResOutputSize(resolution string) (int, int) {
 	default:
 		return 0, 0
 	}
+}
+
+// superResObjectName 生成**按任务唯一**的产物文件名（相对 OutputDir）。
+//
+// 为什么必须唯一：不指定文件名时腾讯云用输入 URL 的 basename 命名产物。
+// 心笔渠道的成片地址是 .../v1/media/files/{id}/content，basename 恒为 "content"，
+// 于是每个任务都写到 /mps_api_test/content_transcode_0.mp4 —— 后完成的直接覆盖
+// 先完成的（2026-11-01 实测：两个不同用户的成片指向同一个对象）。
+//
+// hint 传任务的公开 ID（task_xxx）。为空或含非法字符时退化成时间戳，
+// 保证「至少不会互相覆盖」，不追求可读性。
+func superResObjectName(hint string) string {
+	cleaned := make([]rune, 0, len(hint))
+	for _, r := range hint {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			cleaned = append(cleaned, r)
+		default:
+			cleaned = append(cleaned, '_')
+		}
+	}
+	name := strings.Trim(string(cleaned), "_")
+	// 留出 "sr_" 前缀与 ".mp4" 后缀的余量，控制在 64 字符内。
+	if len(name) > 52 {
+		name = name[:52]
+	}
+	if name == "" {
+		name = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return "sr_" + name + ".mp4"
 }
 
 // pollPostProcess 轮询后处理任务，把结果写回 task。
