@@ -12,8 +12,16 @@ import (
 // 一旦任何下游可见的字段里出现上游或供应商的字样（wan3 / aliyun / 有赞 …），
 // 用户就能直接反推出真实货源，别名就白起了。其它模型本来就是原样对外，
 // 遮它们的字样只会让报错更难读，还可能把用户自己买的东西的名字也打散。
+//
+// ⚠️ 这是所有脱敏逻辑的**总开关**：IsUpstreamAliasModel 返回 false 时，
+// RedactUpstreamIdentity 与 redactAliasTaskUpstream 都直接 return —— 不报错、
+// 不告警，上游模型名和上游回执原样漏给下游。所以从这里删一行等于关掉一条防线的开关。
+// 改动前先看 model/channel_hide_guard_test.go 与
+// relay/seedance25_tehui_channel_hide_test.go，那里锁住了这份名单。
 var upstreamAliasModels = map[string]bool{
-	"seedance2.5-特惠": true, // 上游是 wan3.0-video-prime（有赞渠道，2026-10-29 起）
+	// 上游是渠道 17「有赞 Wan3」(type 63) 的 wan3.0-video-prime（2026-10-29 起）。
+	// 生产 abilities 表里这个别名与 wan3.0-video-prime 同挂渠道 17。
+	"seedance2.5-特惠": true,
 	"seedance2.5特惠版": true, // 同一模型的历史旧名
 	// 两跳链路（2026-10-30 加）：上游是 wan3.0-video 的 480P 原片。
 	//

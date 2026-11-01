@@ -181,6 +181,10 @@ func assignDisplayLogIds(logs []*Log, startIdx int) {
 // 口径（2026-10-30 老板定）：**凡是能看出走了哪个渠道、哪个上游的，一律过滤掉**。
 // 客户不需要知道我们内部怎么调度；知道了就能反推货源、比价、绕开我们直接对接。
 // 管理员走 GetAllLogs，不经过这里，排障时仍能看到全部原文。
+//
+// ⚠️ 这份清单被 model/channel_hide_guard_test.go 逐项锁住，删任何一行都会红。
+// 不同链路写的 key 不一样（channel / channel_id / channel_type 三种写法都出现过），
+// 看着冗余，实际缺一不可。加新 key 的标准：它能不能帮客户定位到某个渠道或上游。
 var userLogDroppedOtherKeys = []string{
 	"channel_id",          // 渠道 ID：一看编号就能对上渠道
 	"channel_name",        // 渠道名（"DashScope-Wan3" 这种直接点名货源）
@@ -207,6 +211,17 @@ var userLogRedactedOtherKeys = []string{
 }
 
 func formatUserLogs(logs []*Log, startIdx int) {
+	// ⚠️ 改这个函数或改 Log / userLogDroppedOtherKeys 之前，先看
+	// model/channel_hide_guard_test.go —— 那里把每条清理规则都变成了断言。
+	//
+	// 日志有**两个**渠道出口，漏一个都算泄露：
+	//   ① 结构体字段 ChannelId / ChannelName / UpstreamRequestId（下面三行清掉）
+	//   ② Other 这个 JSON 字符串，里面塞着 channel_id / channel_name /
+	//      upstream_model_name / admin_info …（靠 userLogDroppedOtherKeys 逐个删）
+	//
+	// ② 是最容易漏的：它是字符串，结构体层面看不出任何问题，加字段、改类型
+	// 都不会报错，只有逐个 key 删才管用。给 Other 里加新 key 时，
+	// 问一句「这个 key 能帮客户定位到具体渠道或上游吗」，能就加进删除清单。
 	for i := range logs {
 		// 渠道信息一律不给客户：ID 置 0、名字清空、上游任务号清空。
 		// 前端日志页的渠道列本来就是 admin only，普通用户置 0 不影响展示。

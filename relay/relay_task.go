@@ -743,11 +743,19 @@ func redactRouteOriginModel(out *dto.TaskDto, task *model.Task) {
 // 客户不需要知道任务跑在哪条渠道上 —— 知道了他就能反推货源、比价、
 // 甚至绕过我们直接找上游。
 //
+// ⚠️ 改这个函数之前，先看 relay/seedance25_tehui_channel_hide_test.go ——
+// 那里把每一条清理规则都变成了断言，并写清了为什么不能删。三个要点：
+// 客户最常看到的别名是 seedance2.5-特惠，底层是渠道 17「有赞 Wan3」(type 63)；
+// platform 不是"平台名"而是**渠道类型编号**，"63" 对着渠道表一查就是货源；
+// 给 dto.TaskDto 加字段会让信息绕过本函数直接序列化出去（TestTaskDto_字段清单守卫会拦）。
+//
 //   - channel_id：一看编号就能对上渠道，置 0。
+//
 //   - platform：其实是**渠道类型编号**（"63" = 有赞 Wan3），直接换成「上游」。
 //     为什么不置空：前端任务日志列要拿它做 i18n 显示（t(log.platform)），
 //     清空会显示成空白；suno 保留原值 —— 那是公开产品线，且前端按
 //     log.platform === 'suno' 判断要不要渲染音频播放器。
+//
 //   - properties.upstream_model_name：上游真实模型名（"wan-3.0"），
 //     换回对外模型名，字段结构保持不变。
 func redactChannelInfo(out *dto.TaskDto, task *model.Task) {
@@ -845,7 +853,7 @@ func redactAliasOpenAIVideo(task *model.Task, raw []byte) []byte {
 // 改派过时是**目标模型名** —— 直接返回等于告诉客户「你调 A、实际跑 B」。
 //
 // 为什么还要脱敏 error.message：各 adaptor 都会把上游失败原文塞进 error.message
-//（"youzan wan3 rejected ... https://dashscope-result.oss-*.aliyuncs.com"）。
+// （"youzan wan3 rejected ... https://dashscope-result.oss-*.aliyuncs.com"）。
 // 那是渠道痕迹，对客户一律说「上游」（老板口径 2026-10-30）。
 //
 // 解析失败就原样返回：绝不能因为脱敏把下游的响应体搞坏。
