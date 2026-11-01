@@ -895,6 +895,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 				"settle":      shouldSettle,
 				"refund":      shouldRefund,
 			})
+
+		// 额度探针：渠道额度用完时自动暂停「30 秒改派到豆包」，额度恢复后自动接回。
+		//
+		// 放在 CAS 成功之后，是因为只有这里才能确认状态**真的**迁移了；
+		// 提前调用会在同一批轮询里被重复观察，反复写 option。
+		observeVideoTaskOutcome(task)
 	}
 
 	if shouldSettle {

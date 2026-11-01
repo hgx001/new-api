@@ -108,6 +108,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { RouteSwitchCard } from '@/features/video-route/components/route-switch-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
@@ -3580,6 +3581,14 @@ export function ChannelMutateDrawer({
                               )}
                             />
                           </div>
+
+                          {/* 跨模型改派（30 秒 → 豆包）的运维开关。
+                              只在本渠道承载目标模型时渲染 —— 渠道 20 上还挂着
+                              另外 7 个与豆包无关的模型，在它们的抽屉里显示这个
+                              开关会让人以为按了会停掉整条渠道。 */}
+                          <RouteSwitchCard
+                            channelModels={currentModels ?? ''}
+                          />
 
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.internalNotes}

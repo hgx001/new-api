@@ -93,6 +93,17 @@ type Policy struct {
 	// Enabled 是两条规则的总开关，关掉会把「9:16 → wan3」也一起停掉。
 	SecondsRulePausedUntil int64 `json:"seconds_rule_paused_until,omitempty"`
 
+	// PauseSource 记录当前这次暂停是谁发起的："manual"（管理员）或
+	// "auto"（额度探针）。空 = 未暂停。
+	//
+	// 为什么要区分：自动暂停不许覆盖人工暂停（人工可能停到月底、理由与
+	// 额度无关），自动恢复也不许解除人工暂停。没有这个字段就分不清
+	// 「谁停的」，两条规则只能靠猜。
+	PauseSource string `json:"pause_source,omitempty"`
+
+	// PauseReason 是自动暂停的原因文案，给前端直接展示（人工暂停时为空）。
+	PauseReason string `json:"pause_reason,omitempty"`
+
 	// UpdatedAt 最近一次修改的 Unix 时间戳，0 表示从未改过。
 	UpdatedAt int64 `json:"updated_at"`
 }

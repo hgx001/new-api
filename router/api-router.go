@@ -47,6 +47,19 @@ func SetApiRouter(router *gin.Engine) {
 			videoRouteMaintenance.POST("/doubao/resume", controller.ResumeDoubaoRoute)
 		}
 
+		// 管理后台的「跨模型改派」开关（登录态，与上面共用同一套 controller）。
+		//
+		// 为什么要两个入口：上面的共享密钥是给客户端安装包用的（不可能把管理员
+		// 凭据塞进安装包），而运营在网页后台按按钮时用的是登录态。
+		// 逻辑只有一份，鉴权与审计来源由包装层区分。
+		videoRouteAdmin := apiRouter.Group("/video-route")
+		videoRouteAdmin.Use(middleware.AdminAuth())
+		{
+			videoRouteAdmin.GET("/policy", controller.GetDoubaoRouteAdmin)
+			videoRouteAdmin.POST("/policy/pause", controller.PauseDoubaoRouteAdmin)
+			videoRouteAdmin.POST("/policy/resume", controller.ResumeDoubaoRouteAdmin)
+		}
+
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
 		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)

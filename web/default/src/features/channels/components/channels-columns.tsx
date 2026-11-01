@@ -46,6 +46,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { RouteStatusBadge } from '@/features/video-route/components/route-status-badge'
 import {
   formatCurrencyFromUSD,
   formatQuotaWithCurrency,
@@ -679,6 +680,8 @@ export function useChannelsColumns(
                     </Tooltip>
                   </TooltipProvider>
                 )}
+                {/* 改派暂停角标：不做任何操作也能看见状态，避免「忘了按」。 */}
+                <RouteStatusBadge channelModels={channel.models ?? ''} />
               </div>
             </div>
           )

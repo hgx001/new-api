@@ -40,12 +40,30 @@ const maxDoubaoRoutePauseDuration = 30 * 24 * time.Hour
 
 // nextBeijingMidnight 返回「严格晚于 now 的下一个北京时间 0 点」。
 //
-// 用 `<=` 的直觉写法在恰逢 0 点整时会把截止时间算成「现在」，等于没暂停；
-// 这里一律取次日 0 点（nextBeijingMidnightStrictlyAfter 同口径）。
+// 真正的计算在 setting 包（额度探针也要用同一份，两处各写一份必然会漂）。
+// 这里只做 time.Time 包装，供 controller 内部与既有测试使用。
 func nextBeijingMidnight(now time.Time) time.Time {
-	local := now.In(beijingZone)
-	// time.Date 会自己处理月末 / 年末进位（如 10-31 + 1 天 = 11-01）。
-	return time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, beijingZone)
+	return time.Unix(seedanceroute_setting.NextBeijingMidnight(now.Unix()), 0).In(beijingZone)
+}
+
+// parsePauseUntil 解析暂停请求，返回最终的截止时间。
+//
+// 抽成纯函数是为了能直接测边界：过去的时间戳必须拒绝（静默接受会得到
+// 「看起来成功但完全没暂停」的结果），超 30 天的也必须拒绝（把毫秒当秒
+// 传会把路由停几十年，而且没有任何报错）。
+func parsePauseUntil(req pauseDoubaoRouteRequest, now time.Time) (int64, error) {
+	until := req.Until
+	if until <= 0 {
+		// 不传 = 北京时间次日 0 点，对应「今天额度用完了」这个最常见的场景。
+		until = nextBeijingMidnight(now).Unix()
+	}
+	if until <= now.Unix() {
+		return 0, errors.New("until must be in the future")
+	}
+	if time.Duration(until-now.Unix())*time.Second > maxDoubaoRoutePauseDuration {
+		return 0, errors.New("until is too far in the future (max 30 days)")
+	}
+	return until, nil
 }
 
 // pauseDoubaoRouteRequest 是暂停请求体。整个 body 可以省略。
@@ -54,10 +72,22 @@ type pauseDoubaoRouteRequest struct {
 	Until int64 `json:"until"`
 }
 
-// PauseDoubaoRoute 暂停「按时长改派到豆包」这条规则。
+// PauseDoubaoRoute 暂停「按时长改派到豆包」这条规则（共享密钥通道，给客户端用）。
 //
 // 幂等：重复调用只是把截止时间往后推，不会出错。
 func PauseDoubaoRoute(c *gin.Context) {
+	pauseDoubaoRoute(c, "maintenance_key", doubaoRouteState)
+}
+
+// PauseDoubaoRouteAdmin 与 PauseDoubaoRoute 同一实现，只是鉴权与审计来源不同。
+//
+// 为什么要两个入口：客户端安装包里只有单用途共享密钥（不可能塞管理员凭据），
+// 而管理后台是登录态。逻辑只有一份，鉴权和审计来源由包装层区分。
+func PauseDoubaoRouteAdmin(c *gin.Context) {
+	pauseDoubaoRoute(c, "admin", doubaoRouteAdminState)
+}
+
+func pauseDoubaoRoute(c *gin.Context, source string, state func() gin.H) {
 	var req pauseDoubaoRouteRequest
 	// body 允许为空（客户端通常什么都不传，让服务端算次日 0 点）。
 	// io.EOF 表示「没有 body」，不是错误；其它解析错误要明确报出来，不能猜。
@@ -69,24 +99,11 @@ func PauseDoubaoRoute(c *gin.Context) {
 		return
 	}
 
-	now := time.Now()
-	until := req.Until
-	if until <= 0 {
-		until = nextBeijingMidnight(now).Unix()
-	}
-	// 拒绝过去的时间戳：说明调用方时钟或单位搞错了（常见是把毫秒当秒传）。
-	// 静默接受会得到「看起来成功但完全没暂停」的结果，比报错更难排查。
-	if until <= now.Unix() {
+	until, err := parsePauseUntil(req, time.Now())
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "until must be in the future",
-		})
-		return
-	}
-	if time.Duration(until-now.Unix())*time.Second > maxDoubaoRoutePauseDuration {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "until is too far in the future (max 30 days)",
+			"message": err.Error(),
 		})
 		return
 	}
@@ -102,13 +119,22 @@ func PauseDoubaoRoute(c *gin.Context) {
 
 	recordManageAudit(c, "video_route.doubao_pause", map[string]interface{}{
 		"paused_until": until,
-		"source":       "maintenance_key",
+		"source":       source,
 	})
-	common.ApiSuccess(c, doubaoRouteState())
+	common.ApiSuccess(c, state())
 }
 
-// ResumeDoubaoRoute 取消暂停，立刻恢复「按时长改派到豆包」。
+// ResumeDoubaoRoute 取消暂停，立刻恢复「按时长改派到豆包」（共享密钥通道）。
 func ResumeDoubaoRoute(c *gin.Context) {
+	resumeDoubaoRoute(c, "maintenance_key", doubaoRouteState)
+}
+
+// ResumeDoubaoRouteAdmin 是管理后台用的恢复入口（登录态）。
+func ResumeDoubaoRouteAdmin(c *gin.Context) {
+	resumeDoubaoRoute(c, "admin", doubaoRouteAdminState)
+}
+
+func resumeDoubaoRoute(c *gin.Context, source string, state func() gin.H) {
 	if err := saveDoubaoRoutePause(0); err != nil {
 		common.SysLog("resume doubao route failed: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -119,14 +145,20 @@ func ResumeDoubaoRoute(c *gin.Context) {
 	}
 
 	recordManageAudit(c, "video_route.doubao_resume", map[string]interface{}{
-		"source": "maintenance_key",
+		"source": source,
 	})
+	common.ApiSuccess(c, state())
+}
+
+// GetDoubaoRouteMaintenance 查询当前状态（暂停到什么时候、三条规则各自是否生效）。
+func GetDoubaoRouteMaintenance(c *gin.Context) {
 	common.ApiSuccess(c, doubaoRouteState())
 }
 
-// GetDoubaoRouteMaintenance 查询当前状态（暂停到什么时候、两条规则各自是否生效）。
-func GetDoubaoRouteMaintenance(c *gin.Context) {
-	common.ApiSuccess(c, doubaoRouteState())
+// GetDoubaoRouteAdmin 是管理后台用的状态查询：在客户端那份字段之上，
+// 补上「谁停的、为什么停、改派规则本身长什么样」。
+func GetDoubaoRouteAdmin(c *gin.Context) {
+	common.ApiSuccess(c, doubaoRouteAdminState())
 }
 
 // saveDoubaoRoutePause 把暂停截止时间写进 option 并落库。
@@ -137,7 +169,9 @@ func GetDoubaoRouteMaintenance(c *gin.Context) {
 //
 // until=0 表示恢复。
 func saveDoubaoRoutePause(until int64) error {
-	policy := seedanceroute_setting.WithSecondsRulePausedUntil(until)
+	// 用 WithManualPause 而不是 WithSecondsRulePausedUntil：要把来源标成
+	// manual，自动探针才不会覆盖管理员手动设的截止时间（见 quota.go）。
+	policy := seedanceroute_setting.WithManualPause(until)
 	raw, err := common.Marshal(policy)
 	if err != nil {
 		return err
@@ -163,5 +197,26 @@ func doubaoRouteState() gin.H {
 	} else {
 		state["paused_until_text"] = ""
 	}
+	return state
+}
+
+// doubaoRouteAdminState 是管理后台用的状态：客户端那份字段 + 暂停来源/原因 +
+// 改派规则本身。
+//
+// 为什么要带上规则配置：后台按钮旁边必须能读出「改派的是什么」
+// （谁 → 谁、几秒触发）。只给一个 paused 布尔值，运营看到的是一个
+// 没有主语的开关 —— 不敢按，也不知道按了影响哪些请求。
+func doubaoRouteAdminState() gin.H {
+	policy := seedanceroute_setting.Get()
+	state := doubaoRouteState()
+	state["pause_source"] = policy.PauseSource
+	state["pause_reason"] = policy.PauseReason
+	state["source_model"] = policy.SourceModel
+	state["target_model"] = policy.TargetModel
+	state["trigger_seconds"] = policy.TriggerSeconds
+	state["ratio_target_model"] = policy.RatioTargetModel
+	state["trigger_ratio"] = policy.TriggerRatio
+	state["frames_target_model"] = policy.FramesTargetModel
+	state["updated_at"] = policy.UpdatedAt
 	return state
 }
