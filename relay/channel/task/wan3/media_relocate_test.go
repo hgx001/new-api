@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -282,3 +283,21 @@ func TestRelocateMediaForUpstreamSkipsWhenNothingToRelocate(t *testing.T) {
 }
 
 func ptrString(s string) *string { return &s }
+
+// 慢图床不能无限期占着建单连接：单图下载有独立超时。
+// 实测 litter.catbox.moe 单次拉取要 88 秒以上，探测阶段只给 8 秒。
+func TestDownloadImageTimesOutOnSlowHost(t *testing.T) {
+	disableSSRF(t)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(pngMagic)
+	}))
+	defer slow.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, _, err := downloadImage(ctx, slow.URL+"/slow.png", "")
+	require.Error(t, err)
+	assert.Contains(t, strings.ToLower(err.Error()), "context")
+}

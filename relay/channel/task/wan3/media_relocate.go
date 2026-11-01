@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -243,6 +244,13 @@ func hasRelocatableImage(media []relaycommon.TaskMedia) bool {
 	return false
 }
 
+// relocateDownloadTimeout 是单张图片代下载的超时。
+//
+// 实测慢图床（litter.catbox.moe）单次拉取要 88 秒以上，而探测阶段只给 8 秒 ——
+// 转存会因此比探测慢一个数量级，拖住整个建单请求。这里给一个独立上限：
+// 正常图床秒级返回，慢图床超时即拒单（用户拿明确错误，而不是一直挂着）。
+const relocateDownloadTimeout = 30 * time.Second
+
 // downloadImage 代下载一张图片，返回字节与 MIME。
 //
 // 复用 probe 的 SSRF 校验（防内网探测），但走完整 GET —— 探测只读 1KB 头部，
@@ -264,7 +272,11 @@ func downloadImage(ctx context.Context, rawURL, proxy string) ([]byte, string, e
 		client = http.DefaultClient
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	// 单图独立超时：不能因为客户给了一个慢图床就无限期占着建单连接。
+	downloadCtx, cancel := context.WithTimeout(ctx, relocateDownloadTimeout)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(downloadCtx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, "", err
 	}
