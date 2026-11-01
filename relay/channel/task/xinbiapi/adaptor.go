@@ -464,8 +464,10 @@ func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
 		return fixedDuration, nil
 	}
 	if duration != fixedDuration {
-		return 0, fmt.Errorf("%s has a fixed duration of %d seconds, got %d",
-			ModelNamePayPerCall, fixedDuration, duration)
+		// 刻意不带模型名：本模型在脱敏名单里（model/upstream_redact.go），
+		// 报错里的 "wan3.0" 会被替换成「上游」，出来是「上游-720p-按次」这种碎词。
+		// 用户本来就知道自己调的是哪个模型，不需要在这里重复。
+		return 0, fmt.Errorf("this model has a fixed duration of %d seconds, got %d", fixedDuration, duration)
 	}
 	return fixedDuration, nil
 }

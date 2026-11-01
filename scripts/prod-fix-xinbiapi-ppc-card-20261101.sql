@@ -6,6 +6,9 @@
 --       「固定输出 720P，时长 2-30 秒」，与最终定稿不符：
 --         · 时长**固定 30 秒**（代码已改为传其它值直接 400）
 --         · 对外口径是**原生 720P**，不得出现交付链路的实现细节
+--         · 参考素材只承诺**参考图**：上游 schema 虽支持 reference_video /
+--           reference_audio，但我们的兼容提交口只透传 reference_images；
+--           且参考视频在上游是**按秒加收**（最多 15 秒），会直接击穿按次定价。
 --
 -- 幂等：直接按 model_name 覆盖 description / remark，重复执行结果一致。
 --       脚本自带备份表，回滚见文末。
@@ -28,7 +31,7 @@ CREATE TABLE IF NOT EXISTS _bak_channels_ppc_remark_20261101 AS
 
 -- ---------- 1. 模型广场卡片 ----------
 UPDATE models
-   SET description = 'Wan3.0 官方模型，原生 720P 输出，固定时长 30 秒。支持文生视频、图生视频与多模态参考（图 / 视频 / 音频），6 档画面比例（自适应 / 16:9 / 9:16 / 1:1 / 4:3 / 3:4），参考图 ≤9 张。特点：按次计费 ¥4.50/次，不随时长与分辨率变化；支持稳定高并发，适合批量出片。⚠️ 不支持负向提示词（negativePrompt）。',
+   SET description = 'Wan3.0 官方模型，原生 720P 输出，固定时长 30 秒。支持文生视频、图生视频与多张参考图（≤9 张），6 档画面比例（自适应 / 16:9 / 9:16 / 1:1 / 4:3 / 3:4）。特点：按次计费 ¥4.50/次，不随时长与分辨率变化；支持稳定高并发，适合批量出片。⚠️ 不支持负向提示词（negativePrompt）。',
        updated_time = EXTRACT(EPOCH FROM NOW())::bigint
  WHERE model_name = 'wan3.0-720p-按次'
    AND deleted_at IS NULL;
