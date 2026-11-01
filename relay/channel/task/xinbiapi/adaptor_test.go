@@ -144,6 +144,38 @@ func TestBuildRequestBodyShape(t *testing.T) {
 	assert.Equal(t, []interface{}{"https://cdn.example.com/ref.png"}, decoded["reference_images"])
 }
 
+// seed 不在上游 parameterSchema 里（additionalProperties: false），
+// 发出去必吃 422 UNKNOWN_MEDIA_PARAMETER，且报错不点名字段。
+// 所以 BuildRequestBody 绝不能带它，ValidateRequestAndSetAction 必须本地先拒。
+func TestSeedIsRejectedLocallyAndNeverSent(t *testing.T) {
+	seed := int64(20261101)
+	req := relaycommon.TaskSubmitReq{
+		Prompt:   "雨后的青石板小巷",
+		Duration: 30,
+		Seed:     &seed,
+	}
+
+	a := newAdaptor()
+	// 1. 提交体里不能出现 seed
+	c := newTestContext(t, req)
+	reader, err := a.BuildRequestBody(c, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+	body, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	var decoded map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &decoded))
+	assert.NotContains(t, decoded, "seed")
+
+	// 2. 校验阶段就拒，且客户端能从错误码认出来
+	seedReq := relaycommon.TaskSubmitReq{Prompt: "x", Duration: 30, Seed: &seed}
+	err = rejectUnsupportedFields(seedReq)
+	require.Error(t, err, "带 seed 必须被拒")
+	assert.Contains(t, err.Error(), "seed")
+
+	// 不带 seed 时不拦
+	assert.NoError(t, rejectUnsupportedFields(relaycommon.TaskSubmitReq{Prompt: "x", Duration: 30}))
+}
+
 // 按次计价：任何倍率都会在按次价上再乘一次，必须返回 nil。
 func TestEstimateBillingIsPerCall(t *testing.T) {
 	a := newAdaptor()

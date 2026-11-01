@@ -89,6 +89,22 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if _, err := collectReferenceImages(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
+	// seed 上游不支持（parameterSchema 只有 ratio/duration/resolution，
+	// 且 additionalProperties: false）。本地先拒：上游的 422 只说「传了未声明的参数」，
+	// 不点名字段，客户端拿到只会一脸问号。
+	if err := rejectUnsupportedFields(req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "unsupported_seed", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// rejectUnsupportedFields 拦住上游 parameterSchema 没声明、但客户端会习惯性带的字段。
+//
+// 目前只有 seed。做成独立函数是为了能脱离 gin 上下文单测。
+func rejectUnsupportedFields(req relaycommon.TaskSubmitReq) error {
+	if req.Seed != nil {
+		return fmt.Errorf("field seed is not supported by this model, remove it and retry")
+	}
 	return nil
 }
 
@@ -130,11 +146,15 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 //
 // 字段名按 2026-11-01 实测锁定：snake_case 的 reference_images 被接受，
 // negative_prompt 被 UNSUPPORTED_FIELD 拒绝，故不设该字段。
+//
+// ⚠️ 没有 seed：上游 wan3.0-video 的 parameterSchema 是
+// {"properties":{ratio,duration,resolution}, "additionalProperties":false}，
+// 带 seed 会吃 UNKNOWN_MEDIA_PARAMETER（422，且报错不点名字段，很难自查）。
+// 调用方传 seed 在 ValidateRequestAndSetAction 里就本地 400。
 type submitRequest struct {
 	Model           string            `json:"model"`
 	Prompt          string            `json:"prompt"`
 	Duration        int               `json:"duration"`
-	Seed            *int64            `json:"seed,omitempty"`
 	Metadata        map[string]string `json:"metadata"`
 	ReferenceImages []string          `json:"reference_images,omitempty"`
 }
@@ -162,7 +182,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		Model:    upstreamModel,
 		Prompt:   req.Prompt,
 		Duration: duration,
-		Seed:     req.Seed,
 		Metadata: map[string]string{
 			"resolution": generationResolution,
 			"ratio":      ratio,

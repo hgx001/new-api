@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS _bak_channels_ppc_remark_20261101 AS
 
 -- ---------- 1. 模型广场卡片 ----------
 UPDATE models
-   SET description = 'Wan3.0 官方模型，原生 720P 输出，固定时长 30 秒。支持文生视频、图生视频与多张参考图（≤9 张），6 档画面比例（自适应 / 16:9 / 9:16 / 1:1 / 4:3 / 3:4）。特点：按次计费 ¥4.50/次，不随时长与分辨率变化；支持稳定高并发，适合批量出片。⚠️ 不支持负向提示词（negativePrompt）。',
+   SET description = 'Wan3.0 官方模型，原生 720P 输出，固定时长 30 秒。支持文生视频、图生视频与多张参考图（≤9 张），6 档画面比例（自适应 / 16:9 / 9:16 / 1:1 / 4:3 / 3:4）。特点：按次计费 ¥4.50/次，不随时长与分辨率变化；支持稳定高并发，适合批量出片。⚠️ 不支持负向提示词（negativePrompt）与 seed 参数。',
        updated_time = EXTRACT(EPOCH FROM NOW())::bigint
  WHERE model_name = 'wan3.0-720p-按次'
    AND deleted_at IS NULL;
