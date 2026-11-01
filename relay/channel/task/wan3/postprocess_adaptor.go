@@ -15,6 +15,10 @@ import (
 // 这个文件只做「适配」：把 service 层的通用钩子协议翻译成 wan3 包内的
 // 具体动作（提交超分 / 轮询超分）。真正的业务逻辑在 postprocess.go。
 //
+// 2026-11-01：把「提交 / 轮询」抽成包级导出函数 SubmitSuperResolution /
+// PollSuperResolution，供**别的渠道**（心笔 Model Router 的 480P→720P 档）复用。
+// 超分本身与上游是谁无关：只要拿到一条可抓取的 480P 成片地址就能跑。
+// 模型名白名单仍留在各渠道自己的适配器里判，避免跨渠道串味。
 // ─────────────────────────────────────────────────────────────────────────────
 
 // AfterUpstreamSuccess 在上游第一跳成功后接管，提交成片提升任务。
@@ -24,6 +28,34 @@ import (
 func (a *TaskAdaptor) AfterUpstreamSuccess(ctx context.Context, task *model.Task, upstreamURL string) (bool, error) {
 	// 只有 wan3.0-720p-特惠 需要成片提升；其它模型名直接放行。
 	if task == nil || !needsSuperResolution(task.Properties.OriginModelName) {
+		return false, nil
+	}
+	return SubmitSuperResolution(ctx, task, upstreamURL)
+}
+
+// PollPostProcess 轮询成片提升任务。
+//
+// 返回 done=true 表示提升已到终态（成功出 720P，或失败回落 480P），
+// 此时 service 层可以把任务置为 SUCCESS。
+func (a *TaskAdaptor) PollPostProcess(ctx context.Context, task *model.Task) (bool, error) {
+	if task == nil || task.PrivateData.PostProcess == nil {
+		return true, nil
+	}
+	// 只有 wan3.0-720p-特惠 才走这条路；模型名对不上（历史数据/改配置）就放行。
+	if !needsSuperResolution(task.Properties.OriginModelName) {
+		return true, nil
+	}
+	return PollSuperResolution(ctx, task)
+}
+
+// SubmitSuperResolution 提交成片提升任务，并在 task 上记下后处理状态。
+//
+// 调用方负责先判定「这个模型名是否需要超分」——本函数不看模型名。
+//
+// 返回 handled=true 表示已接管：service 层会保持任务为「处理中」，
+// 等 PollSuperResolution 收敛后再置 SUCCESS。
+func SubmitSuperResolution(ctx context.Context, task *model.Task, upstreamURL string) (bool, error) {
+	if task == nil {
 		return false, nil
 	}
 	// 没配 MPS 就不接管 —— 行为与改造前完全一致（用户拿 480P 原片）。
@@ -55,16 +87,11 @@ func (a *TaskAdaptor) AfterUpstreamSuccess(ctx context.Context, task *model.Task
 	return true, nil
 }
 
-// PollPostProcess 轮询成片提升任务。
+// PollSuperResolution 推进成片提升任务；done=true 表示已到终态。
 //
-// 返回 done=true 表示提升已到终态（成功出 720P，或失败回落 480P），
-// 此时 service 层可以把任务置为 SUCCESS。
-func (a *TaskAdaptor) PollPostProcess(ctx context.Context, task *model.Task) (bool, error) {
+// 调用方负责判定模型名是否走超分链路——本函数不看模型名。
+func PollSuperResolution(ctx context.Context, task *model.Task) (bool, error) {
 	if task == nil || task.PrivateData.PostProcess == nil {
-		return true, nil
-	}
-	// 只有 wan3.0-720p-特惠 才走这条路；模型名对不上（历史数据/改配置）就放行。
-	if !needsSuperResolution(task.Properties.OriginModelName) {
 		return true, nil
 	}
 	return pollPostProcess(ctx, task)

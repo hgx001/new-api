@@ -463,6 +463,12 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan3.0-720p-特惠" {
 		return true
 	}
+	// wan3.0-720p-按次（2026-11-01 上架）：心笔 Model Router 渠道的 720P 成片档。
+	// 同样以 "wan3.0-720p-" 开头、不以 "wan3.0-video" 开头，必须显式放行。
+	// 与特惠的区别只在计费口径（按次 ¥4.5/次 vs 按秒 ¥0.20/秒），链路相同。
+	if name == "wan3.0-720p-按次" {
+		return true
+	}
 	if strings.HasPrefix(name, "wan3.0-video") {
 		return true
 	}

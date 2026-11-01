@@ -34,6 +34,10 @@ var upstreamAliasModels = map[string]bool{
 	// 过渡期保留可调用）。漏了旧名 → 旧名调用方的 data 字段仍会漏出上游直链。
 	"wan3.0-720p-特惠": true,
 	"wan3.0-720p-官网": true,
+	// 按次档（2026-11-01 加）：上游是心笔 Model Router 的 wan3.0-video 480P 原片，
+	// 成片再做 2 倍提升交付 720P。与特惠同一套风险：出口里一旦带出上游模型名或
+	// **未提升的 480P 原片直链**，用户既能看穿货源、也能绕过本站拿 480P。
+	"wan3.0-720p-按次": true,
 }
 
 // upstreamNeutralWord 是替换后的中性词：既点明"来自上游"，又不暴露是谁。

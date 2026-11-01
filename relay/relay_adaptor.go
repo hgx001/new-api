@@ -36,18 +36,19 @@ import (
 	taskdashscope "github.com/QuantumNous/new-api/relay/channel/task/dashscope"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	"github.com/QuantumNous/new-api/relay/channel/task/erchun"
-	"github.com/QuantumNous/new-api/relay/channel/task/sanyuan"
 	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	"github.com/QuantumNous/new-api/relay/channel/task/manwu"
 	taskmegabyai "github.com/QuantumNous/new-api/relay/channel/task/megabyai"
+	"github.com/QuantumNous/new-api/relay/channel/task/sanyuan"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
 	taskwan3 "github.com/QuantumNous/new-api/relay/channel/task/wan3"
+	"github.com/QuantumNous/new-api/relay/channel/task/xinbiapi"
 	taskyoukou "github.com/QuantumNous/new-api/relay/channel/task/youkou"
 	taskyouzanwan3 "github.com/QuantumNous/new-api/relay/channel/task/youzanwan3"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
@@ -186,6 +187,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &erchun.TaskAdaptor{}
 		case constant.ChannelTypeSanyuan:
 			return &sanyuan.TaskAdaptor{}
+		case constant.ChannelTypeXinbi:
+			return &xinbiapi.TaskAdaptor{}
 		}
 	}
 	return nil

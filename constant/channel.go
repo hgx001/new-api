@@ -67,7 +67,12 @@ const (
 	// ChannelTypeSanyuan 三元巡狩（SYX）视频生成平台：自定义 JSON 协议，
 	// 提交 POST /v1/video/generate → event_id，轮询 /v1/video/check，下载 /v1/video/file/{id}。
 	ChannelTypeSanyuan = 67
-	ChannelTypeDummy   = 68 // this one is only for count, do not add any channel after this
+	// ChannelTypeXinbi 心笔 API（xinbiapi.com）的 Model Router 平台：聚合多家视频模型，
+	// 提交走 new-api 兼容口 POST /newapi/v1/video/generations，
+	// 轮询与取件走原生口 GET /v1/media/tasks/{id} 与 /v1/media/files/{id}/download。
+	// 三套风格共用同一个 taskId（见上游文档「兼容接口 · 与原生一致的约束」）。
+	ChannelTypeXinbi = 68
+	ChannelTypeDummy = 69 // this one is only for count, do not add any channel after this
 
 )
 
@@ -140,6 +145,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //65
 	"https://arcreel.heibaidao.cn",              //66 (漫屋 ArcReel)
 	"http://47.93.118.167:5000",                 //67 (三元巡狩)
+	"https://www.xinbiapi.com",                  //68 (心笔 Model Router)
 }
 
 // GetChannelBaseURL returns the built-in base URL for a channel type.
@@ -215,6 +221,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeYouzanWan3:     "Youzan Wan3",
 	ChannelTypeManwu:          "漫屋",
 	ChannelTypeSanyuan:        "三元巡狩",
+	ChannelTypeXinbi:          "心笔 Model Router",
 }
 
 func GetChannelTypeName(channelType int) string {
