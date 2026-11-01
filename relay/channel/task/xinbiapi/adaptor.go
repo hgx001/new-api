@@ -82,8 +82,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	// 档位锁定：对外只卖 720P。
 	// 客户端显式要 480P/1080P 必须报错，不能静默改档 —— 那是「收 720P 的钱给 1080P 的承诺」。
 	if raw := strings.TrimSpace(req.Resolution); raw != "" && !strings.EqualFold(raw, deliveredResolution) {
+		// 同样不带模型名：会被脱敏成「上游-720p-按次」。
 		return service.TaskErrorWrapperLocal(
-			fmt.Errorf("resolution %q is not supported by %s, this model always delivers %s", raw, ModelNamePayPerCall, deliveredResolution),
+			fmt.Errorf("resolution %q is not supported, this model always delivers %s", raw, deliveredResolution),
 			"invalid_resolution", http.StatusBadRequest)
 	}
 	if _, err := collectReferenceImages(req); err != nil {
