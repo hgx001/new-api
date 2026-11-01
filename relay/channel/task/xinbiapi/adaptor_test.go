@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -174,6 +175,55 @@ func TestSeedIsRejectedLocallyAndNeverSent(t *testing.T) {
 
 	// 不带 seed 时不拦
 	assert.NoError(t, rejectUnsupportedFields(relaycommon.TaskSubmitReq{Prompt: "x", Duration: 30}))
+}
+
+// ConvertToOpenAIVideo 不实现时 GET /v1/videos/{id} 会落到 not_implemented:68，
+// 任务照跑照扣费但客户端永远查不到 —— 这里锁住「能查 + 不泄露内部地址」。
+func TestConvertToOpenAIVideoUsesProxyURL(t *testing.T) {
+	a := newAdaptor()
+	task := &model.Task{
+		TaskID:   "task_abc",
+		Status:   model.TaskStatusSuccess,
+		Progress: "100%",
+		Properties: model.Properties{
+			OriginModelName: ModelNamePayPerCall,
+		},
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "cos-proxy://mps-test-1397292858/ap-guangzhou/out.mp4",
+		},
+	}
+	raw, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var decoded map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, "task_abc", decoded["id"])
+	assert.Equal(t, "completed", decoded["status"])
+	assert.Equal(t, ModelNamePayPerCall, decoded["model"])
+
+	metadata, ok := decoded["metadata"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, taskcommon.BuildProxyURL("task_abc"), metadata["url"])
+	assert.NotContains(t, string(raw), "cos-proxy", "内部存储标记不能出现在客户端响应里")
+}
+
+// 失败任务要给出可读原因，否则客户端只会看到一个永远 queued 的任务。
+func TestConvertToOpenAIVideoMapsFailure(t *testing.T) {
+	a := newAdaptor()
+	task := &model.Task{
+		TaskID:     "task_bad",
+		Status:     model.TaskStatusFailure,
+		FailReason: "上游拒绝了这次请求",
+		Properties: model.Properties{OriginModelName: ModelNamePayPerCall},
+	}
+	raw, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var decoded map[string]interface{}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, "failed", decoded["status"])
+	errObj, ok := decoded["error"].(map[string]interface{})
+	require.True(t, ok)
+	assert.NotEmpty(t, errObj["message"])
 }
 
 // 按次计价：任何倍率都会在按次价上再乘一次，必须返回 nil。

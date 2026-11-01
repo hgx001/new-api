@@ -429,6 +429,29 @@ func (a *TaskAdaptor) GetChannelName() string {
 	return ChannelName
 }
 
+// ConvertToOpenAIVideo 让客户端能用 GET /v1/videos/{id} 查任务。
+//
+// 不实现它，relay_task.go 的 OpenAI Video 查询分支会落到
+// 「not_implemented:68」—— 任务照跑照扣费，但客户端永远查不到结果，
+// 30 秒这种长任务尤其致命（上架首测就踩到了）。
+func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
+	video := originTask.ToOpenAIVideo()
+	// ToOpenAIVideo 预置的 url 是 GetResultURL()：可能是 cos-proxy:// 内部标记，
+	// 失败任务上还可能回退成上游原文。统一换成本站代理地址。
+	delete(video.Metadata, "url")
+	if originTask.Status == model.TaskStatusSuccess && strings.TrimSpace(originTask.GetResultURL()) != "" {
+		video.SetMetadata("url", taskcommon.BuildProxyURL(originTask.TaskID))
+	}
+	if originTask.Status == model.TaskStatusFailure {
+		video.Error = &dto.OpenAIVideoError{
+			Message: taskcommon.NormalizeFailureReason(originTask.FailReason),
+		}
+	}
+	return common.Marshal(video)
+}
+
+var _ channel.OpenAIVideoConverter = (*TaskAdaptor)(nil)
+
 // ────────────────────────────── 交付前画质增强 ──────────────────────────────
 //
 // ⚠️ 内部实现细节，对外一律表述为「原生 720P」（见 constants.go 的
