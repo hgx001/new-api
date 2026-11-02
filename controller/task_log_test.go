@@ -56,18 +56,34 @@ func TestMediaTypeSummaryCountsByType(t *testing.T) {
 	assert.Empty(t, mediaTypeSummary(nil))
 }
 
-// 快照里的 media 必须与适配器实际送上游的那份一致（同样的优先级）。
-func TestCollectRequestMediaPrefersMediaOverImages(t *testing.T) {
+// 快照里的 media 必须与适配器实际送上游的那份一致：media 与 legacy 合并，
+// 不再「media 非空就把 images 吞掉」。
+func TestCollectRequestMediaMergesMediaAndImages(t *testing.T) {
 	req := relaycommon.TaskSubmitReq{
 		Media:  []relaycommon.TaskMedia{{Type: "reference_audio", URL: "https://example.com/a.mp3"}},
-		Images: []string{"https://example.com/ignored.png"},
+		Images: []string{"https://example.com/1.png", "https://example.com/2.png"},
 	}
 	media := collectRequestMedia(req)
-	require.Len(t, media, 1)
+	require.Len(t, media, 3)
 	assert.Equal(t, "reference_audio", media[0]["type"])
+	assert.Equal(t, "image", media[1]["type"])
+	assert.Equal(t, "https://example.com/2.png", media[2]["url"])
 
-	// media 为空时才回退到 images，并把类型标成 image。
+	// media 为空时 legacy 照旧生效。
 	fallback := collectRequestMedia(relaycommon.TaskSubmitReq{Images: []string{"https://example.com/1.png"}})
 	require.Len(t, fallback, 1)
 	assert.Equal(t, "image", fallback[0]["type"])
+}
+
+// legacy 三选一，不重复计入。
+func TestCollectRequestMediaLegacyFieldsDoNotStack(t *testing.T) {
+	req := relaycommon.TaskSubmitReq{
+		Media:          []relaycommon.TaskMedia{{Type: "reference_audio", URL: "https://example.com/a.mp3"}},
+		Images:         []string{"https://example.com/from-images.png"},
+		Image:          "https://example.com/from-image.png",
+		InputReference: "https://example.com/from-input-ref.png",
+	}
+	media := collectRequestMedia(req)
+	require.Len(t, media, 2)
+	assert.Equal(t, "https://example.com/from-images.png", media[1]["url"])
 }

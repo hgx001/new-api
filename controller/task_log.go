@@ -109,26 +109,29 @@ func requestMediaFields(req relaycommon.TaskSubmitReq) map[string]int {
 	return fields
 }
 
-// collectRequestMedia 把三种入参形态（media / images / image）统一成
-// [{type,url}]，与适配器 buildMedia 的优先级保持一致。
+// collectRequestMedia 把 media 与 legacy 字段（images / image / input_reference）
+// **合并**成 [{type,url}]，与适配器 buildMedia 的口径一致。
+//
+// 为什么是合并而不是「media 优先」：适配器现在会把两边并起来一起送上游，
+// 快照若只记 media，事后看到的就是「只有音频、没有图」，与上游实际收到的不符 ——
+// 排障时会被自己的日志误导（2026-11-02 就踩过）。
 func collectRequestMedia(req relaycommon.TaskSubmitReq) []map[string]string {
 	media := make([]map[string]string, 0, len(req.Media)+len(req.Images)+1)
 	for _, item := range req.Media {
 		media = append(media, map[string]string{"type": item.Type, "url": compactMediaURL(item.URL)})
 	}
-	if len(media) > 0 {
-		return media
+	// legacy 三选一，与适配器一致：同一张图不重复计入。
+	legacy := req.Images
+	if len(legacy) == 0 && strings.TrimSpace(req.Image) != "" {
+		legacy = []string{req.Image}
 	}
-	for _, url := range req.Images {
-		if strings.TrimSpace(url) != "" {
-			media = append(media, map[string]string{"type": "image", "url": compactMediaURL(url)})
+	if len(legacy) == 0 && strings.TrimSpace(req.InputReference) != "" {
+		legacy = []string{req.InputReference}
+	}
+	for _, url := range legacy {
+		if trimmed := strings.TrimSpace(url); trimmed != "" {
+			media = append(media, map[string]string{"type": "image", "url": compactMediaURL(trimmed)})
 		}
-	}
-	if len(media) == 0 && strings.TrimSpace(req.Image) != "" {
-		media = append(media, map[string]string{"type": "image", "url": compactMediaURL(req.Image)})
-	}
-	if len(media) == 0 && strings.TrimSpace(req.InputReference) != "" {
-		media = append(media, map[string]string{"type": "input_reference", "url": compactMediaURL(req.InputReference)})
 	}
 	return media
 }

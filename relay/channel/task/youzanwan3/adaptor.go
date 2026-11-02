@@ -448,6 +448,21 @@ func metadataMedia(metadata map[string]interface{}) ([]relaycommon.TaskMedia, er
 	return media, nil
 }
 
+// buildMedia 汇总请求里的全部素材：media（含 metadata.input.media 回退）
+// 与 legacy 字段（images / image / input_reference）**合并**，不是二选一。
+//
+// 为什么必须合并（2026-11-02 修）：客户端普遍把图片放 images、把音视频放 media，
+// 两个字段是**并行**的，不是备选关系。原实现「media 非空就整段跳过 legacy」会
+// 静默丢掉图片 —— 任务照常建单、照常扣费、状态照常 SUCCESS，成片却完全没有
+// 参考图，prompt 里的 @图片N 全部落空。
+//
+// 线上实测（渠道 17「有赞 Wan3」，本 adaptor）：客户 36 的 43 个带音视频的任务
+// （13 个音频、30 个视频）**全部**丢了图，50 个纯图片任务正常。任务 1084 的 prompt
+// 引用「@图片1~4 + @视频1 + @音频1~3」，上游只收到 1 视频 + 3 音频。
+// 判据是 media 里有没有东西，与首尾帧无关。
+//
+// 注：首尾帧在本渠道已降级成 reference_image（见 validateMedia），所以合并后
+// 不会产生「首帧 + 参考图」的冲突组合。
 func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) {
 	media := append([]relaycommon.TaskMedia(nil), req.Media...)
 	if len(media) == 0 {
@@ -457,21 +472,31 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 			return nil, err
 		}
 	}
-	if len(media) == 0 {
-		images := req.Images
-		if len(images) == 0 && strings.TrimSpace(req.Image) != "" {
-			images = []string{req.Image}
-		}
-		if len(images) == 0 && strings.TrimSpace(req.InputReference) != "" {
-			images = []string{req.InputReference}
-		}
-		for _, item := range images {
-			if strings.TrimSpace(item) != "" {
-				media = append(media, relaycommon.TaskMedia{Type: "reference_image", URL: strings.TrimSpace(item)})
-			}
+	// 无条件并入：legacy 图排在 media 之后，图与图之间的相对顺序保持不变，
+	// 所以 prompt 里「@图片N」的指认不会错位。
+	media = append(media, legacyImages(req)...)
+	return media, validateMedia(media, req.Model)
+}
+
+// legacyImages 把老字段（images / image / input_reference）转成 reference_image。
+//
+// 三者仍是「取第一个非空」的关系（保持既有语义，避免同一张图被重复计入），
+// 但**不再因为 media 非空而被整体丢弃**。
+func legacyImages(req relaycommon.TaskSubmitReq) []relaycommon.TaskMedia {
+	images := req.Images
+	if len(images) == 0 && strings.TrimSpace(req.Image) != "" {
+		images = []string{req.Image}
+	}
+	if len(images) == 0 && strings.TrimSpace(req.InputReference) != "" {
+		images = []string{req.InputReference}
+	}
+	media := make([]relaycommon.TaskMedia, 0, len(images))
+	for _, item := range images {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			media = append(media, relaycommon.TaskMedia{Type: "reference_image", URL: trimmed})
 		}
 	}
-	return media, validateMedia(media, req.Model)
+	return media
 }
 
 func validateMedia(media []relaycommon.TaskMedia, model string) error {
