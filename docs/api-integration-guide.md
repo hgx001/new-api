@@ -217,6 +217,26 @@ while True:
 **首尾帧与参考类素材互斥**：`first_frame` / `last_frame` 不能与 `reference_image` /
 `reference_video` / `reference_audio` 混用，混用直接返回 400。
 
+**`media` 与 `images` / `image` / `input_reference` 是并行的两个通道，可以同时用。**
+网关会把 `images` 里的图按 `reference_image` 追加到 `media` 之后，再一起送上游：
+
+```json
+{
+  "model": "wan3.0-video-官网",
+  "prompt": "@图片1 赵日 @图片2 赶路客 @音频1 赶路客",
+  "media": [{"type": "reference_audio", "url": "https://your-cdn.com/a.mp3"}],
+  "images": ["https://your-cdn.com/1.png", "https://your-cdn.com/2.png"]
+}
+```
+
+等价于在 `media` 里依次写 `reference_audio`、`reference_image`、`reference_image`。
+
+> 2026-11-02 修复：此前 `media` 非空时 `images` 会被**静默忽略** —— 任务照常成功、
+> 照常扣费，成片却完全没有参考图，`prompt` 里的 `@图片N` 全部落空。若你的调用方
+> 是「图片走 `images`、音视频走 `media`」的写法，升级后无需改动即可生效。
+>
+> 仍建议统一用 `media` 一种写法：顺序完全由你控制，`@图片N` / `@音频N` 的指认更不容易错位。
+
 ### 4.2 首选：传 base64 data URL（推荐）
 
 ```bash

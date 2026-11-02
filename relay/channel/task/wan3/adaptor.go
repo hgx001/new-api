@@ -385,6 +385,19 @@ func inferLegacyMediaType(url string) string {
 	return "reference_image"
 }
 
+// buildWan3Media 汇总请求里的全部素材：media（含 metadata.input.media 回退）
+// 与 legacy 字段（images / image / input_reference）**合并**，不是二选一。
+//
+// 为什么必须合并（2026-11-02 修）：客户端普遍把图片放 images、把音视频放 media，
+// 两个字段是**并行**的，不是备选关系。原实现「media 非空就整段跳过 legacy」会
+// 静默丢掉图片 —— 任务照常建单、照常扣费、状态照常 SUCCESS，成片却完全没有
+// 参考图，事后连「图到底发没发出去」都查不到（tasks 表不存 media）。
+//
+// 线上实测：客户 36 的 43 个带音视频的任务（13 个音频、30 个视频）**全部**丢了图，
+// 而 50 个纯图片任务正常。任务 1084 的 prompt 引用「@图片1~4 + @视频1 + @音频1~3」，
+// 上游只收到 1 视频 + 3 音频。判据是 media 里有没有东西，与首尾帧无关。
+//
+// 矛盾入参（首帧 + 参考图）交给 validateWan3Media 明确报 400，不再静默择一。
 func buildWan3Media(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) {
 	media := append([]relaycommon.TaskMedia(nil), req.Media...)
 	if len(media) == 0 {
@@ -394,25 +407,35 @@ func buildWan3Media(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, err
 			return nil, err
 		}
 	}
-	if len(media) == 0 {
-		legacy := req.Images
-		if len(legacy) == 0 && strings.TrimSpace(req.Image) != "" {
-			legacy = []string{req.Image}
-		}
-		if len(legacy) == 0 && strings.TrimSpace(req.InputReference) != "" {
-			legacy = []string{req.InputReference}
-		}
-		for _, url := range legacy {
-			url = strings.TrimSpace(url)
-			if url != "" {
-				media = append(media, relaycommon.TaskMedia{Type: inferLegacyMediaType(url), URL: url})
-			}
-		}
-	}
+	// 无条件并入：legacy 图排在 media 之后，图与图之间的相对顺序保持不变，
+	// 所以 prompt 里「@图片N」的指认不会错位。
+	media = append(media, legacyMedia(req)...)
 	if err := validateWan3Media(media); err != nil {
 		return nil, err
 	}
 	return media, nil
+}
+
+// legacyMedia 把老字段（images / image / input_reference）转成 media 条目。
+//
+// 三者仍是「取第一个非空」的关系（保持既有语义，避免同一张图被重复计入），
+// 但**不再因为 media 非空而被整体丢弃**。
+func legacyMedia(req relaycommon.TaskSubmitReq) []relaycommon.TaskMedia {
+	legacy := req.Images
+	if len(legacy) == 0 && strings.TrimSpace(req.Image) != "" {
+		legacy = []string{req.Image}
+	}
+	if len(legacy) == 0 && strings.TrimSpace(req.InputReference) != "" {
+		legacy = []string{req.InputReference}
+	}
+	media := make([]relaycommon.TaskMedia, 0, len(legacy))
+	for _, url := range legacy {
+		url = strings.TrimSpace(url)
+		if url != "" {
+			media = append(media, relaycommon.TaskMedia{Type: inferLegacyMediaType(url), URL: url})
+		}
+	}
+	return media
 }
 
 func validateWan3Media(media []relaycommon.TaskMedia) error {
