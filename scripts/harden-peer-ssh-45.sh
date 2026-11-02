@@ -19,6 +19,17 @@
 #   所以必须改第 38 行，注释掉后面的重复项。
 #   CentOS 7 没有 sshd_config.d/ 目录，Include 机制不存在。
 #
+# 🚫🚫 绝对不要在本脚本里"顺手清理"这些条目 🚫🚫
+#   perfcc / kmodaudit.service / kmodaudit.timer / /etc/cron.d/perfclean
+#   /root/crontab 里的 perfcc 行 / /root/.bash_profile 的 FPROF 行
+#   —— 这些是**阿里云盾（AliYunDun）官方组件**，不是挖矿木马。
+#   证据: 与 /usr/local/aegis/AliSecCheck/data/cfg_file.db 基线库中记录的
+#   sha256 逐字节一致（kmodaudit.service=9d113848… / kmodaudit.timer=d46ef6fe…
+#   / cron.d/perfclean=2f8cbad2… / spool/cron/root=bbe9a51a… / .bash_profile=cd2101dd…）。
+#   而且 /bin/perfcc 文件根本不存在，45 上也没有任何运行中的 perfcc 进程。
+#   清理它们会破坏云盾防护，且云盾会每 10 秒把 crontab 写回去。
+#   详见 docs/design-seedance25-huodong-percall-30s.md 第 13.8 节。
+#
 # ⚠️ 幂等性: 可重复执行。
 # ==============================================================================
 set -euo pipefail

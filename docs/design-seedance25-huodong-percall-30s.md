@@ -1283,7 +1283,7 @@ DROP 规则在 45 秒采样内从 90 涨到 91，证实是持续命中。
 | 隧道 | `127.0.0.1:8931` → HTTP 400 ✅ | `active`，HTTP 400 ✅ |
 | 隧道钥匙 shell | **被拒**（`command=""`）| — |
 | 隧道钥匙转发范围 | 仅 `127.0.0.1:8931`（`permitopen`）| — |
-| `perfcc` 空转 cron | — | **已清理**（脚本本就不存在，只留两条每小时空跑条目）|
+| `perfcc` 空转 cron | — | **保留**（经 Aegis 基线库核实为阿里云盾官方组件，见 13.8）|
 | 业务健康 | `api.heibaidao.cn/api/status` → **HTTP 200** | — |
 
 已归档脚本：
@@ -1300,6 +1300,64 @@ DROP 规则在 45 秒采样内从 90 涨到 91，证实是持续命中。
    由老板逐个确认是否摘除。
 4. **磁盘 90%**（40G 剩 3.9G）—— 需要定期清理。
 5. **规则三成本倒挂** —— 等老板在 11.9 节的 A/B/C/D 方案中拍板。
+
+### 13.8 坑四：`perfcc` 持久化链其实是阿里云盾，清理它反而破坏了防护
+
+排查 45 时发现一条完整的「内核模块挖矿木马」特征链，一度准备整体清除：
+
+| 位置 | 内容 |
+|---|---|
+| `/etc/systemd/system/kmodaudit.service` | `ExecStart=/bin/perfcc`、`Description=Kernel module perf audit and reporting` |
+| `/etc/systemd/system/kmodaudit.timer` | `OnCalendar=*-*-* 00,02,...,22:45:00` |
+| `/etc/systemd/system/timers.target.wants/kmodaudit.timer` | 符号链接（已 enabled）|
+| `/etc/cron.d/perfclean` | `9 * * * * root perfcc` |
+| root crontab | `11 * * * * /root/.config/cron/perfcc` |
+| `/root/.bash_profile` | `test -x /bin/perfcc && FPROF=p /bin/perfcc` |
+
+这条链完全符合公开的「BillGates / perf.sh」类挖矿木马模板：
+systemd service + timer 双持久化 + 两条 cron 兜底 + shell 启动文件注入。
+
+**但它是阿里云盾（AliYunDun）的官方组件。** 判定依据是逐字节哈希比对：
+
+| 文件 | 当前 sha256 | Aegis 基线库 `cfg_file.db` 记录 | 结论 |
+|---|---|---|---|
+| `kmodaudit.service` | `9d113848…fdd70` | `9d113848…fdd70` | ✅ 一致 |
+| `kmodaudit.timer` | `d46ef6fe…5808c` | `d46ef6fe…5808c` | ✅ 一致 |
+| `/etc/cron.d/perfclean` | `2f8cbad2…fbd638` | `2f8cbad2…fbd638` | ✅ 一致 |
+| `/var/spool/cron/root` | `bbe9a51a…73e442` | `bbe9a51a…73e44` | ✅ 一致 |
+| `/root/.bash_profile` | `cd2101dd…81c57c` | `cd2101dd…81c57c` | ✅ 一致 |
+
+补充佐证：
+- `kmodaudit.service` 的 `rpm -qf` 返回「not owned by any package」——云盾是**自带安装包**部署，不走 yum。
+- `kmodaudit.timer` 的 `WantedBy=timers.target` + `timers.target.wants/` 符号链接，是标准 systemd 启用方式。
+- `.bash_profile` 的 mtime 是 **2020-04-01**，是 CentOS 7 出厂自带内容（`FPROF=p` 是 RHEL 的性能剖析别名），
+  早于云盾部署，属于红鲱鱼。
+- `/bin/perfcc` **文件本身不存在**（`ExecStart` 指向一个不存在的二进制，systemd 只会在 timer 触发时报错退出）。
+  45 上**没有任何**正在运行的 `perfcc` 进程，`ps` 全部进程列表里也没有。
+- `/usr/local/aegis/AliSecCheck/data/cfg_file.db` 里能看到这些文件的完整路径 + 哈希 + 监控条目，
+  说明云盾**把这些文件当作自己的受控资产在守护**。
+
+**处置结果：回滚。** 已把 `/etc/cron.d/perfclean` 与 root crontab 恢复原状，
+三个文件的 sha256 全部回到基线值，云盾进程（`AliYunDun` / `AliYunDunMonitor` / `argusagent` /
+`aliyun-service`）与 `kmodaudit.timer`（enabled + active）全部存活。
+
+**这两次误判（45 的 SSH 登录、`perfcc` 链）暴露了同一个方法论问题**：
+在没有拿到**权威基线**之前就动手清理，是不可逆的风险。
+本节把「先取证、再定性、最后才处置」固化成流程：
+
+```text
+① 异常现象 → ② 收集证据（时间戳 / 父子进程 / 网络外连 / 文件哈希）
+            → ③ 与权威基线比对（Aegis 基线库 / 官方文档 / 包管理记录）
+            → ④ 判定「入侵」还是「自家资产」
+            → ⑤ 只有判定为入侵才动手，且动手前先备份 + 可回滚
+```
+
+配套的判据：
+- **云盾组件在 45 上，`ld.so.preload` 在生产机上是腾讯云云镜的 `/$LIB/libonion.so`** ——
+  两台机器各有一套云厂商安全 agent，看到陌生 agent 不要当成挖矿木马。
+- **挖矿的真实特征是「在跑」**：持续高 CPU、矿池连接、异常外连。
+  只有「持久化条目」而没有「运行中的进程」+「无矿池连接」，大概率是失效的残留或云厂商组件。
+- **基线库哈希是最硬的证据**：能对上官方基线的文件，一律不动。
 
 ---
 
