@@ -438,6 +438,19 @@ func isAllowedPricingModel(name string) bool {
 	if name == "seedance2.5-特惠" {
 		return true
 	}
+	// seedance2.5-活动（2026-11-02 上架）：seedance2.5 促销族的**按次档**，
+	// 与母本 seedance2.5-特惠 同货源同链路，只是定价口径不同（¥4.5/次 固定 30 秒）。
+	//
+	// ⚠️ 判定走**能力组**（constant.IsSeedance25PerCall），不要在这里手写模型名 ——
+	// 能力组是「谁是这一族 + 谁按次计费」的唯一来源；将来促销族再加按次档位，
+	// 这里自动生效，不会出现「加了模型忘了上广场」。
+	//
+	// ⚠️ 母本刻意**不**用能力组判定：母本是**按秒**档，与按次档必须分开 ——
+	// 前端的「/秒 vs /次」显示依赖这个区分（见 web 的 isPerSecondModel）。
+	// 母本走上面的精确匹配，活动版走下面的能力组，**互不干扰**。
+	if constant.IsSeedance25PerCall(name) {
+		return true
+	}
 	if strings.HasPrefix(name, "xuan:") {
 		return true
 	}

@@ -22,7 +22,12 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	// 支持任务仅按次计费
 	// 用 BillingModelName（= 客户请求的源模型）判定：改派到按次模型后，
 	// 计费仍是按源模型的按秒价，日志文案不能跟着变成「按次计费」。
-	if common.StringsContains(constant.TaskPricePatches, info.BillingModelName()) {
+	//
+	// ⚠️ 判据必须与**计费链**同源（constant.IsTaskPerCallModel）：
+	// 以前这里只认 TASK_PRICE_PATCH 环境变量，而计费处认的是能力组 ——
+	// 两处不同步时，活动版（¥4.5/次）会打出「计算参数：seconds: 30.00」
+	// 这种按秒文案，与真实计费口径矛盾，排查时被带偏。
+	if constant.IsTaskPerCallModel(info.BillingModelName()) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
 		if len(info.PriceData.OtherRatios) > 0 {

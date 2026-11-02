@@ -23,6 +23,12 @@ import {
   randomIntInRange,
   seededRandom,
 } from './seed'
+import {
+  getSeedance25SampleSpec,
+  isSeedance25FamilyMember,
+  SEEDANCE25_TEHUI,
+  type Seedance25SampleSpec,
+} from './seedance25-family'
 
 // ----------------------------------------------------------------------------
 // Mock model statistics
@@ -767,6 +773,10 @@ const WAN3_RESOLUTIONS = ['480P', '720P', '1080P']
 /**
  * wan3 系（官网 + 有赞）视频模型：smart/官网/标准版共享档位参数表，
  * prime 固定 1080P/30 秒，r2v 另有一套参数。
+ *
+ * ⚠️ 促销族（seedance2.5-特惠 / seedance2.5-活动）**不在**这个通用表里：
+ * 母本是 prime 别名（只有 720P/1080P、默认 720P），活动版是固定档
+ * （固定 30 秒、固定 720P）。两者都各有专属参数表，见下方。
  */
 function isWan3VideoModel(modelName: string): boolean {
   return (
@@ -814,6 +824,40 @@ function buildWan3PrimeVideoParameters(): SupportedParameter[] {
       type: 'enum',
       enumValues: ['720P', '1080P'],
       defaultValue: '720P',
+      descriptionKey: 'Output video resolution',
+    },
+  ]
+}
+
+/**
+ * seedance2.5-活动：**固定档**参数表（按次 ¥4.5/次、固定 30 秒、固定 720P）。
+ *
+ * 为什么必须单列，不能落进通用表：
+ *   - 落进通用 VIDEO_PARAMS → 显示「duration 1~60」，客户传 5 秒；
+ *   - 后端对固定档是 **fail-loud**（不做就近吸附），直接 400。
+ *     「参数表说可以、实际不行」是最难解释的一类问题。
+ *   - 落进 prime 表 → 显示「duration 2~30 / resolution 720P,1080P」，
+ *     同样会被后端拒（活动版锁死 30 秒 / 720P）。
+ *
+ * 时长写成 defaultValue=30 且**不给 range** —— 语义就是「只有这一个值」；
+ * 给 range 会被前端渲染成「可选区间」，等于又告诉客户可以传别的。
+ */
+function buildSeedance25FixedTierVideoParameters(
+  spec: Seedance25SampleSpec
+): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      type: 'integer',
+      defaultValue: spec.seconds,
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: [spec.resolution],
+      defaultValue: spec.resolution,
       descriptionKey: 'Output video resolution',
     },
   ]
@@ -1071,9 +1115,14 @@ function apiCategoryOf(model: PricingModel): ApiCategory {
 
   // Some task/video models (for example AutoDL) do not contain one of the
   // broad image-profile keywords, so classify video capabilities directly.
+  //
+  // ⚠️ seedance2.5 促销族的名字里既没有 video 也没有 wan-，靠正则会被判成
+  // chat —— 参数表就退化成通用聊天参数，客户端看不到 duration/resolution。
+  // 促销族成员必须单列（新增成员自动同步）。
   if (
     /^autodl:/i.test(model.model_name) ||
     isWan3VideoModel(model.model_name) ||
+    isSeedance25FamilyMember(model.model_name) ||
     /sora|veo|kling|pika|video|wan-|hunyuanvideo/i.test(model.model_name)
   ) {
     return 'video'
@@ -1097,6 +1146,19 @@ export function buildSupportedParameters(
   if (cat === 'video') {
     if (model.model_name === 'wan2.7-r2v') {
       return buildR2VVideoParameters()
+    }
+    // seedance2.5 促销族：
+    //   - 活动版是固定档（30 秒 / 720P），参数表必须锁死；
+    //   - 母本是 prime 别名，参数表与 prime 完全一致（720P/1080P、默认 720P）。
+    //
+    // 两者都必须在通用 wan3 表**之前**判定，否则会显示成
+    // 「resolution 480P/720P/1080P、默认 480P」—— 母本根本不接受 480P。
+    const seedance25FixedTier = getSeedance25SampleSpec(model.model_name)
+    if (seedance25FixedTier) {
+      return buildSeedance25FixedTierVideoParameters(seedance25FixedTier)
+    }
+    if (model.model_name === SEEDANCE25_TEHUI) {
+      return buildWan3PrimeVideoParameters()
     }
     if (
       model.model_name === 'wan3.0-video-prime' ||

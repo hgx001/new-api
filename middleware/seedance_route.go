@@ -145,9 +145,47 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			return
 		}
 		modelName, _ := body["model"].(string)
-		if strings.TrimSpace(modelName) != policy.SourceModel {
+		if !policy.IsSourceModel(modelName) {
 			c.Next()
 			return
+		}
+		// 命中的源模型名（多源化之后可能不是 policy.SourceModel 那个）。
+		// 日志必须打**它** —— 改派日志是排查的唯一凭据，
+		// 写死成某一个源模型名会让「客户请求活动版、日志却显示特惠版」完全对不上账。
+		sourceModel := strings.TrimSpace(modelName)
+
+		// ── 按次固定档：先把「固定时长」的语义锁定 ──
+		//
+		// 为什么必须在这一步做（2026-11-02 上架 seedance2.5-活动 时查出来的绕过路径）：
+		//
+		//	「客户端传 5 秒 → 400」这个 fail-loud 门控写在**源链路**
+		//	（youzanwan3 的 validatePerCallFixedTier），而条件路由中间件发生在
+		//	**源 adaptor 校验之前**。改派后 req.Model 已经是目标模型，
+		//	源链路那道门控根本不会执行 ——
+		//
+		//	· 客户显式传 5 秒 → 可能命中规则二/三/四被改派 → 门控被绕过 →
+		//	  「固定 30 秒」的承诺被静默打破，没有报错；
+		//	· 客户不传时长 → 源链路本应归一到 30 秒 → 改派到 wan3 后
+		//	  wan3 的 resolveDuration 缺省是 **5 秒** → 「按 30 秒卖、实际出 5 秒」
+		//	  的**错交付**。
+		//
+		// 所以固定档必须在**路由层**（改派之前）就锁定，不能只依赖源 adaptor。
+		//
+		// 处置口径：
+		//	· 显式传了非固定时长 → **不放行路由**（让请求原样走到源链路，
+		//	  由源链路报 400）—— 不做就近吸附，静默改档比报错更糟；
+		//	· 没传时长 → 归一成固定时长再继续判规则（这样 30 秒规则能正常命中）。
+		if constant.IsSeedance25PerCall(sourceModel) {
+			normalized, ok := normalizeFixedTierSeconds(body)
+			if !ok {
+				// 显式传了非 30 秒：放弃路由，放行原请求 → 源链路会返回 400。
+				logger.LogInfo(c, fmt.Sprintf(
+					"条件路由：按次固定档模型 %s 的时长不是 %d 秒，放弃路由（保持源链路 fail-loud 门控）",
+					sourceModel, perCallFixedTierSeconds))
+				c.Next()
+				return
+			}
+			body = normalized
 		}
 
 		// ── 规则三（首尾帧）最优先 ──
@@ -159,10 +197,10 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 会被规则一改派到漫屋，直接失败。
 		if seedanceroute_setting.IsFramesRouteEnabled() && hasFrameMedia(body) {
 			if newBody, routed := prepareFramesRoute(c, body, policy); routed {
-				if applyRewrittenBody(c, newBody, policy.SourceModel) {
+				if applyRewrittenBody(c, newBody, sourceModel) {
 					logger.LogInfo(c, fmt.Sprintf(
 						"条件路由：命中首尾帧，改派 %s → %s",
-						policy.SourceModel, policy.FramesTargetModel))
+						sourceModel, policy.FramesTargetModel))
 					c.Next()
 					return
 				}
@@ -173,7 +211,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		if seedanceroute_setting.IsEnabled() {
 			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && seconds == policy.TriggerSeconds {
 				if newBody, routed := prepareDoubaoRoute(c, body, policy); routed {
-					if applyRewrittenBody(c, newBody, policy.SourceModel) {
+					if applyRewrittenBody(c, newBody, sourceModel) {
 						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
 						// 把判定命中的秒数记下来，交给 relay_task.go 补进 OtherRatios。
 						common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
@@ -182,7 +220,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						// 不打日志就分不清是「30 秒」还是「提示词超长」触发的。
 						logger.LogInfo(c, fmt.Sprintf(
 							"条件路由：命中时长 %d 秒，改派 %s → %s",
-							seconds, policy.SourceModel, policy.TargetModel))
+							seconds, sourceModel, policy.TargetModel))
 						c.Next()
 						return
 					}
@@ -203,7 +241,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		if seedanceroute_setting.IsEnabled() {
 			if requestPromptRunes(body) > promptRouteLimitRunes {
 				if newBody, routed := preparePromptRoute(c, body, policy); routed {
-					if applyRewrittenBody(c, newBody, policy.SourceModel) {
+					if applyRewrittenBody(c, newBody, sourceModel) {
 						// 与规则一同理：计费按源模型（按秒）算，目标 adaptor 是按次的、
 						// 不给 seconds。不补这一笔，10 秒的请求只按 1 秒收钱。
 						if seconds, ok := extractRequestSeconds(newBody); ok {
@@ -211,7 +249,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						}
 						logger.LogInfo(c, fmt.Sprintf(
 							"条件路由：提示词 %d 字符超过 %d，改派 %s → %s",
-							requestPromptRunes(body), promptRouteLimitRunes, policy.SourceModel, policy.TargetModel))
+							requestPromptRunes(body), promptRouteLimitRunes, sourceModel, policy.TargetModel))
 						c.Next()
 						return
 					}
@@ -223,10 +261,10 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		if seedanceroute_setting.IsRatioRouteEnabled() {
 			if matchesTriggerRatio(body, policy.TriggerRatio) {
 				if newBody, routed := prepareWan3Route(c, body, policy); routed {
-					if applyRewrittenBody(c, newBody, policy.SourceModel) {
+					if applyRewrittenBody(c, newBody, sourceModel) {
 						logger.LogInfo(c, fmt.Sprintf(
 							"条件路由：命中比例 %s，改派 %s → %s",
-							policy.TriggerRatio, policy.SourceModel, policy.RatioTargetModel))
+							policy.TriggerRatio, sourceModel, policy.RatioTargetModel))
 						c.Next()
 						return
 					}
@@ -236,6 +274,60 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 
 		c.Next()
 	}
+}
+
+// perCallFixedTierSeconds 是按次固定档的固定时长（秒）。
+//
+// ⚠️ 它是 constant.Seedance25PerCallFixedSeconds 的**派生**（不是副本）——
+// 源链路（youzanwan3 的 perCallFixedDuration）也从同一个常量派生。
+// 两处必须一致：源链路用它做 fail-loud 门控，路由层用它做归一。
+//
+// 为什么放 constant 包而不是各自定义：常量语义属于「能力定义」，
+// 而能力定义的唯一来源就是 constant.Seedance25Family 所在的文件。
+// 之前这里是手写的 `= 30`，与 youzanwan3 的 `= 30` 各写一份 ——
+// 任何一边单独改动都不会编译失败，只会让「按 30 秒卖」和
+// 「实际跑多久」在客户侧悄悄脱节。派生关系把这个失败模式彻底消除。
+const perCallFixedTierSeconds = constant.Seedance25PerCallFixedSeconds
+
+// normalizeFixedTierSeconds 把按次固定档请求的时长归一成固定值。
+//
+// 返回值：
+//   - (body, true)：时长合规（显式传了固定值，或没传 → 已归一成固定值）；
+//   - (nil, false)：显式传了**非固定**时长 → 放弃路由。
+//
+// 为什么「没传」要归一而不是放弃：
+//
+//	源链路（youzanwan3）的固定档语义就是「不传 → 30 秒」。如果路由层放弃，
+//	活动版未传时长的请求就走不到 30 秒规则（那条规则的成本优势 ¥4.50）——
+//	那是**少赚**而不是报错。归一后才能正确命中规则一。
+//
+// 为什么「显式传非固定值」要放弃：
+//
+//	客户要 5 秒，按 30 秒卖给他 = 静默改档（用户要 5 秒的片、拿到 30 秒的片，
+//	或者反过来按 30 秒收钱只出 5 秒）。源链路的门控会报 400，所以这里必须放行
+//	原请求让它走到源链路。**不做就近吸附** —— 用户要 5 秒却按 30 秒计费，
+//	比报错更糟。
+//
+// ⚠️ 归一时**必须写回请求体**：改派后目标链路是 wan3（缺省 5 秒）或豆包
+// （只认 5/10/15/30 四档）。不写回 seconds，客户会「按 30 秒的价拿到 5 秒的片」。
+func normalizeFixedTierSeconds(body map[string]interface{}) (map[string]interface{}, bool) {
+	seconds, hasSeconds := extractRequestSeconds(body)
+	if hasSeconds && seconds != perCallFixedTierSeconds {
+		return nil, false
+	}
+	if !hasSeconds {
+		// 没传时长：复制一份 body 并写入固定时长。
+		//
+		// 为什么要复制：body 可能是读出来的原始 map，改它会影响后续
+		// 「请求体逐字节不变」的兜底路径（放行原请求时必须原样）。
+		out := make(map[string]interface{}, len(body)+1)
+		for key, value := range body {
+			out[key] = value
+		}
+		out["seconds"] = strconv.Itoa(perCallFixedTierSeconds)
+		return out, true
+	}
+	return body, true
 }
 
 // readJSONRequestBody 读出请求体并解析成 map。

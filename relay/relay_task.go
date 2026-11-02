@@ -192,11 +192,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
 	//    ResolveOriginTask 可能已在 remix 路径中预设了 OtherRatios，此处合并。
-	if estimatedRatios := adaptor.EstimateBilling(c, info); len(estimatedRatios) > 0 {
-		for k, v := range estimatedRatios {
-			info.PriceData.AddOtherRatio(k, v)
-		}
-	}
+	//
+	//    ⚠️ 按次档（¥4.5/次）**不接收任何倍率** —— 详见 mergeEstimatedRatios。
+	mergeEstimatedRatios(info, adaptor.EstimateBilling(c, info))
 
 	// 5.5 改派过：补上「源模型口径的计费秒数」
 	//
@@ -215,9 +213,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	//   seconds 先 → int(19178*5)=95990 → *0.30/0.28 = 102739
 	// 同一请求 3 次里出现了 102739、102739、102735 两个值，且每级截断误差会累积。
 	// service/task_billing.go 与 service/text_quota.go 都是单次累乘后取整，与此保持一致。
-	if !common.StringsContains(constant.TaskPricePatches, info.BillingModelName()) {
-		info.PriceData.Quota = applyTaskOtherRatios(info.PriceData.Quota, info.PriceData.OtherRatios)
-	}
+	applyBillingRatios(info)
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {
@@ -277,13 +273,10 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	}
 
 	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
-	finalQuota := info.PriceData.Quota
-	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
-		// 基于调整后的 ratios 重新计算 quota
-		finalQuota = recalcQuotaFromRatios(info, adjustedRatios)
-		info.PriceData.OtherRatios = adjustedRatios
-		info.PriceData.Quota = finalQuota
-	}
+	//
+	// ⚠️ 按次档**不参与**这一步（见 resolveSubmitQuota）：一口价的额度就是一口价，
+	// 上游回执里再带出什么倍率都不能改写它。
+	finalQuota := resolveSubmitQuota(info, adaptor.AdjustBillingOnSubmit(info, taskData))
 
 	return &TaskSubmitResult{
 		UpstreamTaskID: upstreamTaskID,
@@ -291,6 +284,109 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+// isPerCallBilling 判断「这个请求是不是按次计费」。
+//
+// 口径 = **计费模型名**（RelayInfo.BillingModelName = 客户请求的源模型），
+// 不是实际执行的模型。改派后两者不同 ——
+//   - 源模型按次、执行模型按秒 → 按次（不乘倍率，避免 ¥4.5 变 ¥135）
+//   - 源模型按秒、执行模型按次 → 按秒（必须乘倍率，否则 ¥0.20 变 ¥0.20 而不是 ¥6.00）
+//
+// 判据本身在 constant.IsTaskPerCallModel（覆盖能力组按次成员 +
+// TASK_PRICE_PATCH 环境变量命中），这样计费、日志、轮询三处用同一口径。
+func isPerCallBilling(info *relaycommon.RelayInfo) bool {
+	if info == nil {
+		return false
+	}
+	return constant.IsTaskPerCallModel(info.BillingModelName())
+}
+
+// mergeEstimatedRatios 把 adaptor 估算出来的倍率并入 PriceData。
+//
+// ⚠️ **按次档不接收任何倍率**（2026-11-02 上架 seedance2.5-活动 时加的）：
+//
+//	按次档的售价是**一口价**（¥4.5/次），不乘时长倍率、不乘分辨率倍率。
+//	而 adaptor 是**按目标渠道**写的，它不知道源模型是按次档 ——
+//	改派到 wan3 链路时，wan3 adaptor 会按自己的习惯返回：
+//	    {"seconds": 30, "size": 1.0}
+//	这份倍率一旦并进来，¥4.5 就会被乘 30 = **¥135**。
+//
+//	为什么 applyRouteBillingSeconds 拦不住：它只在 adaptor **没给** seconds 时补秒数，
+//	**不会删除** adaptor 自己给的。这两条路径必须分别堵。
+//
+//	为什么不能只靠 TASK_PRICE_PATCH 环境变量：那需要改 compose env 并**重启容器**
+//	（它是 env 不是 option，见 common/init.go），代码层兜底不依赖运维动作。
+func mergeEstimatedRatios(info *relaycommon.RelayInfo, ratios map[string]float64) {
+	if info == nil {
+		return
+	}
+	// 按次档：一口价不受任何倍率影响。
+	//
+	// ⚠️ 这里**同时清空**已有的倍率，不只是「不新增」：清空是**防御性**的第二道防线。
+	//	上一道是「按次档根本不产生倍率」（下面的 isPerCallBilling 判断）。
+	//
+	//	为什么还要清空：倍率可能从 EstimateBilling 之外的路径进来 —— 比如
+	//	applyRouteBillingSeconds 按改派补的秒数，或将来新增的倍率来源。
+	//	留着它们会：
+	//	  - 让预扣额度变成 ¥4.5 × 30 = ¥135（超收 30 倍）；
+	//	  - 让 recalcQuotaFromRatios 把基础额度算成 308219 / 30（少收三分之二）。
+	//
+	//	（当前链路上 PriceData 在 ModelPriceHelperPerCall 处被整体重建，
+	//	所以进到这里时 OtherRatios 一定是空的 —— 这道防线是给未来的。）
+	if isPerCallBilling(info) {
+		info.PriceData.OtherRatios = nil
+		return
+	}
+	if len(ratios) == 0 {
+		return
+	}
+	for k, v := range ratios {
+		info.PriceData.AddOtherRatio(k, v)
+	}
+}
+
+// applyBillingRatios 把倍率乘到预扣额度上。
+//
+// ⚠️ **按次档不乘任何倍率**：预扣额度必须**原样**等于 ModelPrice 算出的额度。
+//
+//	判据与 mergeEstimatedRatios 同源（constant.IsTaskPerCallModel），
+//	覆盖能力组按次成员 + TASK_PRICE_PATCH 环境变量命中。
+func applyBillingRatios(info *relaycommon.RelayInfo) {
+	if info == nil {
+		return
+	}
+	if isPerCallBilling(info) {
+		return
+	}
+	info.PriceData.Quota = applyTaskOtherRatios(info.PriceData.Quota, info.PriceData.OtherRatios)
+}
+
+// resolveSubmitQuota 处理提交后的计费调整，返回最终额度。
+//
+// ⚠️ **按次档不参与重算**（2026-11-02 上架 seedance2.5-活动 时加的）：
+//
+//	这条路径最阴险 —— recalcQuotaFromRatios 会先**除掉**已有的 OtherRatios
+//	还原「基础额度」，再乘上 adaptor 返回的新倍率。按次档的额度本来就没乘过倍率
+//	（308219 = ¥4.5/次），若 OtherRatios 里残留着 seconds=30，基础额度会被算成
+//	308219 / 30 = 10273 —— **客户被少收三分之二的钱**，而账单上写着 ¥4.5。
+//
+//	对按次档来说「一口价就是一口价」：上游回执里再带出什么倍率都不能改写它。
+func resolveSubmitQuota(info *relaycommon.RelayInfo, adjustedRatios map[string]float64) int {
+	if info == nil {
+		return 0
+	}
+	if isPerCallBilling(info) {
+		return info.PriceData.Quota
+	}
+	if len(adjustedRatios) == 0 {
+		return info.PriceData.Quota
+	}
+	// 基于调整后的 ratios 重新计算 quota
+	finalQuota := recalcQuotaFromRatios(info, adjustedRatios)
+	info.PriceData.OtherRatios = adjustedRatios
+	info.PriceData.Quota = finalQuota
+	return finalQuota
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
@@ -897,8 +993,35 @@ func replaceOpenAIVideoModel(raw []byte, publicModel string) []byte {
 // 这里只在 adaptor **没给** seconds 时补：
 //   - 比例规则（9:16 → wan3）的 adaptor 本来就会给 seconds，不会被覆盖
 //   - 未改派时直接跳过，非路由请求零影响
+//
+// ⚠️ **按次档必须跳过**（2026-11-02 上架 seedance2.5-活动 时加的）：
+//
+//	seedance2.5-活动 是按次档（¥4.5/次、固定 30 秒），母本 seedance2.5-特惠
+//	是按秒档（¥0.20/秒）。两者共用同一条路由规则（30 秒 → 豆包链路），
+//	所以活动版也会被改派，也就会走到这里。
+//
+//	按次档补 seconds 的后果是**超收 30 倍**：¥4.5 × 30 = ¥135。
+//	而且没有任何报错 —— 只能靠客户投诉 + 对账发现。
+//
+//	判据走**能力组**（constant.IsSeedance25PerCall）而不是 PriceData.UsePrice：
+//	母本（按秒）**也**配了 ModelPrice，UsePrice 为 true —— 它区分不了按次与按秒。
+//	能力组是「谁是这一族 + 谁按次计费」的唯一来源，与 billingModelName() 同源，
+//	新增按次档位时自动生效。
+//
+//	为什么不能只靠 TASK_PRICE_PATCH 环境变量：那需要改 compose env 并**重启容器**
+//	（它是 env 不是 option，见 common/init.go），代码层兜底不依赖运维动作。
+//	两条路都要走 —— env 那条还负责让日志文案与轮询阶段的按次结算口径正确。
 func applyRouteBillingSeconds(c *gin.Context, info *relaycommon.RelayInfo) {
 	if info == nil || info.RouteOriginModel == "" {
+		return
+	}
+	// 按次档：计费口径就是「一口价」，不乘任何时长倍率。
+	//
+	// 判据用 BillingModelName()（= 源模型 = 计费口径），**不是** OriginModelName
+	// （= 实际执行的模型）—— 改派后两者不同，用错会导致口径跟着调度策略漂移。
+	// 判据本身走 constant.IsTaskPerCallModel（覆盖能力组 + TASK_PRICE_PATCH），
+	// 与计费链其它三处保持同一口径。
+	if isPerCallBilling(info) {
 		return
 	}
 	if _, hasSeconds := info.PriceData.OtherRatios["seconds"]; hasSeconds {

@@ -600,7 +600,15 @@ func RelayTask(c *gin.Context) {
 			OriginModelName: relayInfo.OriginModelName,
 			// 按次判定用**客户请求的源模型**：改派后计费仍按源模型的按秒价走，
 			// 不能因为目标链路是按次模型就把差额结算一并关掉。
-			PerCallBilling: common.StringsContains(constant.TaskPricePatches, relayInfo.BillingModelName()) || relayInfo.PriceData.UsePrice,
+			//
+			// ⚠️ 判据与计费链同源（constant.IsTaskPerCallModel）：
+			//   - 能力组按次成员（seedance2.5-活动 等）：显式按次档，
+			//     即使生产漏配 ModelPrice 导致 UsePrice=false，也必须跳过差额结算；
+			//   - TASK_PRICE_PATCH 命中的模型：站内既有的按次先例（sora 等）。
+			//
+			// UsePrice 那半边保留不动：它覆盖的是「配了 ModelPrice 的任务」，
+			// 母本（按秒）也命中它 —— 那是既有行为，本次不动，避免少收/多收。
+			PerCallBilling: constant.IsTaskPerCallModel(relayInfo.BillingModelName()) || relayInfo.PriceData.UsePrice,
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

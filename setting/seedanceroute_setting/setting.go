@@ -18,6 +18,7 @@
 package seedanceroute_setting
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -72,7 +73,21 @@ type Policy struct {
 	// Enabled 总开关。false = 完全不路由，全部走源模型（默认，行为不变）。
 	Enabled bool `json:"enabled"`
 	// SourceModel 源模型名（对外名，客户请求里写的那个）。三条规则共用。
+	//
+	// ⚠️ 保留这个字段是为了**向后兼容**：生产 options 里存的是单值格式
+	// （"source_model": "seedance2.5-特惠"），它必须继续生效。
+	//
+	// 多源场景用 SourceModels；两个字段都配时取**并集**（不是覆盖）。
 	SourceModel string `json:"source_model"`
+	// SourceModels 是源模型的**列表**（2026-11-02 起）。
+	//
+	// 为什么需要：seedance2.5 促销族有两个对外模型名（母本 seedance2.5-特惠、
+	// 活动版 seedance2.5-活动），它们是同一个商品的两档售价，必须**共享同一套
+	// 路由规则** —— 尤其 30 秒规则：活动版走有赞成本 ¥4.50、卖 ¥4.50（零毛利），
+	// 路由到豆包后成本 ≈ ¥0。
+	//
+	// 只有一个源模型时配置这个字段与配 SourceModel 完全等价。
+	SourceModels []string `json:"source_models,omitempty"`
 	// TargetModel 目标模型名（对外名），规则一用。
 	TargetModel string `json:"target_model"`
 	// TriggerSeconds 触发时长（秒）。**只有等于该值才路由**，规则一用。
@@ -177,6 +192,8 @@ func WithSecondsRulePausedUntil(until int64) Policy {
 //   - 规则二配全 = 源模型名 + 比例目标模型 + 触发比例三者都有值；
 //   - 规则三配全 = 源模型名 + 首尾帧目标模型两者都有值（触发条件不可配）。
 //
+// 「源模型名」可以是单值（source_model）或多值（source_models），任一非空即算配了。
+//
 // 一条都没配全就当作没开（Enabled 置 false）—— 宁可不开也不要半开，
 // 半开的状态（比如 target_model 为空）会把请求改写成一个空模型名，线上直接全挂。
 func UpdateFromJSONString(jsonStr string) error {
@@ -256,9 +273,52 @@ func SecondsRulePausedUntil() int64 {
 
 func secondsRuleReady(p Policy) bool {
 	return p.Enabled &&
-		p.SourceModel != "" &&
+		p.hasSourceModel() &&
 		p.TargetModel != "" &&
 		p.TriggerSeconds > 0
+}
+
+// hasSourceModel 判断策略是否配了**至少一个**源模型。
+//
+// 单值字段（SourceModel）与多值字段（SourceModels）任一非空即算配了 ——
+// 只配 source_models 的新式配置不能被判定成「没配全」，否则路由会被静默关掉。
+func (p Policy) hasSourceModel() bool {
+	if strings.TrimSpace(p.SourceModel) != "" {
+		return true
+	}
+	for _, name := range p.SourceModels {
+		if strings.TrimSpace(name) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSourceModel 判断「这个模型名是不是本策略的源模型」。
+//
+// 判定口径 = SourceModel（单值）与 SourceModels（多值）的**并集**。
+//
+// 为什么两者都留着：生产的 options 里存的是单值格式（"source_model"），
+// 它必须继续生效；而多源场景（seedance2.5 促销族）需要数组形式。
+// 两个字段都配时取并集 —— 不能是「后者覆盖前者」，那样改配置的人
+// 会发现原来的单源突然不生效了。
+//
+// ⚠️ 两边都容忍首尾空格：生产上真出现过「 seedance2.5-特惠」这种请求
+// （model/log.go 里记着同一个事故）。请求侧与配置侧都要 Trim。
+func (p Policy) IsSourceModel(model string) bool {
+	target := strings.TrimSpace(model)
+	if target == "" {
+		return false
+	}
+	if strings.TrimSpace(p.SourceModel) == target {
+		return true
+	}
+	for _, name := range p.SourceModels {
+		if strings.TrimSpace(name) == target {
+			return true
+		}
+	}
+	return false
 }
 
 // secondsRulePaused 判断当前是否处于规则一的暂停期。
@@ -282,7 +342,7 @@ var nowUnix = func() int64 { return time.Now().Unix() }
 
 func ratioRuleReady(p Policy) bool {
 	return p.Enabled &&
-		p.SourceModel != "" &&
+		p.hasSourceModel() &&
 		p.RatioTargetModel != "" &&
 		p.TriggerRatio != ""
 }
@@ -293,7 +353,7 @@ func ratioRuleReady(p Policy) bool {
 // 请求里出现 first_frame/last_frame 就命中，不存在阈值。
 func framesRuleReady(p Policy) bool {
 	return p.Enabled &&
-		p.SourceModel != "" &&
+		p.hasSourceModel() &&
 		p.FramesTargetModel != ""
 }
 

@@ -23,6 +23,14 @@ var upstreamAliasModels = map[string]bool{
 	// 生产 abilities 表里这个别名与 wan3.0-video-prime 同挂渠道 17。
 	"seedance2.5-特惠": true,
 	"seedance2.5特惠版": true, // 同一模型的历史旧名
+	// seedance2.5-活动（2026-11-02 加）：seedance2.5 促销族的**按次档**，
+	// 与母本 seedance2.5-特惠 是同一个商品的两种售价形态 —— 上游同样是
+	// 渠道 17「有赞 Wan3」的 wan3.0-video-prime。
+	//
+	// ⚠️ 必须与母本享受**完全相同**的保护级别：漏了它，
+	// redactAliasTaskUpstream 会直接 return —— 上游回执（任务号 + 成本 +
+	// 原片直链）原样进对外 DTO。而这是促销档，下单的人最多、最需要藏货源。
+	"seedance2.5-活动": true,
 	// 两跳链路（2026-10-30 加）：上游是 wan3.0-video 的 480P 原片。
 	//
 	// 为什么它比别的模型更该脱敏：出口 2 的 data 字段里挂着**上游 OSS 签名直链**

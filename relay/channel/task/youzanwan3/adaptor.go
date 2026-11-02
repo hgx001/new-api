@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -205,7 +206,78 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if genErr := validateGenerationSecondsWithReferenceVideo(c, media, resolveDurationForModel(req, req.Model)); genErr != nil {
 		return genErr
 	}
+	// 按次档（seedance2.5-活动）的档位锁定必须在**校验阶段**拒掉，
+	// 不能等到计费或建单之后 —— 否则会走完「建单 → 预扣 → 上游拒绝 → 退款」，
+	// 客户白占一次余额还要等退款。
+	//
+	// ⚠️ 顺序很关键：这条校验要排在**路由改派之后**才有效。改派会把请求体的
+	// model 换成目标模型（豆包/官网链路），req.Model 随之变化 ——
+	// 改派成功的请求走的是目标链路，本就不该再按「按次档」来卡时长。
+	// 改派失败的请求 model 不变，这条校验照常生效。
+	if taskErr := validatePerCallFixedTier(req); taskErr != nil {
+		return taskErr
+	}
 	return nil
+}
+
+// validatePerCallFixedTier 校验「按次档」的固定时长与固定分辨率。
+//
+// 按次档（seedance2.5-活动）只卖一种规格：**30 秒 + 720P**，价 ¥4.5/次。
+//
+// 两条硬约束，都必须 fail-loud：
+//   - **时长**：不传 → 30 秒；传了别的值 → 400。不做「就近吸附」——
+//     用户要 5 秒却按 30 秒计费，比报错更糟。
+//   - **分辨率**：只接受 720P。1080P 的上游成本是 720P 的 1.33 倍
+//     （¥0.20/秒 vs ¥0.15/秒），卖同一个价就在 1080P 上倒挂；
+//     而静默降到 720P 等于「收 1080P 的钱给 720P 的片」。
+//
+// ⚠️ 报错文案**刻意不带模型名**：本模型在脱敏名单里（model/upstream_redact.go），
+// 模型名会被替换成「上游」，出来是「上游-活动」这种碎词。
+// 用户本来就知道自己调的是哪个模型，不需要在这里重复。
+func validatePerCallFixedTier(req relaycommon.TaskSubmitReq) *dto.TaskError {
+	if !isPerCallModel(req.Model) {
+		return nil
+	}
+	duration, err := parseRequestedDuration(req)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+	}
+	if duration != 0 && duration != perCallFixedDuration {
+		return service.TaskErrorWrapperLocal(
+			errors.Errorf("this model has a fixed duration of %d seconds, got %d",
+				perCallFixedDuration, duration),
+			"invalid_duration", http.StatusBadRequest)
+	}
+	// 分辨率：只在客户端**显式**给了非 720P 时报错。
+	// 完全不传时用默认值 720P（normalizeResolutionForModel 已经这么处理）。
+	if raw := strings.TrimSpace(req.Resolution); raw != "" {
+		if normalized := normalizeResolution(raw); normalized != perCallFixedResolution {
+			return service.TaskErrorWrapperLocal(
+				errors.Errorf("resolution %q is not supported, this model always delivers %s",
+					raw, perCallFixedResolution),
+				"invalid_resolution", http.StatusBadRequest)
+		}
+	}
+	return nil
+}
+
+// parseRequestedDuration 解析客户端**显式传入**的时长。
+//
+// 第二个返回值 ok=false 表示没传（duration 会被归一到固定值，不报错）。
+// 与 resolveDurationForModel 的区别：那个函数会**夹紧**（<2 提到 2、>30 压到 30），
+// 这里必须拿到客户端的**原值** —— 只有原值才能判断「客户是不是要了别的档位」。
+func parseRequestedDuration(req relaycommon.TaskSubmitReq) (int, error) {
+	duration := req.Duration
+	if duration <= 0 {
+		if raw := strings.TrimSpace(req.Seconds); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil {
+				return 0, errors.Errorf("invalid seconds %q", raw)
+			}
+			duration = parsed
+		}
+	}
+	return duration, nil
 }
 
 // validateGenerationSecondsWithReferenceVideo 校验「有参考视频时的生成时长上限」。
@@ -279,8 +351,16 @@ func isR2VModel(model string) bool {
 }
 
 func isPrimeModel(model string) bool {
+	// seedance2.5 促销族（母本 + 活动版）都由 prime 执行：档位校验、
+	// 默认分辨率、素材上限全部走 prime 那一套。
+	//
+	// ⚠️ 判定一律走 constant 的**能力组**，不要在这里逐个列模型名 ——
+	// 逐个列名正是「母本加了能力、活动版没同步」的根源。
+	if constant.IsSeedance25Family(model) {
+		return true
+	}
 	switch strings.TrimSpace(model) {
-	case primeModel, legacyPrimeModel, tehuiModel:
+	case primeModel, legacyPrimeModel:
 		return true
 	default:
 		return false
@@ -292,18 +372,40 @@ func isPrimeModel(model string) bool {
 // 它虽然由 prime 执行（isPrimeModel 为真，档位校验/默认值都走 prime 那套），
 // 但**价格是它自己的**：720P ¥0.20、1080P ¥0.30，不跟 prime 联动。
 // 计费取值时必须先认它，否则会读到 prime 的倍率 —— 表现是不报错、静默算错价。
+//
+// ⚠️ 活动版（seedance2.5-活动）**不属于这里**：它是按次档，倍率恒为 1、
+// 时长固定 30 秒、分辨率固定 720P，与母本的按秒分档完全不同的计费口径。
+// 判定见 isPerCallModel。
 func isTehuiModel(model string) bool {
 	return strings.TrimSpace(model) == tehuiModel
+}
+
+// isPerCallModel 判断是不是「按次计费档」的模型（2026-11-02 上架活动版）。
+//
+// 与母本的差别是**计费口径**，不是能力：两者共用同一套素材上限、
+// 同一个上游模型（wan3.0-video-prime）、同一条路由规则。
+//
+// 按次的三个硬性后果（改代码前先看这三条）：
+//  1. 时长固定 30 秒 —— 传别的值 400（不吸附）；
+//  2. 分辨率固定 720P —— 1080P 成本是 720P 的 1.33 倍，卖同一价会倒挂；
+//  3. 不乘任何倍率 —— EstimateBilling 返回 nil，售价就是 ¥4.5/次。
+func isPerCallModel(model string) bool {
+	return constant.IsSeedance25PerCall(model)
 }
 
 // upstreamModelFor maps the public aliases retained by new-api to the model
 // IDs exposed by the current Youzan API.  The mapping is explicit so the
 // public name remains stable while the upstream protocol can evolve.
 func upstreamModelFor(model string) (string, error) {
+	// seedance2.5 促销族（母本 + 活动版）上游恒为 wan3.0-video-prime。
+	// 判定走能力组 —— 新增族成员时这里自动跟着生效。
+	if constant.IsSeedance25Family(model) {
+		return primeModel, nil
+	}
 	switch strings.TrimSpace(model) {
 	case videoModel, smartLegacyModel:
 		return videoModel, nil
-	case primeModel, legacyPrimeModel, tehuiModel:
+	case primeModel, legacyPrimeModel:
 		return primeModel, nil
 	case r2vModel:
 		return "", errors.New("youzan wan2.7-r2v is not exposed by the current upstream API")
@@ -313,6 +415,20 @@ func upstreamModelFor(model string) (string, error) {
 }
 
 func normalizeResolutionForModel(model, resolution string) string {
+	// 按次档固定 720P：只有一档价（¥4.5/次），上游 1080P 的成本是 720P 的
+	// 1.33 倍（¥0.20/秒 vs ¥0.15/秒），卖同一个价就会在 1080P 上倒挂。
+	//
+	// ⚠️ 客户显式要了 1080P 时**必须报错**，不能静默降到 720P ——
+	// 静默降清晰度等于「付了 1080P 的钱拿到 720P 的片」。
+	// 报错由 resolveResolutionForModel 的调用方（Validate 阶段）处理。
+	if isPerCallModel(model) {
+		switch resolution {
+		case perCallFixedResolution:
+			return perCallFixedResolution
+		default:
+			return ""
+		}
+	}
 	if isPrimeModel(model) {
 		// 上游 prime 只提供 720P / 1080P：480P 请求按最低档 720P 执行，
 		// 既不静默升到更贵的 1080P，也让请求能够成功。
@@ -377,7 +493,14 @@ func resolveDuration(req relaycommon.TaskSubmitReq) int {
 // resolveDurationForModel 解析时长。2026-10-28 起上游 prime 也改为按秒计费
 // （supportsSmartDuration=false，但 2—30 秒逐秒可选），不再固定 30 秒；
 // 两个在售模型因此共用同一套夹紧规则。
+//
+// ⚠️ 按次档（seedance2.5-活动）是**例外**：固定 30 秒，与母本不同。
+// 客户端传了别的时长在 Validate 阶段就已 400（见 validatePerCallFixedTier），
+// 走到这里只可能是「没传」→ 按 30 秒处理。
 func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
+	if isPerCallModel(model) {
+		return perCallFixedDuration
+	}
 	duration := req.Duration
 	if duration <= 0 {
 		duration, _ = strconv.Atoi(req.Seconds)
@@ -767,6 +890,21 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if strings.TrimSpace(modelName) == "" {
 		modelName = req.Model
 	}
+	// 按次档（seedance2.5-活动）：**返回 nil**，不乘任何倍率。
+	//
+	// 返回 nil 的含义是「这条链路按次结算，售价就是 ModelPrice 本身」
+	// （与漫屋的豆包链路、megabyai 的统一契约一致，见
+	// relay/helper/price.go 的 ModelPriceHelperPerCall）。
+	//
+	// ⚠️ 这里必须返回 nil 而不是 {"seconds": 30}：
+	//   - 母本是按秒的，EstimateBilling 返 {"seconds": N, "size": R}；
+	//   - 按次档若也返 seconds，relay/relay_task.go 的 applyTaskOtherRatios
+	//     会把 30 秒**乘进** ¥4.5 的预扣额度 → 收 ¥135。
+	//   - 而且按次档连参考视频秒数都不该并入（上游按秒计费，参考视频时长
+	//     不影响我们的售价口径）。
+	if isPerCallModel(modelName) {
+		return nil
+	}
 	// 两个在售模型均为按秒计费：quota = ModelPrice × seconds × size。
 	// prime 的 720P / 1080P 分档差价体现在 size 倍率（见 primeResolutionSizeRatio），
 	// 不再像旧版那样整条模型按次计价。
@@ -811,6 +949,14 @@ func resolutionRatioForModel(model, resolution string) float64 {
 		if ratio := r2vResolutionSizeRatio[resolution]; ratio > 0 {
 			return ratio
 		}
+		return 1
+	}
+	// 按次档：倍率恒为 1。
+	//
+	// 按次只有一档价（¥4.5/次），与分辨率无关；而 EstimateBilling 对按次档
+	// 已经返回 nil（不产生 size 倍率），这里返回 1 是**双保险** ——
+	// 万一将来有人改动 EstimateBilling，倍率也不会把固定价乘歪。
+	if isPerCallModel(model) {
 		return 1
 	}
 	if isTehuiModel(model) {

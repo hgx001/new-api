@@ -2,6 +2,8 @@ package youzanwan3
 
 import (
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+
+	"github.com/QuantumNous/new-api/constant"
 )
 
 const ChannelName = "Youzan Wan3"
@@ -16,7 +18,11 @@ const (
 	// 该名字 2026-10-26 随 MegaAI 渠道停售而空置，2026-10-29 改为路由到有赞 prime。
 	// 别名不写进 ModelList —— 那份清单必须与上游 /v1/models 逐字一致，
 	// 否则「同步上游模型」会把别名当成真实上游模型写回渠道配置。
-	tehuiModel = "seedance2.5-特惠"
+	//
+	// ⚠️ 它是 constant.Seedance25TeHuiModel 的镜像。**真正的能力判定一律走
+	// constant 的能力组**（constant.IsSeedance25Family 等），不要在这里新增
+	// 族成员的判断分支 —— 那正是「母本加了能力、活动版没加」的根源。
+	tehuiModel = constant.Seedance25TeHuiModel
 
 	// smartLegacyModel / legacyPrimeModel 是 2026-10-28 前的公开名，语义等价：
 	// wan3.0-smart → wan3.0-video、wan3.0-video-prime-1080p → wan3.0-video-prime。
@@ -169,6 +175,33 @@ const (
 	// （tasks id=967~982）全是 30 秒生成 + 31.6 秒参考，按同值拦截最早、最省。
 	// 边界取**闭区间**：15 秒生成是允许的（15+15=30 正好不超上游上限）。
 	maxGenerationSecondsWithVideo = 15
+
+	// perCallFixedDuration 是「按次档」的固定时长（秒）。
+	//
+	// 2026-11-02 上架 seedance2.5-活动 时定：¥4.5/次、**固定 30 秒**。
+	//
+	// 为什么锁 30 秒：按次定价只有在时长固定时才不会出现「长片亏本」——
+	// 30 秒是这一档的成本上限（30 × ¥0.15 = ¥4.50 正好贴售价）。
+	// 短片客户按 30 秒的价买、只跑 10 秒，是「按 30 秒封顶卖短片」，
+	// 整体高毛利（10 秒成本 ¥1.50，毛利 67%）。
+	//
+	// 客户端显式传别的时长一律 400（**不做就近吸附**）：用户要 5 秒却按 30 秒
+	// 计费，比报错更糟。与站内既有的固定档模型（心笔 wan3.0-720p-按次）
+	// 同一口径。
+	//
+	// ⚠️ 这里是 constant.Seedance25PerCallFixedSeconds 的**派生**（不是副本）。
+	// 源链路的门控与条件路由层的归一必须用**同一个** 30 —— 两者不一致时，
+	// 「客户传 5 秒」要么被静默改档、要么按 30 秒卖却只出 5 秒，而且不报错。
+	perCallFixedDuration = constant.Seedance25PerCallFixedSeconds
+
+	// perCallFixedResolution 是「按次档」的固定分辨率档。
+	//
+	// 按次只有一档价（¥4.5/次，与分辨率无关），所以锁死 720P ——
+	// 上游 prime 提供 720P/1080P，1080P 的成本是 720P 的 1.33 倍，
+	// 卖同一个价就会在 1080P 上倒挂。锁 720P 才能保证「一口价 = 一个成本」。
+	//
+	// ⚠️ 同样是 constant.Seedance25PerCallFixedResolution 的派生。
+	perCallFixedResolution = constant.Seedance25PerCallFixedResolution
 )
 
 // 导出的限制值，供条件路由中间件（middleware/seedance_route.go）在**改派前**

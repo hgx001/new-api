@@ -365,6 +365,25 @@ var defaultModelPrice = map[string]float64{
 	// 与 prime 的 1.2 不同 —— 两处不要互相抄。
 	// 这一行只是「DB 的 ModelPrice 里没有这个键」时的兜底；生产以 options 为准。
 	"seedance2.5-特惠":                  0.20 / USD2RMB,
+	// seedance2.5-活动（2026-11-02 上架）：seedance2.5 促销族的**按次档**。
+	// 与母本 seedance2.5-特惠 **同货源同链路**（有赞 wan3.0-video-prime），
+	// 只是计费口径从「按秒 ¥0.20/秒」改成「按次 ¥4.5/次、固定 30 秒、固定 720P」。
+	//
+	// ⚠️ 这是**按次价**（ModelPrice），不是按秒价 —— adaptor 的 EstimateBilling
+	// 对它返回 nil（不产生 seconds 倍率），售价就是这一行本身。
+	// 若这里误配成按秒单价，applyTaskOtherRatios 会把秒数乘进来 → 收 ¥135。
+	//
+	// 成本口径（上游 prime 720P ¥0.15/秒；按实际生成时长分档）：
+	//	 2 秒  成本 ¥0.30 → 毛利约 93%
+	//	10 秒  成本 ¥1.50 → 毛利约 67%
+	//	30 秒  成本 ¥4.50 → 毛利 0%
+	// 「固定 30 秒按次」本质是**按 30 秒封顶卖短片** —— 整体高毛利。
+	// 30 秒那一档的零毛利由路由规则一兜住（30 秒改派豆包链路，成本 ≈ ¥0）。
+	//
+	// ⚠️ 锁死 720P 的原因：prime 的 1080P 成本是 720P 的 1.33 倍（¥0.20 vs ¥0.15），
+	// 按次只有一档价，放开 1080P 就会在 1080P 上倒挂（成本 ¥6.00 > 售价 ¥4.50）。
+	// 能力定义见 constant/seedance25_family.go。
+	"seedance2.5-活动":                  4.5 / USD2RMB,     // 对外 ¥4.5/次（固定按次，不乘时长/分辨率倍率）
 	"seedance-2.0":                      1.0 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
 	"seedance-2.5":                      0.8 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
 	"seedance-2-5":                      5.0 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥5.0/次（5/10/15/30 秒同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调；2026-11-01 由 ¥3.0 上调至 ¥5.0

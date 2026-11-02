@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { EXCLUDED_GROUPS, QUOTA_TYPE_VALUES } from '../constants'
 import type { PricingModel } from '../types'
+import { getSeedance25SampleResolution } from './seedance25-family'
 
 // ----------------------------------------------------------------------------
 // Model Helper Utilities
@@ -62,6 +63,7 @@ export function isTokenBasedModel(model: PricingModel): boolean {
  * - `wan2.7-r2v`: only 720p/1080p, and the upstream expects lowercase.
  * - `wan3.0-video-prime`: only 720P/1080P, 720P is the default (and cheapest).
  * - `wan3.0-720p-特惠`: fixed 720P output.
+ * - `seedance2.5-活动`: fixed 720P output (按次档，锁死 720P).
  */
 export function getWan3SampleResolution(modelName: string): string | null {
   if (modelName === 'wan2.7-r2v') return '720p'
@@ -70,10 +72,19 @@ export function getWan3SampleResolution(modelName: string): string | null {
   // seedance2.5-特惠 是 prime 的对外别名（2026-10-29 起），档位与默认值完全一致。
   if (
     modelName === 'wan3.0-video-prime' ||
-    modelName === 'wan3.0-video-prime-1080p' ||
-    modelName === 'seedance2.5-特惠'
+    modelName === 'wan3.0-video-prime-1080p'
   ) {
     return '720P'
+  }
+  // seedance2.5 促销族（母本 + 活动版）的示例分辨率统一取 720P。
+  //
+  // 两者**原因不同**：母本是「720P/1080P 都合法，取最低档」，活动版是
+  // 「只有 720P 合法（1080P 成本 1.33 倍，卖同价会倒挂，后端直接 400）」。
+  // 判定走促销族定义，新增成员自动同步 —— 逐个列名正是
+  // 「母本加了能力、活动版没加」的根源。
+  const seedance25Resolution = getSeedance25SampleResolution(modelName)
+  if (seedance25Resolution !== null) {
+    return seedance25Resolution
   }
   // 官网 720P 成片档：输出档位固定 720P，示例按 720P 写。
   if (modelName === 'wan3.0-720p-特惠') {
