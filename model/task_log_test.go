@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,9 +83,45 @@ func TestTaskLogTruncatesMessageAndPayload(t *testing.T) {
 	require.Len(t, logs, 1)
 	assert.LessOrEqual(t, len([]rune(logs[0].Message)), taskLogMessageLimit+len("…(truncated)"))
 	assert.Contains(t, logs[0].Message, "…(truncated)")
-	assert.LessOrEqual(t, len([]rune(logs[0].Payload)), taskLogPayloadLimit+len("…(truncated)"))
 	// 截断后仍是合法 UTF-8：不能出现半个汉字导致的替换字符
 	assert.NotContains(t, logs[0].Message, "\uFFFD")
+	assert.LessOrEqual(t, len(logs[0].Payload), taskLogPayloadLimit)
+}
+
+// 超限快照必须降级成**合法 JSON**：直接按字节截断会让 payload 不可解析
+// （生产 381 条提交快照里有 18 条因此连 payload::jsonb 都查不了）。
+func TestEncodeTaskLogPayloadKeepsValidJSONWhenOversized(t *testing.T) {
+	payload := map[string]any{
+		"prompt":     strings.Repeat("长提示词", taskLogPayloadLimit),
+		"media":      []map[string]string{{"type": "reference_audio", "url": "https://example.com/a.mp3"}},
+		"channel_id": 17,
+	}
+	encoded := encodeTaskLogPayload(payload)
+	require.LessOrEqual(t, len(encoded), taskLogPayloadLimit)
+
+	var decoded map[string]any
+	require.NoError(t, common.Unmarshal([]byte(encoded), &decoded), "payload 必须是合法 JSON")
+	assert.Equal(t, true, decoded["prompt_truncated"])
+	// 降级只砍提示词，媒体与渠道这些排障必需字段必须还在。
+	assert.NotNil(t, decoded["media"])
+	assert.Equal(t, float64(17), decoded["channel_id"])
+}
+
+// 内联 base64 媒体把快照撑爆时，退到只剩体积信息，仍然要能解析。
+func TestEncodeTaskLogPayloadFallsBackForInlineBase64(t *testing.T) {
+	payload := map[string]any{
+		"prompt": "短提示词",
+		"media": []map[string]string{
+			{"type": "image", "url": "data:image/png;base64," + strings.Repeat("A", taskLogPayloadLimit*2)},
+		},
+	}
+	encoded := encodeTaskLogPayload(payload)
+	require.LessOrEqual(t, len(encoded), taskLogPayloadLimit)
+
+	var decoded map[string]any
+	require.NoError(t, common.Unmarshal([]byte(encoded), &decoded), "降级后仍必须是合法 JSON")
+	assert.Equal(t, true, decoded["truncated"])
+	assert.Greater(t, decoded["original_bytes"], float64(taskLogPayloadLimit))
 }
 
 func TestTruncateTextKeepsShortValue(t *testing.T) {

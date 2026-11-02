@@ -66,11 +66,7 @@ func AddTaskLog(taskId, upstreamTaskId, stage, level, message string, payload an
 		Message:        truncateText(message, taskLogMessageLimit),
 	}
 	if payload != nil {
-		if encoded, err := common.Marshal(payload); err == nil {
-			entry.Payload = truncateText(string(encoded), taskLogPayloadLimit)
-		} else {
-			entry.Payload = fmt.Sprintf(`{"marshal_error":%q}`, err.Error())
-		}
+		entry.Payload = encodeTaskLogPayload(payload)
 	}
 	if err := DB.Create(entry).Error; err != nil {
 		common.SysError("add task log failed: " + err.Error())
@@ -130,6 +126,44 @@ func DeleteTaskLogsBefore(beforeTimestamp int64, batchSize int) (int64, error) {
 			return total, nil
 		}
 	}
+}
+
+// encodeTaskLogPayload 把快照序列化成**合法 JSON** 字符串。
+//
+// 不能直接对序列化结果按长度截断：JSON 是结构化文本，从中间切一刀就成了
+// 非法 JSON，`payload::jsonb` 之类的查询会直接报错（生产实测 381 条提交快照里
+// 有 18 条因此不可解析）。超限时逐级降级，但**每一级输出都仍是合法 JSON**。
+func encodeTaskLogPayload(payload any) string {
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf(`{"marshal_error":%q}`, err.Error())
+	}
+	if len(encoded) <= taskLogPayloadLimit {
+		return string(encoded)
+	}
+	// 一级降级：提示词是快照里最大的字段，先砍它，其余（media/渠道/计费）全留。
+	if fields, ok := payload.(map[string]any); ok {
+		trimmed := make(map[string]any, len(fields)+1)
+		for key, value := range fields {
+			trimmed[key] = value
+		}
+		if prompt, ok := trimmed["prompt"].(string); ok {
+			trimmed["prompt"] = truncateText(prompt, 200)
+			trimmed["prompt_truncated"] = true
+		}
+		if slim, marshalErr := common.Marshal(trimmed); marshalErr == nil && len(slim) <= taskLogPayloadLimit {
+			return string(slim)
+		}
+	}
+	// 二级降级：仍然超限（多半是内联 base64 媒体），只留体积信息，保证可解析。
+	fallback, marshalErr := common.Marshal(map[string]any{
+		"truncated":      true,
+		"original_bytes": len(encoded),
+	})
+	if marshalErr != nil {
+		return `{"truncated":true}`
+	}
+	return string(fallback)
 }
 
 func truncateText(value string, limit int) string {

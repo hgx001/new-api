@@ -37,6 +37,8 @@
 
 - 异步任务在**提交成功、每次提交失败（含重试）、状态迁移、后处理阶段**各写一行 `task_logs`（`stage/level/message/payload`），保留30天，由轮询入口每天清一次；不记每轮轮询原文，避免表失控。
 - 查法：`GET /api/task/logs?task_id=...`（或 `upstream_task_id=...`），仅管理员；也可直接查库。`payload.media` 存客户端原始URL，用来回答“参考图到底有没有随请求发出去”。
+- `payload.media_fields` 记请求里**出现过哪些**媒体字段（`media`/`images`/`image`/`input_reference`，各几条），`payload.media_types` 按类型汇总。判断“图没发出去”时必须看 `media_fields`：只看 `media` 分不清“客户端没传图”和“传了但被另一个字段挡住”。（2026-11-02 的丢图故障就是靠这两个字段之外的旁证才定性的。）
+- `media` 与 legacy 字段（`images`/`image`/`input_reference`）现在是**合并**关系，不再是“media 非空就跳过 legacy”。首帧/尾帧与参考类素材仍然互斥，矛盾入参返回 400 而不是静默择一。
 - 参考图在**建单前**做可达性探测（HEAD→Range GET，判 content-type 与图片魔数），失败直接400 `invalid_input_reference`，不建单不预扣。
 - **图片 URL 在建单前会被代下载转存**（2026-11-01）：网关把公网图片拉下来转存到自家 staging 暂存图床，再把自家地址交给上游。上游是“直传URL、生成时下载”模式，探测只证明“**网关**能打开”，不证明“**上游机房**能打开”——客户用境外图床时探测能过、上游却拉不到，任务会在生成阶段以 `Failed to download` 失败。转存后上游不再碰客户的图床。
   - 转存在**预扣费之前**完成，失败即拒单，不会出现「先扣后退」的抖动。

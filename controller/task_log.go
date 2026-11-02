@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -62,6 +63,18 @@ func buildTaskSubmitSnapshot(c *gin.Context, info *relaycommon.RelayInfo, quota 
 	}
 	if media := collectRequestMedia(req); len(media) > 0 {
 		snapshot["media"] = media
+		// 按类型汇总，便于用一条 LIKE 就回答「这次到底带没带图」，
+		// 不必再解析整个 media 数组。
+		if summary := mediaTypeSummary(media); len(summary) > 0 {
+			snapshot["media_types"] = summary
+		}
+	}
+	// 请求里**出现过**哪些媒体字段。必须单独记：适配器按 media > images >
+	// image > input_reference 取第一个非空的，其余会被静默忽略。只记生效的那份，
+	// 事后就无法区分「客户端没传图」和「传了但被 media 挡住」—— 2026-11-02 排查
+	// 任务 1194 时就卡在这里。
+	if fields := requestMediaFields(req); len(fields) > 0 {
+		snapshot["media_fields"] = fields
 	}
 	if req.Metadata != nil {
 		snapshot["metadata_keys"] = metadataKeys(req.Metadata)
@@ -69,28 +82,81 @@ func buildTaskSubmitSnapshot(c *gin.Context, info *relaycommon.RelayInfo, quota 
 	return snapshot
 }
 
+// mediaTypeSummary 统计各媒体类型的数量，例如 {"image":3,"reference_audio":2}。
+func mediaTypeSummary(media []map[string]string) map[string]int {
+	summary := make(map[string]int, len(media))
+	for _, item := range media {
+		summary[item["type"]]++
+	}
+	return summary
+}
+
+// requestMediaFields 记录请求实际带了哪些媒体字段（只记字段名与条数）。
+func requestMediaFields(req relaycommon.TaskSubmitReq) map[string]int {
+	fields := make(map[string]int, 4)
+	if len(req.Media) > 0 {
+		fields["media"] = len(req.Media)
+	}
+	if len(req.Images) > 0 {
+		fields["images"] = len(req.Images)
+	}
+	if strings.TrimSpace(req.Image) != "" {
+		fields["image"] = 1
+	}
+	if strings.TrimSpace(req.InputReference) != "" {
+		fields["input_reference"] = 1
+	}
+	return fields
+}
+
 // collectRequestMedia 把三种入参形态（media / images / image）统一成
 // [{type,url}]，与适配器 buildMedia 的优先级保持一致。
 func collectRequestMedia(req relaycommon.TaskSubmitReq) []map[string]string {
 	media := make([]map[string]string, 0, len(req.Media)+len(req.Images)+1)
 	for _, item := range req.Media {
-		media = append(media, map[string]string{"type": item.Type, "url": item.URL})
+		media = append(media, map[string]string{"type": item.Type, "url": compactMediaURL(item.URL)})
 	}
 	if len(media) > 0 {
 		return media
 	}
 	for _, url := range req.Images {
 		if strings.TrimSpace(url) != "" {
-			media = append(media, map[string]string{"type": "image", "url": url})
+			media = append(media, map[string]string{"type": "image", "url": compactMediaURL(url)})
 		}
 	}
 	if len(media) == 0 && strings.TrimSpace(req.Image) != "" {
-		media = append(media, map[string]string{"type": "image", "url": req.Image})
+		media = append(media, map[string]string{"type": "image", "url": compactMediaURL(req.Image)})
 	}
 	if len(media) == 0 && strings.TrimSpace(req.InputReference) != "" {
-		media = append(media, map[string]string{"type": "input_reference", "url": req.InputReference})
+		media = append(media, map[string]string{"type": "input_reference", "url": compactMediaURL(req.InputReference)})
 	}
 	return media
+}
+
+// compactMediaURL 把内联 base64 媒体压成可读摘要。
+//
+// 为什么必须压：部分客户端直接传 `data:image/png;base64,...`，单条可达数 MB。
+// 原样落库有两个后果 —— 一是把表撑爆，二是快照被 16KB 上限截断成**非法 JSON**
+// （实测 381 条提交快照里 18 条如此，`payload::jsonb` 直接报错）。
+//
+// 压成摘要反而更好用：既能看出「确实是内联图」，又能看到体积与格式，
+// 还保留了「这张图根本没上过 CDN」这个关键信息。
+func compactMediaURL(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "data:") {
+		return trimmed
+	}
+	comma := strings.IndexByte(trimmed, ',')
+	if comma < 0 {
+		return "data:<malformed>"
+	}
+	header := trimmed[:comma]
+	payload := trimmed[comma+1:]
+	if strings.HasSuffix(strings.ToLower(header), ";base64") {
+		// base64 每 4 字符还原 3 字节，不必解码整段。
+		return fmt.Sprintf("%s,<%d bytes>", header, len(payload)*3/4)
+	}
+	return fmt.Sprintf("%s,<%d chars>", header, len(payload))
 }
 
 func metadataKeys(metadata map[string]any) []string {
