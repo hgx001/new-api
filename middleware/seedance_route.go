@@ -160,6 +160,9 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		if seedanceroute_setting.IsFramesRouteEnabled() && hasFrameMedia(body) {
 			if newBody, routed := prepareFramesRoute(c, body, policy); routed {
 				if applyRewrittenBody(c, newBody, policy.SourceModel) {
+					logger.LogInfo(c, fmt.Sprintf(
+						"条件路由：命中首尾帧，改派 %s → %s",
+						policy.SourceModel, policy.FramesTargetModel))
 					c.Next()
 					return
 				}
@@ -174,6 +177,12 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
 						// 把判定命中的秒数记下来，交给 relay_task.go 补进 OtherRatios。
 						common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
+						// 这条日志是排查「请求到底被哪条规则改派」的唯一凭据：
+						// 规则一和规则四的目标模型是同一条豆包链路，改派后下游现象一致，
+						// 不打日志就分不清是「30 秒」还是「提示词超长」触发的。
+						logger.LogInfo(c, fmt.Sprintf(
+							"条件路由：命中时长 %d 秒，改派 %s → %s",
+							seconds, policy.SourceModel, policy.TargetModel))
 						c.Next()
 						return
 					}
@@ -215,6 +224,9 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			if matchesTriggerRatio(body, policy.TriggerRatio) {
 				if newBody, routed := prepareWan3Route(c, body, policy); routed {
 					if applyRewrittenBody(c, newBody, policy.SourceModel) {
+						logger.LogInfo(c, fmt.Sprintf(
+							"条件路由：命中比例 %s，改派 %s → %s",
+							policy.TriggerRatio, policy.SourceModel, policy.RatioTargetModel))
 						c.Next()
 						return
 					}
