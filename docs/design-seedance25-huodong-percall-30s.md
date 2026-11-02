@@ -835,7 +835,7 @@ constant.Seedance25PerCallFixedResolution = "720P"
 > 改成派生后会匹配失败。已升级为**沿派生链追溯**到 `constant` 包的最终值 ——
 > 校验的仍是后端真正生效的数字，不是某个副本。
 
-### 11.5 变异验证清单（M1 — M34，全部被抓住）
+### 11.5 变异验证清单（M1 — M35，全部被抓住）
 
 | 编号 | 变异 | 被哪个测试抓住 |
 |---|---|---|
@@ -865,6 +865,7 @@ constant.Seedance25PerCallFixedResolution = "720P"
 | M32 | `middleware.perCallFixedTierSeconds` 退回手写字面量 | 前端「单一来源」守卫变红 |
 | M33 | `middleware.perCallFixedTierSeconds` 30 → 25 | Go 侧常量守卫变红 |
 | M34 | 归一写入值改成 5 秒（错交付）| Go 侧归一行为守卫变红 |
+| M35 | `IsSourceModel` 忽略 `SourceModels` 多值数组 | 3 个生产配置 E2E 测试变红（详见 12.10.3）|
 
 > **M26 与 M29 的教训**：第一次写变异时出现了**假绿** ——
 > M26 的用例只覆盖了「倍率还没产生」的阶段，没覆盖「倍率已经存在时的应用步骤」；
@@ -1103,6 +1104,77 @@ OK: web/classic/dist/index.html = 1485 字节
 | `TASK_PRICE_PATCH` 环境变量 | 已非代码必需（代码层三重隔离）。按运维口径决定是否同步加入活动版并重启容器 |
 | 磁盘 90%（40G 剩 4.1G）| 已回收 2.37GB build cache。建议后续加定期清理 |
 | 前端格式化产生的未提交改动 | 28 个 web 文件（17:48 修改，早于本次部署），是 prettier 风格重排，与活动版需求无关，**未混入本次提交** |
+
+### 12.10 活动版路由能力的实测确认（2026-11-02 21:30）
+
+用户问「`seedance2.5-活动` 这个有路由能力的是吧」。以下为**实测**结论，非凭印象推断。
+
+#### 12.10.1 生产库真实配置（SSH 到生产机实查）
+
+```json
+{
+  "enabled": true,
+  "source_model": "seedance2.5-特惠",
+  "source_models": ["seedance2.5-特惠", "seedance2.5-活动"],
+  "target_model": "seedance-2-5",
+  "trigger_ratio": "9:16",
+  "trigger_seconds": 30,
+  "ratio_target_model": "wan3.0-720p-特惠",
+  "frames_target_model": "wan3.0-720p-特惠"
+}
+```
+
+`abilities` 表中活动版与母本参数**完全一致**（`enabled=t` / `priority=10` / `weight=0`）。
+
+#### 12.10.2 两层测试（已入库，commit `8f623b491`）
+
+| 层次 | 文件 | 用例数 | 结果 |
+|---|---|---|---|
+| 配置层 | `setting/seedanceroute_setting/prod_e2e_huodong_test.go` | 2 | ✅ PASS |
+| 中间件层 | `middleware/seedance_route_prod_e2e_test.go` | 5 | ✅ PASS |
+
+配置层验证 `IsSourceModel` 命中活动版 + 四条规则各自就位；
+中间件层用**生产真实配置**走完整条条件路由中间件，验证活动版**真的被改派**（不只是配置层判定）：
+
+```text
+[INFO] 条件路由：命中时长 30 秒，改派 seedance2.5-活动 → seedance-2-5
+[INFO] 条件路由：命中时长 30 秒，改派 seedance2.5-特惠 → seedance-2-5
+[INFO] 条件路由：按次固定档模型 seedance2.5-活动 的时长不是 30 秒，放弃路由（保持源链路 fail-loud 门控）
+```
+
+#### 12.10.3 变异验证 M35（补充到 11.5 清单之后）
+
+| 编号 | 变异点 | 期望 | 实测 |
+|---|---|---|---|
+| M35 | 删除 `IsSourceModel` 里的 `SourceModels` 循环，使多值数组被忽略 | 活动版路由能力测试应 FAIL | ✅ **3 项 FAIL**，全部被抓住 |
+
+变异后失败的用例及报错：
+
+```text
+FAIL  TestProdOption_活动版命中源模型判定
+      Messages: 活动版必须命中 —— 它是促销档，必须共享母本的整套路由规则
+FAIL  TestProdPolicy_活动版30秒请求被改派
+      seedance_route_prod_e2e_test.go:52: 活动版的 30 秒请求没有被改派（model=seedance2.5-活动）
+FAIL  TestProdPolicy_活动版不传时长归一成30秒并命中
+      seedance_route_prod_e2e_test.go:81: 活动版不传时长时没有被改派（model=seedance2.5-活动）
+```
+
+变异源码已用 `git checkout --` 还原，重跑 7 项用例全绿，
+`go test ./setting/seedanceroute_setting/ ./middleware/ ./constant/` 三个包完整回归通过。
+
+#### 12.10.4 结论
+
+**活动版 `seedance2.5-活动` 具备完整路由能力，四条规则全部继承母本 `seedance2.5-特惠`**：
+
+| 规则 | 触发条件 | 活动版是否生效 |
+|---|---|---|
+| 一（时长）| `seconds == 30` → `seedance-2-5`（漫屋）| ✅ 生效 |
+| 二（比例）| `ratio == "9:16"` → `wan3.0-720p-特惠` | ✅ 生效 |
+| 三（首尾帧）| media 含 `first_frame`/`last_frame` → `wan3.0-720p-特惠` | ✅ 生效（但见 11.9 成本倒挂）|
+| 四 | 跟随 `Enabled` 开关 | ✅ 生效 |
+
+> ⚠️ 规则三对活动版存在**成本倒挂**：30 秒 + 首尾帧走 `wan3.0-720p-特惠`（¥0.20/秒 → 成本 ¥6.20），
+> 高于活动版售价 ¥4.50，每单亏 ¥1.70（约 -38%）。该项**未处置**，等老板在 11.9 节的 A/B/C/D 方案中拍板。
 
 ---
 
