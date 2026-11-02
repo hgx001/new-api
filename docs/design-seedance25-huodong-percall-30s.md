@@ -1178,3 +1178,128 @@ FAIL  TestProdPolicy_活动版不传时长归一成30秒并命中
 
 ---
 
+## 13. 安全事件复盘：121.199.14.45「入侵」误判与自愈（2026-11-02 22:28 – 23:22）
+
+> 本节与活动版业务逻辑无关，是同一天发生的一次生产机安全处置的完整复盘。
+> 记录它是因为：**处置过程里有一次真实的自伤**，以及三个容易重复踩的坑。
+
+### 13.1 事件经过（时间线）
+
+| 时间 | 事件 |
+|---|---|
+| 2026-10-11 18:31 | 45 上生成隧道专用私钥 `/root/.ssh/pwmcp_tunnel`（指纹 `3/zGdGpw1gA`）|
+| 2026-10-11 18:32:03 | 公钥加入生产机 `authorized_keys`（注释 `langdu-mcp-tunnel`）|
+| 2026-10-11 18:32:10 | 45 用该密钥登录生产机成功（**这是正常的隧道首连**）|
+| 2026-10-11 18:33–18:47 | 当天共 4 次登录，其中 2 次持续 6~7 分钟 |
+| 2026-11-02 22:28:25 | 45 第 5 次登录成功，**指纹正是隧道私钥** |
+| 2026-11-02 22:40 | 登录审计发现该 IP 出现在「今日登录来源」中，**初次判定为可疑** |
+| 2026-11-02 22:45:26 | 按入侵处置：iptables INPUT + DOCKER-USER 双链 DROP、摘除公钥、SSH 加固 |
+| 2026-11-02 23:10 | 取证发现 45 上 `pwmcp-tunnel.service` 存在，私钥指纹与被摘公钥**完全一致** |
+| 2026-11-02 23:16–23:22 | 解除 DROP、以受限公钥恢复隧道、对 45 做 SSH 加固、清理 `perfcc` 空转 cron |
+
+### 13.2 结论：45 不是入侵者，是用户自己的隧道对端
+
+判定依据（三条独立证据交叉印证）：
+
+1. **指纹对得上**：45 的 `/root/.ssh/pwmcp_tunnel` 私钥指纹 = `SHA256:3/zGdGpw1gA/Utr0orFzLyCzcHQ7uUncnsq1+eJ/+Tw`
+   = 生产机被摘掉的那把公钥指纹。指纹一致 = 同一密钥对，不可能伪造。
+2. **时间顺序是部署顺序**：私钥创建 `18:31` → 公钥加入生产机 `18:32:03` → 首次登录 `18:32:10`。
+   间隔 1 分钟，符合「先生成密钥、随即分发公钥、随即建隧道」的人工操作序列，
+   而不是「入侵者拿到密钥后择机登录」。
+3. **45 上有用户自己写的服务单元** `/etc/systemd/system/pwmcp-tunnel.service`，
+   注释里明确写着技术决策原因（`@playwright/mcp` 的 HTTP 模式没有鉴权选项，
+   所以用隧道而不是公网直连），并写明「生产机生成专用密钥，公钥加到网关机 ubuntu 用户」。
+
+### 13.3 坑一：`restrict` 并不禁止命令执行
+
+第一版受限公钥写成：
+
+```
+restrict,port-forwarding,permitopen="127.0.0.1:8931" ssh-ed25519 AAAA... langdu-mcp-tunnel
+```
+
+实测用该私钥执行 `ssh ... 'echo SHELL_OK; id'` → **成功拿到 `uid=1000(ubuntu)` shell**。
+
+`restrict` 的真实语义是**关闭转发与终端功能**（no-pty / no-agent-forwarding / no-X11-forwarding /
+no-user-rc），但**不禁止执行命令**。加 `command=""` 之后才彻底封死：
+
+```
+restrict,port-forwarding,permitopen="127.0.0.1:8931",command="" ssh-ed25519 AAAA... langdu-mcp-tunnel
+```
+
+复测：`echo SHELL_OK; id` **无任何输出**，而隧道 `curl 127.0.0.1:8931` 仍返回 HTTP 400（通）。
+
+> 这条很关键：生产机的 `ubuntu ALL=(ALL) NOPASSWD: ALL` 意味着**任何一把 authorized_keys 钥匙
+> 都是 root 等效权限**。所以隧道钥匙必须用 `command=""` 把 shell 彻底堵死。
+
+### 13.4 坑二：iptables DROP 会静默掐断自己的隧道
+
+现象：解除公钥后，45 侧隧道日志报的是
+
+```
+ssh: connect to host 119.29.253.97 port 877: Connection timed out
+```
+
+**不是** `Permission denied (publickey...)`。这个差别就是「误伤」与「真被拒」的分界：
+
+| 报错 | 含义 |
+|---|---|
+| `Connection timed out` | 流量被防火墙静默丢弃 → 打到本机自己的 DROP 规则上了 |
+| `Permission denied (publickey...)` | 报文到达 sshd，认证被拒 → 才是公钥被摘掉的表现 |
+
+处置过程：22:45 摘公钥时隧道先报 `Permission denied`（正常），
+22:45:26 加上 DROP 后就变成 `Connection timed out`（被自己的规则挡了）。
+DROP 规则在 45 秒采样内从 90 涨到 91，证实是持续命中。
+
+**教训**：拉黑一个 IP 前，必须先确认它不是自己的基础设施对端。
+如果确实要拉黑，应该用 `DROP` 之外的方式（如只挡 22 端口、保留业务端口），
+或者在加规则时同步把白名单加进去。
+
+### 13.5 坑三：sshd 是 first-obtained wins，两台机器的坑还不一样
+
+`man sshd_config` 明确说明：**同一参数多次出现时，取最先读到的值**，不是最后一个。
+
+| 机器 | 结构 | 坑在哪 | 正确改法 |
+|---|---|---|---|
+| 生产机 119.29.253.97 | `sshd_config` 第 12 行有 `Include /etc/ssh/sshd_config.d/*.conf`；`50-cloud-init.conf` 里有 `PasswordAuthentication yes` | `50-` 字典序靠前，**覆盖**了 `99-hardening.conf` 的 `no` | 同时注释掉 `50-cloud-init.conf` 和 `sshd_config` 里的 `yes` |
+| 45 号机 121.199.14.45 | CentOS 7，**没有** `sshd_config.d/` 目录，`Include` 机制不存在；`PermitRootLogin yes` 在**第 38 行和第 141 行各出现一次** | 改第 141 行完全无效，第 38 行才是生效的那处 | 改第 38 行 → `prohibit-password`，并注释第 141 行 |
+
+生产机最终 `sshd -T`：`passwordauthentication no` / `permitrootlogin no` / `maxauthtries 3` / `allowusers ubuntu`。
+45 号机最终 `sshd -T`：`passwordauthentication no` / `permitrootlogin without-password` / `maxauthtries 3` / `logingracetime 30`。
+
+> ⚠️ 45 上**不能用** `PermitRootLogin no`：运维入口就是 `root@121.199.14.45` 的密钥登录，
+> 写成 `no` 会当场切断唯一通道，只能走阿里云 VNC 救援。
+> `prohibit-password`（= `without-password`）才是正确取值 —— 允许 root 用密钥，禁 root 用密码。
+
+### 13.6 处置后的最终状态
+
+| 项目 | 生产机 119.29.253.97 | 45 号机 121.199.14.45 |
+|---|---|---|
+| authorized_keys | 12 → 11 → 9 → **10**（含 1 把受限隧道钥匙）| 7 把（3 把 `github-actions` 未使用过）|
+| 密码登录 | 已禁 | 已禁 |
+| root 直登 | 已禁（`permitrootlogin no`）| 禁密码、留密钥（`prohibit-password`）|
+| MaxAuthTries | 3 | 3 |
+| iptables 对 45 | **已解除**（误伤）| — |
+| 隧道 | `127.0.0.1:8931` → HTTP 400 ✅ | `active`，HTTP 400 ✅ |
+| 隧道钥匙 shell | **被拒**（`command=""`）| — |
+| 隧道钥匙转发范围 | 仅 `127.0.0.1:8931`（`permitopen`）| — |
+| `perfcc` 空转 cron | — | **已清理**（脚本本就不存在，只留两条每小时空跑条目）|
+| 业务健康 | `api.heibaidao.cn/api/status` → **HTTP 200** | — |
+
+已归档脚本：
+
+- `scripts/harden-ssh-tunnel-key-incident.sh` —— 解除误伤 + 写入受限隧道公钥 + 校验
+- `scripts/harden-peer-ssh-45.sh` —— 45 号机 SSH 加固（含「不能写 `no`」的锁死防护）
+
+### 13.7 遗留待办
+
+1. **轮换腾讯云 SecretKey** —— `REDACTED_SECRET_ID` / `REDACTED_SECRET_KEY`
+   已进入对话记录与 shell 历史，必须作废重发。
+2. **45 上 3 把 `github-actions` 私钥长期驻留** —— 虽然从未被使用过，但私钥在磁盘上就有泄露风险。
+3. **生产机 9 把业务钥匙中多数从未使用过** —— 建议出「指纹 ↔ 猜测来源 ↔ 本机是否有私钥」对照表，
+   由老板逐个确认是否摘除。
+4. **磁盘 90%**（40G 剩 3.9G）—— 需要定期清理。
+5. **规则三成本倒挂** —— 等老板在 11.9 节的 A/B/C/D 方案中拍板。
+
+---
+
