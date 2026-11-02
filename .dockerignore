@@ -9,7 +9,9 @@ docs
 .gocache
 /web/node_modules
 /web/default/node_modules
-/web/default/dist
 /web/classic/node_modules
-/web/classic/dist
+# 前端 dist **不排除**：Dockerfile.deploy（跳过前端构建的轻量路径）要靠宿主机
+# 现成的产物来 embed。主 Dockerfile 用 COPY --from=builder 覆盖它，不受影响。
+# 反过来若在这里排除，Dockerfile.deploy 就只剩占位文件可用 —— 那正是 2026-11-02
+# 两次白屏上线的成因。
 !THIRD-PARTY-LICENSES.md

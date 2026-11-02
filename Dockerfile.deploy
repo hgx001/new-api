@@ -15,9 +15,28 @@ ADD go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN mkdir -p web/default/dist web/classic/dist && \
-    echo '<!doctype html>' > web/default/dist/index.html && \
-    echo '<!doctype html>' > web/classic/dist/index.html
+# 本 Dockerfile 跳过前端构建（磁盘/时间受限时用），前端产物必须由宿主机提供。
+#
+# 这里曾经用 `echo '<!doctype html>' > .../index.html` 写占位文件糊过去，
+# 后果是产出的镜像前端白屏：构建"成功"、健康检查也过（/api/status 返回 200）、
+# 只有用户打开页面才发现一片空白。2026-11-02 因此两次误上线（12:39、12:50）。
+#
+# 现在改成硬校验：产物缺失或小得可疑就直接让构建失败，
+# 宁可构建不过，也不能再产出白屏镜像。
+RUN set -e; \
+    for d in web/default/dist web/classic/dist; do \
+      f="$d/index.html"; \
+      if [ ! -s "$f" ]; then \
+        echo "ERROR: 缺少 $f —— 请先构建前端，或从现有镜像提取产物后再构建"; \
+        exit 1; \
+      fi; \
+      size=$(wc -c < "$f"); \
+      if [ "$size" -le 200 ]; then \
+        echo "ERROR: $f 只有 $size 字节，疑似占位文件，拒绝产出白屏镜像"; \
+        exit 1; \
+      fi; \
+      echo "OK: $f = $size 字节"; \
+    done
 RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
 FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
