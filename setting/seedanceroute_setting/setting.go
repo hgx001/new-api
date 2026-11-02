@@ -38,19 +38,26 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 
 // Policy 是条件路由策略。
 //
-// 目前有**三条独立规则**，共用 Enabled 总开关与 SourceModel：
+// 目前有**四条独立规则**，共用 Enabled 总开关与 SourceModel：
 //
 //	规则三（首尾帧）：SourceModel + media 含 first_frame/last_frame → FramesTargetModel
 //	               seedance2.5-特惠 + 首尾帧 → wan3.0-720p-特惠
 //	规则一（时长）：SourceModel + TriggerSeconds 秒 → TargetModel
 //	               seedance2.5-特惠 + 30 秒 → seedance-2-5（豆包按次 ¥5.00）
+//	规则四（长提示词）：SourceModel + 提示词 > 5000 字符 → TargetModel
+//	               seedance2.5-特惠 + 超长提示词 → seedance-2-5
 //	规则二（比例）：SourceModel + TriggerRatio 比例 → RatioTargetModel
 //	               seedance2.5-特惠 + 9:16 → wan3.0-720p-特惠（¥0.20/秒）
 //
-// **优先级：规则三最先判，然后规则一，最后规则二。**
+// **优先级：规则三最先判，然后规则一、规则四，最后规则二。**
 //
 //	规则一/二之间：老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」，
 //	  即 30 秒 + 9:16 走豆包，只有非 30 秒的 9:16 才走 wan3。
+//
+//	规则四为什么和规则一共用 TargetModel 与暂停窗口：两者的目标链路是同一条
+//	  豆包链路、同一份额度。额度用完时规则一会被自动暂停，规则四必须一起停 ——
+//	  否则暂停期间超长提示词照样打过去、照样失败。也因为这个原因，规则四
+//	  **没有独立的开关字段**：它跟着 IsEnabled() 走。
 //
 //	规则三为什么必须排在最前：源链路（youzan wan3）**已经彻底不收首尾帧**
 //	  （2026-10-28 上游取消 firstFrameAssetId/lastFrameAssetId），带首尾帧的请求
@@ -58,7 +65,7 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 //	  所以「带首尾帧」的请求只有 wan3 直连能跑，这个约束优先级高于时长/比例
 //	  的成本优化 —— 否则 30 秒的首尾帧请求会被规则一改派到漫屋，直接失败。
 //
-// ⚠️ 规则二/三的字段**全部 omitempty 且可为空**：旧的生产 option JSON 里没有它们，
+// ⚠️ 规则二/三/四的字段**全部 omitempty 且可为空**：旧的生产 option JSON 里没有它们，
 // 解析后为空 → 对应规则不生效 → 行为与改造前逐字节一致。这是硬要求，
 // 因为改这份配置的人不一定同步改 SQL。
 type Policy struct {
