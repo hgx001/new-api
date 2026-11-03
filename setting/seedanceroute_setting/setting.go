@@ -126,8 +126,91 @@ type Policy struct {
 	// PauseReason 是自动暂停的原因文案，给前端直接展示（人工暂停时为空）。
 	PauseReason string `json:"pause_reason,omitempty"`
 
+	// SourceOverrides 是**按源模型分别配置**的目标模型覆盖（2026-11-03 起）。
+	//
+	// 为什么需要：source_models 是一个列表，四条规则**共用同一套目标模型**。
+	// 但促销族的两个成员需要不同的兜底链路：
+	//
+	//	seedance2.5-特惠（母本，按秒 ¥0.20/秒）→ 30 秒走豆包 seedance-2-5（成本 ≈ ¥0）
+	//	seedance2.5-活动（按次 ¥4.5/次）       → 30 秒走心笔 wan3.0-720p-按次
+	//
+	// 两者**不能共用目标模型**：母本按秒计价，活动版按次计价，
+	// 目标链路的计费口径与能力都不同（心笔是固定 30 秒按次，
+	// 豆包是 5/10/15/30 四档按次）。
+	//
+	// 只改 option 做不到这一点 —— 改了必然同时改到另一个成员。
+	// 所以这里加一层「按源模型覆盖」：未覆盖的源模型继续用公共字段，
+	// 行为与改造前逐字节一致。
+	SourceOverrides map[string]SourceOverride `json:"source_overrides,omitempty"`
+
 	// UpdatedAt 最近一次修改的 Unix 时间戳，0 表示从未改过。
 	UpdatedAt int64 `json:"updated_at"`
+}
+
+// SourceOverride 是「按源模型分别配置」的目标模型覆盖。
+//
+// 语义：**只覆盖非空字段**。空字段 = 沿用 Policy 上的公共字段。
+// 这样配一条「只改时长目标」的覆盖不会把比例/首尾帧目标清空。
+type SourceOverride struct {
+	// TargetModel 覆盖规则一（时长）的目标模型。
+	TargetModel string `json:"target_model,omitempty"`
+	// RatioTargetModel 覆盖规则二（比例）的目标模型。
+	RatioTargetModel string `json:"ratio_target_model,omitempty"`
+	// FramesTargetModel 覆盖规则三（首尾帧）的目标模型。
+	FramesTargetModel string `json:"frames_target_model,omitempty"`
+}
+
+// targetFor 返回「这个源模型实际生效的目标模型名」。
+//
+// 三级回落：源模型专属覆盖 → 公共字段 → 空串。
+// 为什么要三级：源模型专属覆盖只覆盖它配了的字段（比如只配了 TargetModel），
+// 没配的字段仍要用公共值 —— 否则「只给活动版换时长兜底」会把比例规则
+// 一起关掉，那是配置外的副作用。
+//
+// ⚠️ 覆盖表的键也要 Trim：配置里的 " seedance2.5-活动 " 与请求里的
+// "seedance2.5-活动" 必须匹配得上 —— 生产上真出现过带空格的模型名
+// （model/log.go 里记着同一个事故），配置侧和请求侧都要 Trim。
+func (p Policy) targetFor(sourceModel, field string) string {
+	trimmed := trimModelName(sourceModel)
+	if trimmed == "" {
+		return ""
+	}
+	override, ok := p.SourceOverrides[trimmed]
+	if !ok {
+		// 兜底：配置里的键带空格时也能命中。
+		for key, value := range p.SourceOverrides {
+			if trimModelName(key) == trimmed {
+				override = value
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return ""
+		}
+	}
+	switch field {
+	case fieldTarget:
+		return override.TargetModel
+	case fieldRatio:
+		return override.RatioTargetModel
+	case fieldFrames:
+		return override.FramesTargetModel
+	}
+	return ""
+}
+
+// 三条规则的字段名。用常量而不是裸字符串，避免调用点写错字段名后
+// 静默取到空值（那会让规则「配了却不生效」，且没有任何报错）。
+const (
+	fieldTarget = "target_model"
+	fieldRatio  = "ratio_target_model"
+	fieldFrames = "frames_target_model"
+)
+
+// trimModelName 去掉首尾空格，与 IsSourceModel 的口径保持一致。
+func trimModelName(name string) string {
+	return strings.TrimSpace(name)
 }
 
 // defaultPolicy 与「不做这个路由」等价：开关关、模型名为空。
@@ -194,6 +277,9 @@ func WithSecondsRulePausedUntil(until int64) Policy {
 //
 // 「源模型名」可以是单值（source_model）或多值（source_models），任一非空即算配了。
 //
+// 「目标模型名」既可以是公共字段，也可以由 source_overrides 按源模型单独配置 ——
+// 只要**至少有一个源模型**能配全某条规则，整条策略就算配全。
+//
 // 一条都没配全就当作没开（Enabled 置 false）—— 宁可不开也不要半开，
 // 半开的状态（比如 target_model 为空）会把请求改写成一个空模型名，线上直接全挂。
 func UpdateFromJSONString(jsonStr string) error {
@@ -202,7 +288,7 @@ func UpdateFromJSONString(jsonStr string) error {
 		return err
 	}
 	if parsed.Enabled {
-		if !secondsRuleReady(parsed) && !ratioRuleReady(parsed) && !framesRuleReady(parsed) {
+		if !parsed.anyRuleReady() {
 			parsed.Enabled = false
 		}
 	}
@@ -210,6 +296,39 @@ func UpdateFromJSONString(jsonStr string) error {
 	defer mu.Unlock()
 	current = parsed
 	return nil
+}
+
+// anyRuleReady 判断「至少有一条规则对至少一个源模型配全」。
+//
+// 为什么要按源模型逐个判：策略改成按源模型分别配置后，
+// 公共字段可能全空（每个源模型各有各的目标），
+// 只看公共字段会误判成「一条都没配全」而把路由整个关掉。
+func (p Policy) anyRuleReady() bool {
+	for _, source := range p.allSourceModels() {
+		if secondsRuleReadyFor(p, source) || ratioRuleReadyFor(p, source) || framesRuleReadyFor(p, source) {
+			return true
+		}
+	}
+	return false
+}
+
+// allSourceModels 返回策略涉及的全部源模型名（单值 + 多值，去重去空）。
+func (p Policy) allSourceModels() []string {
+	out := make([]string, 0, len(p.SourceModels)+1)
+	seen := make(map[string]bool, len(p.SourceModels)+1)
+	appendName := func(name string) {
+		trimmed := trimModelName(name)
+		if trimmed == "" || seen[trimmed] {
+			return
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	appendName(p.SourceModel)
+	for _, name := range p.SourceModels {
+		appendName(name)
+	}
+	return out
 }
 
 // IsEnabled 判断「规则一（时长）」当前是否生效。
@@ -246,12 +365,55 @@ func IsFramesRouteEnabled() bool {
 //
 // 中间件早退必须用这个，不能用 IsEnabled —— 只配了比例/首尾帧规则时
 // IsEnabled 是 false，用它会直接跳过整个中间件，那两条规则永远不生效。
+//
+// 也要考虑按源模型单独配置的规则：公共字段全空、每个源模型各有目标时，
+// 只看公共字段会误判成「没有规则生效」，把中间件整个跳过。
 func IsAnyRouteEnabled() bool {
 	mu.RLock()
 	defer mu.RUnlock()
-	return secondsRuleActive(current, nowUnix()) ||
+	if secondsRuleActive(current, nowUnix()) ||
 		ratioRuleReady(current) ||
-		framesRuleReady(current)
+		framesRuleReady(current) {
+		return true
+	}
+	for _, source := range current.allSourceModels() {
+		if secondsRuleActiveFor(current, source, nowUnix()) ||
+			ratioRuleReadyFor(current, source) ||
+			framesRuleReadyFor(current, source) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSecondsRuleEnabledFor 判断「规则一（时长）对某个源模型是否生效」。
+//
+// 与 IsEnabled 的区别：目标模型名按**源模型**取。
+// 活动版专属覆盖了 TargetModel（指向心笔按次）时，规则一对活动版生效、
+// 对母本仍走原来的豆包 —— 两者的「是否生效」可以不同。
+//
+// 不受 SecondsRulePausedUntil 影响：暂停的是「按时长改派到豆包」这一条，
+// 与「按比例改派到 wan3」是两件独立的事。
+func IsSecondsRuleEnabledFor(sourceModel string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return secondsRuleActiveFor(current, sourceModel, nowUnix())
+}
+
+// IsRatioRouteEnabledFor 判断「规则二（比例）对某个源模型是否生效」。
+// 目标模型名按源模型取。
+func IsRatioRouteEnabledFor(sourceModel string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return ratioRuleReadyFor(current, sourceModel)
+}
+
+// IsFramesRouteEnabledFor 判断「规则三（首尾帧）对某个源模型是否生效」。
+// 目标模型名按源模型取。
+func IsFramesRouteEnabledFor(sourceModel string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return framesRuleReadyFor(current, sourceModel)
 }
 
 // IsSecondsRulePaused 报告规则一当前是否处于暂停期。
@@ -275,6 +437,21 @@ func secondsRuleReady(p Policy) bool {
 	return p.Enabled &&
 		p.hasSourceModel() &&
 		p.TargetModel != "" &&
+		p.TriggerSeconds > 0
+}
+
+// secondsRuleReadyFor 判断「规则一对某个具体源模型是否配全」。
+//
+// 与 secondsRuleReady 的区别：目标模型名按**源模型**取
+// （公共值或该源模型的专属覆盖）。
+//
+// 为什么需要单独一份：活动版专属覆盖了 TargetModel 时，
+// 公共 TargetModel 可能仍指向豆包 —— 那时母本走豆包、活动版走心笔，
+// 两条规则各自配全，但共用一条校验口径会误判「都没配全」而把路由关掉。
+func secondsRuleReadyFor(p Policy, sourceModel string) bool {
+	return p.Enabled &&
+		p.hasSourceModel() &&
+		p.TargetModelFor(sourceModel) != "" &&
 		p.TriggerSeconds > 0
 }
 
@@ -306,19 +483,52 @@ func (p Policy) hasSourceModel() bool {
 // ⚠️ 两边都容忍首尾空格：生产上真出现过「 seedance2.5-特惠」这种请求
 // （model/log.go 里记着同一个事故）。请求侧与配置侧都要 Trim。
 func (p Policy) IsSourceModel(model string) bool {
-	target := strings.TrimSpace(model)
+	target := trimModelName(model)
 	if target == "" {
 		return false
 	}
-	if strings.TrimSpace(p.SourceModel) == target {
+	if trimModelName(p.SourceModel) == target {
 		return true
 	}
 	for _, name := range p.SourceModels {
-		if strings.TrimSpace(name) == target {
+		if trimModelName(name) == target {
 			return true
 		}
 	}
 	return false
+}
+
+// TargetModelFor 返回「规则一（时长）对某个源模型生效的目标模型名」。
+//
+// 优先级：源模型专属覆盖 > 公共 TargetModel。
+// 为什么要按源模型区分：促销族的两个成员必须走不同的兜底链路
+// （母本 → 豆包按次，活动版 → 心笔按次），只改公共字段会同时改到两个。
+//
+// ⚠️ 这里的返回值**只对源模型有效**：非源模型返回空串，
+// 调用方不应拿它去改派请求。
+func (p Policy) TargetModelFor(sourceModel string) string {
+	if override := p.targetFor(sourceModel, fieldTarget); override != "" {
+		return override
+	}
+	return p.TargetModel
+}
+
+// RatioTargetModelFor 返回「规则二（比例）对某个源模型生效的目标模型名」。
+// 优先级同 TargetModelFor。
+func (p Policy) RatioTargetModelFor(sourceModel string) string {
+	if override := p.targetFor(sourceModel, fieldRatio); override != "" {
+		return override
+	}
+	return p.RatioTargetModel
+}
+
+// FramesTargetModelFor 返回「规则三（首尾帧）对某个源模型生效的目标模型名」。
+// 优先级同 TargetModelFor。
+func (p Policy) FramesTargetModelFor(sourceModel string) string {
+	if override := p.targetFor(sourceModel, fieldFrames); override != "" {
+		return override
+	}
+	return p.FramesTargetModel
 }
 
 // secondsRulePaused 判断当前是否处于规则一的暂停期。
@@ -334,6 +544,11 @@ func secondsRuleActive(p Policy, now int64) bool {
 	return secondsRuleReady(p) && !secondsRulePaused(p, now)
 }
 
+// secondsRuleActiveFor = 对某个源模型配全了 且 不在暂停期。
+func secondsRuleActiveFor(p Policy, sourceModel string, now int64) bool {
+	return secondsRuleReadyFor(p, sourceModel) && !secondsRulePaused(p, now)
+}
+
 // nowUnix 是当前时间的 Unix 秒。
 //
 // 声明成变量而不是直接调 time.Now()，**只为单测可替换** ——
@@ -347,6 +562,15 @@ func ratioRuleReady(p Policy) bool {
 		p.TriggerRatio != ""
 }
 
+// ratioRuleReadyFor 判断「规则二对某个具体源模型是否配全」。
+// 目标模型名按源模型取（公共值或该源模型的专属覆盖）。
+func ratioRuleReadyFor(p Policy, sourceModel string) bool {
+	return p.Enabled &&
+		p.hasSourceModel() &&
+		p.RatioTargetModelFor(sourceModel) != "" &&
+		p.TriggerRatio != ""
+}
+
 // framesRuleReady 判断规则三是否配全。
 //
 // 比另外两条少一个条件：**没有「触发值」可配**。首尾帧是能力约束，
@@ -357,7 +581,23 @@ func framesRuleReady(p Policy) bool {
 		p.FramesTargetModel != ""
 }
 
+// framesRuleReadyFor 判断「规则三对某个具体源模型是否配全」。
+// 目标模型名按源模型取（公共值或该源模型的专属覆盖）。
+func framesRuleReadyFor(p Policy, sourceModel string) bool {
+	return p.Enabled &&
+		p.hasSourceModel() &&
+		p.FramesTargetModelFor(sourceModel) != ""
+}
+
 func clonePolicy(p Policy) Policy {
 	out := p
+	// SourceOverrides 是 map：浅拷贝会让 Get() 返回的副本与全局状态共享底层 map，
+	// 调用方改一个键就悄悄改到了全局配置。必须深拷贝。
+	if p.SourceOverrides != nil {
+		out.SourceOverrides = make(map[string]SourceOverride, len(p.SourceOverrides))
+		for key, value := range p.SourceOverrides {
+			out.SourceOverrides[key] = value
+		}
+	}
 	return out
 }
