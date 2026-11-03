@@ -18,11 +18,17 @@ func SetVideoRouter(router *gin.Engine) {
 
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
-	// ⚠️ Seedance25TeHuiRoute **必须早于 Distribute()**：
-	// 渠道是在 Distribute 里读 body 的 model 字段选定的，条件路由靠改写 body
-	// 来改派模型（见 middleware/seedance_route.go 的说明）。
-	// 它内部对任何不确定的情况都「放弃路由」，不会挡客户的请求。
-	videoV1Router.Use(middleware.TokenAuth(), middleware.Seedance25TeHuiRoute(), middleware.Distribute())
+	// ⚠️ 顺序是「豆包优先 → 压缩兜底」的实现：
+	//   · Seedance25TeHuiRoute 先尝试把 30 秒 / 超长提示词改派到豆包（吃 20000 字符，不用压）；
+	//   · Wan3PromptCompress 只处理「豆包没接走」且仍超过 5000 字符的请求。
+	// 两者都必须早于 Distribute()：渠道是读 body 的 model 字段选定的。
+	// 任何一步不确定都「放弃/放行」，不会挡客户的请求。
+	videoV1Router.Use(
+		middleware.TokenAuth(),
+		middleware.Seedance25TeHuiRoute(),
+		middleware.Wan3PromptCompress(),
+		middleware.Distribute(),
+	)
 	{
 		videoV1Router.POST("/video/generations", controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)

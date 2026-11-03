@@ -107,7 +107,12 @@ type RelayInfo struct {
 	//
 	// 计费与展示都以它为优先（见 BillingModelName / PublicModelName）：
 	// 客户请求哪个模型就按哪个模型收费，改派只影响内部走哪条链路。
+	//
+	// PromptCompressFrom / To 是提示词压缩前后的字符数（未压缩时为 0）。
+	// 只写进任务 PrivateData（管理员可见），不对客展示。
 	RouteOriginModel      string
+	PromptCompressFrom    int
+	PromptCompressTo      int
 	RequestURLPath        string
 	RequestHeaders        map[string]string
 	ShouldIncludeUsage    bool

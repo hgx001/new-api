@@ -58,6 +58,8 @@ func SetApiRouter(router *gin.Engine) {
 			videoRouteAdmin.GET("/policy", controller.GetDoubaoRouteAdmin)
 			videoRouteAdmin.POST("/policy/pause", controller.PauseDoubaoRouteAdmin)
 			videoRouteAdmin.POST("/policy/resume", controller.ResumeDoubaoRouteAdmin)
+			// 按源模型单独开关「按时长改派」（促销族里只停活动版用）。
+			videoRouteAdmin.POST("/policy/source-switch", controller.SetSourceSecondsRuleAdmin)
 		}
 
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)

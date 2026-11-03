@@ -25,6 +25,19 @@ import { api } from '@/lib/api'
  * 运营需要区分「额度用完自动停的」和「人为停的」—— 前者到点自己恢复，
  * 后者不会，混在一起会让人误判。
  */
+/**
+ * 单个源模型的改派开关。
+ *
+ * 促销族两个成员的经营口径不同：母本按秒（改派豆包赚差价）、活动版按次
+ * （改派豆包每单倒贴）。全局暂停一停就是两个一起停，所以运营需要一个
+ * 只作用于单个模型的开关。
+ */
+export type VideoRouteSourceSwitch = {
+  source_model: string
+  seconds_rule_enabled: boolean
+  target_model: string
+}
+
 export type VideoRoutePolicy = {
   paused: boolean
   paused_until: number
@@ -34,6 +47,7 @@ export type VideoRoutePolicy = {
   seconds_rule_enabled: boolean
   ratio_rule_enabled: boolean
   frames_rule_enabled: boolean
+  source_switches: VideoRouteSourceSwitch[]
   source_model: string
   target_model: string
   trigger_seconds: number
@@ -60,6 +74,23 @@ export async function pauseVideoRoute(
     '/api/video-route/policy/pause',
     until ? { until } : {}
   )
+  return res.data.data
+}
+
+/**
+ * 单独开关某个源模型的「按时长改派」。
+ *
+ * 全局暂停（pauseVideoRoute）优先级更高：豆包真没额度时，
+ * 把单个模型打开也跑不通。
+ */
+export async function setSourceSecondsRule(
+  sourceModel: string,
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/source-switch', {
+    source_model: sourceModel,
+    enabled,
+  })
   return res.data.data
 }
 

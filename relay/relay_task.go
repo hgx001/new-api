@@ -148,6 +148,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 客户请求哪个模型就按哪个模型收费（老板 2026-10-30 定稿），改派只是内部调度。
 	// 详见 constant.ContextKeyRouteOriginModel 与 RelayInfo.BillingModelName。
 	info.RouteOriginModel = common.GetContextKeyString(c, constant.ContextKeyRouteOriginModel)
+	info.PromptCompressFrom = common.GetContextKeyInt(c, constant.ContextKeyPromptCompressFrom)
+	info.PromptCompressTo = common.GetContextKeyInt(c, constant.ContextKeyPromptCompressTo)
 
 	// 1. 确定 platform → 创建适配器 → 验证请求
 	platform := constant.TaskPlatform(c.GetString("platform"))

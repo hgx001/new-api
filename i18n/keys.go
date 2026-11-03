@@ -277,6 +277,15 @@ const (
 	MsgAbilityRepairRunning = "ability.repair_running"
 )
 
+// Relay / 任务提交相关消息
+const (
+	// MsgRelayPromptTooLong 是提示词超过上游上限、且自动压缩没能压到上限内时的对客文案。
+	//
+	// 刻意只说结论：客户要做的事只有一件 —— 把提示词改短。
+	// 不解释「我们尝试压缩了但没成功」，那会让客户以为可以找客服绕过。
+	MsgRelayPromptTooLong = "relay.prompt_too_long"
+)
+
 // OAuth related messages
 const (
 	MsgOAuthInvalidCode     = "oauth.invalid_code"

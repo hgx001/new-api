@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/promptcompress_setting"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/setting/tencentmps_setting"
@@ -153,6 +154,7 @@ func InitOptionMap() {
 	common.OptionMap["ModelPrice"] = ratio_setting.ModelPrice2JSONString()
 	common.OptionMap["YouzanWan3Pricing"] = youzanwan3_setting.MarshalJSONString()
 	common.OptionMap[seedanceroute_setting.OptionKey] = seedanceroute_setting.MarshalJSONString()
+	common.OptionMap[promptcompress_setting.OptionKey] = promptcompress_setting.MarshalJSONString()
 	common.OptionMap[tencentmps_setting.OptionKey] = tencentmps_setting.MarshalJSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
 	common.OptionMap["CreateCacheRatio"] = ratio_setting.CreateCacheRatio2JSONString()
@@ -567,6 +569,10 @@ func updateOptionMap(key string, value string) (err error) {
 		// 有赞 Wan3 的动态调价策略与最近一次同步出的档位倍率。
 		// 计费链在 youzanwan3.EstimateBilling 里读它，见 setting/youzanwan3_setting。
 		err = youzanwan3_setting.UpdateFromJSONString(value)
+	case promptcompress_setting.OptionKey:
+		// wan3 提示词超长压缩的接入配置（模型 / 端点 / 内部令牌 / 目标长度）。
+		// 含明文令牌，只在 option 表里下发，不要出现在前端或日志中。
+		err = promptcompress_setting.UpdateFromJSONString(value)
 	case seedanceroute_setting.OptionKey:
 		// 条件路由策略（如「seedance2.5-特惠 + 30 秒 → seedance-2-5」）。
 		// 路由中间件在 Distribute 之前读它，见 middleware/seedance_route.go。

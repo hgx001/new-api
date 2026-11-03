@@ -33,6 +33,15 @@ const (
 	// 只在「目标 adaptor 没给出 seconds」时生效，不覆盖 adaptor 自己的判断。
 	ContextKeyRouteBillingSeconds ContextKey = "route_billing_seconds"
 
+	// ContextKeyPromptCompressFrom / To 是提示词压缩的「原长度 → 压缩后长度」。
+	//
+	// 为什么要记下来：压缩改写了客户的创作描述，而任务照样成功、账单照收 ——
+	// 客户反馈「成片和提示词不符」时，支持侧只能靠任务侧的证据回答
+	// 「这条请求在生产上被压过没有」。只记管理员可见的 PrivateData，
+	// 不进对客字段（客户不该看到「我们改过你的提示词」这类实现细节）。
+	ContextKeyPromptCompressFrom ContextKey = "prompt_compress_from"
+	ContextKeyPromptCompressTo   ContextKey = "prompt_compress_to"
+
 	/* token related keys */
 	ContextKeyTokenUnlimited         ContextKey = "token_unlimited_quota"
 	ContextKeyTokenKey               ContextKey = "token_key"

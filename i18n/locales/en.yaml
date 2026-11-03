@@ -232,6 +232,9 @@ performance.gc_executed: "GC has been executed"
 ability.db_corrupted: "Database consistency has been compromised"
 ability.repair_running: "A repair task is already running, please try again later"
 
+# Relay / 任务提交相关消息
+relay.prompt_too_long: "Prompt is too long"
+
 # OAuth messages
 oauth.invalid_code: "Invalid authorization code"
 oauth.get_user_error: "Failed to get user information"

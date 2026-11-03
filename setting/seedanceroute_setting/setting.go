@@ -18,6 +18,8 @@
 package seedanceroute_setting
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -158,6 +160,53 @@ type SourceOverride struct {
 	RatioTargetModel string `json:"ratio_target_model,omitempty"`
 	// FramesTargetModel 覆盖规则三（首尾帧）的目标模型。
 	FramesTargetModel string `json:"frames_target_model,omitempty"`
+
+	// SecondsRuleEnabled 是该源模型专属的「按时长改派」开关（2026-11-03 起）。
+	//
+	// 语义：
+	//   - nil（配置里没写这个字段）= **默认开启**，行为与加这个字段之前逐字节一致；
+	//   - 显式 false = 该源模型的规则一与规则四都不改派，请求留在自己的常驻链路；
+	//   - 显式 true = 明确开启（用于把别人关掉的开关改回来）。
+	//
+	// 为什么用指针而不是 bool：必须是三态。用 bool 会让「没配」和「配了 false」
+	// 无法区分 —— 旧的生产 option 里没有这个字段，解析后是 false，
+	// 若把它当作「关掉」，升级当天就会静默停掉全站 30 秒改派，而且没有任何报错。
+	//
+	// 为什么要按源模型分：促销族两个成员的经营口径不同（母本按秒、活动版按次），
+	// 母本改派豆包是纯赚差价，活动版改派豆包会贴钱。老板需要能**只停一个**，
+	// 而全局的 SecondsRulePausedUntil 一停就是两个一起停。
+	SecondsRuleEnabled *bool `json:"seconds_rule_enabled,omitempty"`
+}
+
+// overrideFor 返回「这个源模型的专属覆盖」以及是否存在。
+//
+// ⚠️ 键要 Trim 后比对：生产上真出现过带空格的模型名（model/log.go 里记着
+// 同一个事故），配置侧和请求侧都要 Trim —— 否则「配了却不生效」且没有任何报错。
+func (p Policy) overrideFor(sourceModel string) (SourceOverride, bool) {
+	trimmed := trimModelName(sourceModel)
+	if trimmed == "" {
+		return SourceOverride{}, false
+	}
+	if override, ok := p.SourceOverrides[trimmed]; ok {
+		return override, true
+	}
+	for key, override := range p.SourceOverrides {
+		if trimModelName(key) == trimmed {
+			return override, true
+		}
+	}
+	return SourceOverride{}, false
+}
+
+// secondsRuleEnabledFor 判断该源模型的「按时长改派」是否被单独关掉。
+//
+// 默认（没配覆盖、或覆盖里没写这个字段）= 开启。
+func (p Policy) secondsRuleEnabledFor(sourceModel string) bool {
+	override, ok := p.overrideFor(sourceModel)
+	if !ok || override.SecondsRuleEnabled == nil {
+		return true
+	}
+	return *override.SecondsRuleEnabled
 }
 
 // targetFor 返回「这个源模型实际生效的目标模型名」。
@@ -175,19 +224,9 @@ func (p Policy) targetFor(sourceModel, field string) string {
 	if trimmed == "" {
 		return ""
 	}
-	override, ok := p.SourceOverrides[trimmed]
+	override, ok := p.overrideFor(trimmed)
 	if !ok {
-		// 兜底：配置里的键带空格时也能命中。
-		for key, value := range p.SourceOverrides {
-			if trimModelName(key) == trimmed {
-				override = value
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return ""
-		}
+		return ""
 	}
 	switch field {
 	case fieldTarget:
@@ -268,6 +307,74 @@ func WithSecondsRulePausedUntil(until int64) Policy {
 	return out
 }
 
+// SourceSwitchState 是「按源模型的按时长改派开关」快照，给管理后台展示用。
+//
+// 为什么要有这个结构而不是直接吐 map：运营在后台看到的是「哪一个模型被关了」，
+// 不是一堆布尔值。带上 target_model 才能看出「关了之后这些请求会留在哪条链路」。
+type SourceSwitchState struct {
+	SourceModel        string `json:"source_model"`
+	SecondsRuleEnabled bool   `json:"seconds_rule_enabled"`
+	TargetModel        string `json:"target_model"`
+}
+
+// SourceSwitchStates 返回全部源模型的改派开关快照（按配置顺序去重）。
+func SourceSwitchStates() []SourceSwitchState {
+	mu.RLock()
+	defer mu.RUnlock()
+	sources := current.allSourceModels()
+	out := make([]SourceSwitchState, 0, len(sources))
+	for _, source := range sources {
+		out = append(out, SourceSwitchState{
+			SourceModel:        source,
+			SecondsRuleEnabled: current.secondsRuleEnabledFor(source),
+			TargetModel:        current.TargetModelFor(source),
+		})
+	}
+	return out
+}
+
+// WithSourceSecondsRuleEnabled 返回「把某个源模型的按时长改派开关设成 enabled」的策略副本。
+//
+// 纯函数，**不落库** —— 落库由调用方用 model.UpdateOption(OptionKey, json) 完成，
+// 与 WithSecondsRulePausedUntil 同一套做法。
+//
+// ⚠️ 只接受**已配置的源模型**：拼错一个模型名就静默什么都不做，
+// 比报错更难发现（运营以为关了，实际没有）。
+func WithSourceSecondsRuleEnabled(sourceModel string, enabled bool) (Policy, error) {
+	trimmed := trimModelName(sourceModel)
+	if trimmed == "" {
+		return Policy{}, errors.New("source model is required")
+	}
+	mu.RLock()
+	known := current.IsSourceModel(trimmed)
+	var out Policy
+	if known {
+		out = clonePolicy(current)
+	}
+	mu.RUnlock()
+	if !known {
+		return Policy{}, fmt.Errorf("unknown source model: %s", trimmed)
+	}
+
+	// 沿用配置里已有的键（可能带空格），没有就新建。
+	key := trimmed
+	for existing := range out.SourceOverrides {
+		if trimModelName(existing) == trimmed {
+			key = existing
+			break
+		}
+	}
+	if out.SourceOverrides == nil {
+		out.SourceOverrides = make(map[string]SourceOverride, 1)
+	}
+	override := out.SourceOverrides[key]
+	value := enabled
+	override.SecondsRuleEnabled = &value
+	out.SourceOverrides[key] = override
+	out.UpdatedAt = nowUnix()
+	return out, nil
+}
+
 // UpdateFromJSONString 用管理员提交的 JSON 覆盖策略。
 //
 // 开启路由的**必要条件**：至少有一条规则配全。
@@ -305,7 +412,7 @@ func UpdateFromJSONString(jsonStr string) error {
 // 只看公共字段会误判成「一条都没配全」而把路由整个关掉。
 func (p Policy) anyRuleReady() bool {
 	for _, source := range p.allSourceModels() {
-		if secondsRuleReadyFor(p, source) || ratioRuleReadyFor(p, source) || framesRuleReadyFor(p, source) {
+		if secondsRuleConfiguredFor(p, source) || ratioRuleReadyFor(p, source) || framesRuleReadyFor(p, source) {
 			return true
 		}
 	}
@@ -388,12 +495,12 @@ func IsAnyRouteEnabled() bool {
 
 // IsSecondsRuleEnabledFor 判断「规则一（时长）对某个源模型是否生效」。
 //
-// 与 IsEnabled 的区别：目标模型名按**源模型**取。
-// 活动版专属覆盖了 TargetModel（指向心笔按次）时，规则一对活动版生效、
-// 对母本仍走原来的豆包 —— 两者的「是否生效」可以不同。
+// 与 IsEnabled 的区别：目标模型名按**源模型**取，并且叠加该源模型的专属开关
+// （source_overrides[模型].seconds_rule_enabled）。所以规则一对两个源模型
+// 可以一个开、一个关 —— 这正是「只停活动版改派豆包、母本照旧」的实现方式。
 //
-// 不受 SecondsRulePausedUntil 影响：暂停的是「按时长改派到豆包」这一条，
-// 与「按比例改派到 wan3」是两件独立的事。
+// 全局暂停（SecondsRulePausedUntil）仍然优先：豆包真没额度时，
+// 单独开启某个源模型并不能让它跑起来，所以暂停期内一律不生效。
 func IsSecondsRuleEnabledFor(sourceModel string) bool {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -448,7 +555,21 @@ func secondsRuleReady(p Policy) bool {
 // 为什么需要单独一份：活动版专属覆盖了 TargetModel 时，
 // 公共 TargetModel 可能仍指向豆包 —— 那时母本走豆包、活动版走心笔，
 // 两条规则各自配全，但共用一条校验口径会误判「都没配全」而把路由关掉。
+// secondsRuleReadyFor 判断「规则一对某个具体源模型是否配全且未被单独关掉」。
+//
+// 与 secondsRuleConfiguredFor 的区别：**这里叠加了该源模型的专属开关**。
+// 开关是「要不要改派」的经营决策，不影响「这条规则配没配全」——
+// 后者决定整份策略算不算数（见 anyRuleReady）。
 func secondsRuleReadyFor(p Policy, sourceModel string) bool {
+	return secondsRuleConfiguredFor(p, sourceModel) && p.secondsRuleEnabledFor(sourceModel)
+}
+
+// secondsRuleConfiguredFor 判断「规则一对某个源模型是否配全」（不看开关）。
+//
+// 为什么需要单独一份：anyRuleReady 用它判断「整份策略配全了没有」。
+// 若那里也看开关，两个模型的改派都被关掉时会把 Enabled 判成 false ——
+// 首尾帧规则会跟着一起停，带首尾帧的请求将 100% 400，而且没有任何报错。
+func secondsRuleConfiguredFor(p Policy, sourceModel string) bool {
 	return p.Enabled &&
 		p.hasSourceModel() &&
 		p.TargetModelFor(sourceModel) != "" &&
@@ -596,6 +717,12 @@ func clonePolicy(p Policy) Policy {
 	if p.SourceOverrides != nil {
 		out.SourceOverrides = make(map[string]SourceOverride, len(p.SourceOverrides))
 		for key, value := range p.SourceOverrides {
+			// SecondsRuleEnabled 是指针：浅拷贝会让副本与全局状态共享同一个 bool，
+			// 调用方一改就悄悄改到了全局配置（与 map 浅拷贝同一类问题）。
+			if value.SecondsRuleEnabled != nil {
+				enabled := *value.SecondsRuleEnabled
+				value.SecondsRuleEnabled = &enabled
+			}
 			out.SourceOverrides[key] = value
 		}
 	}

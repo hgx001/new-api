@@ -233,6 +233,9 @@ performance.gc_executed: "GC 已執行"
 ability.db_corrupted: "資料庫一致性被破壞"
 ability.repair_running: "已經有一個修復任務在運行中，請稍後再試"
 
+# Relay / 任务提交相关消息
+relay.prompt_too_long: "提示詞過長"
+
 # OAuth messages
 oauth.invalid_code: "無效的授權碼"
 oauth.get_user_error: "獲取使用者資訊失敗"

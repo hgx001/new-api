@@ -119,12 +119,25 @@ type TaskPrivateData struct {
 	//   - **展示**：客户在自己日志里应当看到他调的模型名，而不是被改派后的目标名。
 	// 退款/差额结算发生在轮询阶段，那时已经拿不到 gin.Context，只能从任务里读。
 	RouteOriginModel string `json:"route_origin_model,omitempty"`
+	// PromptCompress 记录「提示词被自动压缩过」这件事（未压缩时为 nil）。
+	//
+	// 为什么放在 PrivateData：压缩改写了客户的创作描述，但任务照样成功、账单照收 ——
+	// 客户反馈成片与提示词不符时，支持侧要能凭 task_id 回答「这条压过没有、压到多少」。
+	// 对客字段（Properties / TaskDto）里不能出现这个痕迹 —— 客户不该看到
+	// 「平台改过我的提示词」，那是平台对上游 5000 字符限制的内部适配。
+	PromptCompress *TaskPromptCompress `json:"prompt_compress,omitempty"`
 	// PostProcess 保存「上游成片 → 二次加工」的状态（2026-10-29）。
 	//
 	// 为什么需要：部分模型是**两跳**链路（官网先生成 480P，再交给云端增强服务出 720P）。
 	// 第一跳成功后任务还不能置 SUCCESS —— 产物没加工完，用户拿到的是 480P。
 	// 这里记录第二跳的进度，轮询时按阶段推进。
 	PostProcess *TaskPostProcess `json:"post_process,omitempty"`
+}
+
+// TaskPromptCompress 是一次提示词压缩的长度变化（字符数）。
+type TaskPromptCompress struct {
+	From int `json:"from"`
+	To   int `json:"to"`
 }
 
 // TaskPostProcess 记录第二跳（成片后处理）的状态。
@@ -239,6 +252,13 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 		// 客户请求哪个模型就按哪个模型收费，改派只决定内部走哪条链路。
 		if relayInfo.RouteOriginModel != "" {
 			privateData.RouteOriginModel = relayInfo.RouteOriginModel
+		}
+		// 提示词压缩过的请求：记下长度变化，供支持侧按 task_id 追溯。
+		if relayInfo.PromptCompressFrom > 0 && relayInfo.PromptCompressTo > 0 {
+			privateData.PromptCompress = &TaskPromptCompress{
+				From: relayInfo.PromptCompressFrom,
+				To:   relayInfo.PromptCompressTo,
+			}
 		}
 	}
 

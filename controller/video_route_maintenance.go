@@ -171,12 +171,77 @@ func GetDoubaoRouteAdmin(c *gin.Context) {
 func saveDoubaoRoutePause(until int64) error {
 	// 用 WithManualPause 而不是 WithSecondsRulePausedUntil：要把来源标成
 	// manual，自动探针才不会覆盖管理员手动设的截止时间（见 quota.go）。
-	policy := seedanceroute_setting.WithManualPause(until)
+	return saveRoutePolicy(seedanceroute_setting.WithManualPause(until))
+}
+
+// saveRoutePolicy 把一份策略写回 option（先库后内存，见 UpdateOption 的分发链）。
+func saveRoutePolicy(policy seedanceroute_setting.Policy) error {
 	raw, err := common.Marshal(policy)
 	if err != nil {
 		return err
 	}
 	return model.UpdateOption(seedanceroute_setting.OptionKey, string(raw))
+}
+
+// sourceSwitchRequest 是「按源模型开关改派」的请求体。
+type sourceSwitchRequest struct {
+	// SourceModel 源模型对外名，如 seedance2.5-活动。
+	SourceModel string `json:"source_model"`
+	// Enabled 是否允许该源模型的按时长改派（30 秒 / 超长提示词 → 豆包）。
+	//
+	// 用指针收：不传这个字段（nil）时必须报错，不能默认成 false ——
+	// 「少写一个字段」与「明确要关掉」导致的后果完全不同（前者会让运营
+	// 以为自己没动过配置，后者是主动停掉一条赚钱的调度）。
+	Enabled *bool `json:"enabled"`
+}
+
+// SetSourceSecondsRuleAdmin 单独开关「某个源模型的按时长改派」。
+//
+// 为什么需要：促销族的两个成员经营口径不同 —— 母本（按秒 ¥0.20/s）改派豆包
+// 是赚差价，活动版（按次 ¥4.5/次）改派豆包每单倒贴。全局暂停一停就是两个一起停，
+// 运营要的是「只停活动版」。
+//
+// 与暂停的关系：全局暂停（/policy/pause）优先。豆包真没额度时，
+// 把某个源模型开关打开也跑不通，所以暂停期内一律不生效。
+func SetSourceSecondsRuleAdmin(c *gin.Context) {
+	var req sourceSwitchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "enabled is required",
+		})
+		return
+	}
+
+	policy, err := seedanceroute_setting.WithSourceSecondsRuleEnabled(req.SourceModel, *req.Enabled)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	if err := saveRoutePolicy(policy); err != nil {
+		common.SysLog("update source route switch failed: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to save route policy",
+		})
+		return
+	}
+
+	recordManageAudit(c, "video_route.source_switch", map[string]interface{}{
+		"source_model": req.SourceModel,
+		"enabled":      *req.Enabled,
+	})
+	common.ApiSuccess(c, doubaoRouteAdminState())
 }
 
 // doubaoRouteState 是给客户端看的当前状态。
@@ -217,6 +282,9 @@ func doubaoRouteAdminState() gin.H {
 	state["ratio_target_model"] = policy.RatioTargetModel
 	state["trigger_ratio"] = policy.TriggerRatio
 	state["frames_target_model"] = policy.FramesTargetModel
+	// 按源模型的改派开关：运营要知道「现在哪个模型被单独关掉了」。
+	// 只给公共 target_model 不够 —— 两个源模型的目标可以不同。
+	state["source_switches"] = seedanceroute_setting.SourceSwitchStates()
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }
