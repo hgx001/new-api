@@ -213,8 +213,15 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 
 		// ── 规则一（时长）──
 		//
-		// 目标模型按**源模型**取：活动版（按次档）可以单独指向心笔按次链路，
-		// 母本（按秒档）仍走豆包 —— 两者计费口径不同，不能共用一个目标。
+		// 目标模型按**源模型**取：两个源模型的**兜底目标都是豆包**，但它们是
+		// 两条不同的商品：
+		//   - 母本 seedance2.5-特惠（按秒 ¥0.20/秒）：常驻渠道 17 有赞，
+		//     30 秒改派豆包（按次 ¥5.00 对外，成本 ¥2.00）；
+		//   - 活动版 seedance2.5-活动（按次 ¥4.50/次）：常驻渠道 25 心笔，
+		//     30 秒也改派豆包 —— 豆包账号每天刷新额度，用不完就亏本，
+		//     把 30 秒的量导过去既能赚毛利又能消耗额度。
+		//
+		// 两者的计费口径不同，所以仍按源模型分别取目标，不能共用一个字段。
 		secondsTarget := policy.TargetModelFor(sourceModel)
 		if seedanceroute_setting.IsSecondsRuleEnabledFor(sourceModel) {
 			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && seconds == policy.TriggerSeconds {
@@ -249,6 +256,10 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		//
 		// ⚠️ 只在**目标是豆包链路**时适用：心笔按次链路自己就吃 20000 字符提示词，
 		// 超长提示词对它不是问题，不需要改派。
+		//
+		// 2026-11-03：活动版的兜底目标也改成豆包了，所以这条规则**对活动版同样生效**
+		// —— 活动版的常驻链路（心笔）虽然能吃长提示词，但把它导到豆包既能赚毛利
+		// （成本 ¥2.00 vs 售价 ¥4.50）又能消耗每天刷新的豆包额度。
 		if seedanceroute_setting.IsSecondsRuleEnabledFor(sourceModel) && isDoubaoTarget(secondsTarget) {
 			if requestPromptRunes(body) > promptRouteLimitRunes {
 				if newBody, routed := preparePromptRoute(c, body, policy, secondsTarget); routed {
@@ -417,12 +428,13 @@ func prepareDoubaoRoute(c *gin.Context, body map[string]interface{}, policy seed
 // prepareSecondsRoute 组装「规则一（时长）」的改派请求体。
 //
 // 目标模型按源模型取（可能与公共 TargetModel 不同）：
-//   - 豆包链路（母本 seedance2.5-特惠）：素材/分辨率要转换，比例要改名；
-//   - 心笔按次链路（活动版 seedance2.5-活动）：兼容口只认参考图，
+//   - 豆包链路（母本 seedance2.5-特惠、活动版 seedance2.5-活动）：素材/分辨率要转换，比例要改名；
+//   - 心笔按次链路（wan3.0-720p-按次）：兼容口只认参考图，
 //     但**拒绝**首尾帧/参考视频/参考音频/seed，且固定 30 秒、只交付 720P。
 //
-// 两条链路的入参契约不同，所以必须分开处理 —— 用同一套改写逻辑
-// 会让其中一条必然失败（历史上踩过：豆包链路不认 metadata.media → 丢图）。
+// ⚠️ 2026-11-03：活动版的**常驻链路换成了心笔**（母本仍是有赞常驻 + 豆包兜底，
+// 活动版是心笔常驻 + 豆包兜底）。两条链路的入参契约不同，所以必须分开处理 ——
+// 用同一套改写逻辑会让其中一条必然失败（历史上踩过：豆包链路不认 metadata.media → 丢图）。
 func prepareSecondsRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string) (map[string]interface{}, bool) {
 	if isXinbiPerCallTarget(targetModel) {
 		return prepareXinbiPerCallRoute(c, body, targetModel)

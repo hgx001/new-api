@@ -1,5 +1,11 @@
 package xinbiapi
 
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/constant"
+)
+
 // ChannelName 后台展示名。
 const ChannelName = "心笔 Model Router"
 
@@ -23,8 +29,15 @@ const upstreamModel = "wan3.0-video"
 const ModelNamePayPerCall = "wan3.0-720p-按次"
 
 // ModelList 本渠道对外的模型列表。
+//
+// ⚠️ seedance2.5-活动（2026-11-03 起）是本渠道的**常驻**对外模型：
+// 活动版不再是「有赞常驻 + 30 秒改派心笔」，而是**反过来** ——
+// 心笔是活动版的常驻链路，豆包（seedance-2-5）是它的兜底路由。
+// 活动版与 ModelNamePayPerCall 是**同一条链路**（同一上游模型、同一档位、
+// 同一成本），区别只在对外名称与计费口径（活动版按次 ¥4.50 固定 30 秒）。
 var ModelList = []string{
 	ModelNamePayPerCall,
+	constant.Seedance25HuoDongModel,
 }
 
 // generationResolution 是向上游请求的生成档位。
@@ -65,6 +78,26 @@ const maxReferenceImages = 9
 // needsSuperResolution 判断该对外模型名是否走「交付前画质增强」这一步。
 //
 // 函数名沿用内部实现术语，对外文案不得使用该说法（见 ModelNamePayPerCall 注释）。
+//
+// ⚠️ 2026-11-03：seedance2.5-活动 成为本渠道的常驻对外模型后，
+// 这个白名单**不能再只认 ModelNamePayPerCall 一个名字** ——
+//
+//	活动版走心笔时 properties.origin_model_name 记的是「seedance2.5-活动」
+//	（对外模型名，不是上游模型名）。白名单漏了它 → 画质增强不触发 →
+//	客户拿到 480P 原始片，而对外承诺是 720P。**这是静默降质**：
+//	任务照样成功、账单照收 ¥4.50，客户拿到的是低一档的成片。
+//
+//	所以判据改成「是不是本渠道的对外模型」而不是「是不是某一个名字」：
+//	新增对外模型时只要加进 ModelList，增强自动跟上。
 func needsSuperResolution(originModelName string) bool {
-	return originModelName == ModelNamePayPerCall
+	name := strings.TrimSpace(originModelName)
+	if name == "" {
+		return false
+	}
+	for _, publicModel := range ModelList {
+		if name == publicModel {
+			return true
+		}
+	}
+	return false
 }

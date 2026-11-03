@@ -8,24 +8,35 @@ import (
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 )
 
-// 「seedance2.5-活动 → 心笔按次链路」的按源模型改派（2026-11-03）。
+// 「seedance2.5-活动 → 豆包兜底」的按源模型改派（2026-11-03 改造）。
 //
-// 背景：促销族的两个成员需要**不同的兜底链路**：
+// 背景：这一版把促销族的两个成员**对调**了 ——
 //
-//	母本 seedance2.5-特惠（按秒 ¥0.20/秒）→ 30 秒走豆包 seedance-2-5（成本 ≈ ¥0）
-//	活动版 seedance2.5-活动（按次 ¥4.5/次）→ 30 秒走心笔 wan3.0-720p-按次
-//	                                  （上游 wan3.0-video 480P ¥0.135/秒 × 30 = ¥4.05 < ¥4.50）
+//	改造前：活动版常驻渠道 17 有赞，30 秒改派心笔 wan3.0-720p-按次
+//	改造后：活动版常驻渠道 25 心笔（= wan3.0-720p-按次 的同一条链路），
+//	        **豆包 seedance-2-5 变成兜底路由**（30 秒命中 + 提示词超长命中）
 //
-// 两者计费口径不同、目标链路能力不同，**不能共用一套目标模型**。
-// 所以配置层加了 source_overrides：按源模型分别指定目标模型。
+// 为什么兜底是豆包而不是心笔：
 //
-// 本文件锁三件事：
-//  1. 活动版走心笔、母本仍走豆包 —— 互不影响；
-//  2. 心笔链路的素材改写正确（参考图落顶层 reference_images、比例落 metadata.ratio）；
-//  3. 心笔链路扛不住的请求**留在源链路**（参考视频/音频、首尾帧、seed、1080P、超限图数）。
+//	豆包账号每天刷新额度，**用不完就亏本**（额度是买来的、过期作废）。
+//	把 30 秒的量导过去，既能赚毛利（豆包成本 ¥2.00 vs 活动版售价 ¥4.50），
+//	又能把每天刷新的额度消耗掉 —— 一举两得。
+//
+//	母本 seedance2.5-特惠（按秒 ¥0.20/秒）**完全不受影响**：
+//	常驻仍是有赞，30 秒仍改派豆包。
+//
+// 本文件锁四件事：
+//  1. 活动版的 30 秒请求改派豆包，母本同样改派豆包但计费口径互不干扰；
+//  2. 活动版的提示词超长请求也改派豆包（规则四对它同样生效）；
+//  3. 改派后计费与展示仍按「客户请求的模型」——源模型名不变；
+//  4. 豆包扛不住的请求（参考视频/音频、明确分辨率）**留在源链路**。
 
-// enableSplitRoute 打开「母本走豆包、活动版走心笔」的拆分配置。
-func enableSplitRoute(t *testing.T, target string) {
+// enableDoubaoFallbackRoute 打开「两个源模型的兜底目标都是豆包」的拆分配置。
+//
+// 注意这里仍然保留 source_overrides：活动版显式写一遍 target_model=豆包，
+// 是为了让配置**自带意图**（不依赖公共字段的隐式回落）——
+// 万一以后有人把公共 target_model 改成别的，活动版不会被带着走。
+func enableDoubaoFallbackRoute(t *testing.T) {
 	t.Helper()
 	previous := seedanceroute_setting.Get()
 	payload := map[string]interface{}{
@@ -35,7 +46,7 @@ func enableSplitRoute(t *testing.T, target string) {
 		"trigger_seconds": 30,
 		"source_overrides": map[string]interface{}{
 			constant.Seedance25HuoDongModel: map[string]interface{}{
-				"target_model": target,
+				"target_model": doubaoTargetModel,
 			},
 		},
 	}
@@ -52,98 +63,114 @@ func enableSplitRoute(t *testing.T, target string) {
 	})
 }
 
-// 活动版的 30 秒请求必须改派到心笔按次链路。
-func TestHuoDongRouteToXinbiPerCall(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
+// 活动版的 30 秒请求必须改派到豆包（兜底消耗每天刷新的豆包额度）。
+func TestHuoDongRouteToDoubaoFallback(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
 
 	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat"}`)
-	if got := decodeBody(t, seen)["model"]; got != xinbiPerCallTargetModel {
-		t.Fatalf("活动版 30 秒请求没有改派到心笔（model=%v）", got)
+	if got := decodeBody(t, seen)["model"]; got != doubaoTargetModel {
+		t.Fatalf("活动版 30 秒请求没有改派到豆包（model=%v）", got)
 	}
 	if origin != constant.Seedance25HuoDongModel {
 		t.Fatalf("RouteOriginModel() = %q, want %q", origin, constant.Seedance25HuoDongModel)
 	}
 }
 
-// 母本必须**不受影响**：仍然改派到豆包，不能被活动版的覆盖带走。
+// 母本必须**不受影响**：仍然改派到豆包。
 //
-// 这是本次改造最容易出的错：source_models 是共用列表，
-// 一旦目标模型取错来源，母本会被一起改派到心笔 —— 母本是按秒计价，
-// 目标链路是按次计价，计费链会直接算错。
+// 母本是按秒计价、活动版是按次计价，计费链靠 BillingModelName() 区分，
+// 两者不能互相影响。母本的兜底目标没被活动版的覆盖带走。
 func TestTeHuiRouteUnaffectedByHuoDongOverride(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
+	enableDoubaoFallbackRoute(t)
 
 	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25TeHuiModel+`","seconds":30,"prompt":"a cat"}`)
 	if got := decodeBody(t, seen)["model"]; got != doubaoTargetModel {
-		t.Fatalf("母本的 30 秒请求被改派到了 %v，应该是 %v（母本不能被活动版的覆盖带走）",
-			got, doubaoTargetModel)
+		t.Fatalf("母本的 30 秒请求被改派到了 %v，应该是 %v", got, doubaoTargetModel)
 	}
 	if origin != constant.Seedance25TeHuiModel {
 		t.Fatalf("RouteOriginModel() = %q, want %q", origin, constant.Seedance25TeHuiModel)
 	}
 }
 
-// 参考图必须落到**顶层** reference_images[]。
+// 活动版的提示词超长请求也必须改派豆包。
 //
-// 心笔的 collectReferenceImages 只读顶层 image/images/media[image]/input_reference ——
-// 留在 metadata.media 会被**静默丢弃**（客户要的图根本没进去，任务照跑照扣费）。
-func TestXinbiRoutePutsReferenceImagesOnTopLevel(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
+// 心笔常驻链路自己吃 20000 字符提示词，但把超长提示词导到豆包既能赚毛利
+// 也能消耗额度 —— 所以规则四不再只对母本生效。
+//
+// ⚠️ 时长用 30 秒（活动版是固定 30 秒档）。传别的时长会被**按次固定档归一**
+// 提前挡掉（fail-loud，那是对的）—— 那样就轮不到规则四了。
+func TestHuoDongRouteToDoubaoOnLongPrompt(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
+
+	longPrompt := ""
+	for i := 0; i < 6000; i++ {
+		longPrompt += "字"
+	}
+	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"`+longPrompt+`"}`)
+	if got := decodeBody(t, seen)["model"]; got != doubaoTargetModel {
+		t.Fatalf("提示词超长的活动版请求没有改派到豆包（model=%v）", got)
+	}
+	if origin != constant.Seedance25HuoDongModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", origin, constant.Seedance25HuoDongModel)
+	}
+}
+
+// 母本的提示词超长请求仍然改派豆包（这条规则本来就是为母本加的，不能被改坏）。
+func TestTeHuiRouteToDoubaoOnLongPrompt(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
+
+	longPrompt := ""
+	for i := 0; i < 6000; i++ {
+		longPrompt += "字"
+	}
+	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25TeHuiModel+`","seconds":10,"prompt":"`+longPrompt+`"}`)
+	if got := decodeBody(t, seen)["model"]; got != doubaoTargetModel {
+		t.Fatalf("母本提示词超长的请求没有改派到豆包（model=%v）", got)
+	}
+}
+
+// 改派豆包后，参考图必须落到**顶层 input_reference[]**。
+//
+// 豆包链路只认顶层 input_reference，留在 metadata.media 会被静默丢弃
+// （客户要的图根本没进去，任务照跑照扣费）。
+func TestDoubaoRoutePutsReferenceImagesOnTopLevel(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
 
 	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,`+
 		`"prompt":"a cat","metadata":{"media":[{"type":"reference_image","url":"https://example.com/a.png"}]}}`)
 
 	decoded := decodeBody(t, seen)
-	images, ok := decoded["reference_images"].([]interface{})
+	images, ok := decoded["input_reference"].([]interface{})
 	if !ok || len(images) != 1 {
-		t.Fatalf("参考图没有落到顶层 reference_images（decoded=%v）", decoded)
+		t.Fatalf("参考图没有落到顶层 input_reference（decoded=%v）", decoded)
 	}
 	if images[0] != "https://example.com/a.png" {
-		t.Fatalf("reference_images[0] = %v，地址不对", images[0])
+		t.Fatalf("input_reference[0] = %v，地址不对", images[0])
 	}
-	// metadata.media 不能残留 —— 留着会让上游收到一份没声明过的字段。
-	if metadata, ok := decoded["metadata"].(map[string]interface{}); ok {
-		if _, hasMedia := metadata["media"]; hasMedia {
-			t.Fatalf("metadata.media 没有被清掉（decoded=%v）", decoded)
-		}
+	// metadata 整块必须丢掉 —— 留着会让上游收到一份没声明过的字段。
+	if _, hasMetadata := decoded["metadata"]; hasMetadata {
+		t.Fatalf("metadata 没有被清掉（decoded=%v）", decoded)
 	}
 }
 
-// 比例必须落到 metadata.ratio —— 心笔的 resolveRatio 只读 metadata。
-func TestXinbiRoutePutsRatioInMetadata(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
-
-	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,`+
-		`"prompt":"a cat","metadata":{"ratio":"9:16"}}`)
-
-	decoded := decodeBody(t, seen)
-	metadata, ok := decoded["metadata"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("metadata 缺失（decoded=%v）", decoded)
-	}
-	if metadata["ratio"] != "9:16" {
-		t.Fatalf("metadata.ratio = %v, want 9:16", metadata["ratio"])
-	}
-}
-
-// 时长必须显式写成 30 秒 —— 心笔是固定 30 秒按次档。
-func TestXinbiRouteWritesFixedDuration(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
+// 时长必须显式写成 30 秒 —— 豆包只认 5/10/15/30 四档。
+func TestDoubaoRouteWritesTriggerDuration(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
 
 	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat"}`)
 
 	decoded := decodeBody(t, seen)
 	if decoded["seconds"] != "30" {
-		t.Fatalf("seconds = %v, want \"30\"（心笔固定 30 秒按次）", decoded["seconds"])
+		t.Fatalf("seconds = %v, want \"30\"", decoded["seconds"])
 	}
 }
 
-// 带参考视频/参考音频的请求**不能**改派到心笔。
+// 带参考视频/参考音频的请求**不能**改派到豆包。
 //
-// 心笔兼容口对 reference_videos / reference_audios 返回 UNSUPPORTED_FIELD，
-// 路由过去必然 400。留在源链路反而能跑。
-func TestXinbiRouteRejectsUnsupportedMedia(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
+// 豆包链路同样只支持参考图，路由过去必然 400。留在源链路（心笔）还能给出
+// 可读的错误原因。
+func TestDoubaoRouteRejectsUnsupportedMedia(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
 
 	cases := []struct {
 		name string
@@ -179,35 +206,9 @@ func TestXinbiRouteRejectsUnsupportedMedia(t *testing.T) {
 	}
 }
 
-// 带首尾帧的请求不能改派到心笔（兼容口只收参考图）。
-func TestXinbiRouteRejectsFrames(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
-
-	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat",`+
-		`"media":[{"type":"first_frame","url":"https://example.com/a.png"}]}`)
-
-	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("带首尾帧的请求被改派了（model=%v），应该留在源链路", got)
-	}
-	if origin != "" {
-		t.Fatalf("带首尾帧的请求记录了来源模型 %q，应该为空", origin)
-	}
-}
-
-// 带 seed 的请求不能改派到心笔（上游 parameterSchema 不认 seed，会 422）。
-func TestXinbiRouteRejectsSeed(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
-
-	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat","seed":42}`)
-
-	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("带 seed 的请求被改派了（model=%v），应该留在源链路", got)
-	}
-}
-
-// 明确要 1080P 的请求不能改派到心笔（它只交付 720P）。
-func TestXinbiRouteRejects1080P(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
+// 明确要了分辨率的请求不能改派到豆包（豆包链路没有分辨率控件）。
+func TestDoubaoRouteRejectsExplicitResolution(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
 
 	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat","resolution":"1080P"}`)
 
@@ -216,31 +217,12 @@ func TestXinbiRouteRejects1080P(t *testing.T) {
 	}
 }
 
-// 参考图超过心笔上限（9 张）时不改派 —— 路由过去必然被上游 400。
-//
-// 源链路（有赞）限 10 张，心笔限 9 张，所以 10 张的请求改派过去必挂。
-func TestXinbiRouteRejectsTooManyImages(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
-
-	images := make([]string, 0, xinbiMaxReferenceImages+1)
-	for i := 0; i <= xinbiMaxReferenceImages; i++ {
-		images = append(images, `"https://example.com/`+string(rune('a'+i))+`.png"`)
-	}
-	body := `{"model":"` + constant.Seedance25HuoDongModel + `","seconds":30,"prompt":"a cat","images":[` +
-		joinStrings(images) + `]}`
-
-	seen, _ := runRoute(t, body)
-	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("参考图超限的请求被改派了（model=%v），应该留在源链路", got)
-	}
-}
-
 // 目标渠道不可用时必须留在源链路。
 //
 // 中间件改写 body 之后，重试只会用同一个模型名重选渠道，不会退回源模型 ——
 // 所以预检是唯一的机会。渠道挂掉时不能让请求撞 503。
-func TestXinbiRouteSkipsWhenTargetChannelUnavailable(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
+func TestDoubaoRouteSkipsWhenTargetChannelUnavailable(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
 	stubChannelAvailable(t, false)
 
 	seen, _ := runRouteRaw(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat"}`)
@@ -250,14 +232,39 @@ func TestXinbiRouteSkipsWhenTargetChannelUnavailable(t *testing.T) {
 	}
 }
 
-// 非 30 秒的请求不改派到心笔（心笔只卖固定 30 秒）。
-func TestXinbiRouteIgnoresNonFixedDuration(t *testing.T) {
-	enableSplitRoute(t, xinbiPerCallTargetModel)
+// 活动版**不传时长**也要改派豆包 —— 归一成固定 30 秒后命中规则一。
+//
+// 这条锁的是「按次固定档归一」与「规则一」的配合：活动版不传时长时，
+// 源链路（心笔）的语义是「不传 → 30 秒」，所以路由层必须先归一，
+// 否则这类请求就走不到 30 秒规则，白白错过消耗豆包额度的机会。
+func TestHuoDongRouteToDoubaoWhenDurationOmitted(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
 
-	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":10,"prompt":"a cat"}`)
+	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","prompt":"a cat"}`)
+	if got := decodeBody(t, seen)["model"]; got != doubaoTargetModel {
+		t.Fatalf("活动版未传时长的请求没有改派到豆包（model=%v）", got)
+	}
+	if origin != constant.Seedance25HuoDongModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", origin, constant.Seedance25HuoDongModel)
+	}
+	// 归一后必须显式写出 30 秒，否则豆包侧缺省是 5 秒 —— 按 30 秒的价出 5 秒的片。
+	if got := decodeBody(t, seen)["seconds"]; got != "30" {
+		t.Fatalf("seconds = %v, want \"30\"（不写回就是按 30 秒收钱出 5 秒的片）", got)
+	}
+}
 
+// 活动版传**非 30 秒**时必须放弃路由、留在源链路（心笔会 fail-loud 报 400）。
+//
+// 这条锁的是「不做就近吸附」：客户要 5 秒却按 30 秒计费，比报错更糟。
+func TestHuoDongRouteAbandonsOnNonFixedDuration(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
+
+	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":10,"prompt":"a cat"}`)
 	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
 		t.Fatalf("10 秒的请求被改派了（model=%v），应该留在源链路", got)
+	}
+	if origin != "" {
+		t.Fatalf("10 秒的请求记录了来源模型 %q，应该为空（没发生改派）", origin)
 	}
 }
 

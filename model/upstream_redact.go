@@ -24,12 +24,18 @@ var upstreamAliasModels = map[string]bool{
 	"seedance2.5-特惠": true,
 	"seedance2.5特惠版": true, // 同一模型的历史旧名
 	// seedance2.5-活动（2026-11-02 加）：seedance2.5 促销族的**按次档**，
-	// 与母本 seedance2.5-特惠 是同一个商品的两种售价形态 —— 上游同样是
-	// 渠道 17「有赞 Wan3」的 wan3.0-video-prime。
+	// 与母本 seedance2.5-特惠 是同一个商品的两种售价形态。
+	//
+	// ⚠️ 2026-11-03 起上游**变了**：活动版的常驻链路从渠道 17「有赞 Wan3」的
+	// wan3.0-video-prime 换成渠道 25「心笔 Model Router」的 wan3.0-video
+	// （兜底路由才走豆包 seedance-2-5）。
 	//
 	// ⚠️ 必须与母本享受**完全相同**的保护级别：漏了它，
 	// redactAliasTaskUpstream 会直接 return —— 上游回执（任务号 + 成本 +
 	// 原片直链）原样进对外 DTO。而这是促销档，下单的人最多、最需要藏货源。
+	//
+	// ⚠️ 走心笔链路的额外风险：成片还要经交付处理才对外，出口里一旦带出
+	// **未经交付处理的 480P 源片直链**，用户既能看穿货源、也能绕过本站拿走源片。
 	"seedance2.5-活动": true,
 	// 两跳链路（2026-10-30 加）：上游是 wan3.0-video 的 480P 原片。
 	//

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -110,6 +111,83 @@ func TestCollectReferenceImages(t *testing.T) {
 			images[i] = "https://cdn.example.com/x.png"
 		}
 		_, err := collectReferenceImages(relaycommon.TaskSubmitReq{Images: images})
+		require.Error(t, err)
+	})
+}
+
+// metadata.media 里的参考图必须被收进来（2026-11-03 活动版换常驻链路时补的）。
+//
+// 背景：seedance2.5-活动 换成心笔常驻之前走的是渠道 17「有赞 Wan3」，
+// 那个 adaptor **会**读 metadata.media（youzanwan3.metadataMedia）。
+// 客户端已经形成了把素材塞进 metadata 的用法。
+//
+// 心笔适配器原来只读顶层 image/images/media[] —— 客户端传 metadata.media 时
+// 图被**静默丢掉**：任务照建单、照扣费、状态照 SUCCESS，成片却没有参考图。
+// 那是「静默错交付」，只能靠客户投诉发现。
+func TestCollectReferenceImagesFromMetadataMedia(t *testing.T) {
+	t.Run("metadata.media 里的图片被收进来", func(t *testing.T) {
+		got, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+			Metadata: map[string]interface{}{
+				"media": []interface{}{
+					map[string]interface{}{"type": "reference_image", "url": "https://cdn.example.com/a.png"},
+				},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"https://cdn.example.com/a.png"}, got)
+	})
+
+	t.Run("metadata.input.media 里的图片被收进来", func(t *testing.T) {
+		got, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+			Metadata: map[string]interface{}{
+				"input": map[string]interface{}{
+					"media": []interface{}{
+						map[string]interface{}{"type": "reference_image", "url": "https://cdn.example.com/a.png"},
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{"https://cdn.example.com/a.png"}, got)
+	})
+
+	t.Run("与顶层 media 并行合并，不是二选一", func(t *testing.T) {
+		got, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+			Media: []relaycommon.TaskMedia{
+				{Type: "reference_image", URL: "https://cdn.example.com/top.png"},
+			},
+			Metadata: map[string]interface{}{
+				"media": []interface{}{
+					map[string]interface{}{"type": "reference_image", "url": "https://cdn.example.com/meta.png"},
+				},
+			},
+		})
+		require.NoError(t, err)
+		assert.Len(t, got, 2)
+		assert.Contains(t, got, "https://cdn.example.com/top.png")
+		assert.Contains(t, got, "https://cdn.example.com/meta.png")
+	})
+
+	t.Run("metadata.media 里的视频被拒（不能静默丢掉）", func(t *testing.T) {
+		_, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+			Metadata: map[string]interface{}{
+				"media": []interface{}{
+					map[string]interface{}{"type": "reference_video", "url": "https://cdn.example.com/a.mp4"},
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reference images")
+	})
+
+	t.Run("metadata.media 里的音频被拒", func(t *testing.T) {
+		_, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+			Metadata: map[string]interface{}{
+				"media": []interface{}{
+					map[string]interface{}{"type": "reference_audio", "url": "https://cdn.example.com/a.mp3"},
+				},
+			},
+		})
 		require.Error(t, err)
 	})
 }
@@ -288,10 +366,20 @@ func TestParseTaskResultSuccessWithoutFileFails(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestNeedsSuperResolutionOnlyForPayPerCallModel(t *testing.T) {
+// 交付前的画质增强按「是不是本渠道的对外模型」判定，不认死一个名字。
+//
+// ⚠️ 2026-11-03：seedance2.5-活动 成为本渠道的常驻对外模型后，
+// 白名单**不能**只认 ModelNamePayPerCall —— 活动版走心笔时
+// origin_model_name 记的是「seedance2.5-活动」，漏了它 →
+// 画质增强不触发 → 客户拿到 480P 原片，而对外承诺是 720P。
+// 那是**静默降质**：任务成功、账单照收，成片低一档。
+func TestNeedsSuperResolutionCoversAllPublicModels(t *testing.T) {
 	assert.True(t, needsSuperResolution(ModelNamePayPerCall))
+	assert.True(t, needsSuperResolution(constant.Seedance25HuoDongModel))
 	assert.False(t, needsSuperResolution("wan3.0-720p-特惠"))
 	assert.False(t, needsSuperResolution("wan3.0-video"))
+	assert.False(t, needsSuperResolution(""))
+	assert.False(t, needsSuperResolution("  "))
 }
 
 func TestBuildRequestURLEndpoints(t *testing.T) {

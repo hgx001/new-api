@@ -544,6 +544,19 @@ func resolveRatio(req relaycommon.TaskSubmitReq) (string, error) {
 //
 // 兼容口只收 https 直链 / data URL / base64（实测 http 与内网地址被 FILE_3000037 拒）。
 // 在本地先拦，用户拿到的是可读原因，而不是建单后失败再退款。
+//
+// ⚠️ 2026-11-03：取值范围扩到 metadata.media / metadata.input.media。
+//
+//	seedance2.5-活动 改成心笔常驻之前走的是渠道 17「有赞 Wan3」，
+//	那个 adaptor **会**读 metadata.media（见 youzanwan3.metadataMedia）。
+//	客户端（尤其是把素材塞进 metadata 的那批）已经形成了这个用法。
+//	心笔适配器原来只读顶层 image / images / media[] —— 客户端传
+//	metadata.media 时，图会被**静默丢掉**：任务照建单、照扣费、状态照 SUCCESS，
+//	成片却完全没有参考图，prompt 里的 @图片N 全部落空。
+//
+//	这是「静默错交付」：没有任何报错，只能靠客户投诉发现。
+//	所以口径对齐站内其它渠道（youzanwan3 / wan3 / erchun / sanyuan），
+//	把 metadata.media 也收进来。
 func collectReferenceImages(req relaycommon.TaskSubmitReq) ([]string, error) {
 	images := make([]string, 0, len(req.Images)+1)
 	if image := strings.TrimSpace(req.Image); image != "" {
@@ -559,6 +572,16 @@ func collectReferenceImages(req relaycommon.TaskSubmitReq) ([]string, error) {
 			images = append(images, strings.TrimSpace(media.URL))
 		}
 	}
+	// metadata.media / metadata.input.media：与顶层 media 并行，不是备选。
+	//
+	// ⚠️ 只收**图片**类型：video / audio 这条链路根本不支持，
+	// 混进来会让上游收到它不认识的素材类型。它们的拒绝在别处处理
+	// （见 middleware 的 hasUnsupportedMedia 与本 adaptor 的能力校验）。
+	metadataImages, hasUnsupportedMetadataMedia := metadataReferenceImages(req)
+	if hasUnsupportedMetadataMedia {
+		return nil, fmt.Errorf("this model only supports reference images")
+	}
+	images = append(images, metadataImages...)
 	if len(images) > maxReferenceImages {
 		return nil, fmt.Errorf("too many reference images: %d, max %d", len(images), maxReferenceImages)
 	}
@@ -571,6 +594,50 @@ func collectReferenceImages(req relaycommon.TaskSubmitReq) ([]string, error) {
 		}
 	}
 	return images, nil
+}
+
+// metadataReferenceImages 从 metadata.media / metadata.input.media 里取参考图。
+//
+// 返回值：
+//   - (images, false)：取到的图片 URL 列表；
+//   - (nil, true)：metadata 里有**非图片**素材（视频/音频）—— 这条链路不支持，
+//     必须报错而不是丢掉（丢掉 = 静默错交付）。
+func metadataReferenceImages(req relaycommon.TaskSubmitReq) ([]string, bool) {
+	if req.Metadata == nil {
+		return nil, false
+	}
+	raw, ok := req.Metadata["media"]
+	if !ok {
+		if input, inputOK := req.Metadata["input"].(map[string]interface{}); inputOK {
+			raw, ok = input["media"]
+		}
+	}
+	if !ok || raw == nil {
+		return nil, false
+	}
+	encoded, err := common.Marshal(raw)
+	if err != nil {
+		// 解析不了就当没有 —— 不能因为一个读不懂的字段就拒单。
+		return nil, false
+	}
+	var media []relaycommon.TaskMedia
+	if err := common.Unmarshal(encoded, &media); err != nil {
+		return nil, false
+	}
+	var images []string
+	for _, item := range media {
+		url := strings.TrimSpace(item.URL)
+		if url == "" {
+			continue
+		}
+		mediaType := strings.ToLower(strings.TrimSpace(item.Type))
+		if mediaType != "" && !strings.Contains(mediaType, "image") {
+			// 视频/音频：这条链路只收参考图，报错比丢掉强。
+			return nil, true
+		}
+		images = append(images, url)
+	}
+	return images, false
 }
 
 func firstNonEmpty(values ...string) string {
