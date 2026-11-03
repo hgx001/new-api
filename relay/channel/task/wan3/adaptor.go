@@ -121,6 +121,16 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := validateReferenceImageURLs(media); err != nil {
 		return service.TaskErrorWrapper(err, "invalid_input_reference", http.StatusBadRequest)
 	}
+	// 参考音频**合计**时长上限（15 秒）—— 官方《万相3.0-视频生成API参考》。
+	//
+	// 与参考视频不同：音频不参与计费，所以探测失败放行；只有**实测超限**才拒单。
+	//
+	// 真实失败样本（tasks id=1258~1262，2026-11-02，渠道 17 有赞 Wan3）：
+	// 4 条音频累计 19.20 秒被上游 MEDIA_DURATION_INVALID 拒单，
+	// 客户连续重试 5 次每次白占余额、等 1~3 分钟退款。
+	if err := validateReferenceAudioDurations(media); err != nil {
+		return service.TaskErrorWrapper(err, "invalid_input_reference", http.StatusBadRequest)
+	}
 	if len(media) > 0 {
 		// 留痕：事后排查「这张图到底有没有随请求发出去」时，
 		// 库里的 properties 不存 media，只能靠这条日志对上任务时间。

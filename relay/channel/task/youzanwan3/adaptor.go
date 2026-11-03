@@ -194,6 +194,24 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return service.TaskErrorWrapperLocal(
 			refErr, "invalid_input_reference", http.StatusBadRequest)
 	}
+	// 参考音频**合计**时长上限（15 秒）—— 与参考视频同一条硬约束。
+	//
+	// 官方《万相3.0-视频生成API参考》：reference_audio 最多 5 段，
+	// 单个 [1, 15] 秒，总时长不大于 15 秒。
+	//
+	// 真实失败样本（tasks id=1258~1262，2026-11-02 19:35~19:48）：4 条音频
+	// 实测 8.10/3.11/5.00/2.98 秒，**单条都在 15 秒内**，累计 19.20 秒，
+	// 上游 MEDIA_DURATION_INVALID 拒单。客户连续重试 5 次，每次白占余额、
+	// 等 1~3 分钟退款，而上游那句「参考素材时长不符合要求」根本没说是哪条素材。
+	//
+	// 放在这里（预扣之前）而不是等上游拒：本地 400 既不扣费也不建单。
+	if refErr := a.setReferenceAudioSeconds(c, media); refErr != nil {
+		if !isReferenceLimitError(refErr) {
+			refErr = errors.Wrap(refErr, "probe reference audio duration failed")
+		}
+		return service.TaskErrorWrapperLocal(
+			refErr, "invalid_input_reference", http.StatusBadRequest)
+	}
 	// 有参考视频时生成时长也要受限（老板 2026-10-31 定）。
 	//
 	// 为什么放在这里而不是探测函数里：生成时长与参考视频时长是两条独立的限制，
