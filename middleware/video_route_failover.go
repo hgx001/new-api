@@ -111,6 +111,30 @@ const (
 	failoverMaxSeconds = 30
 )
 
+// failoverAllowedDurations 是**源链路**（豆包 seedance-2-5）接受的时长白名单。
+//
+// 与 relay/channel/task/manwu 的 allowedDoubaoDurations 同口径：5/10/15/30。
+//
+// ⚠️ 为什么不能只判班车的 2–30 区间：
+//
+//	源链路走 manwu 的 checkDoubaoDuration，时长必须是 5/10/15/30 之一，
+//	传 7 秒源链路直接报错「must be one of 5/10/15/30」。
+//	如果改派侧只判「落在班车能吃的 2–30 区间」，那么客户传 seconds=7 时：
+//	  - 源链路可用 → 请求留在源链路 → 客户收到明确报错（正确）
+//	  - 源链路挂了 → 改派到班车 → 班车按 7 秒真跑 → **成功出片**
+//
+//	这就是「源链路本该拒绝、改派后却悄悄接受」的静默语义改写 —
+//	客户拿到了源链路给不出的结果，且时长语义被改写了。
+//
+// 所以改派前的时长校验必须**先按源链路口径判合法性**（在白名单里），
+// 再判备胎链路吃不吃得下（在 2–30 区间内）。
+var failoverAllowedDurations = map[int]bool{
+	5:  true,
+	10: true,
+	15: true,
+	30: true,
+}
+
 // failoverDefaultSeconds 是没传时长时的取值。
 //
 // 与豆包链路的缺省时长一致（relay/channel/task/manwu 的 doubaoDefaultDuration），
@@ -354,6 +378,15 @@ func prepareDoubaoBodyFailover(
 		logger.LogInfo(c, "条件路由跳过故障转移：时长不是合法整数，源链路会直接报错")
 		return nil, false
 	}
+	// 时长必须先过**源链路**的白名单（豆包 5/10/15/30），再过备胎的范围。
+	//
+	// 顺序不能反：如果只判班车的 2–30 区间，就会出现
+	// 「源链路报错的时长（比如 7 秒）改派到班车却真跑出片」的静默语义改写。
+	if !failoverAllowedDurations[seconds] {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过故障转移：时长 %d 秒不在源链路允许的档位内", seconds))
+		return nil, false
+	}
 	if seconds < failoverMinSeconds || seconds > failoverMaxSeconds {
 		logger.LogInfo(c, fmt.Sprintf(
 			"条件路由跳过故障转移：时长 %d 秒超出备胎链路范围 %d-%d 秒",
@@ -500,11 +533,14 @@ func prepareFailoverRoute(c *gin.Context, body map[string]interface{}, target st
 	}
 
 	// 时长：取源链路口径（seconds 优先于 duration，缺省 5 秒），
-	// 再确认备胎链路吃得住（2–30 秒）。
+	// **先按源链路的白名单判合法性**，再确认备胎链路吃得住（2–30 秒）。
 	//
-	// 豆包的四档（5/10/15/30）都在范围内，所以这条一般不会拦；
-	// 拦的是「客户直接请求豆包模型但传了 60 秒」这类边角 ——
-	// 改派过去必被上游 400，而留在源链路至少还能拿到源链路的明确报错。
+	// ⚠️ 顺序不能反，只判班车的 2–30 区间是不够的：
+	//
+	//	源链路走 manwu 的 checkDoubaoDuration，时长必须是 5/10/15/30 之一，
+	//	传 7 秒源链路直接报错「must be one of 5/10/15/30」。
+	//	若只判 2–30 区间，客户传 seconds=7 且源链路挂了时，
+	//	请求会被改派到班车按 7 秒真跑出片 —— 源链路本该拒绝的一单被静默接受了。
 	//
 	// ⚠️ 时长非法（小数/非数字）时**也放弃改派**：源链路 manwu 对这类值是
 	// fail-loud 的（会报 invalid_duration），改派过去等于把「源链路会报错的请求」
@@ -512,6 +548,11 @@ func prepareFailoverRoute(c *gin.Context, body map[string]interface{}, target st
 	seconds, secondsOK := failoverSourceSeconds(body)
 	if !secondsOK {
 		logger.LogInfo(c, "条件路由跳过故障转移：时长不是合法整数，源链路会直接报错")
+		return nil, false
+	}
+	if !failoverAllowedDurations[seconds] {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过故障转移：时长 %d 秒不在源链路允许的档位内", seconds))
 		return nil, false
 	}
 	if seconds < failoverMinSeconds || seconds > failoverMaxSeconds {
@@ -730,20 +771,54 @@ func failoverSourceRatio(body map[string]interface{}) (string, bool) {
 // 搬给备胎 —— 客户拿到的是 7 秒的片，源链路本该报错的那一单被静默改了语义。
 // 所以解析不出来时必须**如实报非法**，由调用方放弃改派（留在源链路报错）。
 func failoverSourceSeconds(body map[string]interface{}) (int, bool) {
-	if raw, ok := body["seconds"]; ok && raw != nil {
+	// ⚠️ 「字段存在」不等于「字段有值」：
+	//
+	//	源链路 manwu 的 hasValue 把 null / "" / [] 一律视为「没传」，
+	//	于是 resolveDoubaoDuration 会继续回退到 duration，再回退到默认值 5。
+	//	这里如果用 `raw != nil` 判断，seconds:null 会被判成「字段存在但解析不出」
+	//	→ 非法 → 放弃改派 —— 那就比源链路更严：源链路能跑的单子，改派侧不敢接。
+	//
+	// 所以判定顺序必须是：先按 hasValue 同口径判断「有没有值」，
+	// 有值但解析不出整数才算非法。
+	if raw, ok := body["seconds"]; ok && failoverHasValue(raw) {
 		if seconds, valid := failoverParseInt(raw); valid {
 			return seconds, true
 		}
-		// 字段存在但解析不出整数 → 非法（与源链路同纪律：报错，不截断）。
+		// 字段有值但解析不出整数 → 非法（与源链路同纪律：报错，不截断）。
 		return 0, false
 	}
-	if raw, ok := body["duration"]; ok && raw != nil {
+	if raw, ok := body["duration"]; ok && failoverHasValue(raw) {
 		if seconds, valid := failoverParseInt(raw); valid {
 			return seconds, true
 		}
 		return 0, false
 	}
 	return failoverDefaultSeconds, true
+}
+
+// failoverHasValue 判断字段是不是「有值」。
+//
+// 与 relay/channel/task/manwu 的 hasValue 同口径：
+// null、空串、空数组都视为「没传」。
+//
+// ⚠️ 空白字符串（"  "）**算有值**：源链路的 hasValue 是拿原始 JSON 文本
+// 比对 `""` 字面量，"  " 不匹配 → 当有值 → 进 parseFlexibleInt → Atoi 失败
+// → 报「is not a valid integer」。这里若用 TrimSpace 判空，
+// "  " 就会被当成「没传」而回退到默认值 —— 那比源链路宽松，同样是语义漂移。
+//
+// 注意：map 里的空数组是 []interface{}{}，空串是 ""，
+// 而 JSON null 解到 interface{} 上是 nil —— 三者都要当「没值」。
+func failoverHasValue(raw interface{}) bool {
+	switch typed := raw.(type) {
+	case nil:
+		return false
+	case string:
+		return typed != ""
+	case []interface{}:
+		return len(typed) > 0
+	default:
+		return true
+	}
 }
 
 // failoverParseInt 把「数字 / 数字字符串 / null」解析成 int。

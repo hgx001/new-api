@@ -649,3 +649,122 @@ func TestFailoverSkipsWhenDurationIsFractional(t *testing.T) {
 		t.Fatalf("duration 为小数时不该改派:\n got %s\nwant %s", seen, body)
 	}
 }
+
+// ───────────────────────── 边界：时长白名单按源链路口径 ─────────────────────────
+
+// 时长必须先过**源链路**（豆包）的白名单 5/10/15/30，再过备胎的 2–30 区间。
+//
+// 为什么这条重要：客户传 seconds=7 时，
+//   - 源链路可用 → 走 manwu → checkDoubaoDuration 报「must be one of 5/10/15/30」
+//   - 源链路挂了 → 若改派侧只判 2–30 区间 → 班车按 7 秒真跑出片
+//
+// 后者就是「源链路本该拒绝、改派后却悄悄接受」的静默语义改写。
+func TestFailoverSkipsWhenSecondsNotInSourceChainTiers(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	// 7 秒落在班车能吃的区间内，但不在豆包白名单里。
+	body := `{"model":"seedance-2-5","seconds":7,"prompt":"a cat"}`
+	seen, _ := runFailover(t, body)
+	if seen != body {
+		t.Fatalf("时长不在源链路档位内时不该改派:\n got %s\nwant %s", seen, body)
+	}
+}
+
+// 白名单里的时长必须能正常改派（防止上面的闸口把合法单子也拦了）。
+func TestFailoverRoutesWhenSecondsInSourceChainTiers(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	for _, seconds := range []string{"5", "10", "15", "30"} {
+		seen, _ := runFailover(t, `{"model":"seedance-2-5","seconds":`+seconds+`,"prompt":"a cat"}`)
+		assertModelRouted(t, seen, failoverBackupModel)
+	}
+}
+
+// duration 字段同样受白名单约束（seconds 缺省时回退读 duration）。
+func TestFailoverSkipsWhenDurationNotInSourceChainTiers(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	body := `{"model":"seedance-2-5","duration":7,"prompt":"a cat"}`
+	seen, _ := runFailover(t, body)
+	if seen != body {
+		t.Fatalf("duration 不在源链路档位内时不该改派:\n got %s\nwant %s", seen, body)
+	}
+}
+
+// ───────────────────────── 边界：空值字段按 hasValue 同口径 ─────────────────────────
+
+// seconds:null 时，源链路把 null 当「没传」→ 回退 duration → 再回退默认值 5。
+// 改派侧必须同口径，否则会比源链路更严（源链路能跑的单子不敢接）。
+func TestFailoverTreatsNullSecondsAsAbsent(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	// seconds 是 null、duration 是合法的 10 → 应按 10 秒改派。
+	seen, _ := runFailover(t, `{"model":"seedance-2-5","seconds":null,"duration":10,"prompt":"a cat"}`)
+	assertModelRouted(t, seen, failoverBackupModel)
+	if !strings.Contains(seen, `"seconds":"10"`) {
+		t.Fatalf("seconds:null 时应回退到 duration=10:\n got %s", seen)
+	}
+}
+
+// seconds:null 且 duration 也缺省 → 用源链路的默认 5 秒。
+func TestFailoverTreatsNullSecondsAsDefault(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	seen, _ := runFailover(t, `{"model":"seedance-2-5","seconds":null,"prompt":"a cat"}`)
+	assertModelRouted(t, seen, failoverBackupModel)
+	if !strings.Contains(seen, `"seconds":"5"`) {
+		t.Fatalf("seconds:null 且无 duration 时应取默认 5 秒:\n got %s", seen)
+	}
+}
+
+// 空串同样算「没传」（源链路 hasValue 把 "" 视为无值）。
+func TestFailoverTreatsEmptySecondsAsAbsent(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	seen, _ := runFailover(t, `{"model":"seedance-2-5","seconds":"","duration":15,"prompt":"a cat"}`)
+	assertModelRouted(t, seen, failoverBackupModel)
+	if !strings.Contains(seen, `"seconds":"15"`) {
+		t.Fatalf("seconds 为空串时应回退到 duration=15:\n got %s", seen)
+	}
+}
+
+// 空白字符串**算有值**：源链路 hasValue 只匹配 "" 字面量，
+// "  " 会进 parseFlexibleInt → Atoi 失败 → 报「不是合法整数」。
+// 改派侧若把 "  " 当「没传」，就比源链路宽松了 —— 同样要拦。
+func TestFailoverSkipsWhenSecondsIsBlankString(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	body := `{"model":"seedance-2-5","seconds":"  ","prompt":"a cat"}`
+	seen, _ := runFailover(t, body)
+	if seen != body {
+		t.Fatalf("时长是空白字符串时不该改派:\n got %s\nwant %s", seen, body)
+	}
+}
