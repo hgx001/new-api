@@ -51,6 +51,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/xinbiapi"
 	taskyoukou "github.com/QuantumNous/new-api/relay/channel/task/youkou"
 	taskyouzanwan3 "github.com/QuantumNous/new-api/relay/channel/task/youzanwan3"
+	"github.com/QuantumNous/new-api/relay/channel/task/yuanmeng"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/volcengine"
@@ -189,6 +190,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &sanyuan.TaskAdaptor{}
 		case constant.ChannelTypeXinbi:
 			return &xinbiapi.TaskAdaptor{}
+		case constant.ChannelTypeYuanmeng:
+			return &yuanmeng.TaskAdaptor{}
 		}
 	}
 	return nil

@@ -554,3 +554,194 @@ func sortedKeys(m map[string]any) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 纯转存（不做画质增强）—— 2026-11-04 新增，配合 relocate.go 使用。
+//
+// 与超分的**唯一**区别：请求体里**不配 EnhanceConfig**。
+// 于是 MPS 只做「URL 直链 → 转码 → 落 COS」，原分辨率原画质，不做任何增强。
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mpsRelocateRequest 是一次纯转存请求的参数。
+type mpsRelocateRequest struct {
+	// InputURL 上游成片直链（短期有效的那种）。
+	InputURL string
+	// Bucket / Region 产物落地的 COS 桶与地域。
+	Bucket string
+	Region string
+	// OutputDir 输出目录（单层，形如 /mps_api_test/）。
+	OutputDir string
+	// OutputObjectPath 产物文件名（相对 OutputDir）。必须按任务唯一。
+	OutputObjectPath string
+	// BitrateKbps 输出码率。0 表示用默认 5000。
+	BitrateKbps int
+	// SessionID 会话 ID。
+	SessionID string
+}
+
+// mpsRelocateResult 是一次转存任务的结果。
+type mpsRelocateResult struct {
+	// TaskID 腾讯云侧任务 ID。
+	TaskID string
+	// Status 终态：SUCCESS / FAIL。
+	Status string
+	// ObjectPath 产物在 COS 中的对象路径。
+	ObjectPath string
+	// ErrCode 失败原因。
+	ErrCode string
+}
+
+// submitRelocate 提交一个纯转存任务，返回腾讯云 TaskId。
+//
+// 与 submitSuperRes 共用 ProcessMedia 接口与请求体骨架，差别只有三处：
+//  1. 不配 EnhanceConfig（不增强画质）；
+//  2. Width/Height 不写死 —— 用 ResolutionAdaptive=open 且不传尺寸，
+//     让 MPS **保持输入的原始分辨率**（超分链路写死了 2 倍尺寸）；
+//  3. 不配 SuperResolution（超分与大模型增强互斥，同时配会失败）。
+func (c *mpsClient) submitRelocate(ctx context.Context, req mpsRelocateRequest) (string, error) {
+	payload := buildRelocatePayload(req)
+
+	resp, err := c.call(ctx, mpsActionProcessMedia, payload)
+	if err != nil {
+		return "", err
+	}
+	if resp.Response.TaskId == "" {
+		return "", fmt.Errorf("mps ProcessMedia returned empty TaskId")
+	}
+	return resp.Response.TaskId, nil
+}
+
+// buildRelocatePayload 组装纯转存的 ProcessMedia 请求体。
+//
+// ⚠️ 关键点：**不传 Width/Height**。
+// 超分链路里 Width/Height 表示"目标输出尺寸"（长边/短边语义），
+// 这里必须让 MPS 保持输入分辨率 —— 传了反而会把 1080P 缩成配置里的尺寸。
+// ResolutionAdaptive=open + 不传尺寸 = 按输入自适应、保持原始分辨率。
+func buildRelocatePayload(req mpsRelocateRequest) map[string]any {
+	bitrate := req.BitrateKbps
+	if bitrate <= 0 {
+		bitrate = 5000
+	}
+	fps := 30
+
+	videoTemplate := map[string]any{
+		"Codec":   "h264",
+		"Fps":     fps,
+		"Bitrate": bitrate,
+		"Gop":     60,
+		// FillType=black：保持原始宽高比，边缘留黑边。
+		// ⚠️ 不能用 stretch —— 上游成片可能是 16:9 / 9:16 / 1:1 等各种比例，
+		//	拉伸填满会把竖屏片压成胖画面。
+		"FillType": "black",
+		// ResolutionAdaptive=open：按输入视频宽高比自适应。
+		// 与超分链路不同，这里**不传 Width/Height**，保持输入原始分辨率。
+		"ResolutionAdaptive": "open",
+	}
+
+	transcodeTask := map[string]any{
+		// Definition=0 走 RawParameter。
+		"Definition": 0,
+		"RawParameter": map[string]any{
+			"Container":    "mp4",
+			"VideoTemplate": videoTemplate,
+			"AudioTemplate": map[string]any{
+				"Codec":        "aac",
+				"Bitrate":      64,
+				"SampleRate":   44100,
+				"AudioChannel": 2,
+			},
+			// ⚠️ **不配 EnhanceConfig** —— 纯转存，不做任何画质增强。
+			//	超分与大模型增强互斥，同时配会失败，所以这里一个都不配。
+		},
+	}
+	if strings.TrimSpace(req.OutputObjectPath) != "" {
+		transcodeTask["OutputObjectPath"] = req.OutputObjectPath
+	}
+
+	return map[string]any{
+		"InputInfo": map[string]any{
+			// ⚠️ 大写 "URL"
+			"Type": "URL",
+			"UrlInputInfo": map[string]any{
+				"Url": req.InputURL,
+			},
+		},
+		"OutputStorage": map[string]any{
+			// ⚠️ 大写 "COS"，字段名是 Bucket / Region
+			"Type": "COS",
+			"CosOutputStorage": map[string]any{
+				"Bucket": req.Bucket,
+				"Region": req.Region,
+			},
+		},
+		"OutputDir": req.OutputDir,
+		"MediaProcessTask": map[string]any{
+			// ⚠️ 是数组
+			"TranscodeTaskSet": []any{
+				transcodeTask,
+			},
+		},
+		"SessionId": req.SessionID,
+	}
+}
+
+// describeRelocate 查询转存任务状态。
+//
+// 与 describeSuperRes 同构（同一个 ProcessMedia 任务体系），只是语义不同。
+func (c *mpsClient) describeRelocate(ctx context.Context, taskID string) (*mpsRelocateResult, error) {
+	resp, err := c.call(ctx, mpsActionDescribeTaskDetail, map[string]any{
+		"TaskId": taskID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := &mpsRelocateResult{
+		TaskID:  taskID,
+		Status:  resp.Response.Status,
+		ErrCode: resp.Response.ErrCode.String(),
+	}
+	if result.Status == "" {
+		for _, body := range []*mpsTaskBody{resp.Response.WorkflowTask, resp.Response.ScheduleTask} {
+			if body != nil && body.Status != "" {
+				result.Status = body.Status
+				break
+			}
+		}
+	}
+	// 产物路径：WorkflowTask.MediaProcessResultSet[].TranscodeTask.Output.Path
+	for _, body := range []*mpsTaskBody{resp.Response.WorkflowTask, resp.Response.ScheduleTask} {
+		if body == nil {
+			continue
+		}
+		for _, mr := range body.MediaProcessResultSet {
+			if mr.TranscodeTask == nil {
+				continue
+			}
+			if result.ErrCode == "" {
+				if code := mr.TranscodeTask.ErrCode.String(); code != "" && code != "0" {
+					result.ErrCode = code
+				} else if code := mr.TranscodeTask.ErrCodeX.String(); code != "" {
+					result.ErrCode = code
+				}
+			}
+			if p := mr.TranscodeTask.outputPath(); p != "" {
+				result.ObjectPath = p
+				break
+			}
+		}
+		if result.ObjectPath != "" {
+			break
+		}
+		for i := range body.TranscodeTaskSet {
+			if p := body.TranscodeTaskSet[i].outputPath(); p != "" {
+				result.ObjectPath = p
+				break
+			}
+		}
+		if result.ObjectPath != "" {
+			break
+		}
+	}
+	return result, nil
+}

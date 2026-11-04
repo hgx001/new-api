@@ -283,6 +283,33 @@ func VideoProxy(c *gin.Context) {
 		if needsAuth {
 			req.Header.Set("Authorization", "Bearer "+channel.Key)
 		}
+	case constant.ChannelTypeYuanmeng:
+		// 视频生成车站（排队通道）：成片来源有两种。
+		//
+		// 1. **转存后**（主路径）：ResultURL 是 cos-proxy://bucket/region/path 标记，
+		//    需要现签临时直链 —— 与 wan3/心笔同构。
+		//    转存是因为上游直链只有约 24 小时有效，站点不留副本；
+		//    不转存的话用户隔天取片必然 404，而任务在库里是「成功」状态。
+		// 2. **转存失败回落**：ResultURL 是上游的 videoUrl 直链（短期有效），
+		//    直接回源即可 —— 但**不能带渠道密钥**，那是上游的 X-Token。
+		//
+		// ⚠️ 上游成片直链是公网可访问的链接，回源时不需要任何凭证。
+		//    这里刻意不设 Authorization：把 X-Token 发给第三方存储是凭证泄露。
+		videoURL = task.GetResultURL()
+		if bucket, region, objectPath, ok := taskwan3.ParseCOSProxyMarker(videoURL); ok {
+			signed, perr := taskwan3.PresignCOSURL(c.Request.Context(), bucket, region, objectPath)
+			if perr != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf(
+					"Failed to presign COS url for task %s: %s", taskID, perr.Error()))
+				videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
+				return
+			}
+			// 302 直连 COS：字节不经过本机 3Mbps 出口。
+			c.Writer.Header().Set("Cache-Control", "no-cache")
+			c.Writer.Header().Set("Location", signed)
+			c.Writer.WriteHeader(http.StatusFound)
+			return
+		}
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()

@@ -86,12 +86,13 @@ export const CHANNEL_TYPES = {
   66: '漫屋',
   67: '三元巡狩',
   68: 'Xinbi Model Router',
+  69: '视频生成车站',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 33, 24, 43, 3, 41, 48, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15, 46,
   23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21, 44, 2, 5, 36,
-  50, 51, 52, 53, 54, 55, 56, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68,
+  50, 51, 52, 53, 54, 55, 56, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -406,6 +407,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   66: '漫屋服务令牌（ArcReel 服务间调用令牌，非 Worker Token）',
   67: '三元巡狩 API Key（Bearer token，上游 http://47.93.118.167:5000）',
   68: 'Xinbi Model Router API Key (Bearer token from https://www.xinbiapi.com)',
+  69: '视频生成车站卡密（X-Token 头鉴权，学员名+口令登录后拿到的 token，非 Bearer）',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {

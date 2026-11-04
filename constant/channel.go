@@ -72,7 +72,12 @@ const (
 	// 轮询与取件走原生口 GET /v1/media/tasks/{id} 与 /v1/media/files/{id}/download。
 	// 三套风格共用同一个 taskId（见上游文档「兼容接口 · 与原生一致的约束」）。
 	ChannelTypeXinbi = 68
-	ChannelTypeDummy = 69 // this one is only for count, do not add any channel after this
+	// ChannelTypeYuanmeng 视频生成车站（yuanmengstudio.com）排队通道：
+	// 卡密制学员站，鉴权走 X-Token 请求头，提交 POST /vr/api/tasks，
+	// 轮询 GET /vr/api/tasks（**列表接口**，无单任务查询）。
+	// 每条任务固定扣 1 次（充值 1 元 = 1 次），成片直链约 24 小时过期。
+	ChannelTypeYuanmeng = 69
+	ChannelTypeDummy    = 70 // this one is only for count, do not add any channel after this
 
 )
 
@@ -222,6 +227,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeManwu:          "漫屋",
 	ChannelTypeSanyuan:        "三元巡狩",
 	ChannelTypeXinbi:          "心笔 Model Router",
+	ChannelTypeYuanmeng:       "视频生成车站",
 }
 
 func GetChannelTypeName(channelType int) string {

@@ -168,6 +168,20 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'wan-3.0, seedance2.5-特惠, sd-2.5',
     },
   },
+  69: {
+    id: 69,
+    name: CHANNEL_TYPES[69],
+    icon: 'openai',
+    // ⚠️ 上游站点挂在 /vr 下，适配器会自动拼 /vr/api/tasks，
+    // 所以 base url 只填到站点根，不要自己带 /vr。
+    defaultBaseUrl: 'https://yuanmengstudio.com',
+    supportedModels: ['wan3.0-排队'],
+    hints: {
+      baseUrl: 'Default: https://yuanmengstudio.com',
+      key: '学员卡密（X-Token 鉴权，非 Bearer）',
+      models: 'wan3.0-排队',
+    },
+  },
 }
 
 /**
