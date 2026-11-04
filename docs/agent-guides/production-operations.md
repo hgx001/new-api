@@ -22,6 +22,14 @@
 - 如误建，必须两端处理：new-api退款/失败留痕及ArcReel取消；本站没有通用 `/v1/videos/{id}/cancel` 可替代两端操作。先确认真实状态，不能取消已交付任务引发退款错账。
 - 客户退款不等于上游退款，付费探针按既有OPERATOR-COST-ACCOUNTING记录净成本；具体台账规则见 [定价与目录](pricing-catalog.md)。
 
+## nginx 中间层与模型目录
+
+- **`/v1/models` 若出现「本不该有的模型」，先怀疑 nginx 中间层，别急着翻 new-api 业务代码**（2026-11-04 实测：受限账号下游看到满屏 gpt，根因是 nginx `location = /v1/models` 指向自建 merge shim，绕过了 TokenAuth/分组/白名单；new-api 侧代码完全正确）。
+- 排查固定手法：**直连后端端口 vs 经 nginx 各打一次**（`curl http://127.0.0.1:3000/v1/models` 对比 `curl https://<域名>/v1/models`）。直连对、经 nginx 错 ⇒ 问题在 nginx 或其后面的中间进程。`ss -lntp` 找端口归属进程，`cat /proc/<pid>/cmdline` 看真实启动命令。
+- 站点专属日志在 `/var/log/nginx/<站点>_error.log`；**全局 `error.log` 是所有 server 的噪音**，别拿它判断本站点问题。用 `nginx -T` 看**实际生效**的配置。
+- **nginx 在本机有两份配置且都生效**：`sites-enabled/api.heibaidao.cn.conf` 是**独立实体文件、不是** `sites-available/` 的软链，两份内容本就不同（enabled 版另有 `= /v1/videos`、`= /v1/images`，`location /v1/` 的 timeout 也不同）。改配置必须两份都改，否则 `nginx -t` 通过、reload 成功但**行为完全没变**。下线某个 location 后若请求变成 502，说明还有另一份配置仍指向已停进程。
+- 自建 shim/补丁进程用 `crontab -l` 查 `@reboot` 自启条目并一并清除，否则**重启即复活**；下线时优先 `mv` 归档而非删除，保留回滚可能。
+
 ## 渠道与OAuth恢复
 
 - AutoBan恢复优先 `scripts/restore-channel.sh`，同时改channels.status与abilities.enabled；不要只见status正常就宣称全模型可用。
