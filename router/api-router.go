@@ -60,6 +60,16 @@ func SetApiRouter(router *gin.Engine) {
 			videoRouteAdmin.POST("/policy/resume", controller.ResumeDoubaoRouteAdmin)
 			// 按源模型单独开关「按时长改派」（促销族里只停活动版用）。
 			videoRouteAdmin.POST("/policy/source-switch", controller.SetSourceSecondsRuleAdmin)
+
+			// 规则五（故障转移）：源链路额度用完 / 渠道被关 → 改派到备胎。
+			//
+			// 与上面四个接口分开：规则五的触发源是**渠道状态**而不是请求特征，
+			// 语义与运营动作都不同（需要额外的「人工标记源链路不可用」）。
+			videoRouteAdmin.GET("/policy/failover", controller.GetFailoverPolicyAdmin)
+			videoRouteAdmin.POST("/policy/failover/switch", controller.SetFailoverSwitchAdmin)
+			videoRouteAdmin.POST("/policy/failover/models", controller.SetFailoverModelsAdmin)
+			videoRouteAdmin.POST("/policy/failover/unavailable", controller.MarkFailoverSourceUnavailableAdmin)
+			videoRouteAdmin.POST("/policy/failover/available", controller.ClearFailoverSourceUnavailableAdmin)
 		}
 
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)

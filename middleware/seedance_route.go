@@ -144,7 +144,47 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			c.Next()
 			return
 		}
-		modelName, _ := body["model"].(string)
+
+		// ── 规则五（故障转移）最先判 ──
+		//
+		// 为什么排在最前、且排在 IsSourceModel 检查**之前**：
+		//
+		//	1. 触发源不同：前四条规则看的是「请求长什么样」，
+		//	   规则五看的是「源链路还能不能用」。源链路都挂了，
+		//	   再去优化「这条 30 秒的请求该走哪条更便宜的链路」没有意义 ——
+		//	   客户要的是能出片，不是最便宜的片。
+		//	2. 源模型口径不同：规则五的源是 seedance-2-5，
+		//	   它**不在** policy.SourceModel / SourceModels 里 ——
+		//	   那两个字段是促销族的源，而 seedance-2-5 恰恰是规则一的**目标**。
+		//	   如果把它塞进 source_models，规则一命中后会把请求改派成同一个
+		//	   模型名，形成「改派到自己」的循环。
+		//
+		// 所以规则五走独立的字段（failover_source_model）与独立的判定函数，
+		// 必须在 IsSourceModel 的早退**之前**判。
+		//
+		// ⚠️ 但只判这一次**不够**：规则一/规则四的目标模型恰恰就是
+		// seedance-2-5 —— 也就是说规则五的源模型是前两条规则的**目标**。
+		// 豆包额度用完时，规则一把 30 秒请求改派到豆包 → 豆包必然失败 →
+		// 客户白等一轮 + 白烧一次预扣。
+		//
+		// 所以规则一/规则四改派成功后**必须再判一次规则五**（见
+		// tryFailoverAfterDoubaoRoute）。那个函数会在「豆包链路也不可用」
+		// 时把请求继续改派到备胎（班车），形成一条完整的降级链：
+		//
+		//	促销族 → 豆包 → 班车
+		//
+		// 这条链是必须的：豆包额度是**按天**计的，用完之后不降级就是
+		// 「整个 30 秒档位全挂」，而不是「慢一点但能出片」。
+		//
+		// 计费原点：顶层这一段，客户请求的就是 seedance-2-5，
+		// 所以计费口径 = seedance-2-5（¥3.50/次，按次不叠时长倍率）。
+		requestedModel, _ := body["model"].(string)
+		if routed, _ := tryFailoverRoute(c, body, strings.TrimSpace(requestedModel)); routed {
+			c.Next()
+			return
+		}
+
+		modelName := requestedModel
 		if !policy.IsSourceModel(modelName) {
 			c.Next()
 			return
@@ -236,6 +276,16 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						logger.LogInfo(c, fmt.Sprintf(
 							"条件路由：命中时长 %d 秒，改派 %s → %s",
 							seconds, sourceModel, secondsTarget))
+						// 规则五的第二段：豆包链路本身也不可用（额度用完 / 渠道被关）
+						// 时继续降级到备胎（班车）。
+						//
+						// ⚠️ 计费原点必须是 **sourceModel**（客户最初请求的促销族模型），
+						// 不能是 secondsTarget —— 客户买的是 seedance2.5-特惠，
+						// 降级到班车后仍按它计费（¥0.20/秒），不是按豆包的 ¥3.50/次。
+						if failRouted, _ := tryFailoverAfterDoubaoRoute(c, newBody, sourceModel); failRouted {
+							c.Next()
+							return
+						}
 						c.Next()
 						return
 					}
@@ -272,6 +322,12 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						logger.LogInfo(c, fmt.Sprintf(
 							"条件路由：提示词 %d 字符超过 %d，改派 %s → %s",
 							requestPromptRunes(body), promptRouteLimitRunes, sourceModel, secondsTarget))
+						// 规则五的第二段：豆包链路本身也不可用时继续降级到备胎。
+						// 计费原点同样是 sourceModel（客户最初请求的模型）。
+						if failRouted, _ := tryFailoverAfterDoubaoRoute(c, newBody, sourceModel); failRouted {
+							c.Next()
+							return
+						}
 						c.Next()
 						return
 					}
@@ -1037,6 +1093,21 @@ func hasAvailableChannel(c *gin.Context, modelName string) bool {
 		return false
 	}
 	return channel != nil
+}
+
+// HasAvailableChannel 是 hasAvailableChannel 的对外版本，供管理后台
+// 展示「源链路当前还有没有渠道」。
+//
+// 为什么后台需要它：故障转移的静态触发条件是「源模型在当前分组下没有
+// 启用中的渠道」。运营在后台看到的必须与中间件判定的是**同一个事实**，
+// 否则会出现「后台显示源链路正常、请求却全被改派」这种无法解释的状态。
+// 复用同一个实现才能保证两边一致。
+//
+// ⚠️ 分组口径：后台请求走的是管理员的分组（通常是 default），
+// 而客户请求可能走别的分组 —— 所以这里给的是「管理员视角」的可用性，
+// 仅供参考，不能当成全站结论。
+func HasAvailableChannel(c *gin.Context, modelName string) bool {
+	return hasAvailableChannel(c, modelName)
 }
 
 // extractRequestSeconds 从请求体里解析时长。

@@ -106,6 +106,65 @@ type Policy struct {
 	// 首尾帧是能力约束不是调度偏好，不存在「阈值」可调。
 	FramesTargetModel string `json:"frames_target_model,omitempty"`
 
+	// ─────────────────── 规则五：故障转移（failover）───────────────────
+	//
+	// 前四条规则的触发源都是**请求特征**（时长 / 比例 / 首尾帧 / 提示词长度），
+	// 规则五的触发源完全不同：**源链路本身不可用**（额度用完 / 渠道被关）。
+	//
+	// 为什么必须独立成一条规则、不能塞进前四条：
+	//  1. 触发条件不是「请求长什么样」，而是「渠道状态如何」，两者没有共同表达；
+	//  2. 源模型的口径相反 —— 前四条是「促销族模型 → 别的模型」，
+	//     规则五是「**已经是别的模型的对外名** → 备胎模型」；
+	//     seedance-2-5 既是规则一的**目标**，又是规则五的**源**，
+	//     混用同一份 source_models 会让「源 == 目标」的自循环风险出现；
+	//  3. 规则五的可用性判定要查**渠道状态**，前四条不查。
+	//
+	// FailoverSourceModel 是「会触发故障转移的源模型名」（如 seedance-2-5）。
+	//
+	// ⚠️ **刻意与 SourceModel / SourceModels 分开存**：那两份是前四条规则的源，
+	// 规则一的 target_model 恰好就是 seedance-2-5 —— 若把规则五的源写进
+	// source_models，中间件会先命中规则一、又把请求改派成同一个模型名，
+	// 形成「改派到自己」的循环。这里用独立字段，从结构上杜绝。
+	FailoverSourceModel string `json:"failover_source_model,omitempty"`
+
+	// FailoverTargetModel 是故障转移的目标模型名（备胎，如 wan3.0-班车）。空 = 规则五不启用。
+	FailoverTargetModel string `json:"failover_target_model,omitempty"`
+
+	// FailoverEnabled 规则五的总开关。默认 false（不改派）。
+	//
+	// 用三态指针还是 bool：这里用 bool 即可，理由与 SecondsRuleEnabled 不同 ——
+	// 规则五是**全新**的规则，旧的生产 option JSON 里根本没有这两个字段，
+	// 解析后是零值 false = 不启用，语义正好是「没配过就不生效」。
+	// 没有「升级当天静默改变行为」的风险。
+	FailoverEnabled bool `json:"failover_enabled,omitempty"`
+
+	// FailoverUnavailableUntil 是「源链路被判定为不可用」的截止时间（Unix 秒）。
+	// 0 = 当前没有被判定为不可用。
+	//
+	// 为什么需要它：额度用完是**持续状态**，不是一次性的失败。渠道被 AutoBan
+	// 下线时，渠道状态本身就是持久事实；但「额度用完但渠道没被下线」这种
+	// 情况（上游只在任务终态回一句「今日额度已用完」）只能靠探针感知 ——
+	// 而探针是**事件驱动**的，只在任务失败的那一刻才跑一次。
+	// 没有这个时间戳，下一个请求进来时中间件根本不知道源链路已经坏了，
+	// 会照常把请求送过去再失败一次（客户白等一轮 + 白烧一次预扣）。
+	//
+	// 判定不可用的时间点决定生效区间：探针在 T 时刻发现额度用完，
+	// 就置成「T 起不可用」，直到 T+窗口期结束才恢复尝试。
+	FailoverUnavailableUntil int64 `json:"failover_unavailable_until,omitempty"`
+
+	// FailoverUnavailableReason 是「源链路不可用」的原因文案，给前端展示。
+	FailoverUnavailableReason string `json:"failover_unavailable_reason,omitempty"`
+
+	// FailoverUnavailableSource 是「谁判定源链路不可用」："auto"（额度探针）
+	// 或 "manual"（管理员在后台标记）。空 = 未标记。
+	//
+	// 为什么必须区分：自动标记会在源链路成功出片后**自动解除**，
+	// 人工标记不会（人工可能知道上游今天一直挂着）。前端如果只显示
+	// 「不可用」，运营会以为关掉开关就等于源链路恢复了 —— 那是两种
+	// 完全不同的语义（自动标记的开关是「要不要启用故障转移」，
+	// 与「源链路好不好使」是两回事）。
+	FailoverUnavailableSource string `json:"failover_unavailable_source,omitempty"`
+
 	// SecondsRulePausedUntil 规则一的暂停截止时间（Unix 秒）。0 = 未暂停。
 	//
 	// 为什么需要「到期时间」而不是一个布尔开关：目标链路（豆包官网）的额度是
@@ -411,6 +470,9 @@ func UpdateFromJSONString(jsonStr string) error {
 // 公共字段可能全空（每个源模型各有各的目标），
 // 只看公共字段会误判成「一条都没配全」而把路由整个关掉。
 func (p Policy) anyRuleReady() bool {
+	if failoverRuleReady(p) {
+		return true
+	}
 	for _, source := range p.allSourceModels() {
 		if secondsRuleConfiguredFor(p, source) || ratioRuleReadyFor(p, source) || framesRuleReadyFor(p, source) {
 			return true
@@ -480,7 +542,8 @@ func IsAnyRouteEnabled() bool {
 	defer mu.RUnlock()
 	if secondsRuleActive(current, nowUnix()) ||
 		ratioRuleReady(current) ||
-		framesRuleReady(current) {
+		framesRuleReady(current) ||
+		failoverRuleReady(current) {
 		return true
 	}
 	for _, source := range current.allSourceModels() {
@@ -491,6 +554,192 @@ func IsAnyRouteEnabled() bool {
 		}
 	}
 	return false
+}
+
+// ─────────────────────── 规则五：故障转移 ───────────────────────
+
+// failoverRuleReady 判断规则五是否配全（可以生效）。
+//
+// 必要条件三个：总开关开着、源模型名非空、目标模型名非空。
+// 少任何一个都不生效 —— 与其他规则的「配全才生效」口径一致，
+// 避免半开状态下把请求改派成一个空模型名。
+func failoverRuleReady(p Policy) bool {
+	return p.FailoverEnabled &&
+		trimModelName(p.FailoverSourceModel) != "" &&
+		trimModelName(p.FailoverTargetModel) != ""
+}
+
+// IsFailoverRouteEnabled 判断规则五（故障转移）当前是否生效。
+func IsFailoverRouteEnabled() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return failoverRuleReady(current)
+}
+
+// IsFailoverSource 判断模型名是不是规则五的源模型。
+func IsFailoverSource(model string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	target := trimModelName(model)
+	if target == "" {
+		return false
+	}
+	return trimModelName(current.FailoverSourceModel) == target
+}
+
+// FailoverTargetModel 返回规则五的目标模型名（备胎）。空 = 未配置。
+func FailoverTargetModel() string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return trimModelName(current.FailoverTargetModel)
+}
+
+// FailoverSourceModel 返回规则五的源模型名。空 = 未配置。
+func FailoverSourceModel() string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return trimModelName(current.FailoverSourceModel)
+}
+
+// FailoverUnavailable 判断「源链路当前是否被判定为不可用」。
+//
+// 两种不可用来源，判定方式不同：
+//
+//	动态（探针）：FailoverUnavailableUntil > now —— 上游明确回报「额度用完」，
+//	              探针置了这个时间戳。额度按天重置，所以到期自动失效。
+//	静态（渠道）：源模型在当前分组下**没有启用中的渠道** —— 渠道被 AutoBan
+//	              下线或人工关闭。这不需要状态位，查渠道缓存即可，
+//	              而且渠道一恢复就自动恢复，不需要任何状态维护。
+//
+// 中间件要把这两种都算上。只认其中一种的话：渠道真被关了但探针没跑过时，
+// 请求会继续撞坏渠道；额度用完但渠道没被下线时，请求会继续白烧预扣。
+func FailoverUnavailable(now int64) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.FailoverUnavailableUntil > now
+}
+
+// FailoverReason 返回「源链路不可用」的原因文案（给前端展示）。没有则空串。
+func FailoverReason() string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.FailoverUnavailableReason
+}
+
+// FailoverUnavailableUntil 返回「源链路被判为不可用」的截止时间（Unix 秒）。0 = 未标记。
+func FailoverUnavailableUntil() int64 {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.FailoverUnavailableUntil
+}
+
+// FailoverUnavailableSource 返回「谁判定源链路不可用」："auto" / "manual" / ""。
+func FailoverUnavailableSource() string {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.FailoverUnavailableSource
+}
+
+// WithFailoverUnavailable 返回「把源链路标记为不可用直到 until」的策略副本（纯函数，不落库）。
+//
+// until 传 0 表示取消标记（恢复）。
+func WithFailoverUnavailable(until int64, reason string) Policy {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := clonePolicy(current)
+	out.FailoverUnavailableUntil = until
+	out.FailoverUnavailableReason = reason
+	if until > 0 {
+		out.FailoverUnavailableSource = PauseSourceAuto
+		out.UpdatedAt = nowUnix()
+	} else {
+		out.FailoverUnavailableSource = ""
+	}
+	return out
+}
+
+// WithManualFailoverUnavailable 返回「人工把源链路标记为不可用直到 until」的策略副本。
+//
+// 与 WithFailoverUnavailable 的区别只有「来源」：人工标记**不会**被
+// 额度探针的成功事件自动解除（探针只解除自己写的 auto 标记）。
+//
+// 为什么需要人工标记：上游有时不回报「额度用完」这句话，只是直接失败
+// （或者失败文案是别的样子，探针认不出来）。这时只能由人点一下按钮
+// 把源链路标成不可用，让请求改派到备胎。
+func WithManualFailoverUnavailable(until int64, reason string) Policy {
+	mu.RLock()
+	defer mu.RUnlock()
+	out := clonePolicy(current)
+	out.FailoverUnavailableUntil = until
+	out.FailoverUnavailableReason = reason
+	if until > 0 {
+		out.FailoverUnavailableSource = PauseSourceManual
+		out.UpdatedAt = nowUnix()
+	} else {
+		out.FailoverUnavailableSource = ""
+	}
+	return out
+}
+
+// WithFailoverEnabled 返回「规则五开关设成 enabled」的策略副本（纯函数，不落库）。
+func WithFailoverEnabled(enabled bool) (Policy, error) {
+	mu.RLock()
+	out := clonePolicy(current)
+	mu.RUnlock()
+	if enabled {
+		if trimModelName(out.FailoverSourceModel) == "" || trimModelName(out.FailoverTargetModel) == "" {
+			return Policy{}, errors.New("failover source model and target model are required")
+		}
+	}
+	out.FailoverEnabled = enabled
+	out.UpdatedAt = nowUnix()
+	return out, nil
+}
+
+// WithFailoverModels 返回「规则五的源/目标模型设成 source/target」的策略副本。
+//
+// 为什么要单独一个函数：规则五的源与目标是**一对**（谁挂了改派给谁），
+// 不像规则一~四那样源与目标分属不同维度。让后台接口分别提交两个字段
+// 会出现「只配了源、没配目标」的半开状态 —— 那种状态在中间件里表现为
+// 「配了却不生效」，且没有任何报错。
+//
+// 校验：
+//   - 两个模型名都必须非空（Trim 后）；
+//   - 两者不能相同 —— 相同就是「改派到自己」，请求会在链路里原地打转。
+//
+// ⚠️ 这里**不**改 FailoverEnabled：开关是独立的经营决策，配置完模型名
+// 不代表运营已经决定启用。是否启用由 WithFailoverEnabled 单独控制。
+func WithFailoverModels(sourceModel, targetModel string) (Policy, error) {
+	source := trimModelName(sourceModel)
+	target := trimModelName(targetModel)
+	if source == "" {
+		return Policy{}, errors.New("failover source model is required")
+	}
+	if target == "" {
+		return Policy{}, errors.New("failover target model is required")
+	}
+	if source == target {
+		return Policy{}, errors.New("failover source and target model must differ")
+	}
+	mu.RLock()
+	out := clonePolicy(current)
+	mu.RUnlock()
+	out.FailoverSourceModel = source
+	out.FailoverTargetModel = target
+	out.UpdatedAt = nowUnix()
+	return out, nil
+}
+
+// FailoverConfigured 判断规则五的源与目标是否都配好了（不要求开关开着）。
+//
+// 用途：后台接口要区分「还没配过规则五」与「配了但开关关着」——
+// 前者要提示先配模型名，后者只提示可以打开开关。两者都返回 false 的话，
+// 运营永远不知道自己缺哪一步。
+func FailoverConfigured() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return trimModelName(current.FailoverSourceModel) != "" &&
+		trimModelName(current.FailoverTargetModel) != ""
 }
 
 // IsSecondsRuleEnabledFor 判断「规则一（时长）对某个源模型是否生效」。

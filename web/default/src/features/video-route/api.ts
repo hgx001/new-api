@@ -57,8 +57,91 @@ export type VideoRoutePolicy = {
   updated_at: number
 }
 
+/**
+ * 规则五（故障转移）的状态。
+ *
+ * 核心区分：**`failover_enabled` 是「要不要改派」，`failover_unavailable`
+ * 是「源链路现在好不好使」**。两者不是一回事 ——
+ * 源链路挂着但故障转移没开 = 请求照旧打过去并失败；
+ * 源链路好好的但故障转移开着 = 请求照旧打过去，什么也没发生。
+ * 界面上必须分开，否则运营会以为「开着就等于源链路没问题」。
+ */
+export type VideoRouteFailoverState = {
+  /** 规则五总开关。 */
+  failover_enabled: boolean
+  /** 源/目标模型是否都配好了（不要求开关开着）。 */
+  failover_configured: boolean
+  failover_source_model: string
+  failover_target_model: string
+  /** 源链路当前在分组下有没有启用中的渠道（静态可用性）。 */
+  failover_source_available: boolean
+  /** 备胎链路当前有没有可用渠道。 */
+  failover_target_available: boolean
+  /** 源链路当前是否被判定为不可用（静态没渠道 或 动态被标记）。 */
+  failover_unavailable: boolean
+  failover_unavailable_reason: string
+  failover_unavailable_until: number
+  /** 标记来源：auto（额度探针）/ manual（人工）/ ''（未标记）。 */
+  failover_unavailable_source: '' | 'auto' | 'manual'
+  failover_unavailable_until_text: string
+}
+
 export async function getVideoRoutePolicy(): Promise<VideoRoutePolicy> {
   const res = await api.get('/api/video-route/policy')
+  return res.data.data
+}
+
+export async function getVideoRouteFailover(): Promise<VideoRouteFailoverState> {
+  const res = await api.get('/api/video-route/policy/failover')
+  return res.data.data
+}
+
+/**
+ * 启停规则五（故障转移）。
+ *
+ * 开启要求源/目标模型都已配置 —— 否则改派会把请求写成一个空模型名。
+ */
+export async function setVideoRouteFailoverEnabled(
+  enabled: boolean
+): Promise<VideoRouteFailoverState> {
+  const res = await api.post('/api/video-route/policy/failover/switch', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/** 配置规则五的源/目标模型（一次性配置，与开关分开）。 */
+export async function setVideoRouteFailoverModels(
+  sourceModel: string,
+  targetModel: string
+): Promise<VideoRouteFailoverState> {
+  const res = await api.post('/api/video-route/policy/failover/models', {
+    source_model: sourceModel,
+    target_model: targetModel,
+  })
+  return res.data.data
+}
+
+/**
+ * 人工把源链路标记为不可用。
+ *
+ * until 省略 = 北京时间次日 0 点（对应「今天额度用完了」）。
+ * 与额度探针的自动标记分开：人工标记不会被一次成功自动解除。
+ */
+export async function markVideoRouteFailoverUnavailable(
+  until?: number,
+  reason?: string
+): Promise<VideoRouteFailoverState> {
+  const res = await api.post(
+    '/api/video-route/policy/failover/unavailable',
+    { until: until ?? 0, reason: reason ?? '' }
+  )
+  return res.data.data
+}
+
+/** 人工解除「源链路不可用」标记（不动开关）。 */
+export async function clearVideoRouteFailoverUnavailable(): Promise<VideoRouteFailoverState> {
+  const res = await api.post('/api/video-route/policy/failover/available', {})
   return res.data.data
 }
 

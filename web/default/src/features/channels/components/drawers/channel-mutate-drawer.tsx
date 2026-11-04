@@ -108,6 +108,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { FailoverSwitchCard } from '@/features/video-route/components/failover-switch-card'
 import { RouteSwitchCard } from '@/features/video-route/components/route-switch-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -3587,6 +3588,15 @@ export function ChannelMutateDrawer({
                               另外 7 个与豆包无关的模型，在它们的抽屉里显示这个
                               开关会让人以为按了会停掉整条渠道。 */}
                           <RouteSwitchCard
+                            channelModels={currentModels ?? ''}
+                          />
+
+                          {/* 故障转移（规则五）：源链路额度用完 / 渠道被关
+                              → 请求自动改派到备胎模型。
+                              与上面的「跨模型改派」分开：前者是省钱调度，
+                              后者是保出片的兜底，混在一起时运营为了关一次
+                              成本优化会把兜底也关掉。 */}
+                          <FailoverSwitchCard
                             channelModels={currentModels ?? ''}
                           />
 
