@@ -386,7 +386,7 @@ var defaultModelPrice = map[string]float64{
 	"seedance2.5-活动":                  4.5 / USD2RMB,     // 对外 ¥4.5/次（固定按次，不乘时长/分辨率倍率）
 	"seedance-2.0":                      1.0 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
 	"seedance-2.5":                      0.8 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
-	"seedance-2-5":                      5.0 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥5.0/次（5/10/15/30 秒同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调；2026-11-01 由 ¥3.0 上调至 ¥5.0
+	"seedance-2-5":                      3.5 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥3.5/次（5/10/15/30 秒同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调；2026-11-01 由 ¥3.0 上调至 ¥5.0；2026-11-04 由 ¥5.0 下调至 ¥3.5
 	"seedance-2-0-fast":                 0.1 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.0 Fast（公开短名，上游真名 doubao-seedance-2-0-fast-260128），**按秒** ¥0.1/秒（5-15 秒逐秒可选，由 EstimateBilling 返回 seconds 倍率相乘）；2026-10-12 由 db-seedance-2-0 改名并由 ¥1.0/次 改为按秒
 	"gemini-web-video":                  1.0 / USD2RMB,   // 漫屋 ArcReel Gemini 官网 Veo，按次计费 ¥1.0/次（站点侧不乘时长）
 	"Nano Banana Pro":                   0.3 / USD2RMB,   // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
@@ -395,6 +395,14 @@ var defaultModelPrice = map[string]float64{
 	"MiniMax-H3-Max":                    0.365 / USD2RMB, // MiniMax 官方 v2 高速档，**按秒**（基础档 480P ¥0.365/秒；768P 倍率 1.6）
 	"MiniMax-H3-Context-IR":             1.0 / USD2RMB,   // MiniMax 官方 H3 上下文解析（只产提示词），按次 ¥1.0/次（占位价，待商务核定）
 	"wan3.0-1080p-慢速":                   2.0 / USD2RMB,   // 三元巡狩 wanwan 1080P（拼车），按次 ¥2.0/次（上游成本 ¥1/次）；拼车批次制，次日出片（EstimateBilling 返回 nil）
+	// wan3.0-班车（2026-11-04 上架，原名「wan3.0-排队」）：视频生成车站排队通道的
+	// 万相 wan3 全模态，攒批发车。480P/720P/1080P **上游同价**（每条固定扣 1 次），
+	// 对外也按次单一价位 ¥1.5/次，不叠时长/分辨率倍率（EstimateBilling 返回 nil）。
+	//
+	// ⚠️ 上游成本 ¥1/次（充值 1 元 = 1 次），对外 ¥1.5/次 —— 毛利 ¥0.5/次。
+	//    这是**唯一比成本价低的档**，定价依据是「排队要等数小时」，
+	//    用低价换客户对慢速档位的接受度。
+	"wan3.0-班车":                       1.5 / USD2RMB,
 	"autodl:minimax-h3-text-to-video":   autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5":     autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5-15s": autoDLVideoBasePrice,

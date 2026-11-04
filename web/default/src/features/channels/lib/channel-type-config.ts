@@ -175,11 +175,11 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     // ⚠️ 上游站点挂在 /vr 下，适配器会自动拼 /vr/api/tasks，
     // 所以 base url 只填到站点根，不要自己带 /vr。
     defaultBaseUrl: 'https://yuanmengstudio.com',
-    supportedModels: ['wan3.0-排队'],
+    supportedModels: ['wan3.0-班车'],
     hints: {
       baseUrl: 'Default: https://yuanmengstudio.com',
       key: '学员卡密（X-Token 鉴权，非 Bearer）',
-      models: 'wan3.0-排队',
+      models: 'wan3.0-班车',
     },
   },
 }

@@ -1272,7 +1272,7 @@ func TestDoubao20FastDurationPassesThroughArbitraryValues(t *testing.T) {
 }
 
 // 2026-10-12 计价口径分家：seedance-2-0-fast 改按秒（¥0.10/秒），
-// seedance-2-5 按次（¥5.00/次）。EstimateBilling 必须如实给出 seconds 倍率——
+// seedance-2-5 按次（¥3.50/次）。EstimateBilling 必须如实给出 seconds 倍率——
 // 漏掉它会**静默按 1 秒收费**（relay_task.go 用返回的 OtherRatios 乘 ModelPrice）。
 func TestDoubaoBillingModeIsPerSecondForFastAndPerCallFor25(t *testing.T) {
 	for _, tc := range []struct {

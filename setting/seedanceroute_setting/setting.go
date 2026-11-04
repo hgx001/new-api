@@ -4,7 +4,7 @@
 // 不是通用的倍率表，也不是模型定价。放独立包里，路由中间件只依赖这一份策略，
 // 不会把计费链（ratio_setting）和路由决策耦合在一起。
 //
-// 为什么需要它：同一个对外模型名，在「时长 = 30 秒」时走豆包官网链路（按次 ¥5.00），
+// 为什么需要它：同一个对外模型名，在「时长 = 30 秒」时走豆包官网链路（按次 ¥3.50），
 // 其余情况走有赞链路（按秒 ¥0.20/秒）。两条链路的成本结构完全不同，
 // 必须由开关控制、且默认关闭 —— 没有这个 option 时行为与改造前完全一致。
 //
@@ -46,7 +46,7 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 //	规则三（首尾帧）：SourceModel + media 含 first_frame/last_frame → FramesTargetModel
 //	               seedance2.5-特惠 + 首尾帧 → wan3.0-720p-特惠
 //	规则一（时长）：SourceModel + TriggerSeconds 秒 → TargetModel
-//	               seedance2.5-特惠 + 30 秒 → seedance-2-5（豆包按次 ¥5.00）
+//	               seedance2.5-特惠 + 30 秒 → seedance-2-5（豆包按次 ¥3.50）
 //	规则四（长提示词）：SourceModel + 提示词 > 5000 字符 → TargetModel
 //	               seedance2.5-特惠 + 超长提示词 → seedance-2-5
 //	规则二（比例）：SourceModel + TriggerRatio 比例 → RatioTargetModel

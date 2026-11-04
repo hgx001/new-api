@@ -489,6 +489,15 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan3.0-1080p-慢速" {
 		return true
 	}
+	// wan3.0-班车（2026-11-04 上架，原名「wan3.0-排队」）：视频生成车站排队通道
+	// 的万相 wan3 全模态，攒批发车。同样以 "wan3.0-" 开头、不以 "wan3.0-video"
+	// 开头，必须显式放行，否则广场里看不到、也算不出价。
+	//
+	// ⚠️ 旧名「wan3.0-排队」**故意不在这里**：改名时生产库尚无该模型的渠道与
+	// 能力记录，不存在旧名调用方，广场上不该同时挂两个名字。
+	if name == "wan3.0-班车" {
+		return true
+	}
 	// AutoDL ComfyUI：全部已配置工作流（autodl: 前缀）
 	if strings.HasPrefix(name, "autodl:") {
 		return true

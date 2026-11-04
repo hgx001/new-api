@@ -198,7 +198,8 @@ func TestDefaultModelPriceSeedance20PerUse(t *testing.T) {
 // 2026-10-12 豆包官网计价分家：
 //   - seedance-2-0-fast（豆包 2.0 Fast）改按**秒**计价 ¥0.10/秒，由 EstimateBilling
 //     返回 seconds 倍率相乘（与 wan3.0 家族同范式），时长 5–15 秒逐秒可选；
-//   - seedance-2-5（豆包 2.5）按**次**计价 ¥5.00/次（2026-11-01 由 ¥3.00 上调）；
+//   - seedance-2-5（豆包 2.5）按**次**计价 ¥3.50/次（2026-11-01 由 ¥3.00 上调到
+//     ¥5.00，2026-11-04 再下调到 ¥3.50）；
 //   - 旧公开名 db-seedance-2-0 / db-seedance-2-5 彻底下线，不得再有价格。
 func TestDefaultModelPriceDoubaoSeedance(t *testing.T) {
 	InitRatioSettings()
@@ -210,13 +211,30 @@ func TestDefaultModelPriceDoubaoSeedance(t *testing.T) {
 
 	perCall, ok := GetModelPrice("seedance-2-5", false)
 	require.True(t, ok, "seedance-2-5 must have an explicit per-use price")
-	require.InDelta(t, 5.0/USD2RMB, perCall, 1e-12, "seedance-2-5 must be ¥5/call in USD")
-	require.InDelta(t, 0.6849315, perCall, 1e-7, "seedance-2-5 must be ¥5/call in USD")
+	require.InDelta(t, 3.5/USD2RMB, perCall, 1e-12, "seedance-2-5 must be ¥3.50/call in USD")
+	require.InDelta(t, 0.4794521, perCall, 1e-7, "seedance-2-5 must be ¥3.50/call in USD")
 
 	for _, retired := range []string{"db-seedance-2-0", "db-seedance-2-5"} {
 		_, exists := defaultModelPrice[retired]
 		require.False(t, exists, "%s 必须从默认价格表移除", retired)
 	}
+}
+
+// wan3.0-班车（2026-11-04 上架，原名「wan3.0-排队」）：视频生成车站排队通道，
+// 按次 ¥1.50/次（上游成本 ¥1/次）。
+//
+// ⚠️ 旧名「wan3.0-排队」不得再有价格 —— 改名时生产库尚无该模型的渠道与能力
+// 记录，不存在旧名调用方，留着会让旧名在广场或计费里复活。
+func TestDefaultModelPriceYuanmengBanChe(t *testing.T) {
+	InitRatioSettings()
+
+	price, ok := GetModelPrice("wan3.0-班车", false)
+	require.True(t, ok, "wan3.0-班车 must have an explicit per-use price")
+	require.InDelta(t, 1.5/USD2RMB, price, 1e-12, "wan3.0-班车 must be ¥1.50/call in USD")
+	require.InDelta(t, 0.2054795, price, 1e-7, "wan3.0-班车 must be ¥1.50/call in USD")
+
+	_, exists := defaultModelPrice["wan3.0-排队"]
+	require.False(t, exists, "旧名「wan3.0-排队」必须从默认价格表移除")
 }
 
 func TestDefaultModelPriceSeedance25PerUse(t *testing.T) {

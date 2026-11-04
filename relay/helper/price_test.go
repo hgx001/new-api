@@ -80,7 +80,7 @@ func TestModelPriceHelperPerCallBillsRouteOriginModel(t *testing.T) {
 
 	const (
 		sourcePrice = 0.027397260273972605 // 源模型：¥0.20/秒
-		targetPrice = 0.6849315068493151   // 目标模型：¥5.00/次
+		targetPrice = 0.4794520547945206   // 目标模型：¥3.50/次
 	)
 	raw, err := common.Marshal(map[string]float64{
 		"route-src-model": sourcePrice,
