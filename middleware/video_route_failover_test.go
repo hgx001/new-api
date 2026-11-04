@@ -12,6 +12,7 @@ package middleware
 import (
 	"bytes"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -557,5 +558,94 @@ func TestFailoverDoesNotDegradeWhenDoubaoAvailable(t *testing.T) {
 	assertModelRouted(t, seen, failoverSourceModel)
 	if originModel != testSourceModel {
 		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
+	}
+}
+
+// ───────────────────────── 边界：提示词长度按字节口径 ─────────────────────────
+
+// 提示词长度必须按**字节**判，与班车 adaptor 的 len(prompt) 完全一致。
+//
+// 为什么这条重要：班车 adaptor 用 len(prompt)（Go 字符串字节数）判 5～20000，
+// 而改派侧此前用 len([]rune(prompt))（字符数）。中文提示词每字 3 字节，
+// 字符数口径会放行 3 倍长的提示词 —— 改派过去必被上游 400，
+// 而留在源链路至少能拿到源链路的明确报错。
+func TestFailoverPromptLengthUsesByteSemantics(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	// 7000 个中文字 = 21000 字节 > 20000（班车上限），
+	// 但只有 7000 个字符 < 20000（字符口径会误放行）。
+	prompt := strings.Repeat("猫", 7000)
+	body := `{"model":"seedance-2-5","seconds":10,"prompt":"` + prompt + `"}`
+	seen, _ := runFailover(t, body)
+	if seen != body {
+		t.Fatalf("提示词超字节上限时不该改派（字符口径会误放行）:\n got %s\nwant %s", seen[:80], body[:80])
+	}
+}
+
+// 反向：字节数没超上限时**必须**改派（不能因为字符数换算而误拦）。
+func TestFailoverRoutesWhenPromptWithinByteLimit(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	// 3000 个中文字 = 9000 字节，落在 5～20000 区间内。
+	prompt := strings.Repeat("猫", 3000)
+	seen, _ := runFailover(t, `{"model":"seedance-2-5","seconds":10,"prompt":"`+prompt+`"}`)
+	assertModelRouted(t, seen, failoverBackupModel)
+}
+
+// ───────────────────────── 边界：非法时长 fail-loud ─────────────────────────
+
+// 时长是小数时**不改派**：源链路 manwu 对非法值是 fail-loud 的
+// （parseFlexibleInt 会报 "is not a valid integer"），改派侧若把 7.5 截断成 7
+// 搬过去，就把「源链路会报错的请求」变成了「备胎按 7 秒跑」的一单 ——
+// 静默改了客户要的时长。
+func TestFailoverSkipsWhenSecondsIsFractional(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	body := `{"model":"seedance-2-5","seconds":7.5,"prompt":"a cat"}`
+	seen, _ := runFailover(t, body)
+	if seen != body {
+		t.Fatalf("时长为小数时不该改派（源链路会直接报错）:\n got %s\nwant %s", seen, body)
+	}
+}
+
+// 时长是非数字字符串时同样不改派。
+func TestFailoverSkipsWhenSecondsIsNotNumeric(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	body := `{"model":"seedance-2-5","seconds":"abc","prompt":"a cat"}`
+	seen, _ := runFailover(t, body)
+	if seen != body {
+		t.Fatalf("时长非法时不该改派:\n got %s\nwant %s", seen, body)
+	}
+}
+
+// duration 字段带小数时同样不改派（seconds 缺省时回退读 duration）。
+func TestFailoverSkipsWhenDurationIsFractional(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: false,
+		failoverBackupModel: true,
+	})
+
+	body := `{"model":"seedance-2-5","duration":12.5,"prompt":"a cat"}`
+	seen, _ := runFailover(t, body)
+	if seen != body {
+		t.Fatalf("duration 为小数时不该改派:\n got %s\nwant %s", seen, body)
 	}
 }

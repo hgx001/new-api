@@ -85,6 +85,7 @@ package middleware
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -125,6 +126,12 @@ const failoverMaxReferenceImages = 10
 // failoverMinPromptLength / failoverMaxPromptLength 是班车链路的提示词长度区间。
 //
 // 与 relay/channel/task/yuanmeng 的 BuildRequestBody 一致（上游 5～20000 字符）。
+//
+// ⚠️ **单位是字节，不是字符**：班车 adaptor 用 `len(prompt)`（Go 字符串字节数）
+// 判上下限，不是 `len([]rune(prompt))`。中文提示词每个字 3 字节，
+// 用字符数判会放行 3 倍长的提示词 —— 改派过去必被上游 400，
+// 而留在源链路还能拿到源链路的明确报错。
+// 所以这里的校验**必须用字节口径**，与 adaptor 完全对齐。
 const (
 	failoverMinPromptLength = 5
 	failoverMaxPromptLength = 20000
@@ -331,16 +338,22 @@ func prepareDoubaoBodyFailover(
 		return nil, false
 	}
 
+	// 提示词：班车要求 5～20000 **字节**（与班车 adaptor 的 len() 同口径）。
+	// 中文按字符数判会放行 3 倍长的提示词，改派过去必被上游 400。
 	prompt, _ := doubaoBody["prompt"].(string)
-	promptLength := len([]rune(strings.TrimSpace(prompt)))
+	promptLength := len(strings.TrimSpace(prompt))
 	if promptLength < failoverMinPromptLength || promptLength > failoverMaxPromptLength {
 		logger.LogInfo(c, fmt.Sprintf(
-			"条件路由跳过故障转移：提示词 %d 字符超出备胎链路范围 %d-%d 字符",
+			"条件路由跳过故障转移：提示词 %d 字节超出备胎链路范围 %d-%d 字节",
 			promptLength, failoverMinPromptLength, failoverMaxPromptLength))
 		return nil, false
 	}
 
-	seconds := failoverSourceSeconds(doubaoBody)
+	seconds, secondsOK := failoverSourceSeconds(doubaoBody)
+	if !secondsOK {
+		logger.LogInfo(c, "条件路由跳过故障转移：时长不是合法整数，源链路会直接报错")
+		return nil, false
+	}
 	if seconds < failoverMinSeconds || seconds > failoverMaxSeconds {
 		logger.LogInfo(c, fmt.Sprintf(
 			"条件路由跳过故障转移：时长 %d 秒超出备胎链路范围 %d-%d 秒",
@@ -468,16 +481,20 @@ func prepareFailoverRoute(c *gin.Context, body map[string]interface{}, target st
 		return nil, false
 	}
 
-	// 提示词：班车要求 5～20000 字符。
+	// 提示词：班车要求 5～20000 **字节**。
 	//
 	// 豆包链路只检查「非空」，长度上限在更上游（官网/App 侧）。
-	// 短于 5 字符的提示词在豆包链路可能能过（但内容毫无意义），
+	// 短于 5 字节的提示词在豆包链路可能能过（但内容毫无意义），
 	// 改派到班车一定被拒 → 留在源链路。
+	//
+	// ⚠️ 单位必须与班车 adaptor 一致（字节，不是字符）：
+	// relay/channel/task/yuanmeng 用 `len(prompt)` 判上下限。
+	// 中文提示词按字符数判会放行 3 倍长的提示词，改派过去必被上游 400。
 	prompt, _ := body["prompt"].(string)
-	promptLength := len([]rune(strings.TrimSpace(prompt)))
+	promptLength := len(strings.TrimSpace(prompt))
 	if promptLength < failoverMinPromptLength || promptLength > failoverMaxPromptLength {
 		logger.LogInfo(c, fmt.Sprintf(
-			"条件路由跳过故障转移：提示词 %d 字符超出备胎链路范围 %d-%d 字符",
+			"条件路由跳过故障转移：提示词 %d 字节超出备胎链路范围 %d-%d 字节",
 			promptLength, failoverMinPromptLength, failoverMaxPromptLength))
 		return nil, false
 	}
@@ -488,7 +505,15 @@ func prepareFailoverRoute(c *gin.Context, body map[string]interface{}, target st
 	// 豆包的四档（5/10/15/30）都在范围内，所以这条一般不会拦；
 	// 拦的是「客户直接请求豆包模型但传了 60 秒」这类边角 ——
 	// 改派过去必被上游 400，而留在源链路至少还能拿到源链路的明确报错。
-	seconds := failoverSourceSeconds(body)
+	//
+	// ⚠️ 时长非法（小数/非数字）时**也放弃改派**：源链路 manwu 对这类值是
+	// fail-loud 的（会报 invalid_duration），改派过去等于把「源链路会报错的请求」
+	// 变成「备胎按某个截断值跑」——静默改了客户要的时长。
+	seconds, secondsOK := failoverSourceSeconds(body)
+	if !secondsOK {
+		logger.LogInfo(c, "条件路由跳过故障转移：时长不是合法整数，源链路会直接报错")
+		return nil, false
+	}
 	if seconds < failoverMinSeconds || seconds > failoverMaxSeconds {
 		logger.LogInfo(c, fmt.Sprintf(
 			"条件路由跳过故障转移：时长 %d 秒超出备胎链路范围 %d-%d 秒",
@@ -698,20 +723,43 @@ func failoverSourceRatio(body map[string]interface{}) (string, bool) {
 // duration 优先 —— 那是给促销族链路用的宽松口径），缺省 5 秒。
 //
 // 数值与字符串两种写法都接（源链路用 parseFlexibleInt）。
-func failoverSourceSeconds(body map[string]interface{}) int {
-	if seconds, ok := failoverParseInt(body["seconds"]); ok {
-		return seconds
+//
+// ⚠️ 第二个返回值是「这个值是否合法」：
+// 源链路对非法值是 fail-loud 的（parseFlexibleInt 遇到小数/非数字直接报错），
+// 而这里的解析若继续「尽量解析出一个数」，就会把 `7.5` 截断成 `7` 当成合法值
+// 搬给备胎 —— 客户拿到的是 7 秒的片，源链路本该报错的那一单被静默改了语义。
+// 所以解析不出来时必须**如实报非法**，由调用方放弃改派（留在源链路报错）。
+func failoverSourceSeconds(body map[string]interface{}) (int, bool) {
+	if raw, ok := body["seconds"]; ok && raw != nil {
+		if seconds, valid := failoverParseInt(raw); valid {
+			return seconds, true
+		}
+		// 字段存在但解析不出整数 → 非法（与源链路同纪律：报错，不截断）。
+		return 0, false
 	}
-	if seconds, ok := failoverParseInt(body["duration"]); ok {
-		return seconds
+	if raw, ok := body["duration"]; ok && raw != nil {
+		if seconds, valid := failoverParseInt(raw); valid {
+			return seconds, true
+		}
+		return 0, false
 	}
-	return failoverDefaultSeconds
+	return failoverDefaultSeconds, true
 }
 
 // failoverParseInt 把「数字 / 数字字符串 / null」解析成 int。
+//
+// ⚠️ **小数不算合法**：源链路 manwu 的 parseFlexibleInt 用 json.Unmarshal 到
+// *int，小数（7.5）会直接 Unmarshal 失败 → 源链路报「is not a valid integer」。
+// 这里如果用 int(typed) 截断，7.5 会变成 7 —— 把「源链路会报错的一单」
+// 变成「备胎按 7 秒跑」的一单，静默改了客户要的时长。
+// 所以小数一律判为非法。
 func failoverParseInt(raw interface{}) (int, bool) {
 	switch typed := raw.(type) {
 	case float64:
+		// JSON 数字统一解成 float64，整数值没有小数部分才算合法。
+		if typed != math.Trunc(typed) {
+			return 0, false
+		}
 		return int(typed), true
 	case int:
 		return typed, true
