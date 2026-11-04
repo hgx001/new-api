@@ -859,10 +859,45 @@ func (a *TaskAdaptor) AfterUpstreamSuccess(ctx context.Context, task *model.Task
 	if !tencentmps_setting.IsConfigured() {
 		return false, nil
 	}
-	if strings.TrimSpace(upstreamURL) == "" {
+	// ⚠️ **upstreamURL 一定是空的**：ParseTaskResult 为了不透传 24 小时过期的
+	// 上游直链，在 done 分支故意留空 TaskInfo.Url。而 service 层正是把这个
+	// Url 当参数传进来 —— 两个设计互相打脸：直接判空返回 false 的话，转存永远
+	// 不会触发，ResultURL 落到 BuildProxyURL（站内 /content 自引用），客户取片
+	// 时代理回落到上游直链，实测报 502（上游 401）。
+	//
+	// 所以这里必须从已落库的上游原始响应 task.Data 里回捞真实地址。
+	source := strings.TrimSpace(upstreamURL)
+	if source == "" {
+		source = upstreamSourceURL(task)
+	}
+	if source == "" {
 		return false, nil
 	}
-	return wan3.SubmitRelocate(ctx, task, upstreamURL)
+	return wan3.SubmitRelocate(ctx, task, source)
+}
+
+// upstreamSourceURL 从任务的原始上游响应（task.Data）里取成片直链。
+//
+// task.Data 存的是上游最后一次返回的完整 JSON（{"ok":true,"task":{...}}），
+// 里面 videoUrl / videoDirect / video 三个字段都可能有值，按可靠性依次取。
+func upstreamSourceURL(task *model.Task) string {
+	if task == nil || len(task.Data) == 0 {
+		return ""
+	}
+	var payload struct {
+		Task *upstreamTask `json:"task"`
+		// 兼容直接存上游单任务对象（没有外层 task 包装）的情况。
+		upstreamTask
+	}
+	if err := common.Unmarshal(task.Data, &payload); err != nil {
+		return ""
+	}
+	candidates := []string{}
+	if payload.Task != nil {
+		candidates = append(candidates, payload.Task.VideoURL, payload.Task.VideoDirect, payload.Task.Video)
+	}
+	candidates = append(candidates, payload.VideoURL, payload.VideoDirect, payload.Video)
+	return firstNonEmpty(candidates...)
 }
 
 // PollPostProcess 推进转存任务。

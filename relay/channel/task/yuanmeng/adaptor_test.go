@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -555,4 +556,40 @@ func TestChannelNameAndModelList(t *testing.T) {
 	a := newAdaptor()
 	assert.Equal(t, ChannelName, a.GetChannelName())
 	assert.Equal(t, []string{PublicModel}, a.GetModelList())
+}
+
+// ────────────────────── 成片转存的取源（回归守门）──────────────────────
+
+// ParseTaskResult 在 done 分支**故意留空** TaskInfo.Url（不透传 24 小时过期的
+// 上游直链），而 service 层正是把这个 Url 当 upstreamURL 传给 AfterUpstreamSuccess。
+// 如果 AfterUpstreamSuccess 只认这个参数，转存永远不会触发 —— 线上表现为
+// ResultURL 落成站内 /content 自引用，取片回落到已失效的上游直链，返回 502。
+//
+// 这条测试锁死：upstreamURL 为空时必须能从 task.Data 回捞到真实地址。
+func TestAfterUpstreamSuccessFallsBackToTaskData(t *testing.T) {
+	raw := []byte(`{"ok":true,"task":{"id":"T154640","status":"done",` +
+		`"videoUrl":"https://upstream.example.com/v/out.mp4","video":""}}`)
+
+	task := &model.Task{TaskID: "task_x"}
+	task.Data = raw
+
+	got := upstreamSourceURL(task)
+	assert.Equal(t, "https://upstream.example.com/v/out.mp4", got,
+		"必须能从 task.Data 里回捞上游成片直链，否则转存永远不触发")
+}
+
+// 裸单任务形态（没有外层 task 包装）也要能取到。
+func TestUpstreamSourceURLFlatShape(t *testing.T) {
+	task := &model.Task{TaskID: "task_y"}
+	task.Data = []byte(`{"id":"T1","status":"done","videoDirect":"https://u.example.com/2.mp4"}`)
+
+	assert.Equal(t, "https://u.example.com/2.mp4", upstreamSourceURL(task))
+}
+
+// 数据为空或没有地址时返回空串，不能 panic、不能瞎猜。
+func TestUpstreamSourceURLEmpty(t *testing.T) {
+	assert.Empty(t, upstreamSourceURL(nil))
+	assert.Empty(t, upstreamSourceURL(&model.Task{}))
+	assert.Empty(t, upstreamSourceURL(&model.Task{Data: []byte(`{"ok":true,"task":{"status":"done"}}`)}))
+	assert.Empty(t, upstreamSourceURL(&model.Task{Data: []byte(`not-json`)}))
 }
