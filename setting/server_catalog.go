@@ -18,7 +18,7 @@ import (
 // 由服务端重新算一次 —— 否则改一个请求体就能用 1 分钱买走一台 GPU 机器。
 //
 // 改价流程：先改这里（后端），再同步前端常量；两边都有测试锁定关键价位
-// （100M = 10M × 3、RTX PRO 6000 = ¥15/小时），改单边会直接测挂。
+// （100M = 10M × 3、GPU 三档时价 5.6 / 7.8 / 19.9），改单边会直接测挂。
 
 const ServerHoursPerMonth = 730
 
@@ -54,16 +54,19 @@ type ServerSpec struct {
 	DataDiskMax int     `json:"data_disk_max,omitempty"`
 	CPUModel    string  `json:"cpu_model,omitempty"`
 	Multiplier  float64 `json:"multiplier"`
-	// MonthlyPrice 是**包月口径的机型月价**（¥/月），可选。
+	// HourlyPrice / MonthlyPrice 是两个口径各自独立的**机型价**，
+	// 填了就直接覆盖「基准价 × Multiplier」的推导，不填才回落到系数。
 	//
-	// 什么时候需要它：按量与包月是两个独立的价格体系，不总能由同一个
-	// 系数推出来。RTX PRO 6000 档就是这种 —— 按量卖 ¥15/小时
-	// （系数 6 × 基准时价 ¥2.50），包月卖 ¥6,580/月，
-	// 而 ¥6,580 ÷ ¥1,280 = 5.140625 与按量系数 6 对不上：
-	// 硬套系数会算出 ¥7,680，比用户要的贵 ¥1,100/月，且没有任何报错。
+	// 为什么需要显式定价：按量与包月是两套独立的价格体系，不能互推。
+	// GPU 三档就是典型 —— 用户指定 4090 ¥5.60 / 5090 ¥7.80 /
+	// PRO 6000 ¥19.90 每小时，这些数除以基准时价 ¥2.50 会得到
+	// 2.24 / 3.12 / 7.96 这种没人看得懂的系数，而且改一个价就要反算一遍。
+	// 同理 PRO 6000 包月卖 ¥6,580，¥6,580 ÷ ¥1,280 = 5.140625，
+	// 与按量口径也完全对不上。硬套系数会算错钱且不报错。
 	//
-	// 语义：填了就**直接作为该档的包月机型价**，覆盖「基准月价 × 系数」；
-	// 不填则回落到系数推导（绝大多数档位保持单一系数，两口径天然自洽）。
+	// 语义：HourlyPrice 只在按量口径生效，MonthlyPrice 只在包月口径生效，
+	// 互不污染。Multiplier 仍保留给未显式定价的档位以及历史数据展示。
+	HourlyPrice  *float64   `json:"hourly_price,omitempty"`
 	MonthlyPrice *float64   `json:"monthly_price,omitempty"`
 	GPU          *ServerGPU `json:"gpu,omitempty"`
 }
@@ -142,24 +145,36 @@ var ServerPlans = []ServerPlan{
 		BasePricePerMonth: 1280,
 		BasePricePerHour:  2.5,
 		Specs: []ServerSpec{
-			{Id: "gpu-16c64g", CPU: 16, Memory: 64, Disk: 500, Multiplier: 1, GPU: &ServerGPU{Model: "RTX 4090", VRAM: 24, Count: 1}},
-			{Id: "gpu-16c64g-rtx5090", CPU: 16, Memory: 64, Disk: 500, Multiplier: 1.4, GPU: &ServerGPU{Model: "RTX 5090", VRAM: 32, Count: 1}},
+			// GPU 三档的按量时价由用户直接指定（¥/小时），不再由系数推导。
+			// 包月价仍是「基准月价 ¥1,280 × Multiplier」，PRO 6000 例外用 MonthlyPrice。
+			// 两套口径各写各的，改价时不会互相带偏。
 			{
-				// RTX PRO 6000 单卡档：¥15.00/小时。
-				//
-				// 按量卖 ¥15.00/小时：系数 = ¥15.00 ÷ 基准时价 ¥2.50 = 6.00。
-				//
-				// 包月卖 ¥6,580/月（用户指定）。注意这**不是** ¥1,280 × 6：
-				// ¥6,580 ÷ ¥1,280 = 5.140625，与按量系数 6 不一致 —— 按量与包月
-				// 是两套独立定价，不能用同一个系数推导。所以这里用
-				// MonthlyPrice 显式指定包月机型价，按量仍走系数 6。
-				//
+				Id:          "gpu-16c64g",
+				CPU:         16,
+				Memory:      64,
+				Disk:        500,
+				Multiplier:  1,
+				HourlyPrice: floatPtr(5.6),
+				GPU:         &ServerGPU{Model: "RTX 4090", VRAM: 24, Count: 1},
+			},
+			{
+				Id:          "gpu-16c64g-rtx5090",
+				CPU:         16,
+				Memory:      64,
+				Disk:        500,
+				Multiplier:  1.4,
+				HourlyPrice: floatPtr(7.8),
+				GPU:         &ServerGPU{Model: "RTX 5090", VRAM: 32, Count: 1},
+			},
+			{
+				// RTX PRO 6000 单卡档：按量 ¥19.90/小时，包月 ¥6,580/月。
 				// 主机配置：24 vCPU / 96 GB / 1000 GB，单卡 RTX PRO 6000 96 GB。
 				Id:           "gpu-24c96g-rtxpro6000",
 				CPU:          24,
 				Memory:       96,
 				Disk:         1000,
 				Multiplier:   6,
+				HourlyPrice:  floatPtr(19.9),
 				MonthlyPrice: floatPtr(6580),
 				GPU:          &ServerGPU{Model: "RTX PRO 6000", VRAM: 96, Count: 1},
 			},
@@ -339,13 +354,13 @@ func ComputeServerQuote(config ServerConfig) (*ServerQuote, error) {
 		BandwidthPrice: roundServerMoney(bandwidth.PricePerMonth),
 	}
 	machinePrice := roundServerMoney(quote.PlanPrice * spec.Multiplier)
-	// 包月口径下规格若显式指定了月价（MonthlyPrice），以它为准。
-	//
-	// 按量与包月是两套独立定价，不能强行用同一个系数互推：
-	// RTX PRO 6000 档按量 ¥15/小时（系数 6），包月 ¥6,580/月
-	// （÷ ¥1,280 = 5.140625）。硬套系数会算成 ¥7,680，比用户要的贵 ¥1,100。
-	//
-	// 只有包月口径读这个字段 —— 按量仍由 Multiplier 推导，两边各自独立。
+	// 显式机型价覆盖系数推导，且**按量与包月互不读取对方的字段**：
+	// GPU 三档的时价（5.6 / 7.8 / 19.9）与包月价（1280 / 1792 / 6580）
+	// 是两套独立定价，硬用 Multiplier 互推会算错钱还不报错。
+	// 只有当前口径对应的字段生效，另一口径的值不会污染本次报价。
+	if duration.Pricing == ServerBillingHourly && spec.HourlyPrice != nil {
+		machinePrice = roundServerMoney(*spec.HourlyPrice)
+	}
 	if duration.Pricing == ServerBillingPrepaid && spec.MonthlyPrice != nil {
 		machinePrice = roundServerMoney(*spec.MonthlyPrice)
 	}

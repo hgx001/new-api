@@ -134,7 +134,13 @@ export const PLANS: ServerPlan[] = [
     // 单卡 4090 的量级参照 AutoDL 同档卡型（¥1.8~2.6/小时）
     basePricePerHour: 2.5,
     badgeKey: 'New',
-    // 按价格从低到高排：单卡 4090 → 单卡 5090 → 单卡 RTX PRO 6000
+    // 按价格从低到高排：单卡 4090 → 单卡 5090 → 单卡 RTX PRO 6000。
+    //
+    // GPU 三档的按量时价由用户直接指定（¥/小时），写进 hourlyPrice，
+    // 不再靠 multiplier 反推 —— 5.6/7.8/19.9 除以基准时价 ¥2.50
+    // 会得到 2.24/3.12/7.96 这种没人看得懂的系数，改一个价就要反算一遍。
+    // 包月价仍走 multiplier（PRO 6000 例外用 monthlyPrice = ¥6,580）。
+    // 两个口径各写各的，与后端 setting/server_catalog.go 一一对应。
     specs: [
       {
         id: 'gpu-16c64g',
@@ -142,39 +148,21 @@ export const PLANS: ServerPlan[] = [
         memory: 64,
         disk: 500,
         multiplier: 1,
+        hourlyPrice: 5.6,
         gpu: { model: 'RTX 4090', vram: 24, count: 1 },
       },
       {
-        /**
-         * RTX 5090 档：¥3.50/小时。
-         *
-         * 价格只由一个系数决定 —— ¥3.50 ÷ 基准时价 ¥2.50 = 1.4，
-         * 包月价由同一个系数同步算出（¥1,280 × 1.4 = ¥1,792/月）。
-         * 这样两个口径永远同源：¥3.50 × 730 = ¥2,555，
-         * ¥2,555 ÷ ¥1,792 = 1.426，与基准档的 1.426 完全一致，
-         * 不会出现「按量按 4090 的比价、包月按另一个比价」的口径漂移。
-         *
-         * 主机配置沿用单卡 4090 档（同机型换卡）；要改成更大的内存/盘，
-         * 只需改这一条 + multiplier（规格 id 也要跟着改，见下）。
-         */
         id: 'gpu-16c64g-rtx5090',
         cpu: 16,
         memory: 64,
         disk: 500,
         multiplier: 1.4,
+        hourlyPrice: 7.8,
         gpu: { model: 'RTX 5090', vram: 32, count: 1 },
       },
       {
         /**
-         * RTX PRO 6000 单卡档：¥15.00/小时。
-         *
-         * 按量卖 ¥15.00/小时：系数 = ¥15.00 ÷ 基准时价 ¥2.50 = 6.00。
-         *
-         * 包月卖 ¥6,580/月（用户指定）。注意这**不是** ¥1,280 × 6：
-         * ¥6,580 ÷ ¥1,280 = 5.140625，与按量系数 6 不一致 —— 按量与包月
-         * 是两套独立定价，不能用同一个系数推导。所以这里用 monthlyPrice
-         * 显式指定包月机型价，按量仍走系数 6。
-         *
+         * RTX PRO 6000 单卡档：按量 ¥19.90/小时，包月 ¥6,580/月。
          * 主机配置：24 vCPU / 96 GB / 1000 GB，单卡 RTX PRO 6000 96 GB。
          */
         id: 'gpu-24c96g-rtxpro6000',
@@ -182,6 +170,7 @@ export const PLANS: ServerPlan[] = [
         memory: 96,
         disk: 1000,
         multiplier: 6,
+        hourlyPrice: 19.9,
         monthlyPrice: 6580,
         gpu: { model: 'RTX PRO 6000', vram: 96, count: 1 },
       },

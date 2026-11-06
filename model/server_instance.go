@@ -315,7 +315,7 @@ func PurchaseServerInstance(
 // PurchaseServerInstanceWithProvider 按指定支付网关下单。
 //
 // provider 为 PaymentProviderBalance 时同步扣额度并开通实例；
-// 为 PaymentProviderEpay 时只落 pending 订单，等网关回调后开通
+// 为 PaymentProviderAlipay 时只落 pending 订单，等支付宝回调后开通
 // （见 CompleteServerOrderPaid）。
 func PurchaseServerInstanceWithProvider(
 	userId int,
@@ -334,8 +334,8 @@ func PurchaseServerInstanceWithProvider(
 //
 // provider 决定扣款方式：
 //   - PaymentProviderBalance：同步扣站内额度，订单直接成功、实例立即创建；
-//   - PaymentProviderEpay：同步阶段**只落一张 pending 订单**，不扣额度也不建实例；
-//     真正的开通动作发生在网关回调里（见 CompleteServerOrderPaid）。
+//   - PaymentProviderAlipay：同步阶段**只落一张 pending 订单**，不扣额度也不建实例；
+//     真正的开通动作发生在支付宝回调里（见 CompleteServerOrderPaid）。
 func purchaseServerInstanceWithProvider(
 	userId int,
 	config setting.ServerConfig,
@@ -525,8 +525,8 @@ func purchaseServerInstanceWithProvider(
 			Action:     "create",
 			// Detail 只放**语言中性**的事实（实例名、订单号、金额），
 			// 具体描述由前端按 action 翻译 —— 否则英文界面会蹦出中文。
-			Detail:     fmt.Sprintf("%s · %s", instance.Name, order.TradeNo),
-			CreatedAt:  now,
+			Detail:    fmt.Sprintf("%s · %s", instance.Name, order.TradeNo),
+			CreatedAt: now,
 		}).Error
 	})
 	if err != nil {

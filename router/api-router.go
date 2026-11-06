@@ -45,7 +45,7 @@ func SetApiRouter(router *gin.Engine) {
 			serverRoute.GET("/orders", controller.GetServerOrders)
 			serverRoute.GET("/orders/:trade_no", controller.GetServerOrderStatus)
 			serverRoute.GET("/pay-methods", controller.GetServerPayMethods)
-			serverRoute.POST("/pay/epay", middleware.CriticalRateLimit(), controller.RequestServerEpayPay)
+			serverRoute.POST("/pay/alipay", middleware.CriticalRateLimit(), controller.RequestServerAlipayPay)
 			serverRoute.GET("/instances", controller.GetServerInstances)
 			serverRoute.GET("/instances/:id", controller.GetServerInstance)
 			serverRoute.GET("/instances/:id/metrics", controller.GetServerInstanceMetrics)
@@ -57,9 +57,9 @@ func SetApiRouter(router *gin.Engine) {
 			serverRoute.POST("/instances/:id/renew", middleware.CriticalRateLimit(), controller.RenewServerInstance)
 			serverRoute.POST("/instances/:id/release", middleware.CriticalRateLimit(), controller.ReleaseServerInstance)
 		}
-		// 云服务器订单的支付回调：无需登录（网关服务器调用），但必须验签。
-		apiRouter.POST("/server/pay/epay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.ServerEpayNotify)
-		apiRouter.GET("/server/pay/epay/notify", middleware.PaymentNotifyRateLimit(), controller.ServerEpayNotify)
+		// 云服务器订单的支付回调：无需登录（支付宝服务器调用），但必须 RSA2 验签。
+		apiRouter.POST("/server/pay/alipay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.ServerAlipayNotify)
+		apiRouter.GET("/server/pay/alipay/notify", middleware.PaymentNotifyRateLimit(), controller.ServerAlipayNotify)
 
 		// 条件路由的运维开关（暂停 / 恢复「按时长改派到豆包」那条规则）。
 		//

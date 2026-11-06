@@ -25,14 +25,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { PublicLayout } from '@/components/layout'
 import { Footer } from '@/components/layout/components/footer'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { submitPaymentForm } from '@/features/wallet/lib/payment'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { newRequestId, quoteServer } from './api'
@@ -41,12 +40,20 @@ import { CheckoutDialog } from './components/checkout-dialog'
 import { ConfigSection } from './components/config-section'
 import { InstanceConsole } from './components/instance-console'
 import { PasswordDialog } from './components/password-dialog'
+import { ResourceNotice } from './components/resource-notice'
 import { ServerHero } from './components/server-hero'
+import { WeChatContactDialog } from './components/wechat-contact-dialog'
 import {
   DEFAULT_DURATION_ID,
   DEFAULT_MBPS,
   DEFAULT_PLAN,
   DEFAULT_REGION,
+  formatGpu,
+  formatSpec,
+  getDuration,
+  getPlan,
+  getRegion,
+  getSpec,
 } from './constants'
 import { useInstanceActions } from './hooks/use-instance-actions'
 import {
@@ -152,6 +159,9 @@ export function ServersContent({
     null
   )
   const [passwordSubmitting, setPasswordSubmitting] = useState(false)
+  // 「资源紧张」引导：微信弹窗与收银台的轻确认门槛
+  const [contactOpen, setContactOpen] = useState(false)
+  const [contactConfirmed, setContactConfirmed] = useState(false)
 
   const instancesQuery = useServerInstances(isAuthenticated)
   const servers = instancesQuery.data?.items ?? []
@@ -166,6 +176,29 @@ export function ServersContent({
   // 第三方支付的订单状态轮询：钱到了、机器开了就停
   const orderStatusQuery = useServerOrderStatus(pendingTradeNo)
   const paidFromOrder = orderStatusQuery.data?.instance ?? null
+
+  /**
+   * 给管理员微信弹窗用的配置摘要。
+   *
+   * 自动拼进咨询话术 —— 用户不用自己描述要哪台机器，管理员收到消息
+   * 就能直接查库存，省掉一轮「你要什么配置」的来回。
+   */
+  const configSummary = useMemo(() => {
+    const plan = getPlan(config.plan)
+    const spec = getSpec(plan, config.specId)
+    const region = getRegion(config.region)
+    const duration = getDuration(config.durationId ?? DEFAULT_DURATION_ID)
+    return [
+      t(region.nameKey),
+      t(plan.nameKey),
+      formatSpec(spec, t),
+      formatGpu(spec.gpu),
+      t(duration.nameKey),
+      `${config.mbps} Mbps`,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+  }, [config, t])
 
   /**
    * 从收银台跳回来时：把之前挂起的订单接上，继续轮询支付结果。
@@ -238,7 +271,9 @@ export function ServersContent({
     setPaidServer(null)
     setServerQuote(null)
     setPendingTradeNo(null)
-    // 默认选余额支付：不需要跳网关，是最快的路径。
+    // 每次新开一张订单都重新确认「已联系管理员」，不能沿用上一次的勾选。
+    setContactConfirmed(false)
+    // 默认选余额支付：不需要跳收银台，是最快的路径。
     setSelectedMethod('balance')
     // 每次打开收银台生成一个幂等号：双击或网络重试都只会成交一台机器
     setCheckoutRequestId(newRequestId())
@@ -254,8 +289,8 @@ export function ServersContent({
    *
    * 两条路径：
    *  1. 余额支付 —— 同步扣款、机器立刻开，直接展示凭据；
-   *  2. 第三方支付 —— 先落一张 pending 订单，再拉起网关收银台。
-   *     机器要等网关异步回调才开通，所以这里跳出去后由订单轮询接管，
+   *  2. 支付宝官方直连 —— 先落一张 pending 订单，再整页跳转官方收银台。
+   *     机器要等支付宝异步回调才开通，所以跳出去后由订单轮询接管，
    *     支付完成后在同一个弹窗里展示凭据。
    */
   const handlePay = useCallback(async () => {
@@ -274,9 +309,9 @@ export function ServersContent({
         return
       }
 
-      // 第三方支付：机器还没开，等回调。先记下订单号，再拉起收银台。
+      // 在线支付：机器还没开，等回调。先记下订单号，再跳支付宝。
       setPendingTradeNo(result.order.trade_no)
-      const launch = await actions.launchEpay.mutateAsync({
+      const launch = await actions.launchAlipay.mutateAsync({
         tradeNo: result.order.trade_no,
         paymentMethod: selectedMethod,
       })
@@ -284,12 +319,7 @@ export function ServersContent({
         toast.error(t('Failed to open the payment page'))
         return
       }
-      if (launch.pay_mode === 'redirect') {
-        window.location.assign(launch.url)
-        return
-      }
-      // 易支付网关：浏览器要 POST 一张表单过去
-      submitPaymentForm(launch.url, launch.params ?? {})
+      window.location.assign(launch.url)
       toast.success(
         t('Payment page opened. Your server will be ready once the payment is confirmed.')
       )
@@ -298,7 +328,7 @@ export function ServersContent({
     } finally {
       setPaying(false)
     }
-  }, [actions.launchEpay, actions.purchase, checkoutRequestId, config, selectedMethod, t])
+  }, [actions.launchAlipay, actions.purchase, checkoutRequestId, config, selectedMethod, t])
 
   // 第三方支付到账后：展示凭据，并停掉轮询
   useEffect(() => {
@@ -351,6 +381,14 @@ export function ServersContent({
       <div className='bg-[#f5f9f7]'>
         {/* 主区 */}
         <section className='mx-auto max-w-6xl px-4 py-10 md:py-14'>
+          {/* 资源由人工排期：在选配置之前就告知，避免用户挑完一轮
+              到收银台才发现要先联系管理员。 */}
+          <ResourceNotice
+            variant='banner'
+            onContact={() => setContactOpen(true)}
+            className='mb-6'
+          />
+
           <div ref={configRef} className='scroll-mt-24'>
             <Tabs
               value={activeView}
@@ -477,8 +515,18 @@ export function ServersContent({
         payMethods={payMethods}
         selectedMethod={selectedMethod}
         onSelectMethod={setSelectedMethod}
+        onContactAdmin={() => setContactOpen(true)}
+        contactConfirmed={contactConfirmed}
+        onContactConfirmedChange={setContactConfirmed}
         onPay={handlePay}
         onDone={handleCheckoutDone}
+      />
+
+      <WeChatContactDialog
+        open={contactOpen}
+        onOpenChange={setContactOpen}
+        configSummary={configSummary}
+        onConfirmed={() => setContactConfirmed(true)}
       />
 
       <PasswordDialog

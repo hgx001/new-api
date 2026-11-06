@@ -26,7 +26,7 @@ import {
   getServerOrderStatus,
   listServerPayMethods,
   purchaseServer,
-  requestServerEpayPay,
+  requestServerAlipayPay,
   serverErrorMessageKey,
 } from './api'
 import type { ServerConfig } from './types'
@@ -137,13 +137,13 @@ describe('服务器下单的支付方式参数', () => {
     assert.equal(result.instance?.id, 7)
   })
 
-  test('第三方支付：请求体带 payment_method=alipay，且响应无实例', async () => {
+  test('在线支付：请求体带 payment_method=alipay，且响应无实例', async () => {
     responder = () => ({
       payload: {
         success: true,
         data: {
           order: { trade_no: 'SRV2', status: 'pending' },
-          pay_mode: 'epay',
+          pay_mode: 'alipay',
           quota: 100,
           balance_amount: 50,
         },
@@ -154,7 +154,7 @@ describe('服务器下单的支付方式参数', () => {
 
     const body = captured[0].body as Record<string, unknown>
     assert.equal(body.payment_method, 'alipay')
-    assert.equal(result.pay_mode, 'epay')
+    assert.equal(result.pay_mode, 'alipay')
     // 异步链路：下单这一刻机器还没开，实例必须为空
     assert.equal(result.instance, undefined)
     assert.equal(result.order.trade_no, 'SRV2')
@@ -179,31 +179,30 @@ describe('服务器下单的支付方式参数', () => {
   })
 })
 
-describe('拉起第三方收银台', () => {
-  test('带上订单号与支付方式，拿到网关地址和表单参数', async () => {
+describe('拉起支付宝官方收银台', () => {
+  test('带上订单号与支付方式，拿到官方跳转 URL（不再提交网关表单）', async () => {
     responder = () => ({
       payload: {
         success: true,
         data: {
-          pay_mode: 'form',
-          url: 'https://pay.example.test/submit.php',
-          params: { pid: '1001', money: '6580.00' },
+          pay_mode: 'redirect',
+          url: 'https://openapi.alipay.com/gateway.do?biz_content=...',
           trade_no: 'SRV2',
         },
       },
     })
 
-    const launch = await requestServerEpayPay('SRV2', 'alipay')
+    const launch = await requestServerAlipayPay('SRV2', 'alipay')
 
-    assert.equal(captured[0].url, '/api/server/pay/epay')
+    assert.equal(captured[0].url, '/api/server/pay/alipay')
     assert.equal(captured[0].method, 'POST')
     assert.deepEqual(captured[0].body, {
       trade_no: 'SRV2',
       payment_method: 'alipay',
     })
-    assert.equal(launch.pay_mode, 'form')
-    assert.equal(launch.url, 'https://pay.example.test/submit.php')
-    assert.equal(launch.params.money, '6580.00')
+    assert.equal(launch.pay_mode, 'redirect')
+    assert.match(launch.url, /openapi\.alipay\.com/)
+    assert.equal(launch.trade_no, 'SRV2')
   })
 })
 

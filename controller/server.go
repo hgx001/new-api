@@ -103,11 +103,11 @@ func serverWalletSnapshot(userId int) gin.H {
 //
 // 两种支付方式：
 //   - balance（默认）：同步扣站内额度，下单即开通，返回 instance；
-//   - 第三方渠道（alipay/wxpay…）：只落一张 pending 订单，返回 trade_no，
-//     前端拿它去拉起收银台；机器在网关回调成功后才开通。
+//   - alipay（支付宝官方直连）：只落一张 pending 订单，返回 trade_no，
+//     前端拿它去拉起支付宝收银台；机器在异步回调成功后才开通。
 //
 // 返回的 data 里 pay_mode 告诉前端该怎么走：balance 直接展示凭据，
-// epay 需要跳去收银台。
+// alipay 需要整页跳转去支付宝。
 func PurchaseServer(c *gin.Context) {
 	userId := c.GetInt("id")
 	var req serverPurchaseRequest
@@ -127,12 +127,13 @@ func PurchaseServer(c *gin.Context) {
 	}
 	provider := model.PaymentProviderBalance
 	if paymentMethod != model.PaymentMethodBalance {
-		// 第三方渠道：校验渠道确实可用，避免下单成功却拉不起收银台。
+		// 在线支付与全站统一，只走支付宝官方直连。先校验渠道可用，
+		// 避免下单成功却拉不起收银台，把用户卡在一张 pending 订单上。
 		if !serverPaymentMethodAvailable(paymentMethod) {
 			serverError(c, "payment_method_invalid", "支付方式不可用")
 			return
 		}
-		provider = model.PaymentProviderEpay
+		provider = model.PaymentProviderAlipay
 	}
 
 	order, instance, err := model.PurchaseServerInstanceWithProvider(
@@ -146,7 +147,7 @@ func PurchaseServer(c *gin.Context) {
 
 	now := common.GetTimestamp()
 	data := gin.H{
-		"order": order,
+		"order":    order,
 		"pay_mode": provider,
 	}
 	if instance != nil {

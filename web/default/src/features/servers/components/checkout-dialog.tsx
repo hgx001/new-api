@@ -60,6 +60,7 @@ import type {
   ServerQuoteResult,
 } from '../types'
 import { CredentialsPanel } from './credentials-panel'
+import { ResourceNotice } from './resource-notice'
 
 interface CheckoutDialogProps {
   open: boolean
@@ -72,11 +73,16 @@ interface CheckoutDialogProps {
   serverQuote: ServerQuoteResult | null
   /** 账户余额（人民币） */
   balance: number
-  /** 可用的支付方式（余额 + 服务端下发的第三方渠道） */
+  /** 可用的支付方式（余额 + 服务端下发的在线渠道） */
   payMethods: ServerPayMethod[]
   /** 当前选中的支付方式 */
   selectedMethod: string
   onSelectMethod: (method: string) => void
+  /** 打开管理员微信弹窗 */
+  onContactAdmin: () => void
+  /** 是否已确认「支付前已联系管理员」 */
+  contactConfirmed: boolean
+  onContactConfirmedChange: (value: boolean) => void
   onPay: () => void
   onDone: () => void
 }
@@ -99,6 +105,9 @@ export function CheckoutDialog({
   payMethods,
   selectedMethod,
   onSelectMethod,
+  onContactAdmin,
+  contactConfirmed,
+  onContactConfirmedChange,
   onPay,
   onDone,
 }: CheckoutDialogProps) {
@@ -251,8 +260,12 @@ export function CheckoutDialog({
 
               <Separator />
 
-              {/* 支付方式：站内余额（同步开通）或第三方收银台（异步开通）。
-                  两种方式的门槛不同 —— 余额付要余额充足，第三方付不需要。 */}
+              {/* 资源由人工排期：把「先联系管理员」放到支付方式正上方，
+                  用户选完卡、正要付钱的时候一定看得见。 */}
+              <ResourceNotice variant='inline' onContact={onContactAdmin} />
+
+              {/* 支付方式：站内余额（同步开通）或支付宝直连（异步开通）。
+                  两种方式的门槛不同 —— 余额付要余额充足，在线付不需要。 */}
               <div className='space-y-2.5'>
                 <div className='text-sm font-semibold'>
                   {t('Payment Method')}
@@ -349,6 +362,32 @@ export function CheckoutDialog({
                 )}
               </div>
 
+              {/* 轻确认门槛：不是硬拦，勾一下就能继续；但能保证
+                  「支付前请先联系管理员」这句提示真的被读到。 */}
+              <label
+                className={cn(
+                  'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3.5 py-3 transition-colors',
+                  contactConfirmed
+                    ? 'border-[#7dd3c0] bg-[#7dd3c0]/[0.08]'
+                    : 'border-[#f0d9a8] bg-[#fffaf0]'
+                )}
+              >
+                <input
+                  type='checkbox'
+                  checked={contactConfirmed}
+                  onChange={(event) =>
+                    onContactConfirmedChange(event.target.checked)
+                  }
+                  disabled={paying}
+                  className='mt-0.5 size-4 shrink-0 accent-[#3a8f7a]'
+                />
+                <span className='text-xs leading-relaxed text-[#6b5738]'>
+                  {t(
+                    'I have contacted the admin and confirmed that the resource is available'
+                  )}
+                </span>
+              </label>
+
               <div className='bg-muted/50 rounded-xl p-3.5'>
                 <div className='flex items-end justify-between gap-3'>
                   <div>
@@ -376,12 +415,19 @@ export function CheckoutDialog({
             </div>
 
             <DialogFooter className='bg-muted/30 gap-2 border-t px-6 py-4 sm:justify-between'>
-              <span className='text-muted-foreground inline-flex items-center gap-1.5 text-[11px]'>
-                <ShieldCheck className='size-3.5 text-[#3a8f7a]' />
-                {isBalanceMethod
-                  ? t('Deducted from your balance instantly')
-                  : t('Payment is confirmed by the payment gateway')}
-              </span>
+              {!contactConfirmed ? (
+                <span className='inline-flex items-center gap-1.5 text-[11px] text-[#a86a12]'>
+                  <Info className='size-3.5' />
+                  {t('Confirm admin contact to unlock payment')}
+                </span>
+              ) : (
+                <span className='text-muted-foreground inline-flex items-center gap-1.5 text-[11px]'>
+                  <ShieldCheck className='size-3.5 text-[#3a8f7a]' />
+                  {isBalanceMethod
+                    ? t('Deducted from your balance instantly')
+                    : t('Payment is confirmed by the payment gateway')}
+                </span>
+              )}
               <div className='flex gap-2'>
                 <Button
                   variant='outline'
@@ -395,7 +441,8 @@ export function CheckoutDialog({
                     paying ||
                     insufficient ||
                     payMethods.length === 0 ||
-                    !selectedMethod
+                    !selectedMethod ||
+                    !contactConfirmed
                   }
                   onClick={onPay}
                   className='bg-[#3a8f7a] text-white hover:bg-[#2f7a66]'

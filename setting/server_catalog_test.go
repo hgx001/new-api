@@ -40,9 +40,10 @@ func TestComputeServerQuoteHourlyKeepsAnchorPrice(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 用户明确要求 RTX PRO 6000 按 ¥15/小时卖；系数 6 × 基准 2.5。
-	assert.Equal(t, 15.0, quote.UnitPrice)
-	assert.Equal(t, 15.0, quote.Total)
+	// 用户明确要求 RTX PRO 6000 按 ¥19.90/小时卖，由 HourlyPrice 显式指定，
+	// 不再走「系数 6 × 基准 ¥2.50」的推导。
+	assert.Equal(t, 19.9, quote.UnitPrice)
+	assert.Equal(t, 19.9, quote.Total)
 	assert.Equal(t, "hour", quote.Unit)
 	assert.Equal(t, int64(3600), quote.PeriodSeconds)
 }
@@ -57,13 +58,69 @@ func TestComputeServerQuoteAppliesRegionAndDurationDiscount(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 上海 1.08 倍；7 天档 168 小时、9 折。
+	// 上海 1.08 倍；7 天档 168 小时、9 折。¥19.90 × 1.08 = ¥21.49
+	// （roundServerMoney 按分取整后再乘小时数）。
 	assert.Equal(t, 1.08, quote.RegionFactor)
-	assert.Equal(t, 16.2, quote.UnitPrice)
-	assert.Equal(t, 2721.6, quote.ListTotal)
-	assert.Equal(t, 2449.44, quote.Total)
-	assert.InDelta(t, 272.16, quote.Saved, 0.001)
+	assert.Equal(t, 21.49, quote.UnitPrice)
+	assert.Equal(t, 3610.32, quote.ListTotal)
+	assert.Equal(t, 3249.29, quote.Total)
+	assert.InDelta(t, 361.03, quote.Saved, 0.001)
 	assert.Equal(t, int64(168*3600), quote.PeriodSeconds)
+}
+
+// GPU 三档的按量时价是用户直接指定的三个数，任何一个被系数推导覆盖都会测挂。
+func TestComputeServerQuoteGPUHourlyPrices(t *testing.T) {
+	cases := []struct {
+		specId string
+		gpu    string
+		price  float64
+	}{
+		{"gpu-16c64g", "RTX 4090", 5.6},
+		{"gpu-16c64g-rtx5090", "RTX 5090", 7.8},
+		{"gpu-24c96g-rtxpro6000", "RTX PRO 6000", 19.9},
+	}
+	for _, tc := range cases {
+		t.Run(tc.gpu, func(t *testing.T) {
+			quote, err := ComputeServerQuote(ServerConfig{
+				Region:     "guangzhou",
+				Plan:       "gpu",
+				SpecId:     tc.specId,
+				Mbps:       5,
+				DurationId: "1h",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.price, quote.UnitPrice)
+			assert.Equal(t, tc.price, quote.Total)
+			// 摘要分项必须自洽：套餐 ¥2.50 + 配置加价 = 该档时价。
+			assert.Equal(t, 2.5, quote.PlanPrice)
+			assert.Equal(t, roundServerMoney(tc.price-2.5), quote.SpecPrice)
+		})
+	}
+}
+
+// 按量的 HourlyPrice 不能污染包月口径：包月仍走 Multiplier / MonthlyPrice。
+func TestComputeServerQuoteHourlyPriceDoesNotLeakIntoPrepaid(t *testing.T) {
+	cases := []struct {
+		specId string
+		price  float64
+	}{
+		{"gpu-16c64g", 1280.0},
+		{"gpu-16c64g-rtx5090", 1792.0},
+		{"gpu-24c96g-rtxpro6000", 6580.0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.specId, func(t *testing.T) {
+			quote, err := ComputeServerQuote(ServerConfig{
+				Region:     "guangzhou",
+				Plan:       "gpu",
+				SpecId:     tc.specId,
+				Mbps:       5,
+				DurationId: "1mo",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tc.price, quote.UnitPrice)
+		})
+	}
 }
 
 func TestServerBandwidthLadderKeepsThreeTimesAnchor(t *testing.T) {
@@ -114,7 +171,7 @@ func TestComputeServerQuoteRejectsUnknownConfig(t *testing.T) {
 	}
 }
 
-func TestComputeServerQuoteRTXPRO6000KeepsFifteenPerHour(t *testing.T) {
+func TestComputeServerQuoteRTXPRO6000KeepsNineteenNinetyPerHour(t *testing.T) {
 	quote, err := ComputeServerQuote(ServerConfig{
 		Region:     "guangzhou",
 		Plan:       "gpu",
@@ -124,16 +181,16 @@ func TestComputeServerQuoteRTXPRO6000KeepsFifteenPerHour(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 用户要求这档卖 ¥15/小时：系数 6 × 基准时价 ¥2.50。
-	assert.Equal(t, 15.0, quote.UnitPrice)
-	assert.Equal(t, 15.0, quote.Total)
+	// 用户要求这档卖 ¥19.90/小时，由 HourlyPrice 显式指定。
+	assert.Equal(t, 19.9, quote.UnitPrice)
+	assert.Equal(t, 19.9, quote.Total)
 	assert.Equal(t, "hour", quote.Unit)
 	assert.Equal(t, int64(3600), quote.PeriodSeconds)
 
 	// 包月价由 MonthlyPrice 显式指定：¥6,580/月（用户指定）。
 	//
-	// 注意它不是「基准月价 × 按量系数」—— ¥6,580 ÷ ¥1,280 = 5.140625，
-	// 与按量系数 6 不符。按量与包月是两套独立定价，这里各走各的。
+	// 按量与包月是两套独立定价：时价 ¥19.90、月价 ¥6,580，
+	// 各自读自己的字段，互不推导、互不污染。
 	monthly, err := ComputeServerQuote(ServerConfig{
 		Region:     "guangzhou",
 		Plan:       "gpu",
@@ -171,9 +228,12 @@ func TestServerRTXPRO6000SpecMatchesPublishedConfig(t *testing.T) {
 	assert.Equal(t, "RTX PRO 6000", spec.GPU.Model)
 	assert.Equal(t, 96, spec.GPU.VRAM)
 	assert.Equal(t, 1, spec.GPU.Count)
-	// 包月价显式指定为 ¥6,580/月，按量仍走系数 6
+	// 包月价显式指定为 ¥6,580/月；按量时价显式指定为 ¥19.90/小时。
+	// Multiplier 保留给未显式定价的档位与历史数据展示，两个口径都不再靠它互推。
 	require.NotNil(t, spec.MonthlyPrice)
 	assert.Equal(t, 6580.0, *spec.MonthlyPrice)
+	require.NotNil(t, spec.HourlyPrice)
+	assert.Equal(t, 19.9, *spec.HourlyPrice)
 	assert.Equal(t, 6.0, spec.Multiplier)
 }
 

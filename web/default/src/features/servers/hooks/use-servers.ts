@@ -33,7 +33,7 @@ import {
   rebootServer,
   releaseServer,
   renewServer,
-  requestServerEpayPay,
+  requestServerAlipayPay,
   resetServerPassword,
   startServer,
   stopServer,
@@ -186,9 +186,9 @@ export function useServerActions() {
    * 与余额支付分开成两个 mutation：它们的成功语义完全不同 ——
    * 余额支付返回实例，第三方支付返回的是「跳去哪儿付钱」。
    */
-  const launchEpay = useMutation({
+  const launchAlipay = useMutation({
     mutationFn: (input: { tradeNo: string; paymentMethod: string }) =>
-      requestServerEpayPay(input.tradeNo, input.paymentMethod),
+      requestServerAlipayPay(input.tradeNo, input.paymentMethod),
   })
 
   const renew = useMutation({
@@ -247,5 +247,5 @@ export function useServerActions() {
     },
   })
 
-  return { purchase, launchEpay, renew, release, power, reboot, resetPassword }
+  return { purchase, launchAlipay, renew, release, power, reboot, resetPassword }
 }

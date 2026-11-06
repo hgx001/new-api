@@ -15,7 +15,7 @@ import (
 // 这一段是整条支付链路最关键的部分：订单落库 → 回调开通。
 // 出错的后果是真金白银 —— 要么「付了钱没发货」，要么「没付钱发了货」。
 
-func TestPurchaseServerWithEpayDoesNotChargeOrProvision(t *testing.T) {
+func TestPurchaseServerWithAlipayDoesNotChargeOrProvision(t *testing.T) {
 	truncateTables(t)
 	user := createServerTestUser(t, 100_000_000)
 	config := liteServerConfig("1mo")
@@ -23,14 +23,14 @@ func TestPurchaseServerWithEpayDoesNotChargeOrProvision(t *testing.T) {
 	required := setting.ServerQuotaForAmount(quote.Total)
 
 	order, instance, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-1",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-1",
 	)
 	require.NoError(t, err)
 	require.NotNil(t, order)
 	// 第三方支付是异步的：下单这一刻不能有实例，也**不能扣额度**。
 	assert.Nil(t, instance)
 	assert.Equal(t, common.TopUpStatusPending, order.Status)
-	assert.Equal(t, PaymentProviderEpay, order.PaymentProvider)
+	assert.Equal(t, PaymentProviderAlipay, order.PaymentProvider)
 	assert.Equal(t, 0, order.QuotaDelta)
 
 	var after User
@@ -53,12 +53,12 @@ func TestCompleteServerOrderPaidProvisionsInstance(t *testing.T) {
 	quote := serverTestQuote(t, config)
 
 	order, _, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-2",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-2",
 	)
 	require.NoError(t, err)
 
 	completed, instance, err := CompleteServerOrderPaid(
-		order.TradeNo, PaymentProviderEpay, order.Amount, "alipay",
+		order.TradeNo, PaymentProviderAlipay, order.Amount, "alipay",
 	)
 	require.NoError(t, err)
 	assert.True(t, completed)
@@ -90,20 +90,20 @@ func TestCompleteServerOrderPaidIsIdempotent(t *testing.T) {
 	quote := serverTestQuote(t, config)
 
 	order, _, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-3",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-3",
 	)
 	require.NoError(t, err)
 
 	completed, first, err := CompleteServerOrderPaid(
-		order.TradeNo, PaymentProviderEpay, order.Amount, "alipay",
+		order.TradeNo, PaymentProviderAlipay, order.Amount, "alipay",
 	)
 	require.NoError(t, err)
 	assert.True(t, completed)
 	require.NotNil(t, first)
 
-	// 网关重放同一笔通知：不能再开一台机器。
+	// 支付宝重放同一笔通知：不能再开一台机器。
 	completed, second, err := CompleteServerOrderPaid(
-		order.TradeNo, PaymentProviderEpay, order.Amount, "alipay",
+		order.TradeNo, PaymentProviderAlipay, order.Amount, "alipay",
 	)
 	require.NoError(t, err)
 	assert.False(t, completed, "重复回调不得再开一台")
@@ -122,13 +122,13 @@ func TestCompleteServerOrderPaidRejectsWrongAmount(t *testing.T) {
 	quote := serverTestQuote(t, config)
 
 	order, _, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-4",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-4",
 	)
 	require.NoError(t, err)
 
 	// 少付钱：必须拒绝，且不能开机器。
 	completed, instance, err := CompleteServerOrderPaid(
-		order.TradeNo, PaymentProviderEpay, 0.01, "alipay",
+		order.TradeNo, PaymentProviderAlipay, 0.01, "alipay",
 	)
 	require.Error(t, err)
 	assert.False(t, completed)
@@ -146,11 +146,11 @@ func TestCompleteServerOrderPaidRejectsProviderMismatch(t *testing.T) {
 	quote := serverTestQuote(t, config)
 
 	order, _, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-5",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-5",
 	)
 	require.NoError(t, err)
 
-	// 订单走的是易支付，别让别的网关回调把它入账。
+	// 订单走的是支付宝直连，别让别的支付渠道回调把它入账。
 	_, _, err = CompleteServerOrderPaid(
 		order.TradeNo, PaymentProviderStripe, order.Amount, "alipay",
 	)
@@ -164,7 +164,7 @@ func TestCompleteServerOrderPaidRejectsExpiredOrder(t *testing.T) {
 	quote := serverTestQuote(t, config)
 
 	order, _, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-6",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-6",
 	)
 	require.NoError(t, err)
 
@@ -173,7 +173,7 @@ func TestCompleteServerOrderPaidRejectsExpiredOrder(t *testing.T) {
 		Update("trade_no_expires", common.GetTimestamp()-10).Error)
 
 	_, instance, err := CompleteServerOrderPaid(
-		order.TradeNo, PaymentProviderEpay, order.Amount, "alipay",
+		order.TradeNo, PaymentProviderAlipay, order.Amount, "alipay",
 	)
 	require.ErrorIs(t, err, ErrServerOrderExpired)
 	assert.Nil(t, instance, "过期订单不得发货")
@@ -182,7 +182,7 @@ func TestCompleteServerOrderPaidRejectsExpiredOrder(t *testing.T) {
 func TestCompleteServerOrderPaidRejectsUnknownTradeNo(t *testing.T) {
 	truncateTables(t)
 	_, _, err := CompleteServerOrderPaid(
-		"SRV-NOT-EXIST", PaymentProviderEpay, 10, "alipay",
+		"SRV-NOT-EXIST", PaymentProviderAlipay, 10, "alipay",
 	)
 	require.ErrorIs(t, err, ErrServerOrderNotFound)
 }
@@ -194,7 +194,7 @@ func TestExpireServerOrdersFailsPendingOrders(t *testing.T) {
 	quote := serverTestQuote(t, config)
 
 	order, _, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-7",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-7",
 	)
 	require.NoError(t, err)
 
@@ -214,27 +214,27 @@ func TestExpireServerOrdersFailsPendingOrders(t *testing.T) {
 
 	// 作废后的回调不得发货。
 	_, instance, err := CompleteServerOrderPaid(
-		order.TradeNo, PaymentProviderEpay, order.Amount, "alipay",
+		order.TradeNo, PaymentProviderAlipay, order.Amount, "alipay",
 	)
 	require.Error(t, err)
 	assert.Nil(t, instance)
 }
 
-func TestEpayPurchaseKeepsIdempotency(t *testing.T) {
+func TestAlipayPurchaseKeepsIdempotency(t *testing.T) {
 	truncateTables(t)
 	user := createServerTestUser(t, 100_000_000)
 	config := liteServerConfig("1mo")
 	quote := serverTestQuote(t, config)
 
 	first, _, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-8",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-8",
 	)
 	require.NoError(t, err)
 
 	// 同一个 client_request_id 重放：必须拿到同一张订单，
 	// 不能产生第二张 pending 订单（否则用户会被收两次钱）。
 	second, _, err := PurchaseServerInstanceWithProvider(
-		user.Id, config, quote, "alipay", PaymentProviderEpay, "req-epay-8",
+		user.Id, config, quote, "alipay", PaymentProviderAlipay, "req-alipay-8",
 	)
 	require.NoError(t, err)
 	assert.Equal(t, first.Id, second.Id)

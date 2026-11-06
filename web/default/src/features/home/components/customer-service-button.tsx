@@ -36,16 +36,15 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import {
+  CUSTOMER_SERVICE_QR_PNG,
+  CUSTOMER_SERVICE_QR_SVG,
+  CUSTOMER_SERVICE_WECHAT_ID,
+} from '@/lib/customer-service'
 import { cn } from '@/lib/utils'
 
-// The WeChat QR lives in `web/default/public/` and is served from the site root.
-// It is a vector asset re-encoded from the original card artwork
-// (`customer-service-wechat.jpg`), so it stays crisp at any zoom level instead
-// of turning blurry when scaled up. The PNG twin exists because mobile browsers
-// cannot long-press-to-save an SVG.
-const CUSTOMER_SERVICE_QR_SVG = '/customer-service-wechat-qr.svg'
-const CUSTOMER_SERVICE_QR_PNG = '/customer-service-wechat-qr.png'
-const CUSTOMER_SERVICE_WECHAT_NAME = 'heibaidao'
+// QR assets are shared with the server-rental "contact admin" dialog so both
+// surfaces always point at the same WeChat account.
 
 /**
  * Floating button anchored to the bottom-right of the homepage. Tapping it
@@ -116,7 +115,7 @@ export function CustomerServiceButton() {
             <p className='text-muted-foreground mt-3 text-xs'>
               {t('WeChat ID')}:{' '}
               <span className='text-foreground font-medium'>
-                {CUSTOMER_SERVICE_WECHAT_NAME}
+                {CUSTOMER_SERVICE_WECHAT_ID}
               </span>
             </p>
           </PopoverContent>
@@ -148,7 +147,7 @@ export function CustomerServiceButton() {
             <p className='text-muted-foreground text-xs'>
               {t('WeChat ID')}:{' '}
               <span className='text-foreground font-medium'>
-                {CUSTOMER_SERVICE_WECHAT_NAME}
+                {CUSTOMER_SERVICE_WECHAT_ID}
               </span>
             </p>
             <Button

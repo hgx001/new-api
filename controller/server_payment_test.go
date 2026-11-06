@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"crypto/rsa"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Calcium-Ion/go-epay/epay"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -21,12 +21,16 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
-// 服务器订单的第三方支付回调测试。
+// 服务器订单的支付宝官方直连回调测试。
 //
-// 这一层验的是「网关报文进来 → 验签 → 金额校验 → 开机器」整条链路。
-// 任何一环松了，钱和货就会对不上。
+// 这一层验的是「支付宝通知进来 → RSA2 验签 → app_id 比对 → 金额校验
+// → 开机器」整条链路。任何一环松了，钱和货就会对不上。
+//
+// 复用 topup_payment_hardening_test.go 的 setupAlipayNotifyConfig 生成
+// 临时 RSA 密钥对，以及 topup_alipay_test.go 的 signAlipayNotify 按官方
+// SDK 口径签名，保证测的是真验签而不是 mock 掉校验。
 
-const serverEpayTestKey = "server-epay-test-key"
+const serverAlipayTestAppID = "2026110600000001"
 
 // setupServerPaymentDB 为服务器支付用例准备一个独立的内存数据库。
 //
@@ -88,72 +92,66 @@ func createServerPayUser(t *testing.T, quota int) *model.User {
 	return user
 }
 
-// setupServerEpay 装好易支付网关配置与支付合规状态。
-func setupServerEpay(t *testing.T) {
+// setupServerAlipay 装好支付宝直连配置，返回给通知签名的私钥。
+func setupServerAlipay(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
-	confirmPaymentComplianceForTest(t)
-
-	originalAddress := operation_setting.PayAddress
-	originalID := operation_setting.EpayId
-	originalKey := operation_setting.EpayKey
-	originalMethods := operation_setting.PayMethods
-
-	operation_setting.PayAddress = "https://pay.example.test"
-	operation_setting.EpayId = "1001"
-	operation_setting.EpayKey = serverEpayTestKey
-	operation_setting.PayMethods = []map[string]string{
-		{"name": "支付宝", "icon": "SiAlipay", "type": "alipay"},
-	}
-
-	t.Cleanup(func() {
-		operation_setting.PayAddress = originalAddress
-		operation_setting.EpayId = originalID
-		operation_setting.EpayKey = originalKey
-		operation_setting.PayMethods = originalMethods
-	})
+	return setupAlipayNotifyConfig(t, serverAlipayTestAppID)
 }
 
-// callServerEpayNotify 模拟网关回调，返回响应体（success / fail）。
-func callServerEpayNotify(t *testing.T, params map[string]string) string {
+// serverAlipayNotifyForm 构造一份指向服务器订单的支付宝成功通知。
+func serverAlipayNotifyForm(
+	t *testing.T,
+	key *rsa.PrivateKey,
+	tradeNo string,
+	amount string,
+) url.Values {
 	t.Helper()
 	form := url.Values{}
-	for key, value := range params {
-		form.Set(key, value)
-	}
+	form.Set("notify_time", "2026-11-06 10:00:00")
+	form.Set("notify_type", "trade_status_sync")
+	form.Set("notify_id", "SRV-NOTIFY-ID")
+	form.Set("app_id", serverAlipayTestAppID)
+	form.Set("charset", "utf-8")
+	form.Set("version", "1.0")
+	form.Set("sign_type", "RSA2")
+	form.Set("trade_no", "2026110622000000000000000")
+	form.Set("out_trade_no", tradeNo)
+	form.Set("seller_id", "2088000000000000")
+	form.Set("buyer_id", "2088000000000001")
+	form.Set("total_amount", amount)
+	form.Set("receipt_amount", amount)
+	form.Set("buyer_pay_amount", amount)
+	form.Set("subject", "云服务器")
+	form.Set("gmt_payment", "2026-11-06 10:00:00")
+	form.Set("trade_status", "TRADE_SUCCESS")
+	signAlipayNotify(t, form, key)
+	return form
+}
+
+// callServerAlipayNotify 模拟支付宝回调，返回响应体（success / fail）。
+func callServerAlipayNotify(t *testing.T, form url.Values) string {
+	t.Helper()
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"https://example.test/api/server/pay/epay/notify",
+		"https://example.test/api/server/pay/alipay/notify",
 		strings.NewReader(form.Encode()),
 	)
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	request.RemoteAddr = "198.51.100.7:4321"
+	request.RemoteAddr = "203.0.113.10:4321"
 	c.Request = request
 
-	ServerEpayNotify(c)
+	ServerAlipayNotify(c)
 	return recorder.Body.String()
 }
 
-// serverEpayNotifyParams 构造一份合法签名的回调报文。
-func serverEpayNotifyParams(tradeNo string, money string) map[string]string {
-	return map[string]string{
-		"pid":          "1001",
-		"type":         "alipay",
-		"out_trade_no": tradeNo,
-		"trade_no":     "EPAY" + tradeNo,
-		"trade_status": epay.StatusTradeSuccess,
-		"name":         "云服务器",
-		"money":        money,
-	}
-}
-
-// serverOrderMoney 把订单金额格式化成网关回调里的金额字符串。
+// serverOrderMoney 把订单金额格式化成支付宝通知里的金额字符串。
 func serverOrderMoney(order *model.ServerOrder) string {
 	return fmt.Sprintf("%.2f", order.Amount)
 }
 
-// createServerOrderForNotify 建一笔 pending 的第三方支付订单。
+// createServerOrderForNotify 建一笔 pending 的支付宝直连订单。
 func createServerOrderForNotify(t *testing.T, userId int) *model.ServerOrder {
 	t.Helper()
 	config := setting.ServerConfig{
@@ -167,24 +165,23 @@ func createServerOrderForNotify(t *testing.T, userId int) *model.ServerOrder {
 	require.NoError(t, err)
 
 	order, _, err := model.PurchaseServerInstanceWithProvider(
-		userId, config, quote, model.PaymentMethodAlipay, model.PaymentProviderEpay, "",
+		userId, config, quote, model.PaymentMethodAlipay, model.PaymentProviderAlipay, "",
 	)
 	require.NoError(t, err)
 	return order
 }
 
-func TestServerEpayNotifyProvisionsInstanceOnSuccess(t *testing.T) {
+func TestServerAlipayNotifyProvisionsInstanceOnSuccess(t *testing.T) {
 	setupServerPaymentDB(t)
-	setupServerEpay(t)
+	key := setupServerAlipay(t)
 	truncateServerTables(t)
 
 	user := createServerPayUser(t, 100_000_000)
 	order := createServerOrderForNotify(t, user.Id)
+	require.Equal(t, model.PaymentProviderAlipay, order.PaymentProvider)
 
-	params := serverEpayNotifyParams(order.TradeNo, serverOrderMoney(order))
-	epay.GenerateParams(params, serverEpayTestKey)
-
-	assert.Equal(t, "success", callServerEpayNotify(t, params))
+	form := serverAlipayNotifyForm(t, key, order.TradeNo, serverOrderMoney(order))
+	assert.Equal(t, "success", callServerAlipayNotify(t, form))
 
 	var updated model.ServerOrder
 	require.NoError(t, model.DB.Where("id = ?", order.Id).First(&updated).Error)
@@ -196,45 +193,43 @@ func TestServerEpayNotifyProvisionsInstanceOnSuccess(t *testing.T) {
 	assert.Equal(t, model.ServerInstanceStatusRunning, instance.Status)
 	assert.NotEmpty(t, instance.Password)
 
-	// 下单阶段不扣额度；第三方支付的钱不进站内余额。
+	// 下单阶段不扣额度；在线支付的钱不进站内余额。
 	var after model.User
 	require.NoError(t, model.DB.Select("quota").Where("id = ?", user.Id).First(&after).Error)
-	assert.Equal(t, 100_000_000, after.Quota, "第三方支付不应扣站内额度")
+	assert.Equal(t, 100_000_000, after.Quota, "在线支付不应扣站内额度")
 }
 
-func TestServerEpayNotifyIsIdempotent(t *testing.T) {
+func TestServerAlipayNotifyIsIdempotent(t *testing.T) {
 	setupServerPaymentDB(t)
-	setupServerEpay(t)
+	key := setupServerAlipay(t)
 	truncateServerTables(t)
 
 	user := createServerPayUser(t, 100_000_000)
 	order := createServerOrderForNotify(t, user.Id)
+	form := serverAlipayNotifyForm(t, key, order.TradeNo, serverOrderMoney(order))
 
-	params := serverEpayNotifyParams(order.TradeNo, serverOrderMoney(order))
-	epay.GenerateParams(params, serverEpayTestKey)
-
-	assert.Equal(t, "success", callServerEpayNotify(t, params))
-	// 网关重放同一份报文：只能开一台机器。
-	assert.Equal(t, "success", callServerEpayNotify(t, params))
+	assert.Equal(t, "success", callServerAlipayNotify(t, form))
+	// 支付宝重放同一份通知：只能开一台机器。
+	assert.Equal(t, "success", callServerAlipayNotify(t, form))
+	assert.Equal(t, "success", callServerAlipayNotify(t, form))
 
 	var count int64
 	require.NoError(t, model.DB.Model(&model.ServerInstance{}).Count(&count).Error)
 	assert.Equal(t, int64(1), count, "重复回调不得开两台机器")
 }
 
-func TestServerEpayNotifyRejectsUnderpaidAmount(t *testing.T) {
+func TestServerAlipayNotifyRejectsUnderpaidAmount(t *testing.T) {
 	setupServerPaymentDB(t)
-	setupServerEpay(t)
+	key := setupServerAlipay(t)
 	truncateServerTables(t)
 
 	user := createServerPayUser(t, 100_000_000)
 	order := createServerOrderForNotify(t, user.Id)
+	// 订单实价几十元，通知只报 ¥0.01，且签名是合法的 —— 防的是
+	// 「拿真实密钥伪造低价通知」而不是单纯篡改报文。
+	form := serverAlipayNotifyForm(t, key, order.TradeNo, "0.01")
 
-	// 订单实价几十元，回调只报 ¥0.01。
-	params := serverEpayNotifyParams(order.TradeNo, "0.01")
-	epay.GenerateParams(params, serverEpayTestKey)
-
-	assert.Equal(t, "fail", callServerEpayNotify(t, params))
+	assert.Equal(t, "fail", callServerAlipayNotify(t, form))
 
 	var count int64
 	require.NoError(t, model.DB.Model(&model.ServerInstance{}).Count(&count).Error)
@@ -245,103 +240,116 @@ func TestServerEpayNotifyRejectsUnderpaidAmount(t *testing.T) {
 	assert.Equal(t, common.TopUpStatusPending, updated.Status, "订单必须保持待支付")
 }
 
-func TestServerEpayNotifyRejectsBadSignature(t *testing.T) {
+func TestServerAlipayNotifyRejectsBadSignature(t *testing.T) {
 	setupServerPaymentDB(t)
-	setupServerEpay(t)
+	key := setupServerAlipay(t)
 	truncateServerTables(t)
 
 	user := createServerPayUser(t, 100_000_000)
 	order := createServerOrderForNotify(t, user.Id)
+	form := serverAlipayNotifyForm(t, key, order.TradeNo, serverOrderMoney(order))
+	// 签名合法但报文被改过：金额改小后签名失效。
+	form.Set("total_amount", "0.01")
+	form.Set("receipt_amount", "0.01")
 
-	params := serverEpayNotifyParams(order.TradeNo, serverOrderMoney(order))
-	epay.GenerateParams(params, "wrong-key")
-
-	assert.Equal(t, "fail", callServerEpayNotify(t, params))
+	assert.Equal(t, "fail", callServerAlipayNotify(t, form))
 
 	var count int64
 	require.NoError(t, model.DB.Model(&model.ServerInstance{}).Count(&count).Error)
 	assert.Equal(t, int64(0), count, "验签失败绝不能发货")
 }
 
-func TestServerEpayNotifyRejectsUnknownOrder(t *testing.T) {
+func TestServerAlipayNotifyRejectsWrongAppID(t *testing.T) {
 	setupServerPaymentDB(t)
-	setupServerEpay(t)
-	truncateServerTables(t)
-
-	params := serverEpayNotifyParams("SRV-NOT-EXIST", "68.00")
-	epay.GenerateParams(params, serverEpayTestKey)
-
-	assert.Equal(t, "fail", callServerEpayNotify(t, params))
-}
-
-func TestServerEpayNotifyIgnoresNonSuccessStatus(t *testing.T) {
-	setupServerPaymentDB(t)
-	setupServerEpay(t)
+	key := setupServerAlipay(t)
 	truncateServerTables(t)
 
 	user := createServerPayUser(t, 100_000_000)
 	order := createServerOrderForNotify(t, user.Id)
+	form := serverAlipayNotifyForm(t, key, order.TradeNo, serverOrderMoney(order))
+	// 换一个 app_id 后重新签名（否则会先被验签挡住，测不到 app_id 这道闸门）。
+	form.Set("app_id", "2026000000000999")
+	form.Del("sign")
+	signAlipayNotify(t, form, key)
 
-	params := serverEpayNotifyParams(order.TradeNo, serverOrderMoney(order))
-	params["trade_status"] = "TRADE_CLOSED"
-	epay.GenerateParams(params, serverEpayTestKey)
+	assert.Equal(t, "fail", callServerAlipayNotify(t, form))
 
-	// 非成功终态回 success（让网关停止重试），但不开机器。
-	assert.Equal(t, "success", callServerEpayNotify(t, params))
+	var count int64
+	require.NoError(t, model.DB.Model(&model.ServerInstance{}).Count(&count).Error)
+	assert.Equal(t, int64(0), count, "串应用的通知绝不能发货")
+}
+
+func TestServerAlipayNotifyRejectsUnknownOrder(t *testing.T) {
+	setupServerPaymentDB(t)
+	key := setupServerAlipay(t)
+	truncateServerTables(t)
+
+	form := serverAlipayNotifyForm(t, key, "SRV-NOT-EXIST", "68.00")
+	assert.Equal(t, "fail", callServerAlipayNotify(t, form))
+}
+
+func TestServerAlipayNotifyIgnoresNonSuccessStatus(t *testing.T) {
+	setupServerPaymentDB(t)
+	key := setupServerAlipay(t)
+	truncateServerTables(t)
+
+	user := createServerPayUser(t, 100_000_000)
+	order := createServerOrderForNotify(t, user.Id)
+	form := serverAlipayNotifyForm(t, key, order.TradeNo, serverOrderMoney(order))
+	form.Set("trade_status", "TRADE_CLOSED")
+	form.Del("sign")
+	signAlipayNotify(t, form, key)
+
+	// 非成功终态回 success（让支付宝停止重试），但不开机器。
+	assert.Equal(t, "success", callServerAlipayNotify(t, form))
 
 	var count int64
 	require.NoError(t, model.DB.Model(&model.ServerInstance{}).Count(&count).Error)
 	assert.Equal(t, int64(0), count)
 }
 
-// TestServerEpayNotifyRejectsDisabledWebhook 确认「webhook 没开就绝不开货」。
-func TestServerEpayNotifyRejectsDisabledWebhook(t *testing.T) {
+// 「通道没开就绝不开货」：合规/凭据关掉后，即使签名合法也不发货。
+func TestServerAlipayNotifyRejectsDisabledChannel(t *testing.T) {
 	setupServerPaymentDB(t)
-	setupServerEpay(t)
+	key := setupServerAlipay(t)
 	truncateServerTables(t)
-
-	// 把 PayMethods 清空 —— 等价于管理员关掉了这个收款通道。
-	operation_setting.PayMethods = []map[string]string{}
 
 	user := createServerPayUser(t, 100_000_000)
 	order := createServerOrderForNotify(t, user.Id)
+	form := serverAlipayNotifyForm(t, key, order.TradeNo, serverOrderMoney(order))
 
-	params := serverEpayNotifyParams(order.TradeNo, serverOrderMoney(order))
-	epay.GenerateParams(params, serverEpayTestKey)
+	originalEnabled := operation_setting.AlipayEnabled
+	operation_setting.AlipayEnabled = false
+	t.Cleanup(func() { operation_setting.AlipayEnabled = originalEnabled })
 
-	assert.Equal(t, "fail", callServerEpayNotify(t, params))
+	assert.Equal(t, "fail", callServerAlipayNotify(t, form))
 
 	var count int64
 	require.NoError(t, model.DB.Model(&model.ServerInstance{}).Count(&count).Error)
 	assert.Equal(t, int64(0), count)
 }
 
-// TestServerPayMethodsHidesUnavailableChannels 确认不会把「点了会失败」的渠道下发给前端。
+// 支付方式列表：直连凭据齐全才下发「支付宝」，且**不读**易支付的 PayMethods。
 func TestServerPayMethodsHidesUnavailableChannels(t *testing.T) {
 	setupServerPaymentDB(t)
 	truncateServerTables(t)
 
-	// 未确认合规 + 无凭据：第三方渠道一个都不该出现。
+	// 未确认合规 + 无凭据：在线渠道一个都不该出现。
 	assert.Empty(t, serverPaymentProviders())
 
 	confirmPaymentComplianceForTest(t)
+	// 只配易支付网关（PayMethods），没有直连凭据 —— 仍然不下发。
 	operation_setting.PayMethods = []map[string]string{
 		{"name": "支付宝", "icon": "SiAlipay", "type": "alipay"},
 	}
-	// 凭据不全，仍然不下发。
+	originalMethods := operation_setting.PayMethods
+	t.Cleanup(func() { operation_setting.PayMethods = originalMethods })
 	assert.Empty(t, serverPaymentProviders())
 
-	operation_setting.PayAddress = "https://pay.example.test"
-	operation_setting.EpayId = "1001"
-	operation_setting.EpayKey = serverEpayTestKey
-	t.Cleanup(func() {
-		operation_setting.PayAddress = ""
-		operation_setting.EpayId = ""
-		operation_setting.EpayKey = ""
-	})
-
+	// 打开直连：下发且只下发一个支付宝。
+	setupServerAlipay(t)
 	providers := serverPaymentProviders()
 	require.Len(t, providers, 1)
-	assert.Equal(t, "alipay", providers[0].Type)
+	assert.Equal(t, model.PaymentMethodAlipay, providers[0].Type)
 	assert.Equal(t, "支付宝", providers[0].Name)
 }

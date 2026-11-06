@@ -69,14 +69,16 @@ describe('servers: RTX PRO 6000 的定价', () => {
     assert.equal(price.total, 6610)
   })
 
-  test('按量：¥2.50 + ¥12.50 = ¥15.00/小时', () => {
+  test('按量：¥2.50 + ¥17.40 = ¥19.90/小时', () => {
     const price = computePrice(config({ mbps: 5, durationId: '1h' }))
     assert.equal(price.billing, 'hourly')
-    assert.equal(price.unitPrice, 15)
-    assert.equal(price.total, 15)
+    assert.equal(price.planPrice, 2.5)
+    assert.equal(price.specPrice, 17.4)
+    assert.equal(price.unitPrice, 19.9)
+    assert.equal(price.total, 19.9)
   })
 
-  test('按量仍比包月贵：15 × 730 = ¥10,950 > ¥6,580', () => {
+  test('按量仍比包月贵：19.9 × 730 = ¥14,527 > ¥6,580', () => {
     // 按量与包月是两套独立定价（包月机型价由用户指定 ¥6,580，
     // 不是「基准月价 × 按量系数」推出来的），但「按量比包月贵」
     // 这个基本事实不能反 —— 反了就说明定价配错了。
@@ -268,23 +270,61 @@ describe('servers: 已下线的双卡 4090 档', () => {
   })
 })
 
+describe('servers: GPU 三档按量时价', () => {
+  const cases: Array<[string, string, number]> = [
+    ['gpu-16c64g', 'RTX 4090', 5.6],
+    ['gpu-16c64g-rtx5090', 'RTX 5090', 7.8],
+    ['gpu-24c96g-rtxpro6000', 'RTX PRO 6000', 19.9],
+  ]
+  for (const [specId, gpu, expected] of cases) {
+    test(`${gpu} 按量 ¥${expected}/小时`, () => {
+      const price = computePrice(config({ specId, mbps: 5, durationId: '1h' }))
+      assert.equal(price.unitPrice, expected)
+      assert.equal(price.total, expected)
+      // 摘要分项自洽：套餐 ¥2.50 + 配置加价 = 该档时价
+      assert.equal(price.planPrice, 2.5)
+      assert.equal(price.specPrice, Math.round((expected - 2.5) * 100) / 100)
+    })
+  }
+
+  test('按量的 hourlyPrice 不污染包月口径', () => {
+    assert.equal(
+      computePrice(config({ specId: 'gpu-16c64g', mbps: 5, durationId: '1mo' }))
+        .unitPrice,
+      1280
+    )
+    assert.equal(
+      computePrice(
+        config({ specId: 'gpu-16c64g-rtx5090', mbps: 5, durationId: '1mo' })
+      ).unitPrice,
+      1792
+    )
+    assert.equal(
+      computePrice(
+        config({ specId: 'gpu-24c96g-rtxpro6000', mbps: 5, durationId: '1mo' })
+      ).unitPrice,
+      6580
+    )
+  })
+})
+
 describe('servers: RTX PRO 6000 单卡档', () => {
-  test('按量卖 ¥15/小时：系数 6 × 基准时价 ¥2.50', () => {
+  test('按量卖 ¥19.90/小时：由 hourlyPrice 显式指定', () => {
     const price = computePrice(
       config({ specId: 'gpu-24c96g-rtxpro6000', mbps: 5, durationId: '1h' })
     )
-    assert.equal(price.unitPrice, 15)
-    assert.equal(price.total, 15)
+    assert.equal(price.unitPrice, 19.9)
+    assert.equal(price.total, 19.9)
   })
 
-  test('包月价不影响按量口径：按量仍是 ¥15/小时', () => {
+  test('包月价不影响按量口径：按量 6 小时 ¥119.40', () => {
     // monthlyPrice 只在包月口径生效。按量若也被它污染，
     // 「按量比包月贵」这个基本事实就反了。
     const price = computePrice(
       config({ specId: 'gpu-24c96g-rtxpro6000', mbps: 5, durationId: '6h' })
     )
-    assert.equal(price.unitPrice, 15)
-    assert.equal(price.total, 90)
+    assert.equal(price.unitPrice, 19.9)
+    assert.equal(price.total, 119.4)
   })
 
   test('包月价单独指定：¥6,580/月，不套按量系数', () => {

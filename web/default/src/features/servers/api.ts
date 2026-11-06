@@ -172,10 +172,10 @@ export interface ServerWalletSnapshot {
 
 export interface PurchaseResult extends ServerWalletSnapshot {
   order: ServerOrderRecord
-  /** 站内余额支付时立即返回；第三方支付要等回调，此刻为空 */
+  /** 站内余额支付时立即返回；在线支付要等回调，此刻为空 */
   instance?: ServerInstance
-  /** balance：余额同步开通；epay：先拉起收银台，机器在回调后开通 */
-  pay_mode: 'balance' | 'epay'
+  /** balance：余额同步开通；alipay：跳官方收银台，机器在回调后开通 */
+  pay_mode: 'balance' | 'alipay'
 }
 
 /** 收银台上的一个支付方式 */
@@ -190,11 +190,15 @@ export interface ServerPayMethodsResult extends ServerWalletSnapshot {
   methods: ServerPayMethod[]
 }
 
-/** 第三方收银台参数：需要前端提交表单跳转到网关 */
+/**
+ * 支付宝官方直连收银台参数：前端整页跳转到官方 URL。
+ *
+ * 不再有「网关表单」这种形态 —— 那是易支付网关的做法。
+ * url 由服务端用商户私钥签好，前端只负责跳转，不参与签名也不提交参数。
+ */
 export interface ServerPayLaunch {
-  pay_mode: 'form' | 'redirect'
+  pay_mode: 'redirect'
   url: string
-  params: Record<string, string>
   trade_no: string
 }
 
@@ -224,7 +228,7 @@ export async function listServerPayMethods(): Promise<ServerPayMethodsResult> {
  * 下单购买一台服务器。
  *
  * paymentMethod 为 'balance' 时同步开通并返回 instance；
- * 第三方渠道则返回 pending 订单与 trade_no，需要再调 requestServerEpayPay。
+ * 'alipay' 则返回 pending 订单与 trade_no，需要再调 requestServerAlipayPay。
  */
 export async function purchaseServer(
   config: ServerConfig,
@@ -244,14 +248,14 @@ export async function purchaseServer(
   )
 }
 
-/** 拉起第三方收银台：拿到网关地址与表单参数 */
-export async function requestServerEpayPay(
+/** 拉起支付宝官方收银台：拿到已签名的跳转 URL */
+export async function requestServerAlipayPay(
   tradeNo: string,
   paymentMethod: string
 ): Promise<ServerPayLaunch> {
   return unwrap<ServerPayLaunch>(
     api.post(
-      '/api/server/pay/epay',
+      '/api/server/pay/alipay',
       { trade_no: tradeNo, payment_method: paymentMethod },
       WRITE_OPTIONS
     )
