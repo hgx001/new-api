@@ -21,7 +21,6 @@ import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { logout } from '@/features/auth/api'
-import { clearServerData } from '@/features/servers/store'
 import { useAuthStore } from '@/stores/auth-store'
 
 interface SignOutDialogProps {
@@ -40,11 +39,13 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
       /* empty */
     }
     auth.reset()
-    // 服务器实例的凭据（公网 IP / root 密码）保存在浏览器本地，
-    // 登出时必须一起清掉，否则同一台电脑上的下一个登录用户可以直接看到。
-    clearServerData()
     try {
       if (typeof window !== 'undefined') {
+        // 服务器凭据现在只存在服务端、按登录账号鉴权，登出后本就取不到。
+        // 这里清的是**演示态遗留**的本地副本：老版本把 IP 与 root 密码
+        // 明文存在 localStorage 里，不清掉的话同一台电脑上的下一个登录
+        // 用户还能把它翻出来。
+        window.localStorage.removeItem('heibaidao-servers')
         window.localStorage.removeItem('uid')
       }
     } catch {
