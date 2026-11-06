@@ -58,10 +58,10 @@ type workflowConfig struct {
 var seetaResolutionRatios = map[string]float64{
 	"480p横":     1.0,
 	"480p竖":     1.0,
-	"480p(1:1)":  1.0,
+	"480p(1:1)": 1.0,
 	"768p横":     1.667,
 	"768p竖":     1.667,
-	"768p(1:1)":  1.667,
+	"768p(1:1)": 1.667,
 }
 
 var workflowByModel = map[string]workflowConfig{
@@ -108,4 +108,12 @@ const (
 
 	// maxReferenceImageCount 单次最多参考图数量，与上游 ref_image_N 槽位对齐。
 	maxReferenceImageCount = 9
+
+	// maxUpstreamKeyframes 上游工作流真正生效的关键帧上限：首帧 + 尾帧 = 2 张。
+	//
+	// 上游 /v1/models 的描述写明「最多 2 张参考图——这是 V2 蒸馏权重的关键帧
+	// 槽位上限，不是配置项」。实测（2026-11-06）传 3 张上游照收照出片，
+	// 但第 3 张完全没有生效 —— 上游不报错只是默默忽略。
+	// 所以这个上限必须由网关自己兜住，不能等上游报错。
+	maxUpstreamKeyframes = 2
 )

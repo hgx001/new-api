@@ -423,7 +423,7 @@ export function buildAutoDLAudioVideoSample(
 //
 // 与其它 openai-video 模型的差异：
 // 1. resolution 是「档位+方向」格式（480p横 / 768p横），不是 autoDL 的 768p竖；
-// 2. 文生模型（minimax_h3-文生）**不接受参考图**，带参考图会被上游拒；
+// 2. 文生模型（minimax_h3-文生）**不接受参考图**，带参考图会被网关本地拒（400）；
 // 3. 时长上限 15 秒，示例写 5 秒（缺省值，安全）。
 export function buildSeetaVideoSample(lang: Lang, ctx: SampleContext): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`

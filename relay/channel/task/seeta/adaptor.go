@@ -55,9 +55,9 @@ type submitResponse struct {
 //	{"data":{"task_id":"...","status":"PENDING|RUNNING|SUCCESS|FAILED","message":"","results":[...]}}
 type pollResponse struct {
 	Data struct {
-		TaskID string       `json:"task_id"`
-		Status string       `json:"status"`
-		Message string      `json:"message"`
+		TaskID  string       `json:"task_id"`
+		Status  string       `json:"status"`
+		Message string       `json:"message"`
 		Results []resultItem `json:"results"`
 	} `json:"data"`
 	Error *struct {
@@ -68,8 +68,8 @@ type pollResponse struct {
 
 // resultItem results 数组中的元素（url 字段才是真实资源地址）。
 type resultItem struct {
-	URL      string `json:"url"`
-	Filename string `json:"filename"`
+	URL       string `json:"url"`
+	Filename  string `json:"filename"`
 	Subfolder string `json:"subfolder"`
 }
 
@@ -201,30 +201,54 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 	return nil
 }
 
+// BuildRequestBody 构造上游请求体。
+//
+// ⚠️ 所有**入参不合法**的错误都必须用 taskcommon.NewUserError 包起来：
+// relay_task 只对 UserError 降级成 400 LocalError，其他 error 一律 500，
+// 而 500 会触发重试与 AutoBan —— 客户少传一个 resolution 就能把整条渠道打掉。
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil, err
 	}
 	if a.wf.WorkflowID == "" {
-		return nil, errors.Errorf("model %s is not mapped to a SeetaCloud workflow", info.OriginModelName)
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s is not mapped to a SeetaCloud workflow", info.OriginModelName),
+			"invalid_model")
 	}
 
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		return nil, errors.New("field prompt is required")
+		return nil, taskcommon.NewUserError(errors.New("field prompt is required"), "invalid_request")
 	}
 	if max := a.wf.MaxPromptLength; max > 0 && utf8.RuneCountInString(prompt) > max {
-		return nil, errors.Errorf("model %s supports prompts up to %d characters", info.OriginModelName, max)
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s supports prompts up to %d characters", info.OriginModelName, max),
+			"invalid_request")
 	}
 
 	resolution, err := a.resolveResolution(req)
 	if err != nil {
-		return nil, err
+		return nil, taskcommon.NewUserError(err, "invalid_resolution")
 	}
 
 	if req.Seed != nil && !a.wf.SupportsSeed {
-		return nil, errors.Errorf("model %s does not support seed", info.OriginModelName)
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s does not support seed", info.OriginModelName),
+			"invalid_request")
+	}
+
+	// H3 工作流只有「提示词 + 关键帧图」两类输入，没有音频/视频参考槽位。
+	// 静默丢弃会让客户以为做了配音或参考了片段视频 —— 明确报错。
+	if req.HasAudio() {
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s does not support audio input; H3 workflow has no audio slot", info.OriginModelName),
+			"invalid_request")
+	}
+	if hasVideoMaterial(req) {
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s does not support video reference input; H3 workflow has no video slot", info.OriginModelName),
+			"invalid_request")
 	}
 
 	body := map[string]interface{}{
@@ -240,18 +264,34 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	// 所以客户给的是 http(s) 链接时，网关要先把图下载下来转成 data URI。
 	images := collectReferenceImages(req)
 	if len(images) > maxReferenceImageCount {
-		return nil, errors.Errorf("model %s supports at most %d reference images", info.OriginModelName, maxReferenceImageCount)
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s supports at most %d reference images", info.OriginModelName, maxReferenceImageCount),
+			"invalid_request")
+	}
+	// 上游的关键帧槽位上限是 2 张（首帧 + 尾帧）—— 这是 V2 蒸馏权重的硬上限，
+	// 不是配置项。传第 3 张上游会默默忽略（实测 2026-11-06：3 张照收照出片，
+	// 但第 3 张完全没生效），所以这里必须自己拦下来告诉客户。
+	if len(images) > maxUpstreamKeyframes {
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s supports at most %d reference images (first frame + last frame); got %d",
+				info.OriginModelName, maxUpstreamKeyframes, len(images)),
+			"invalid_request")
 	}
 	if !a.wf.RequiresImages && len(images) > 0 {
-		return nil, errors.Errorf("model %s does not support reference images", info.OriginModelName)
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s does not support reference images", info.OriginModelName),
+			"invalid_request")
 	}
 	if a.wf.RequiresImages && len(images) == 0 {
-		return nil, errors.Errorf("model %s requires at least one reference image (images field)", info.OriginModelName)
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s requires at least one reference image (images field)", info.OriginModelName),
+			"invalid_request")
 	}
 	for i, image := range images {
 		dataURI, err := toDataURI(c, image)
 		if err != nil {
-			return nil, errors.Wrapf(err, "reference image %d", i+1)
+			return nil, taskcommon.NewUserError(
+				errors.Wrapf(err, "reference image %d", i+1), "invalid_reference_image")
 		}
 		// 上游对图生视频/首尾帧工作流识别 first_frame 或 ref_image_0，
 		// 多图时按 ref_image_N 递增下发（ref_image_0 即首帧）。
@@ -266,6 +306,21 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.Wrap(err, "marshal request body failed")
 	}
 	return bytes.NewReader(encoded), nil
+}
+
+// hasVideoMaterial 判断请求里是否带了视频素材（media 里的 video 类型）。
+//
+// H3 工作流没有视频参考槽位：视频素材只会被 collectReferenceImages 忽略掉
+// （那里只收 type 含 "image" 的 media），于是客户的视频引用静默消失。
+// 这里单独识别出来，明确报错。
+func hasVideoMaterial(req relaycommon.TaskSubmitReq) bool {
+	for _, media := range req.Media {
+		if strings.Contains(strings.ToLower(media.Type), "video") &&
+			strings.TrimSpace(media.URL) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // collectReferenceImages 从请求里收集参考图，兼容 images / image /
@@ -467,7 +522,10 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	// 以 OpenAI video 风格返回，保持与其他视频通道一致的客户端体验
+	// 以 OpenAI video 风格返回，保持与其他视频通道一致的客户端体验。
+	//
+	// ⚠️ size 必须回显**实际解析出的**档位，不能用工作流默认值：
+	// 客户传 768p竖 时回执说 480p横，是客户看到的第一眼信息，属于对客口径错误。
 	now := time.Now().Unix()
 	out := gin.H{
 		"id":         info.PublicTaskID,
@@ -476,12 +534,28 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		"status":     "queued",
 		"progress":   0,
 		"created_at": now,
-		"size":       a.wf.Resolution,
+		"size":       a.resolutionForResponse(c),
 		"seconds":    strconv.Itoa(a.resolveDurationForResponse(c)),
 	}
 	taskData, _ = common.Marshal(out)
 	c.JSON(http.StatusOK, out)
 	return upstreamID, taskData, nil
+}
+
+// resolutionForResponse 返回本次请求实际生效的分辨率档位。
+//
+// 解析失败时回落到工作流默认档 —— 此时请求已经在 BuildRequestBody 被拒，
+// 走不到这里，所以这里的错误分支只是兜底。
+func (a *TaskAdaptor) resolutionForResponse(c *gin.Context) string {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return a.wf.Resolution
+	}
+	resolution, err := a.resolveResolution(req)
+	if err != nil {
+		return a.wf.Resolution
+	}
+	return resolution
 }
 
 func (a *TaskAdaptor) resolveDurationForResponse(c *gin.Context) int {
@@ -664,6 +738,11 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 // ConvertToOpenAIVideo 把任务数据转换成 OpenAI video 对象返回给客户端。
+//
+// ⚠️ status 的**基准是本站任务状态**（task.Status），不是 task.Data 里的上游 status：
+// task.Data 在提交后存的是**提交回执**（只有 task_id，没有 status 字段），
+// 只有轮询同步过之后才变成上游轮询响应。轮询前查任务如果只看 task.Data，
+// 会落到 default 分支返回 status=unknown —— 客户会以为任务挂了。
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	var res pollResponse
 	if err := common.Unmarshal(task.Data, &res); err != nil {
@@ -676,6 +755,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	openAIResp.SetProgressStr(task.Progress)
 	openAIResp.CreatedAt = task.CreatedAt
 	openAIResp.CompletedAt = task.UpdatedAt
+	// 以本站任务状态为基准，轮询还没同步到上游状态时也不会退化成 unknown。
+	openAIResp.Status = task.Status.ToVideoStatus()
 
 	if res.Error != nil {
 		openAIResp.Status = dto.VideoStatusFailed
@@ -700,11 +781,12 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		openAIResp.Status = dto.VideoStatusInProgress
 	case "SUCCESS", "SUCCEEDED", "COMPLETED":
 		openAIResp.Status = dto.VideoStatusCompleted
-		if len(res.Data.Results) > 0 && strings.TrimSpace(res.Data.Results[0].URL) != "" {
-			openAIResp.SetMetadata("url", res.Data.Results[0].URL)
-		}
-	default:
-		openAIResp.Status = dto.VideoStatusUnknown
+	}
+	if openAIResp.Status == dto.VideoStatusCompleted {
+		// 成片地址一律给**站内代理路径**，不吐上游实例直链：
+		// 上游是自建实例，直链里带着实例地址（u113...seetacloud.com:8443），
+		// 直接暴露等于把自建入口送出去；而且直链本身不鉴权，谁拿到都能下。
+		openAIResp.SetMetadata("url", taskcommon.BuildProxyURL(task.TaskID))
 	}
 	return common.Marshal(openAIResp)
 }
