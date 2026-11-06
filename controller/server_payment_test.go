@@ -190,8 +190,11 @@ func TestServerAlipayNotifyProvisionsInstanceOnSuccess(t *testing.T) {
 
 	var instance model.ServerInstance
 	require.NoError(t, model.DB.Where("order_id = ?", order.Id).First(&instance).Error)
-	assert.Equal(t, model.ServerInstanceStatusRunning, instance.Status)
-	assert.NotEmpty(t, instance.Password)
+	// 人工开台：回调只建骨架，凭据与到期时间都要等管理员分配。
+	assert.Equal(t, model.ServerInstanceStatusProvisioning, instance.Status)
+	assert.Zero(t, instance.ExpireAt)
+	assert.Empty(t, instance.Password)
+	assert.Equal(t, model.ServerOrderProvisionAwaiting, updated.ProvisionStatus)
 
 	// 下单阶段不扣额度；在线支付的钱不进站内余额。
 	var after model.User

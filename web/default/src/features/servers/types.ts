@@ -263,7 +263,14 @@ export interface PriceBreakdown {
   regionFactor: number
 }
 
-export type ServerStatus = 'pending' | 'running' | 'stopped' | 'expired' | 'released'
+export type ServerStatus =
+  | 'pending'
+  /** 已付款，等管理员分配 IP 与登录凭据；此阶段不计时 */
+  | 'provisioning'
+  | 'running'
+  | 'stopped'
+  | 'expired'
+  | 'released'
 
 /** 服务端报价：与前端 computePrice 同口径，但金额以下单时服务端返回为准 */
 export interface ServerQuoteResult {
@@ -341,6 +348,9 @@ export interface ServerOrderRecord {
   /** 支付渠道：balance（站内余额）/ alipay（官方直连）；历史订单可能为空 */
   payment_provider?: string
   status: string
+  /** 购买订单的交付进度：awaiting 待分配 / assigned 已分配 */
+  provision_status?: 'awaiting' | 'assigned' | ''
+  provisioned_at?: number
   description: string
   create_time: number
   complete_time: number
@@ -362,6 +372,15 @@ export interface ServerInstance {
   username: string
   password: string
   password_readable: boolean
+  /** SSH 端口：人工开台时可能是非标端口，缺省按 22 处理 */
+  ssh_port?: number
+  /** 管理员填写的私钥明文；未填写为空串 */
+  private_key?: string
+  private_key_ready?: boolean
+  /** 管理员分配时写给用户的备注 */
+  admin_note?: string
+  /** 分配时间；未分配为 0 */
+  assigned_at?: number
   config: ServerConfig
   spec: ServerInstanceSpec
   region: string
@@ -407,4 +426,56 @@ export interface ServerInstanceEvent {
   action: string
   detail: string
   created_at: number
+}
+
+/* ---------------------------------------------------------------------------
+ * 人工开台（管理端「服务器分配」）
+ * ------------------------------------------------------------------------ */
+
+/** 一行待分配/已分配的购买订单：订单 + 用户 + 配置快照 */
+export interface ServerProvisionOrder {
+  trade_no: string
+  user_id: number
+  username: string
+  email: string
+  plan: string
+  spec_id: string
+  region: string
+  mbps: number
+  duration_id: string
+  billing: BillingMode
+  amount: number
+  status: string
+  provision_status: 'awaiting' | 'assigned'
+  /** 支付完成时间 */
+  paid_at: number
+  provisioned_at: number
+  /** 已等待秒数；已分配为 0 */
+  waited_seconds: number
+  instance_id: number
+  instance_name: string
+  config: ServerConfig
+  spec: ServerInstanceSpec
+}
+
+export interface ServerProvisionListResult {
+  orders: ServerProvisionOrder[]
+  awaiting: number
+  oldest_wait_seconds: number
+}
+
+export interface ServerProvisionSummary {
+  awaiting: number
+  oldest_wait_seconds: number
+}
+
+/** 分配表单：IP / 端口 / 账号 / 密码或私钥 */
+export interface ServerAssignPayload {
+  trade_no: string
+  ip: string
+  ssh_port: number
+  username: string
+  password: string
+  private_key: string
+  note: string
 }

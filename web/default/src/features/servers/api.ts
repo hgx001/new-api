@@ -20,11 +20,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 import type {
+  ServerAssignPayload,
   ServerConfig,
   ServerInstance,
   ServerInstanceEvent,
   ServerMetrics,
   ServerOrderRecord,
+  ServerProvisionListResult,
+  ServerProvisionSummary,
   ServerQuoteResult,
 } from './types'
 
@@ -42,6 +45,9 @@ export type ServerErrorCode =
   | 'instance_released'
   | 'instance_expired'
   | 'instance_not_active'
+  | 'instance_provisioning'
+  | 'order_not_awaiting'
+  | 'invalid_assign_input'
   | 'concurrent_update'
   | 'invalid_config'
   | 'password_too_short'
@@ -369,5 +375,32 @@ export async function resetServerPassword(
       { password },
       WRITE_OPTIONS
     )
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * 人工开台（管理端「服务器分配」）
+ * ------------------------------------------------------------------------ */
+
+/** 待分配 / 已分配的购买订单列表 */
+export async function listServerProvisionOrders(
+  status: 'awaiting' | 'assigned' | '' = ''
+): Promise<ServerProvisionListResult> {
+  return unwrap(
+    api.get('/api/server/provisioning/orders', { params: { status } })
+  )
+}
+
+/** 角标计数：待办数量与最久等待时长（30s 轮询用） */
+export async function getServerProvisionSummary(): Promise<ServerProvisionSummary> {
+  return unwrap(api.get('/api/server/provisioning/summary'))
+}
+
+/** 交付一台机器：写 IP / 端口 / 账号 / 密码或私钥，并开始计时 */
+export async function assignServerOrder(
+  payload: ServerAssignPayload
+): Promise<{ order: ServerOrderRecord; instance: ServerInstance }> {
+  return unwrap(
+    api.post('/api/server/provisioning/assign', payload, WRITE_OPTIONS)
   )
 }

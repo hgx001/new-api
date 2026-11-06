@@ -23,12 +23,15 @@ import { useCallback } from 'react'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
+  assignServerOrder,
   getServerEvents,
+  getServerProvisionSummary,
   getServerMetrics,
   getServerOrderStatus,
   listServerInstances,
   listServerOrders,
   listServerPayMethods,
+  listServerProvisionOrders,
   purchaseServer,
   rebootServer,
   releaseServer,
@@ -41,7 +44,7 @@ import {
   type RenewResult,
   type ServerWalletSnapshot,
 } from '../api'
-import type { ServerConfig } from '../types'
+import type { ServerAssignPayload, ServerConfig } from '../types'
 
 export const serverKeys = {
   instances: ['server-instances'] as const,
@@ -50,6 +53,8 @@ export const serverKeys = {
   orders: ['server-orders'] as const,
   payMethods: ['server-pay-methods'] as const,
   orderStatus: (tradeNo: string) => ['server-order-status', tradeNo] as const,
+  provisionOrders: ['server-provision-orders'] as const,
+  provisionSummary: ['server-provision-summary'] as const,
 }
 
 /**
@@ -248,4 +253,47 @@ export function useServerActions() {
   })
 
   return { purchase, launchAlipay, renew, release, power, reboot, resetPassword }
+}
+
+/* ---------------------------------------------------------------------------
+ * 人工开台（管理端「服务器分配」）
+ * ------------------------------------------------------------------------ */
+
+/**
+ * 待分配列表。
+ *
+ * 30 秒轮询：这是管理员盯着的待办队列，新订单进来要尽快出现，
+ * 但也没必要做成实时推送 —— 处理一单通常要好几分钟。
+ */
+export function useServerProvisionOrders(enabled = true) {
+  return useQuery({
+    queryKey: serverKeys.provisionOrders,
+    queryFn: () => listServerProvisionOrders(''),
+    enabled,
+    refetchInterval: 30_000,
+  })
+}
+
+/** 侧边栏角标：待办数量与最久等待时长。 */
+export function useServerProvisionSummary(enabled = true) {
+  return useQuery({
+    queryKey: serverKeys.provisionSummary,
+    queryFn: getServerProvisionSummary,
+    enabled,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+  })
+}
+
+/** 分配成功后刷新待办列表与角标。 */
+export function useAssignServerOrder() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: ServerAssignPayload) => assignServerOrder(payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: serverKeys.provisionOrders })
+      queryClient.invalidateQueries({ queryKey: serverKeys.provisionSummary })
+      queryClient.invalidateQueries({ queryKey: serverKeys.instances })
+    },
+  })
 }

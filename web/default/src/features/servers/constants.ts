@@ -304,6 +304,14 @@ export const TERMS: TermOption[] = [
  * 阶梯折扣的理由与 AutoDL 一致：租得越久对平台是更稳定的需求，
  * 所以长档位给一点折扣，而不是全都一个价。
  */
+/**
+ * 唯一允许跨计费口径续费的时长档。
+ *
+ * 按量实例买「1 个月」实质是把这台机器转成包月，价格按包月机型价结算
+ * （不是 720 小时 × 时价）；其余档位仍要求与原实例同口径，避免套利。
+ */
+export const SERVER_ONE_MONTH_DURATION_ID = '1mo'
+
 export const DURATIONS: DurationOption[] = [
   // 按量：小时
   { id: '1h', pricing: 'hourly', amount: 1, nameKey: '1 hour', discount: 1 },

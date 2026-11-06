@@ -67,6 +67,7 @@ import { Route as AuthenticatedSystemSettingsContentIndexRouteImport } from './r
 import { Route as AuthenticatedSystemSettingsBillingIndexRouteImport } from './routes/_authenticated/system-settings/billing/index'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
 import { Route as AuthenticatedConsoleServersIndexRouteImport } from './routes/_authenticated/console/servers/index'
+import { Route as AuthenticatedConsoleServerProvisioningIndexRouteImport } from './routes/_authenticated/console/server-provisioning/index'
 import { Route as AuthenticatedSystemSettingsSiteSectionRouteImport } from './routes/_authenticated/system-settings/site/$section'
 import { Route as AuthenticatedSystemSettingsSecuritySectionRouteImport } from './routes/_authenticated/system-settings/security/$section'
 import { Route as AuthenticatedSystemSettingsOperationsSectionRouteImport } from './routes/_authenticated/system-settings/operations/$section'
@@ -387,6 +388,12 @@ const AuthenticatedConsoleServersIndexRoute =
     path: '/console/servers/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedConsoleServerProvisioningIndexRoute =
+  AuthenticatedConsoleServerProvisioningIndexRouteImport.update({
+    id: '/console/server-provisioning/',
+    path: '/console/server-provisioning/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSystemSettingsSiteSectionRoute =
   AuthenticatedSystemSettingsSiteSectionRouteImport.update({
     id: '/site/$section',
@@ -486,6 +493,7 @@ export interface FileRoutesByFullPath {
   '/system-settings/operations/$section': typeof AuthenticatedSystemSettingsOperationsSectionRoute
   '/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/console/server-provisioning/': typeof AuthenticatedConsoleServerProvisioningIndexRoute
   '/console/servers/': typeof AuthenticatedConsoleServersIndexRoute
   '/system-settings/auth/': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/system-settings/billing/': typeof AuthenticatedSystemSettingsBillingIndexRoute
@@ -550,6 +558,7 @@ export interface FileRoutesByTo {
   '/system-settings/operations/$section': typeof AuthenticatedSystemSettingsOperationsSectionRoute
   '/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/console/server-provisioning': typeof AuthenticatedConsoleServerProvisioningIndexRoute
   '/console/servers': typeof AuthenticatedConsoleServersIndexRoute
   '/system-settings/auth': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/system-settings/billing': typeof AuthenticatedSystemSettingsBillingIndexRoute
@@ -618,6 +627,7 @@ export interface FileRoutesById {
   '/_authenticated/system-settings/operations/$section': typeof AuthenticatedSystemSettingsOperationsSectionRoute
   '/_authenticated/system-settings/security/$section': typeof AuthenticatedSystemSettingsSecuritySectionRoute
   '/_authenticated/system-settings/site/$section': typeof AuthenticatedSystemSettingsSiteSectionRoute
+  '/_authenticated/console/server-provisioning/': typeof AuthenticatedConsoleServerProvisioningIndexRoute
   '/_authenticated/console/servers/': typeof AuthenticatedConsoleServersIndexRoute
   '/_authenticated/system-settings/auth/': typeof AuthenticatedSystemSettingsAuthIndexRoute
   '/_authenticated/system-settings/billing/': typeof AuthenticatedSystemSettingsBillingIndexRoute
@@ -685,6 +695,7 @@ export interface FileRouteTypes {
     | '/system-settings/operations/$section'
     | '/system-settings/security/$section'
     | '/system-settings/site/$section'
+    | '/console/server-provisioning/'
     | '/console/servers/'
     | '/system-settings/auth/'
     | '/system-settings/billing/'
@@ -749,6 +760,7 @@ export interface FileRouteTypes {
     | '/system-settings/operations/$section'
     | '/system-settings/security/$section'
     | '/system-settings/site/$section'
+    | '/console/server-provisioning'
     | '/console/servers'
     | '/system-settings/auth'
     | '/system-settings/billing'
@@ -816,6 +828,7 @@ export interface FileRouteTypes {
     | '/_authenticated/system-settings/operations/$section'
     | '/_authenticated/system-settings/security/$section'
     | '/_authenticated/system-settings/site/$section'
+    | '/_authenticated/console/server-provisioning/'
     | '/_authenticated/console/servers/'
     | '/_authenticated/system-settings/auth/'
     | '/_authenticated/system-settings/billing/'
@@ -1259,6 +1272,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedConsoleServersIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/console/server-provisioning/': {
+      id: '/_authenticated/console/server-provisioning/'
+      path: '/console/server-provisioning'
+      fullPath: '/console/server-provisioning/'
+      preLoaderRoute: typeof AuthenticatedConsoleServerProvisioningIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/system-settings/site/$section': {
       id: '/_authenticated/system-settings/site/$section'
       path: '/site/$section'
@@ -1414,6 +1434,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
+  AuthenticatedConsoleServerProvisioningIndexRoute: typeof AuthenticatedConsoleServerProvisioningIndexRoute
   AuthenticatedConsoleServersIndexRoute: typeof AuthenticatedConsoleServersIndexRoute
 }
 
@@ -1439,6 +1460,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
+  AuthenticatedConsoleServerProvisioningIndexRoute:
+    AuthenticatedConsoleServerProvisioningIndexRoute,
   AuthenticatedConsoleServersIndexRoute: AuthenticatedConsoleServersIndexRoute,
 }
 

@@ -33,8 +33,7 @@ import {
 import { cn } from '@/lib/utils'
 
 import { quoteServer } from '../api'
-import { DURATIONS } from '../constants'
-import { formatAmount } from '../lib/pricing'
+import { formatAmount, renewDurationsFor } from '../lib/pricing'
 import type { ServerInstance, ServerQuoteResult } from '../types'
 
 interface RenewDialogProps {
@@ -54,7 +53,7 @@ interface RenewDialogProps {
 export function RenewDialog(props: RenewDialogProps) {
   const { t } = useTranslation()
   const durations = useMemo(
-    () => DURATIONS.filter((item) => item.pricing === props.instance.billing),
+    () => renewDurationsFor(props.instance.billing),
     [props.instance.billing]
   )
   const [durationId, setDurationId] = useState(
@@ -137,6 +136,12 @@ export function RenewDialog(props: RenewDialogProps) {
                 )}
               >
                 <div>{t(item.nameKey)}</div>
+                {/* 跨口径只有「1 个月」这一档，明确告诉用户这会把机器转成包月 */}
+                {item.pricing !== props.instance.billing && (
+                  <div className='mt-0.5 text-[11px] text-amber-600 dark:text-amber-400'>
+                    {t('Switches to monthly billing')}
+                  </div>
+                )}
                 {item.discount < 1 && (
                   <div className='mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400'>
                     {t('Save {{percent}}%', {

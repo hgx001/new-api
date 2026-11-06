@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Activity,
   Box,
+  ClipboardList,
   CreditCard,
   FileText,
   FlaskConical,
@@ -34,10 +35,14 @@ import {
   Users,
   Wallet,
 } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import type { SidebarData } from '@/components/layout/types'
+import { useServerProvisionSummary } from '@/features/servers/hooks/use-servers'
 import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -47,6 +52,27 @@ import { ROLE } from '@/lib/roles'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const isAdmin = !!user && user.role >= ROLE.ADMIN
+
+  // 待分配角标：管理员才拉，普通用户拿到 403 只会白报错。
+  // 30 秒轮询，够「新订单进来几十秒内看到」，又不至于把接口打满。
+  const provisionSummary = useServerProvisionSummary(isAdmin)
+  const awaiting = provisionSummary.data?.awaiting ?? 0
+  const prevAwaiting = useRef<number | null>(null)
+
+  // 数量变多就提示一声：管理员可能正停在别的页面上，没有这个 toast
+  // 就只能靠他自己盯侧边栏，容易漏单。
+  useEffect(() => {
+    const previous = prevAwaiting.current
+    prevAwaiting.current = awaiting
+    if (previous === null || awaiting <= previous) return
+    toast.info(
+      t('A new server order is waiting for assignment ({{count}} in total)', {
+        count: awaiting,
+      })
+    )
+  }, [awaiting, t])
 
   return {
     navGroups: [
@@ -124,6 +150,14 @@ export function useSidebarData(): SidebarData {
         id: 'admin',
         title: t('Admin'),
         items: [
+          {
+            // 排在最前：这是唯一一条「有人正在等」的待办，不该被埋在列表中间。
+            title: t('Server assignment'),
+            url: '/console/server-provisioning',
+            icon: ClipboardList,
+            badge: awaiting > 0 ? String(awaiting) : undefined,
+            requiredRole: ROLE.ADMIN,
+          },
           {
             title: t('Channels'),
             url: '/channels',

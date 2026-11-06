@@ -51,6 +51,29 @@ func gpuServerConfig(durationId string) setting.ServerConfig {
 	}
 }
 
+// purchaseActiveServer 买一台并立刻交付，供「已开通之后」的用例使用。
+//
+// 人工开台之后，下单只得到一台 provisioning 的骨架；开关机、改密、退款、
+// 到期这些行为都要在 running 的实例上才有意义，所以统一走这条捷径。
+func purchaseActiveServer(
+	t *testing.T,
+	userId int,
+	config setting.ServerConfig,
+	quote *setting.ServerQuote,
+) (*ServerOrder, *ServerInstance) {
+	t.Helper()
+	order, _, err := PurchaseServerInstance(userId, config, quote, PaymentMethodBalance, "")
+	require.NoError(t, err)
+	_, instance, err := AssignServerOrder(order.TradeNo, 1, ServerAssignInput{
+		IP:       "203.0.113.10",
+		Username: "ubuntu",
+		Password: "test-password",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, instance)
+	return order, instance
+}
+
 func TestPurchaseServerInstanceChargesOnceAndIsIdempotent(t *testing.T) {
 	truncateTables(t)
 	user := createServerTestUser(t, 100_000_000)
@@ -67,13 +90,13 @@ func TestPurchaseServerInstanceChargesOnceAndIsIdempotent(t *testing.T) {
 	require.NoError(t, DB.Select("quota").Where("id = ?", user.Id).First(&afterPurchase).Error)
 	assert.Equal(t, 100_000_000-required, afterPurchase.Quota, "必须且只能扣一次额度")
 
-	assert.Equal(t, ServerInstanceStatusRunning, instance.Status)
+	assert.Equal(t, ServerInstanceStatusProvisioning, instance.Status, "下单后进入待分配")
 	assert.Equal(t, common.TopUpStatusSuccess, order.Status)
-	assert.Equal(t, int64(30*24*3600), instance.ExpireAt-instance.CreatedAt)
+	assert.Zero(t, instance.ExpireAt, "分配前不开始计时")
 
 	view := instance.ToView(common.GetTimestamp())
-	assert.True(t, view.PasswordReadable, "密码必须能解密回显")
-	assert.GreaterOrEqual(t, len(view.Password), 8)
+	assert.False(t, view.PasswordReadable, "未分配前不下发凭据")
+	assert.Empty(t, view.Ip)
 	assert.Equal(t, "lite-2c2g", view.Spec.Id)
 	assert.Equal(t, 2, view.Spec.CPU)
 
@@ -119,8 +142,7 @@ func TestRenewServerInstanceExtendsExpiryAndCharges(t *testing.T) {
 	config := liteServerConfig("1mo")
 	quote := serverTestQuote(t, config)
 
-	_, instance, err := PurchaseServerInstance(user.Id, config, quote, PaymentMethodBalance, "")
-	require.NoError(t, err)
+	_, instance := purchaseActiveServer(t, user.Id, config, quote)
 
 	renewQuote := serverTestQuote(t, config)
 	order, renewed, err := RenewServerInstance(user.Id, instance.Id, renewQuote, PaymentMethodBalance, "req-renew-1")
@@ -142,14 +164,40 @@ func TestRenewServerInstanceExtendsExpiryAndCharges(t *testing.T) {
 	assert.Equal(t, current.Quota, afterRetry.Quota)
 }
 
+func TestRenewServerInstanceSwitchesHourlyInstanceToMonthly(t *testing.T) {
+	truncateTables(t)
+	user := createServerTestUser(t, 100_000_000)
+	hourly := liteServerConfig("24h")
+	quote := serverTestQuote(t, hourly)
+	_, instance := purchaseActiveServer(t, user.Id, hourly, quote)
+	require.Equal(t, setting.ServerBillingHourly, instance.Billing)
+
+	// 按量实例买「1 个月」：等于转成包月，价格按包月机型价算。
+	monthly := liteServerConfig(setting.ServerDurationOneMonth)
+	monthlyQuote := serverTestQuote(t, monthly)
+	order, renewed, err := RenewServerInstance(user.Id, instance.Id, monthlyQuote, PaymentMethodBalance, "")
+	require.NoError(t, err)
+
+	assert.Equal(t, setting.ServerBillingPrepaid, renewed.Billing)
+	assert.Equal(t, setting.ServerDurationOneMonth, renewed.DurationId)
+	assert.Equal(t, monthlyQuote.UnitPrice, renewed.UnitPrice)
+	assert.Equal(t, setting.ServerBillingPrepaid, order.Billing)
+	assert.Equal(t, instance.ExpireAt+monthlyQuote.PeriodSeconds, renewed.ExpireAt)
+
+	// 落库也要是包月口径，不能只改内存对象。
+	var stored ServerInstance
+	require.NoError(t, DB.Where("id = ?", instance.Id).First(&stored).Error)
+	assert.Equal(t, setting.ServerBillingPrepaid, stored.Billing)
+	assert.Equal(t, setting.ServerDurationOneMonth, stored.DurationId)
+}
+
 func TestReleaseServerInstanceRefundsRemainingValue(t *testing.T) {
 	truncateTables(t)
 	user := createServerTestUser(t, 100_000_000)
 	config := liteServerConfig("1mo")
 	quote := serverTestQuote(t, config)
 
-	_, instance, err := PurchaseServerInstance(user.Id, config, quote, PaymentMethodBalance, "")
-	require.NoError(t, err)
+	_, instance := purchaseActiveServer(t, user.Id, config, quote)
 
 	// 用掉一半租期再退：应退约一半实付，不能按标价全退。
 	now := common.GetTimestamp()
@@ -182,8 +230,7 @@ func TestReleaseExpiredInstanceRefundsNothing(t *testing.T) {
 	config := liteServerConfig("1mo")
 	quote := serverTestQuote(t, config)
 
-	_, instance, err := PurchaseServerInstance(user.Id, config, quote, PaymentMethodBalance, "")
-	require.NoError(t, err)
+	_, instance := purchaseActiveServer(t, user.Id, config, quote)
 
 	now := common.GetTimestamp()
 	require.NoError(t, DB.Model(&ServerInstance{}).Where("id = ?", instance.Id).
@@ -205,8 +252,7 @@ func TestExpireServerInstancesMarksThenReleases(t *testing.T) {
 	config := liteServerConfig("1mo")
 	quote := serverTestQuote(t, config)
 
-	_, instance, err := PurchaseServerInstance(user.Id, config, quote, PaymentMethodBalance, "")
-	require.NoError(t, err)
+	_, instance := purchaseActiveServer(t, user.Id, config, quote)
 
 	now := common.GetTimestamp()
 	require.NoError(t, DB.Model(&ServerInstance{}).Where("id = ?", instance.Id).
@@ -243,8 +289,7 @@ func TestSetServerInstancePowerRejectsExpired(t *testing.T) {
 	config := liteServerConfig("1mo")
 	quote := serverTestQuote(t, config)
 
-	_, instance, err := PurchaseServerInstance(user.Id, config, quote, PaymentMethodBalance, "")
-	require.NoError(t, err)
+	_, instance := purchaseActiveServer(t, user.Id, config, quote)
 
 	stopped, err := SetServerInstancePower(user.Id, instance.Id, false)
 	require.NoError(t, err)
@@ -265,8 +310,7 @@ func TestBuildServerMetricsMatchesSpecAndStatus(t *testing.T) {
 	user := createServerTestUser(t, 500_000_000)
 
 	liteQuote := serverTestQuote(t, liteServerConfig("24h"))
-	_, lite, err := PurchaseServerInstance(user.Id, liteServerConfig("24h"), liteQuote, PaymentMethodBalance, "")
-	require.NoError(t, err)
+	_, lite := purchaseActiveServer(t, user.Id, liteServerConfig("24h"), liteQuote)
 
 	now := common.GetTimestamp()
 	metrics := BuildServerMetrics(lite, now, 12)
@@ -283,14 +327,13 @@ func TestBuildServerMetricsMatchesSpecAndStatus(t *testing.T) {
 	assert.Equal(t, metrics, BuildServerMetrics(lite, now, 12))
 
 	gpuQuote := serverTestQuote(t, gpuServerConfig("24h"))
-	_, gpuInstance, err := PurchaseServerInstance(user.Id, gpuServerConfig("24h"), gpuQuote, PaymentMethodBalance, "")
-	require.NoError(t, err)
+	_, gpuInstance := purchaseActiveServer(t, user.Id, gpuServerConfig("24h"), gpuQuote)
 	gpuMetrics := BuildServerMetrics(gpuInstance, now, 12)
 	assert.True(t, gpuMetrics.HasGPU)
 	assert.Greater(t, gpuMetrics.GPU, 0.0)
 
 	// 停机后除磁盘占用外全部归零。
-	_, err = SetServerInstancePower(user.Id, gpuInstance.Id, false)
+	_, err := SetServerInstancePower(user.Id, gpuInstance.Id, false)
 	require.NoError(t, err)
 	require.NoError(t, DB.Where("id = ?", gpuInstance.Id).First(gpuInstance).Error)
 	stoppedMetrics := BuildServerMetrics(gpuInstance, now, 12)
@@ -306,10 +349,9 @@ func TestResetServerInstancePasswordStoresCiphertext(t *testing.T) {
 	user := createServerTestUser(t, 100_000_000)
 	config := liteServerConfig("1mo")
 	quote := serverTestQuote(t, config)
-	_, instance, err := PurchaseServerInstance(user.Id, config, quote, PaymentMethodBalance, "")
-	require.NoError(t, err)
+	_, instance := purchaseActiveServer(t, user.Id, config, quote)
 
-	_, err = ResetServerInstancePassword(user.Id, instance.Id, "short")
+	_, err := ResetServerInstancePassword(user.Id, instance.Id, "short")
 	require.Error(t, err)
 
 	password, err := ResetServerInstancePassword(user.Id, instance.Id, "N3w-Passw0rd!")

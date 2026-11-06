@@ -45,6 +45,11 @@ export const EXPIRING_SOON_HOURS = 72
 
 export function isExpired(instance: ServerInstance): boolean {
   if (instance.status === 'released') return false
+  // 等待分配的实例 expire_at 还是 0，不排除掉会被误判成「已过期」，
+  // 用户刚付完钱就看见一台过期机器。
+  if (instance.status === 'provisioning' || instance.status === 'pending') {
+    return false
+  }
   return instance.status === 'expired' || instance.expire_at * 1000 <= Date.now()
 }
 
@@ -59,7 +64,7 @@ export function statusKeyOf(instance: ServerInstance): InstanceStatusKey {
   const status = resolveStatus(instance)
   if (status === 'released') return 'Released'
   if (status === 'stopped') return 'Stopped'
-  if (status === 'pending') return 'Provisioning'
+  if (status === 'provisioning' || status === 'pending') return 'Provisioning'
   if (status === 'expired') return 'Expired'
   if (hoursLeft(instance) <= EXPIRING_SOON_HOURS) return 'Expiring soon'
   return 'Running'

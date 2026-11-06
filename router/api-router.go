@@ -57,6 +57,15 @@ func SetApiRouter(router *gin.Engine) {
 			serverRoute.POST("/instances/:id/renew", middleware.CriticalRateLimit(), controller.RenewServerInstance)
 			serverRoute.POST("/instances/:id/release", middleware.CriticalRateLimit(), controller.ReleaseServerInstance)
 		}
+		// 人工开台（服务器分配）：把已付款的订单变成可用机器，只给管理员。
+		// 路径带 provisioning 前缀，和用户侧的 /server 路由不重叠。
+		serverProvisionRoute := apiRouter.Group("/server/provisioning")
+		serverProvisionRoute.Use(middleware.AdminAuth())
+		{
+			serverProvisionRoute.GET("/orders", controller.GetServerProvisionOrders)
+			serverProvisionRoute.GET("/summary", controller.GetServerProvisionSummary)
+			serverProvisionRoute.POST("/assign", middleware.CriticalRateLimit(), controller.AssignServerOrder)
+		}
 		// 云服务器订单的支付回调：无需登录（支付宝服务器调用），但必须 RSA2 验签。
 		apiRouter.POST("/server/pay/alipay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.ServerAlipayNotify)
 		apiRouter.GET("/server/pay/alipay/notify", middleware.PaymentNotifyRateLimit(), controller.ServerAlipayNotify)

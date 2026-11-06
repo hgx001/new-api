@@ -37,6 +37,7 @@ import {
   HOURS_PER_MONTH,
   computePrice,
   planFromPrice,
+  renewDurationsFor,
   resolveBilling,
   resolveDurationId,
 } from './pricing'
@@ -461,5 +462,38 @@ describe('servers: 旧配置的时长映射', () => {
     // 落到列表第一项（1 小时）等于把老订单悄悄改成按量。
     assert.equal(getDuration('nope').id, '1y')
     assert.equal(resolveBilling({ durationId: 'nope' } as ServerConfig), 'prepaid')
+  })
+})
+
+describe('续费可选时长', () => {
+  test('按量实例也能续「1 个月」，且排在最后', () => {
+    const list = renewDurationsFor('hourly')
+    assert.equal(list.at(-1)?.id, '1mo')
+    // 同口径的按量档位一个都不能少
+    assert.deepEqual(
+      list.slice(0, -1).map((item) => item.id),
+      DURATIONS.filter((item) => item.pricing === 'hourly').map(
+        (item) => item.id
+      )
+    )
+  })
+
+  test('包月实例本来就有一个月，不能出现两个', () => {
+    const list = renewDurationsFor('prepaid')
+    assert.equal(list.filter((item) => item.id === '1mo').length, 1)
+    assert.deepEqual(
+      list.map((item) => item.id),
+      DURATIONS.filter((item) => item.pricing === 'prepaid').map(
+        (item) => item.id
+      )
+    )
+  })
+
+  test('跨口径只放一个月，半年与一年必须挡住', () => {
+    // 「按小时续一年」会在两套单价之间套利，后端也会拒绝
+    const ids = renewDurationsFor('hourly').map((item) => item.id)
+    for (const forbidden of ['3mo', '6mo', '1y', '3y']) {
+      assert.equal(ids.includes(forbidden), false)
+    }
   })
 })

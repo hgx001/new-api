@@ -64,23 +64,25 @@ func TestCompleteServerOrderPaidProvisionsInstance(t *testing.T) {
 	assert.True(t, completed)
 	require.NotNil(t, instance)
 
-	assert.Equal(t, ServerInstanceStatusRunning, instance.Status)
+	// 人工开台：回调只建订单与实例骨架，凭据和计时都要等管理员分配。
+	assert.Equal(t, ServerInstanceStatusProvisioning, instance.Status)
 	assert.Equal(t, order.Id, instance.OrderId)
 	assert.NotEmpty(t, instance.Name)
 	assert.Equal(t, quote.Total, instance.PaidAmount)
 	assert.Equal(t, quote.PeriodSeconds, instance.PurchasedSeconds)
-	// 密码是密文存的，不是明文。
-	assert.NotEmpty(t, instance.Password)
-	plain, err := common.DecryptSecret(instance.Password)
-	require.NoError(t, err)
-	assert.Len(t, plain, 20)
+	assert.Zero(t, instance.ExpireAt, "未分配前不能开始计时")
+	assert.Empty(t, instance.IP)
+	assert.Empty(t, instance.Password)
+	assert.Equal(t, 22, instance.SshPort)
+	assert.Equal(t, ServerProvisionLive, instance.ProvisionMode)
 
-	// 订单回写实例信息
+	// 订单回写实例信息，并标记为待分配
 	var updated ServerOrder
 	require.NoError(t, DB.Where("id = ?", order.Id).First(&updated).Error)
 	assert.Equal(t, common.TopUpStatusSuccess, updated.Status)
 	assert.Equal(t, instance.Id, updated.InstanceId)
 	assert.Equal(t, instance.Name, updated.InstanceName)
+	assert.Equal(t, ServerOrderProvisionAwaiting, updated.ProvisionStatus)
 }
 
 func TestCompleteServerOrderPaidIsIdempotent(t *testing.T) {

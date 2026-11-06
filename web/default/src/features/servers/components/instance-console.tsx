@@ -28,6 +28,7 @@ import {
   HardDrive,
   KeyRound,
   LifeBuoy,
+  Loader2,
   MemoryStick,
   Network,
   Play,
@@ -89,10 +90,16 @@ interface InstanceConsoleProps {
   onRelease: (server: ServerInstance) => Promise<boolean>
 }
 
-type StatusFilter = 'all' | 'running' | 'stopped' | 'expiring'
+type StatusFilter =
+  | 'all'
+  | 'provisioning'
+  | 'running'
+  | 'stopped'
+  | 'expiring'
 
 const FILTERS: { id: StatusFilter; labelKey: string }[] = [
   { id: 'all', labelKey: 'All' },
+  { id: 'provisioning', labelKey: 'Waiting for assignment' },
   { id: 'running', labelKey: 'Running' },
   { id: 'stopped', labelKey: 'Stopped' },
   { id: 'expiring', labelKey: 'Expiring soon' },
@@ -136,12 +143,18 @@ function statusTone(key: InstanceStatusKey): string {
  * 机器本身是健康的，把它显示成红色会让人以为机器坏了。
  * 「Healthy」只在这里出现，所以单独给它一个类型，不塞进 InstanceStatusKey。
  */
-type HealthKey = 'Healthy' | 'Stopped' | 'Expired' | 'Released'
+type HealthKey =
+  | 'Healthy'
+  | 'Stopped'
+  | 'Provisioning'
+  | 'Expired'
+  | 'Released'
 
 function healthKeyOf(server: ServerInstance): HealthKey {
   const status = resolveStatus(server)
   if (status === 'released') return 'Released'
   if (status === 'expired') return 'Expired'
+  if (status === 'provisioning') return 'Provisioning'
   if (status === 'running') return 'Healthy'
   return 'Stopped'
 }
@@ -149,6 +162,7 @@ function healthKeyOf(server: ServerInstance): HealthKey {
 function healthTone(key: HealthKey): string {
   if (key === 'Healthy') return 'text-emerald-600 dark:text-emerald-400'
   if (key === 'Stopped') return 'text-muted-foreground'
+  if (key === 'Provisioning') return 'text-blue-600 dark:text-blue-400'
   return 'text-red-600 dark:text-red-400'
 }
 
@@ -191,6 +205,10 @@ export function InstanceConsole(props: InstanceConsoleProps) {
 
   const filtered = useMemo(() => {
     switch (filter) {
+      case 'provisioning':
+        return props.servers.filter(
+          (server) => resolveStatus(server) === 'provisioning'
+        )
       case 'running':
         return props.servers.filter(
           (server) => resolveStatus(server) === 'running'
@@ -223,6 +241,9 @@ export function InstanceConsole(props: InstanceConsoleProps) {
     const key = statusKeyOf(server)
     return key === 'Expiring soon' || key === 'Expired'
   }).length
+  const pendingCount = props.servers.filter(
+    (server) => resolveStatus(server) === 'provisioning'
+  ).length
 
   const copyText = (value: string, messageKey: string) => {
     void copyToClipboard(value).then((ok) => {
@@ -296,12 +317,26 @@ export function InstanceConsole(props: InstanceConsoleProps) {
         />
       </div>
 
+      {/* 待分配提示：付款后机器不是立刻就好，得让用户知道自己在等什么、
+          以及「等待不算钱」这件事，否则会产生「我是不是被坑了」的疑虑 */}
+      {pendingCount > 0 && (
+        <div className='flex items-start gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 text-xs leading-relaxed text-blue-800 dark:text-blue-300'>
+          <Loader2 className='mt-0.5 size-3.5 shrink-0 animate-spin' />
+          <span>
+            {t(
+              '{{count}} instance(s) paid and waiting for assignment. We usually deliver within 30 minutes, and the rental clock only starts once the credentials are handed over.',
+              { count: pendingCount }
+            )}
+          </span>
+        </div>
+      )}
+
       {/* 到期释放说明：这是用户最容易被坑的一条规则，常驻在第一屏 */}
       <div className='flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs leading-relaxed text-amber-800 dark:text-amber-300'>
         <AlertTriangle className='mt-0.5 size-3.5 shrink-0' />
         <span>
           {t(
-            'Instances are released automatically once the rental period ends. Everything on them is deleted and cannot be recovered, so renew before it expires.'
+            'Instances stop as soon as the rental period ends and stay recoverable for 7 days — renew within that window and they come back. After 7 days they are released and all data is deleted.'
           )}
         </span>
       </div>
@@ -517,7 +552,17 @@ function InstanceRow({
   const isHourly = server.billing === 'hourly'
   const released = status === 'released'
   const expired = status === 'expired'
-  const locked = released || expired
+  // 等待分配的机器还不能操作：既没有 IP 也没有凭据，开机/改密都无从谈起。
+  const provisioning = status === 'provisioning'
+  const locked = released || expired || provisioning
+
+  // 释放时间：未分配时还没开始计时，不能显示 1970 年。
+  let expireLabel = formatDateTime(server.expire_at)
+  if (released) {
+    expireLabel = t('Released')
+  } else if (provisioning) {
+    expireLabel = t('Not counting yet')
+  }
 
   // 剩余时间按计费口径报：按量报小时、包月报天；已释放就不再提剩余时间。
   const remainingHint = remainingHintOf(server, t)
@@ -613,7 +658,7 @@ function InstanceRow({
         {/* 释放时间 */}
         <Cell label={t('Auto release time')}>
           <div className='text-foreground text-[12px] font-medium'>
-            {released ? t('Released') : formatDateTime(server.expire_at)}
+            {expireLabel}
           </div>
           {remainingHint && (
             <div
@@ -632,6 +677,14 @@ function InstanceRow({
         {/* SSH 登录：一行命令 + 一键复制。改密/重启这类非常用操作收进「更多」，
             避免操作列把表格挤得只剩几个字 */}
         <Cell label={t('SSH login')} className='sm:col-span-2 xl:col-span-1'>
+          {provisioning ? (
+            <div className='flex items-center justify-end'>
+              <span className='inline-flex items-center gap-1.5 rounded-md bg-blue-500/10 px-2 py-1 text-[11px] font-medium text-blue-700 dark:text-blue-400'>
+                <Loader2 className='size-3 animate-spin' />
+                {t('Waiting for assignment')}
+              </span>
+            </div>
+          ) : (
           <div className='flex flex-wrap items-center justify-end gap-1.5'>
             <button
               type='button'
@@ -708,13 +761,15 @@ function InstanceRow({
                   <Receipt className='size-4' />
                   {t('Operation log')}
                 </DropdownMenuItem>
-                {!locked && (
+                {!released && (
                   <>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={onRenew}>
-                      <RefreshCcw className='size-4' />
-                      {t('Renew')}
-                    </DropdownMenuItem>
+                    {!locked && (
+                      <DropdownMenuItem onClick={onRenew}>
+                        <RefreshCcw className='size-4' />
+                        {t('Renew')}
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem
                       onClick={onRelease}
                       className='text-destructive'
@@ -732,6 +787,7 @@ function InstanceRow({
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          )}
         </Cell>
       </div>
 
@@ -788,6 +844,21 @@ function InstanceRow({
             <div className='text-muted-foreground mb-2 text-[11px] font-semibold tracking-wide uppercase'>
               {t('Login credentials')}
             </div>
+            {provisioning ? (
+              <div className='border-border/70 bg-muted/40 flex items-start gap-2.5 rounded-xl border border-dashed px-3.5 py-3'>
+                <Loader2 className='mt-0.5 size-4 shrink-0 animate-spin text-blue-600 dark:text-blue-400' />
+                <div className='text-[12px] leading-relaxed'>
+                  <div className='text-foreground font-medium'>
+                    {t('Waiting for assignment')}
+                  </div>
+                  <div className='text-muted-foreground mt-0.5'>
+                    {t(
+                      'Payment received. Login credentials appear here as soon as the machine is assigned, and the rental clock starts at that moment.'
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div className='grid gap-2 sm:grid-cols-3'>
               <CredentialField
                 label={t('Public IP')}
@@ -810,6 +881,8 @@ function InstanceRow({
                 dense
               />
             </div>
+            )}
+            {!provisioning && (
             <div className='mt-2.5 flex flex-wrap gap-2'>
               <Button
                 size='sm'
@@ -855,6 +928,7 @@ function InstanceRow({
                 </Button>
               )}
             </div>
+            )}
           </div>
         </div>
       )}

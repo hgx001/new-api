@@ -246,6 +246,13 @@ var ServerBandwidths = []ServerBandwidth{
 	{Mbps: 100, PricePerMonth: 54},
 }
 
+// ServerDurationOneMonth 是**唯一**允许跨计费口径续费的档位。
+//
+// 按量实例买「1 个月」，实质是把这台机器转成包月：价格按包月机型价结算，
+// 而不是 720 小时 × 时价（那样比包月贵一倍多，没人会买）。其余档位仍要求
+// 同口径，否则「按小时续一年」会在两套单价之间来回套利。
+const ServerDurationOneMonth = "1mo"
+
 var ServerDurations = []ServerDuration{
 	{Id: "1h", Pricing: ServerBillingHourly, Amount: 1, Discount: 1},
 	{Id: "6h", Pricing: ServerBillingHourly, Amount: 6, Discount: 1},

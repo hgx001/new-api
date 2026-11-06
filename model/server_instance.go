@@ -26,11 +26,23 @@ import (
 //  4. 所有金额以人民币分为单位算一次，再按汇率折成站内额度。
 
 const (
-	ServerInstanceStatusPending  = "pending"
-	ServerInstanceStatusRunning  = "running"
-	ServerInstanceStatusStopped  = "stopped"
-	ServerInstanceStatusExpired  = "expired"
-	ServerInstanceStatusReleased = "released"
+	ServerInstanceStatusPending = "pending"
+	// ServerInstanceStatusProvisioning 表示「钱已收到、机器还没交到用户手上」。
+	//
+	// 这一档是人工开台的产物：支付宝回调只建实例骨架，IP、账号、密码、
+	// SSH 密钥由管理员在后台填写并点「分配」后才落库。在此之前实例不计时
+	// （ExpireAt 保持 0），否则用户会为等待时间付费。
+	ServerInstanceStatusProvisioning = "provisioning"
+	ServerInstanceStatusRunning      = "running"
+	ServerInstanceStatusStopped      = "stopped"
+	ServerInstanceStatusExpired      = "expired"
+	ServerInstanceStatusReleased     = "released"
+)
+
+// 购买订单的交付状态。只在 type=purchase 的订单上有意义。
+const (
+	ServerOrderProvisionAwaiting = "awaiting" // 已支付，待管理员分配
+	ServerOrderProvisionAssigned = "assigned" // 已分配，凭据已交付
 )
 
 const (
@@ -64,6 +76,7 @@ var (
 	ErrServerInstanceReleased  = errors.New("实例已释放")
 	ErrServerInstanceExpired   = errors.New("实例已到期，请先续费")
 	ErrServerInstanceNotActive = errors.New("实例当前状态不支持该操作")
+	ErrServerInstancePending   = errors.New("实例尚未分配，请等待管理员开通")
 	ErrServerQuotaInsufficient = errors.New("余额不足")
 	ErrServerConcurrentUpdate  = errors.New("实例状态已变化，请刷新后重试")
 	// ErrServerOrderNotFound 服务器订单不存在。
@@ -72,6 +85,10 @@ var (
 	ErrServerOrderExpired = errors.New("订单已超时作废")
 	// ErrServerPaymentProviderMismatch 支付网关与订单不匹配。
 	ErrServerPaymentProviderMismatch = errors.New("支付网关与订单不匹配")
+	// ErrServerOrderNotAwaiting 订单不处于待分配状态（已分配或类型不对）。
+	ErrServerOrderNotAwaiting = errors.New("该订单不在待分配状态")
+	// ErrServerAssignInvalid 分配参数不合法（IP/端口/凭据）。
+	ErrServerAssignInvalid = errors.New("分配信息不完整或格式不正确")
 )
 
 type ServerOrder struct {
@@ -111,6 +128,13 @@ type ServerOrder struct {
 	PeriodSeconds int64   `json:"period_seconds"`
 	// TradeNoExpires 是未支付订单的作废时间；超时后回调不再开通实例。
 	TradeNoExpires int64 `json:"-" gorm:"column:trade_no_expires"`
+	// ProvisionStatus / ProvisionedAt / ProvisionedBy 记录人工开台的交付进度。
+	// 只在 type=purchase 的订单上有值：awaiting 待分配、assigned 已分配。
+	// 续费与退款订单恒为空，查询待分配列表时用 awaiting 过滤即可，
+	// 历史订单是空字符串，不会莫名出现在待办里。
+	ProvisionStatus string `json:"provision_status" gorm:"type:varchar(16);index"`
+	ProvisionedAt   int64  `json:"provisioned_at"`
+	ProvisionedBy   int    `json:"provisioned_by"`
 }
 
 type ServerInstance struct {
@@ -140,6 +164,14 @@ type ServerInstance struct {
 	CreatedAt     int64  `json:"created_at" gorm:"index"`
 	UpdatedAt     int64  `json:"updated_at"`
 	ReleasedAt    int64  `json:"released_at"`
+	// 以下是人工开台的交付信息，由管理员在「服务器分配」里填写。
+	// SshPort 默认 22，允许非标端口；PrivateKey 与 Password 同级别加密。
+	SshPort    int    `json:"ssh_port"`
+	PrivateKey string `json:"-" gorm:"type:text"`
+	// AdminNote 是分配时写给用户的备注（重装方式、工单入口等），可为空。
+	AdminNote  string `json:"admin_note" gorm:"type:varchar(255)"`
+	AssignedBy int    `json:"assigned_by"`
+	AssignedAt int64  `json:"assigned_at"`
 }
 
 type ServerInstanceEvent struct {
@@ -160,6 +192,11 @@ type ServerInstanceView struct {
 	Username         string               `json:"username"`
 	Password         string               `json:"password"`
 	PasswordReadable bool                 `json:"password_readable"`
+	SshPort          int                  `json:"ssh_port"`
+	PrivateKey       string               `json:"private_key"`
+	PrivateKeyReady  bool                 `json:"private_key_ready"`
+	AdminNote        string               `json:"admin_note"`
+	AssignedAt       int64                `json:"assigned_at"`
 	Config           setting.ServerConfig `json:"config"`
 	Spec             setting.ServerSpec   `json:"spec"`
 	Region           string               `json:"region"`
@@ -187,6 +224,12 @@ func (instance *ServerInstance) ToView(now int64) ServerInstanceView {
 		_ = common.UnmarshalJsonStr(instance.Spec, &spec)
 	}
 	password, err := common.DecryptSecret(instance.Password)
+	privateKey := ""
+	if instance.PrivateKey != "" {
+		if decrypted, keyErr := common.DecryptSecret(instance.PrivateKey); keyErr == nil {
+			privateKey = decrypted
+		}
+	}
 	view := ServerInstanceView{
 		Id:               instance.Id,
 		Name:             instance.Name,
@@ -195,6 +238,11 @@ func (instance *ServerInstance) ToView(now int64) ServerInstanceView {
 		Username:         instance.Username,
 		Password:         password,
 		PasswordReadable: err == nil && password != "",
+		SshPort:          instance.SshPort,
+		PrivateKey:       privateKey,
+		PrivateKeyReady:  privateKey != "",
+		AdminNote:        instance.AdminNote,
+		AssignedAt:       instance.AssignedAt,
 		Config:           config,
 		Spec:             spec,
 		Region:           instance.Region,
@@ -212,6 +260,17 @@ func (instance *ServerInstance) ToView(now int64) ServerInstanceView {
 		OrderId:          instance.OrderId,
 	}
 	if view.RemainingSeconds < 0 {
+		view.RemainingSeconds = 0
+	}
+	// 还没分配：机器上什么都没有，凭据与剩余时间都不下发。
+	// 前端据此直接渲染「等待分配」，不用自己判断状态再决定显示什么。
+	if instance.Status == ServerInstanceStatusProvisioning {
+		view.Ip = ""
+		view.Username = ""
+		view.Password = ""
+		view.PasswordReadable = false
+		view.PrivateKey = ""
+		view.PrivateKeyReady = false
 		view.RemainingSeconds = 0
 	}
 	return view
@@ -466,6 +525,8 @@ func purchaseServerInstanceWithProvider(
 			PeriodSeconds:   quote.PeriodSeconds,
 			CreateTime:      now,
 			CompleteTime:    now,
+			// 余额支付同样是「钱到了、机器还没交付」，一样要走进人工分配。
+			ProvisionStatus: ServerOrderProvisionAwaiting,
 		}
 		if clientRequestId != "" {
 			id := clientRequestId
@@ -479,10 +540,7 @@ func purchaseServerInstanceWithProvider(
 		for attempts := 0; attempts < 5 && serverInstanceNameExists(tx, name); attempts++ {
 			name = generateServerInstanceName(config.Plan)
 		}
-		encryptedPassword, err := common.EncryptSecret(generateServerPassword())
-		if err != nil {
-			return err
-		}
+		// 与支付宝回调一致：只建骨架，凭据由管理员分配时填写，到期时间分配时才开始算。
 		instance = &ServerInstance{
 			UserId:           userId,
 			Name:             name,
@@ -498,12 +556,10 @@ func purchaseServerInstanceWithProvider(
 			UnitPrice:        quote.UnitPrice,
 			PaidAmount:       quote.Total,
 			PurchasedSeconds: quote.PeriodSeconds,
-			IP:               simulatedServerIP(),
-			Username:         "ubuntu",
-			Password:         encryptedPassword,
-			Status:           ServerInstanceStatusRunning,
-			ProvisionMode:    ServerProvisionSimulated,
-			ExpireAt:         now + quote.PeriodSeconds,
+			SshPort:          22,
+			Status:           ServerInstanceStatusProvisioning,
+			ProvisionMode:    ServerProvisionLive,
+			ExpireAt:         0,
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}
@@ -662,10 +718,9 @@ func CompleteServerOrderPaid(
 		for attempts := 0; attempts < 5 && serverInstanceNameExists(tx, name); attempts++ {
 			name = generateServerInstanceName(order.Plan)
 		}
-		encryptedPassword, err := common.EncryptSecret(generateServerPassword())
-		if err != nil {
-			return err
-		}
+		// 只建订单与实例骨架：IP、账号、密码、SSH 密钥一律等管理员在
+		// 「服务器分配」里填写。ExpireAt 留 0，分配那一刻才开始计时 ——
+		// 排队等机器的时间不该由用户买单。
 		created := &ServerInstance{
 			UserId:           order.UserId,
 			Name:             name,
@@ -681,12 +736,10 @@ func CompleteServerOrderPaid(
 			UnitPrice:        order.UnitPrice,
 			PaidAmount:       order.Amount,
 			PurchasedSeconds: order.PeriodSeconds,
-			IP:               simulatedServerIP(),
-			Username:         "ubuntu",
-			Password:         encryptedPassword,
-			Status:           ServerInstanceStatusRunning,
-			ProvisionMode:    ServerProvisionSimulated,
-			ExpireAt:         now + order.PeriodSeconds,
+			SshPort:          22,
+			Status:           ServerInstanceStatusProvisioning,
+			ProvisionMode:    ServerProvisionLive,
+			ExpireAt:         0,
 			CreatedAt:        now,
 			UpdatedAt:        now,
 		}
@@ -697,8 +750,9 @@ func CompleteServerOrderPaid(
 
 		if err := tx.Model(&ServerOrder{}).Where("id = ?", order.Id).
 			Updates(map[string]interface{}{
-				"instance_id":   created.Id,
-				"instance_name": created.Name,
+				"instance_id":      created.Id,
+				"instance_name":    created.Name,
+				"provision_status": ServerOrderProvisionAwaiting,
 			}).Error; err != nil {
 			return err
 		}
@@ -812,15 +866,26 @@ func RenewServerInstance(
 		}
 		newExpireAt := base + quote.PeriodSeconds
 
+		updates := map[string]interface{}{
+			"expire_at":         newExpireAt,
+			"status":            ServerInstanceStatusRunning,
+			"paid_amount":       gorm.Expr("paid_amount + ?", quote.Total),
+			"purchased_seconds": gorm.Expr("purchased_seconds + ?", quote.PeriodSeconds),
+			"updated_at":        now,
+		}
+		// 跨口径续费（按量实例买「1 个月」）：把实例的口径一并迁到包月，
+		// 否则控制台会显示「按量计费」却躺着一整个月的有效期，下一次续费
+		// 还会被同口径校验挡住。单价也换成包月机型价，避免后续按旧时价折算。
+		crossBilling := quote.Billing != "" && quote.Billing != current.Billing
+		if crossBilling {
+			updates["billing"] = quote.Billing
+			updates["duration_id"] = quote.DurationId
+			updates["unit_price"] = quote.UnitPrice
+		}
+
 		res := tx.Model(&ServerInstance{}).
 			Where("id = ? AND expire_at = ?", current.Id, current.ExpireAt).
-			Updates(map[string]interface{}{
-				"expire_at":         newExpireAt,
-				"status":            ServerInstanceStatusRunning,
-				"paid_amount":       gorm.Expr("paid_amount + ?", quote.Total),
-				"purchased_seconds": gorm.Expr("purchased_seconds + ?", quote.PeriodSeconds),
-				"updated_at":        now,
-			})
+			Updates(updates)
 		if res.Error != nil {
 			return res.Error
 		}
@@ -884,6 +949,11 @@ func RenewServerInstance(
 		instance = &current
 		instance.ExpireAt = newExpireAt
 		instance.Status = ServerInstanceStatusRunning
+		if crossBilling {
+			instance.Billing = quote.Billing
+			instance.DurationId = quote.DurationId
+			instance.UnitPrice = quote.UnitPrice
+		}
 		// 金额按分收敛：float64 累加会漏出 ¥1.1199999999999999 这种尾巴
 		instance.PaidAmount = roundMoneyCents(instance.PaidAmount + quote.Total)
 		instance.PurchasedSeconds += quote.PeriodSeconds
@@ -911,6 +981,14 @@ func RenewServerInstance(
 // 否则 1 年 8.5 折买的机器用一天就退，按标价退会多退钱。
 // 上限是「实付 - 已退」，保证任何情况下不会倒贴。
 func serverRefundQuota(instance *ServerInstance, now int64) (float64, int) {
+	// 还没分配就退：机器一天都没用上，等待时间也不该扣钱，整笔退回。
+	if instance.Status == ServerInstanceStatusProvisioning {
+		full := roundMoneyCents(instance.PaidAmount - instance.RefundedAmount)
+		if full <= 0 {
+			return 0, 0
+		}
+		return full, setting.ServerQuotaForAmount(full)
+	}
 	remaining := instance.ExpireAt - now
 	if remaining <= 0 || instance.PurchasedSeconds <= 0 || instance.PaidAmount <= 0 {
 		return 0, 0
@@ -1060,6 +1138,10 @@ func SetServerInstancePower(userId, instanceId int, start bool) (*ServerInstance
 	if instance.Status == ServerInstanceStatusReleased {
 		return nil, ErrServerInstanceReleased
 	}
+	// 还没分配就没有「开机」这回事：机器还没交到用户手上。
+	if instance.Status == ServerInstanceStatusProvisioning {
+		return nil, ErrServerInstancePending
+	}
 	if instance.ExpireAt <= now || instance.Status == ServerInstanceStatusExpired {
 		return nil, ErrServerInstanceExpired
 	}
@@ -1107,6 +1189,10 @@ func RebootServerInstance(userId, instanceId int) (*ServerInstance, error) {
 	if instance.Status == ServerInstanceStatusReleased {
 		return nil, ErrServerInstanceReleased
 	}
+	// 还没分配就没有「开机」这回事：机器还没交到用户手上。
+	if instance.Status == ServerInstanceStatusProvisioning {
+		return nil, ErrServerInstancePending
+	}
 	if instance.ExpireAt <= now || instance.Status == ServerInstanceStatusExpired {
 		return nil, ErrServerInstanceExpired
 	}
@@ -1143,6 +1229,10 @@ func ResetServerInstancePassword(userId, instanceId int, newPassword string) (st
 	}
 	if instance.Status == ServerInstanceStatusReleased {
 		return "", ErrServerInstanceReleased
+	}
+	// 凭据由管理员在分配时填写，分配前不接受用户改密码。
+	if instance.Status == ServerInstanceStatusProvisioning {
+		return "", ErrServerInstancePending
 	}
 	encrypted, err := common.EncryptSecret(newPassword)
 	if err != nil {
@@ -1207,8 +1297,11 @@ func ListServerInstanceEvents(userId, instanceId int, limit int) ([]*ServerInsta
 // 由后台任务每分钟调用一次，同时列表接口也会先调一次 —— 否则用户点开控制台
 // 到定时任务下一次触发之间，会看到一台「已过期但仍显示运行中」的机器。
 func ExpireServerInstances(now int64) (int64, int64, error) {
+	// 只处理已开始计时的实例：provisioning 的 ExpireAt 还是 0，
+	// 一旦被这条语句扫到会立刻判为过期，用户刚付完钱机器就没了。
 	expired := DB.Model(&ServerInstance{}).
 		Where("status IN ?", []string{ServerInstanceStatusRunning, ServerInstanceStatusStopped}).
+		Where("expire_at > 0").
 		Where("expire_at <= ?", now).
 		Update("status", ServerInstanceStatusExpired)
 	if expired.Error != nil {

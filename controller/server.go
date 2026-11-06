@@ -57,6 +57,14 @@ func serverErrorFrom(c *gin.Context, err error) {
 		serverError(c, "instance_expired", "实例已到期，请先续费")
 	case errors.Is(err, model.ErrServerInstanceNotActive):
 		serverError(c, "instance_not_active", "实例当前状态不支持该操作")
+	case errors.Is(err, model.ErrServerInstancePending):
+		serverError(c, "instance_provisioning", "实例尚未分配，请等待管理员开通")
+	case errors.Is(err, model.ErrServerOrderNotAwaiting):
+		serverError(c, "order_not_awaiting", "该订单不在待分配状态")
+	case errors.Is(err, model.ErrServerAssignInvalid):
+		serverError(c, "invalid_assign_input", err.Error())
+	case errors.Is(err, model.ErrServerOrderNotFound):
+		serverError(c, "order_not_found", "订单不存在")
 	case errors.Is(err, model.ErrServerConcurrentUpdate):
 		serverError(c, "concurrent_update", "实例状态已变化，请刷新后重试")
 	default:
@@ -398,7 +406,9 @@ func serverRenewQuote(instance *model.ServerInstance, durationId string) (*setti
 	if !ok {
 		return nil, errors.New("未知租用时长")
 	}
-	if duration.Pricing != instance.Billing {
+	// 「1 个月」允许跨口径：按量实例买一个月，等于把机器转成包月。
+	// 其余档位仍必须同口径，避免在两套单价之间套利。
+	if duration.Pricing != instance.Billing && duration.Id != setting.ServerDurationOneMonth {
 		return nil, errors.New("续费时长必须与原实例的计费方式一致")
 	}
 

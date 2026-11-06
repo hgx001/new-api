@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   DEFAULT_DURATION_ID,
   DURATIONS,
+  SERVER_ONE_MONTH_DURATION_ID,
   TERMS,
   getBandwidth,
   getDuration,
@@ -29,11 +30,33 @@ import {
 } from '../constants'
 import type {
   BillingMode,
+  DurationOption,
   PriceBreakdown,
   ServerConfig,
   ServerPlan,
   ServerSpec,
 } from '../types'
+
+/**
+ * 续费可选的时长档位。
+ *
+ * 默认只列与原实例**同口径**的档位：按量实例不能按半年续，包月实例也不能
+ * 按小时续 —— 两套单价的含义差一个数量级，混着列只会让人点错。
+ *
+ * 唯一的例外是「1 个月」：按量实例买一个月，实质是把这台机器转成包月，
+ * 价格按包月机型价结算（不是 720 小时 × 时价）。服务端在续费成功时会把
+ * 实例的口径、时长档、单价一起迁过去，所以这里把它恒定列在最后。
+ */
+export function renewDurationsFor(billing: BillingMode): DurationOption[] {
+  const sameBilling = DURATIONS.filter((item) => item.pricing === billing)
+  const oneMonth = DURATIONS.find(
+    (item) => item.id === SERVER_ONE_MONTH_DURATION_ID
+  )
+  if (!oneMonth || sameBilling.some((item) => item.id === oneMonth.id)) {
+    return sameBilling
+  }
+  return [...sameBilling, oneMonth]
+}
 
 /**
  * 一个月的折算小时数。
