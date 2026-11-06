@@ -27,7 +27,11 @@ echo "DISK_OK: ${free_mb}MB free"
 
 # github 偶尔连不上（本次就遇到）。只要本地已有该 commit 就继续，
 # 否则必须报错退出——绝不能在代码不对的情况下构建。
-if ! git fetch -q origin main 2>/dev/null; then
+#
+# ⚠️ 必须带 timeout：服务器到 github 不通时，裸 `git fetch` 会一直挂在
+# TCP 超时上（2026-11-06 实测卡了 15 分钟，部署停在第一步没有任何输出）。
+# 25 秒拿不到就直接走「本地已有该 commit」分支。
+if ! timeout 25 git fetch -q origin main 2>/dev/null; then
   echo "WARN: fetch 失败，检查本地是否已有 $TARGET"
   if ! git cat-file -e "${TARGET}^{commit}" 2>/dev/null; then
     echo "ABORT: 本地也没有 $TARGET，无法部署"
