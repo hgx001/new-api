@@ -624,6 +624,11 @@ func TestModelListAndChannelName(t *testing.T) {
 	a := &TaskAdaptor{}
 	assert.Equal(t, []string{
 		"Nano Banana Pro",
+		// 豆包系图片两个模型（2026-11-07 上架）：公开名 = 官网显示名。
+		// ⚠️ sort.Strings 按字节序排：大写在小写前、空格在前 —— 这里按实际
+		// 排序结果写死，改名时要同步。
+		"Seedream 4.5",
+		"Seedream 5.0 Flash",
 		"gemini-web-video",
 		"jimeng-video-reverse",
 		"seedance-2-0-fast",

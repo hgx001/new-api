@@ -393,6 +393,16 @@ var defaultModelPrice = map[string]float64{
 	"seedance-2-0-fast":                 0.1 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.0 Fast（公开短名，上游真名 doubao-seedance-2-0-fast-260128），**按秒** ¥0.1/秒（5-15 秒逐秒可选，由 EstimateBilling 返回 seconds 倍率相乘）；2026-10-12 由 db-seedance-2-0 改名并由 ¥1.0/次 改为按秒
 	"gemini-web-video":                  1.0 / USD2RMB,   // 漫屋 ArcReel Gemini 官网 Veo，按次计费 ¥1.0/次（站点侧不乘时长）
 	"Nano Banana Pro":                   0.3 / USD2RMB,   // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
+	// 豆包系图片两个模型（2026-11-07 上架，用户口径「定价两毛一张」）：
+	//   - Seedream 5.0 Flash：豆包官网「图像生成」入口的默认模型
+	//   - Seedream 4.5：dola 官网 /chat/create-image 的默认模型
+	// 两者都**按张** ¥0.2/张，张数走 OtherRatios{"n":N} 倍率（与 Nano Banana Pro 同机制）。
+	//
+	// ⚠️ 不要把 Nano Banana Pro 一并改成 0.2 —— 「两毛一张」针对的是这两个
+	// **新增**模型，不是把整个图片品类降价（ArcReel 侧同理：
+	// REMOTE_IMAGE_PRICE_CENTS_BY_MODEL 只给这两个模型 20 分）。
+	"Seedream 5.0 Flash":                0.2 / USD2RMB,   // 漫屋 ArcReel 豆包官网图片（上游 doubao-seedream-5-0-flash），按张 ¥0.2/张
+	"Seedream 4.5":                      0.2 / USD2RMB,   // 漫屋 ArcReel dola 官网图片（上游 dola-seedream-4-5），按张 ¥0.2/张
 	"jimeng-video-reverse":              1.0 / USD2RMB,   // 漫屋 ArcReel 即梦视频反解，按次 ¥1.0/次（占位价，待商务核定）
 	"MiniMax-H3":                        0.5 / USD2RMB,   // MiniMax 官方 v2 视频，**按秒**（基础档 768P ¥0.5/秒；2K 走 size 倍率 1.625）
 	"MiniMax-H3-Max":                    0.365 / USD2RMB, // MiniMax 官方 v2 高速档，**按秒**（基础档 480P ¥0.365/秒；768P 倍率 1.6）

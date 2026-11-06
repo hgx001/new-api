@@ -526,6 +526,14 @@ func isAllowedPricingModel(name string) bool {
 	if name == "gemini-web-video" || name == "Nano Banana Pro" {
 		return true
 	}
+	// 漫屋 ArcReel 豆包系图片两个模型（2026-11-07 上架）：公开名 = 官网显示名
+	//（Seedream 5.0 Flash / Seedream 4.5），按张 ¥0.2/张，与 ArcReel 站点口径一致。
+	//
+	// ⚠️ 只放行这两个**公开名**：上游档位 id（doubao-seedream-5-0-flash /
+	// dola-seedream-4-5）只存在于 adaptor 的 modelSpecs 里，不对外暴露。
+	if name == "Seedream 5.0 Flash" || name == "Seedream 4.5" {
+		return true
+	}
 	// 漫屋 ArcReel 通义万相 wan2.7 免灵感值（relax 慢队列）：图生 / 编辑两个模型共用
 	// platformId=tongyiwan，靠素材类型分流两条 DOM 路线（同上游 Wan2_7）。
 	// ¥0.30/次，与 ArcReel 站点口径一致；交付预期「通常 3 小时左右出一条」写在

@@ -99,6 +99,22 @@ const (
 	// maxImageCount 与 ArcReel `_remote_image_count` 的 clamp 上限一致（1..10）。
 	maxImageCount     = 10
 	defaultImageCount = 1
+	// maxSeedreamImageCount 是**豆包系图片**（Seedream 5.0 Flash / Seedream 4.5）
+	// 单独的上限，与 maxImageCount 分开。
+	//
+	// 真机取证（2026-11-07，CDP 9230 读豆包「图像生成」模式 actionbar）：
+	//   - actionbar 只有 model / style 两个控件，另有「比例 自动」按钮；
+	//   - 全页叶子节点文本扫「张 / 数量 / count」**零命中**；
+	//   - dola /chat/create-image 同样零命中。
+	// 官网图片**一次固定出 4 张**，且没有张数控件可以设。
+	//
+	// ⚠️ 为什么不沿用 1..10：上限放 10 而官网只出 4 张 → 用户按 10 张付钱、
+	// 实际只拿到 4 张图，账单与交付直接错配。所以这条链路的张数上限
+	// 单独收敛到官网真实能力 4；放行 1..4 时由上游截断取最后 N 张。
+	//
+	// Nano Banana Pro（kindImage）不受影响 —— 那是另一条链路、另一个能力集，
+	// 它的上限仍是 maxImageCount。
+	maxSeedreamImageCount = 4
 
 	idempotencyKeyPrefix = "manwu-"
 
@@ -161,6 +177,20 @@ const (
 	ModelImage        = "Nano Banana Pro"
 	ModelVideo        = "gemini-web-video"
 	ModelReverse      = "jimeng-video-reverse"
+	// ModelSeedream50Flash 是**豆包官网**「图像生成」入口的默认模型
+	// （2026-11-07 上架）。公开名**就是官网显示名**（用户口径：
+	// 「命名就按照官网的命名用」），不做本地化改写。
+	//
+	// 上游真名 doubao-seedream-5-0-flash（Worker 侧白名单口径），
+	// 按张计费 ¥0.2/张。
+	ModelSeedream50Flash = "Seedream 5.0 Flash"
+	// ModelSeedream45 是**dola 官网** /chat/create-image 的默认模型
+	// （2026-11-07 上架）。公开名同样是官网显示名。
+	//
+	// 与 ModelSeedream50Flash 是**两个独立商品**：不同官网、不同上游、
+	// 不同档位。官网显示名撞车不代表是同一个东西（Seedream 5.0 Flash
+	// 与 Seedream 4.5 本就是不同版本的模型）。
+	ModelSeedream45 = "Seedream 4.5"
 	// 万相 wan2.7 免灵感值（2026-10-16 上架，老板定稿）：后缀用中文，
 	// 与 dola/doubao 的公开名风格区分，避免和上游 dashscope 的 wan 系重名。
 	ModelWan27I2V  = "wan2.7-图生"
@@ -190,6 +220,12 @@ const (
 const (
 	doubaoUpstreamModel25     = "doubao-seedance-2-5-260628"
 	doubaoUpstreamModel20Fast = "doubao-seedance-2-0-fast-260128"
+	// doubaoSeedreamUpstreamModel 是豆包官网图片档位 id（Worker 侧
+	// src/platforms/doubao/params.ts 的 DOUBAO_ALLOWED_IMAGE_MODELS 同口径）。
+	doubaoSeedreamUpstreamModel = "doubao-seedream-5-0-flash"
+	// dolaSeedreamUpstreamModel 是 dola 官网图片档位 id（Worker 侧
+	// src/platforms/dola/params.ts 的 DOLA_ALLOWED_IMAGE_MODELS 同口径）。
+	dolaSeedreamUpstreamModel = "dola-seedream-4-5"
 )
 
 // picsartUpstreamModel 是 Picsart 官网 Wan 3.0 的档位 id（URL `?model=` 与内部
@@ -205,6 +241,16 @@ const (
 	kindVeoVideo    = "veo_video"    // 只有宽高比：官网无模型/时长/分辨率控件
 	kindImage       = "image"        // 张数 + 宽高比 + 参考图
 	kindReverse     = "reverse"      // 单视频入参，文本出参
+	// kindSeedreamImage 是豆包系图片档位（2026-11-07 上架）：模型固定一档
+	// （各平台的官网默认模型），比例八档（含「自动」），张数 1–10。
+	//
+	// 为什么与 kindImage 分开而不是复用：
+	//   - 比例白名单**不同**（图片有 2:3 / 3:2、少了 21:9）；
+	//   - 「未指定不编造」——图片比例缺省时必须留空（官网出厂「自动」），
+	//     而 kindImage 沿用 Nano Banana Pro 的 16:9 缺省；
+	//   - 模型是**平台决定的**（豆包 → Seedream 5.0 Flash、dola → Seedream 4.5），
+	//     客户端不能指定模型。
+	kindSeedreamImage = "seedream_image"
 	// 万相两条 DOM 路线：上游模型同为 Wan2_7，分流全靠素材类型 ——
 	// 图生带 reference_image；编辑带 reference_video（Worker 侧据
 	// generationMode='edit' || !!referenceVideo 判定 isEditMode）。
@@ -297,6 +343,13 @@ var modelSpecs = map[string]modelSpec{
 	ModelWan3TeHui: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel},
 	// 改名前的公开名，同一条 spec：只保可调用，不进广场（见 ModelWan3TeHuiLegacy 注释）。
 	ModelWan3TeHuiLegacy: {PlatformID: PlatformIDPicsart, OutputMode: OutputModeVideo, Kind: kindPicsartVideo, UpstreamModel: picsartUpstreamModel},
+	// 豆包系图片两个模型（2026-11-07 上架）：公开名 = 官网显示名，
+	// 上游模型名 = 官网档位 id（Worker 侧白名单按它归一）。
+	//
+	// ⚠️ 两个模型**不是别名**：平台不同（doubao / dola）、档位不同
+	// （5.0 Flash / 4.5）、上游模型 id 不同。别把它们合并成一条 spec。
+	ModelSeedream50Flash: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeImage, Kind: kindSeedreamImage, UpstreamModel: doubaoSeedreamUpstreamModel},
+	ModelSeedream45:      {PlatformID: PlatformID, OutputMode: OutputModeImage, Kind: kindSeedreamImage, UpstreamModel: dolaSeedreamUpstreamModel},
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -378,6 +431,27 @@ var allowedDoubaoRatios = map[string]bool{
 	"16:9": true,
 	"1:1":  true,
 	"21:9": true,
+}
+
+// 豆包系**图片**比例白名单（2026-11-07 真机探针，与 Worker 侧
+// cron_video_brach src/platforms/doubao/params.ts 的
+// DOUBAO_IMAGE_ASPECT_RATIOS / src/platforms/dola/params.ts 的
+// DOLA_IMAGE_ASPECT_RATIOS 同口径）。
+//
+// ⚠️ 与**视频**比例档位**不同**：图片多了 2:3 / 3:2、少了 21:9。
+// 用视频白名单校验图片比例会误杀 2:3 / 3:2（官网确实有这两档）。
+//
+// 值用**官网文案**（「自动」），不是 fiber 的 'auto'：
+// Worker 侧写控件时按 label/value 两侧都试，label 是官网文案。
+var allowedSeedreamImageRatios = map[string]bool{
+	"自动": true,
+	"9:16": true,
+	"2:3":  true,
+	"3:4":  true,
+	"1:1":  true,
+	"4:3":  true,
+	"3:2":  true,
+	"16:9": true,
 }
 
 // ============================
@@ -470,6 +544,16 @@ type videoParams struct {
 }
 
 type imageParams struct {
+	// ImageModel 是官网档位 id（如 doubao-seedream-5-0-flash）。
+	// 仅豆包系图片（kindSeedreamImage）使用：模型由**平台**决定，
+	// Worker 侧按白名单归一成官网显示名去点控件。
+	//
+	// ⚠️ 键名与 ArcReel 内部键（`imageModel`）一致 —— 三仓同名，避免
+	// 「发出去叫 model、收到叫 imageModel」这种静默丢参。
+	// Nano Banana Pro（kindImage）不传 —— 那个模型由 ArcReel 服务端决定。
+	ImageModel string `json:"imageModel,omitempty"`
+	// AspectRatio 是官网比例文案（图片档位用「自动」，不是 fiber 的 'auto'）。
+	// 空串 = 未指定，键本身也会被 omitempty 省略（不下发 = 不改官网当前档）。
 	AspectRatio string `json:"aspectRatio,omitempty"`
 	Count       int    `json:"count"`
 }
@@ -614,7 +698,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	// 豆包的比例在 kindDoubaoVideo 分支自行解析：官网含 auto 档且「未指定不编造」
 	// （空 → 保持官网当前状态），与 dola「缺省补 16:9」口径不同，公共段不适用。
 	// Picsart 同理：官网默认档是 adaptive（跟随输入图比例），缺省不能补成 16:9。
-	if spec.Kind != kindDoubaoVideo && spec.Kind != kindPicsartVideo {
+	// 豆包系图片（kindSeedreamImage）同理：官网图片模式出厂档是「自动」，
+	// 未指定时必须留空 —— 补 16:9 等于把「用户没选」变成一次静默的参数改写。
+	if spec.Kind != kindDoubaoVideo && spec.Kind != kindPicsartVideo && spec.Kind != kindSeedreamImage {
 		ratio, err := resolveRatio(req)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
@@ -696,7 +782,35 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
-		count, err := resolveImageCount(req)
+		count, err := resolveImageCount(req, maxImageCount)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_count", http.StatusBadRequest)
+		}
+		norm.Count = count
+	case kindSeedreamImage:
+		// 豆包系图片（2026-11-07 上架）：模型固定（平台决定，客户端不可指定）、
+		// 比例八档（含「自动」）、张数 1–10、无时长/分辨率。
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		// 比例「未指定不编造」：空 → 留空，不下发 aspectRatio，
+		// 让 Worker 保持官网出厂的「自动」档（用户没选就别替他选）。
+		rawRatio := firstNonEmpty(
+			strings.TrimSpace(req.Size),
+			strings.TrimSpace(req.Ratio),
+			strings.TrimSpace(req.AspectRatio),
+		)
+		if rawRatio != "" {
+			normalizedRatio := normalizeSeedreamImageRatio(rawRatio)
+			if normalizedRatio == "" {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("ratio must be one of 自动/9:16/2:3/3:4/1:1/4:3/3:2/16:9, got %q", rawRatio),
+					"invalid_ratio", http.StatusBadRequest,
+				)
+			}
+			norm.Ratio = normalizedRatio
+		}
+		count, err := resolveImageCount(req, maxSeedreamImageCount)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_count", http.StatusBadRequest)
 		}
@@ -841,7 +955,10 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	if err != nil {
 		return nil
 	}
-	if req.Kind == kindImage && req.Count > 1 {
+	// 图片按张计费：n 倍率乘到**单张价**上。
+	// kindImage（Nano Banana Pro，¥0.3/张）与 kindSeedreamImage
+	// （豆包系 Seedream，¥0.2/张）都是「按张」口径，倍率机制完全相同。
+	if (req.Kind == kindImage || req.Kind == kindSeedreamImage) && req.Count > 1 {
 		return map[string]float64{"n": float64(req.Count)}
 	}
 	if req.Kind == kindDoubaoVideo && req.Model == ModelDoubao20Fast && req.Duration > 0 {
@@ -893,6 +1010,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		body.Inputs = []jobInput{{Type: InputTypeVideo, URL: req.Videos[0]}}
 	case kindImage:
 		body.ImageParams = &imageParams{AspectRatio: req.Ratio, Count: req.Count}
+		body.Inputs = toInputs(InputTypeImage, req.Images)
+	case kindSeedreamImage:
+		// 豆包系图片：imageModel 传官网档位 id（Worker 侧白名单按它归一成
+		// 官网显示名）；比例空串 = 未指定（不下发键，让官网保持出厂「自动」）。
+		body.ImageParams = &imageParams{
+			ImageModel:  spec.UpstreamModel,
+			AspectRatio: req.Ratio,
+			Count:       req.Count,
+		}
 		body.Inputs = toInputs(InputTypeImage, req.Images)
 	case kindVeoVideo:
 		// 只传宽高比：官网没有时长/分辨率控件，传了也会被 ArcReel 剥掉，写进去只会
@@ -1232,6 +1358,15 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 		if strings.TrimSpace(req.Resolution) != "" {
 			return fmt.Errorf("%s does not support resolution", modelName)
 		}
+	case kindSeedreamImage:
+		// 豆包系图片：官网只有「模型 / 比例 / 张数」三个概念，
+		// 时长与分辨率都没有对应控件 → 显式拒绝，别让用户以为生效了。
+		if hasValue(req.Seconds) || hasValue(req.Duration) {
+			return fmt.Errorf("%s is an image model: seconds/duration is not supported", modelName)
+		}
+		if strings.TrimSpace(req.Resolution) != "" {
+			return fmt.Errorf("%s does not support resolution", modelName)
+		}
 	case kindReverse:
 		if hasValue(req.Seconds) || hasValue(req.Duration) {
 			return fmt.Errorf("%s duration is fixed by the skill and is not supported", modelName)
@@ -1325,6 +1460,32 @@ func resolveWanResolution(req clientRequest) (string, error) {
 		return "", fmt.Errorf("resolution must be one of 720P/1080P, got %q", raw)
 	}
 	return normalized, nil
+}
+
+// normalizeSeedreamImageRatio 把客户端各种写法归一到豆包系官网的图片比例八档。
+// 返回空串 = 不在白名单（调用方负责 400，**不回落默认值**）。
+//
+// 归一规则：
+//   - `auto` / `自适应` → 官网文案「自动」（官网出厂默认档）；
+//   - `16/9`、`16：9`、`16x9` 统一成 `16:9`（同 normalizePicsartRatio 的思路）。
+//
+// ⚠️ 白名单是**图片专用**八档（多了 2:3 / 3:2、少了 21:9），
+// 与视频侧的 allowedRatios / allowedDoubaoRatios 不是同一张表。
+func normalizeSeedreamImageRatio(raw string) string {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return ""
+	}
+	lower := strings.ToLower(strings.ReplaceAll(text, " ", ""))
+	switch lower {
+	case "auto", "自适应", "自动比例":
+		return "自动"
+	}
+	normalized := strings.NewReplacer("：", ":", "/", ":", "x", ":", "×", ":").Replace(lower)
+	if !allowedSeedreamImageRatios[normalized] {
+		return ""
+	}
+	return normalized
 }
 
 // normalizePicsartRatio 把客户端各种写法归一到 Picsart 官网的六档比例。
@@ -1751,9 +1912,11 @@ func resolveVideos(req clientRequest) ([]string, error) {
 	return nil, fmt.Errorf("video reference is required: pass a public http(s) video URL via input_reference")
 }
 
-// resolveImageCount 解析出图张数：n（首选）→ count → 缺省 1，上限 10（与 ArcReel
-// `_remote_image_count` 的 clamp 一致）。
-func resolveImageCount(req clientRequest) (int, error) {
+// resolveImageCount 解析出图张数：n（首选）→ count → 缺省 1。
+//
+// maxCount 由调用方给：kindImage 走 maxImageCount（10），
+// kindSeedreamImage 走 maxSeedreamImageCount（4，贴合官网固定出 4 张）。
+func resolveImageCount(req clientRequest, maxCount int) (int, error) {
 	count, found, err := parseFlexibleInt(req.N)
 	if err != nil {
 		return 0, fmt.Errorf("n %s: %w", string(req.N), err)
@@ -1766,8 +1929,8 @@ func resolveImageCount(req clientRequest) (int, error) {
 	if !found {
 		return defaultImageCount, nil
 	}
-	if count < 1 || count > maxImageCount {
-		return 0, fmt.Errorf("n must be between 1 and %d, got %d", maxImageCount, count)
+	if count < 1 || count > maxCount {
+		return 0, fmt.Errorf("n must be between 1 and %d, got %d", maxCount, count)
 	}
 	return count, nil
 }

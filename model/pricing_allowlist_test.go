@@ -114,6 +114,20 @@ func TestIsAllowedPricingModelManwuRemote(t *testing.T) {
 		"jimeng-video-reverse 定价未核定，不得出现在广场")
 }
 
+// 漫屋 ArcReel 豆包系图片两个模型上广场（2026-11-07 上架）：
+// 公开名 = 官网显示名，按张 ¥0.2/张。
+//
+// ⚠️ 上游档位 id 不得上广场 —— 公开名只存在于 adaptor 的 modelSpecs 里，
+// 客户端按公开名调用。
+func TestIsAllowedPricingModelManwuSeedreamImage(t *testing.T) {
+	for _, name := range []string{"Seedream 5.0 Flash", "Seedream 4.5"} {
+		require.True(t, isAllowedPricingModel(name), "%s must show in pricing square", name)
+	}
+	for _, hidden := range []string{"doubao-seedream-5-0-flash", "dola-seedream-4-5"} {
+		assert.False(t, isAllowedPricingModel(hidden), "upstream id %s must not show in pricing square", hidden)
+	}
+}
+
 // 漫屋 ArcReel 通义万相 wan2.7 免灵感值双模型上广场（2026-10-16）。
 // 两个公开名共用 platformId=tongyiwan，靠素材类型分流图生 / 编辑两条 DOM 路线。
 func TestIsAllowedPricingModelManwuWan27(t *testing.T) {
