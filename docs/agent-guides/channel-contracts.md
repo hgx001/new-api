@@ -75,7 +75,9 @@
 
 - 心笔（channel 25，type 68）生成 480P + 交付前提升到 720P；官网 Wan3（channel 12，type 60）保留给心笔吃不住的请求。
 - 分流在 `middleware.Wan3TehuiXinbiRoute`（挂在 Seedance25TeHuiRoute 之后、Distribute 之前）：改写 body.model 为内部名 `wan3.0-720p-特惠-内链`，**不覆盖**已有的 RouteOriginModel —— 规则二/三先改派时计费原点仍是客户最初请求的促销族。
-- 心笔只收参考图：带首尾帧、参考视频、参考音频、seed、非 720P 明确分辨率、>9 张图、http 图、非枚举比例、小数时长 → 一律留在原 Wan3 链路（规则三因此仍然可用）。
+- 心笔只收参考图：带首尾帧、参考视频、参考音频、seed、>9 张图、http 图、非枚举比例、小数时长 → 一律留在原 Wan3 链路（规则三因此仍然可用）。
+- 分辨率**不参与**分流判断：特惠只有一个交付档位，原 Wan3 链路对它的 `resolveGenerationResolution` 无条件返回 480P，客户端传 480P/1080P 同样被忽略、成片统一提升到 720P。心笔侧 `generationResolution` 也是 480P，所以两条链路产物一致；顶层 `resolution`/`size` 在改写时剥掉（心笔会把像素尺寸当比例误读），`size` 里能推断出的画幅仍写进 `metadata.ratio`。
+- 提交回执的 `resolution` 报**实际交付档位** 720P（Wan3 与心笔两侧都改），不回显客户端请求值 —— 否则等于把「参数被忽略」包装成承诺。
 - 时长口径与 Wan3 一致：2–30 秒透传，缺省 5，越界夹取；内部名必须保持按秒，不能进 `IsSeedance25PerCall` 能力组。
 - 内部名**不进模型广场**、不配 ModelPrice（取价走 BillingModelName = 特惠）；生产需把该名字加进 channel 25 的 models 与 abilities。
 - 不同公开模型分别维护基础价与分辨率倍率；调价一起核对代码默认、生产option、各模型回归与前端展示，不把官网档倍率套给标准版。

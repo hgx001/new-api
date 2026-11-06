@@ -148,14 +148,6 @@ func TestWan3TehuiXinbiRoute_KeepsUnsupportedRequestsOnWan3(t *testing.T) {
 			body: `{"model":"` + tehuiModel + `","prompt":"x","seed":42}`,
 		},
 		{
-			name: "1080P",
-			body: `{"model":"` + tehuiModel + `","prompt":"x","resolution":"1080P"}`,
-		},
-		{
-			name: "480P",
-			body: `{"model":"` + tehuiModel + `","prompt":"x","resolution":"480P"}`,
-		},
-		{
 			name: "10 张参考图",
 			body: `{"model":"` + tehuiModel + `","prompt":"x","images":["https://a/1.png","https://a/2.png","https://a/3.png","https://a/4.png","https://a/5.png","https://a/6.png","https://a/7.png","https://a/8.png","https://a/9.png","https://a/10.png"]}`,
 		},
@@ -197,6 +189,69 @@ func TestWan3TehuiXinbiRoute_RewritesRatioAndImages(t *testing.T) {
 	require.True(t, ok, "参考图必须收到顶层 reference_images")
 	require.Len(t, images, 1)
 	assert.Equal(t, "https://a.example/1.png", images[0])
+}
+
+// 分辨率：特惠只有一个交付档位（720P），客户端传 480P/1080P 本来就不会改变产物 ——
+// 原 Wan3 链路是**无条件 480P 生成 + 提升到 720P**，参数直接忽略。
+//
+// 分流必须保持同一语义：不能因为参数不是 720P 就退回贵链路（白花钱），
+// 也不能把分辨率原样透给心笔（顶层像素尺寸会被它当成比例误读）。
+func TestWan3TehuiXinbiRoute_IgnoresRequestedResolution(t *testing.T) {
+	cases := []struct {
+		name      string
+		body      string
+		wantRatio string
+	}{
+		{
+			name: "顶层 1080P",
+			body: `{"model":"` + tehuiModel + `","prompt":"x","resolution":"1080P"}`,
+		},
+		{
+			name: "顶层 480P",
+			body: `{"model":"` + tehuiModel + `","prompt":"x","resolution":"480P"}`,
+		},
+		{
+			name: "顶层 720P",
+			body: `{"model":"` + tehuiModel + `","prompt":"x","resolution":"720P"}`,
+		},
+		{
+			name:      "像素尺寸 1920x1080",
+			body:      `{"model":"` + tehuiModel + `","prompt":"x","size":"1920x1080"}`,
+			wantRatio: "16:9",
+		},
+		{
+			name:      "像素尺寸 720x1280",
+			body:      `{"model":"` + tehuiModel + `","prompt":"x","size":"720x1280"}`,
+			wantRatio: "9:16",
+		},
+		{
+			name: "metadata.resolution 1080P",
+			body: `{"model":"` + tehuiModel + `","prompt":"x","metadata":{"resolution":"1080P"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := runTehuiXinbi(t, tc.body)
+			body := decodeBody(t, rec.body)
+
+			assert.Equal(t, xinbiapi.ModelNameTehuiRoute, body["model"],
+				"非 720P 参数不能挡住分流：原链路同样只会交付 720P")
+			assert.Equal(t, tehuiModel, rec.originModel, "计费原点仍是特惠")
+
+			_, hasResolution := body["resolution"]
+			_, hasSize := body["size"]
+			assert.False(t, hasResolution, "分辨率不透传：心笔固定 480P 生成 + 720P 交付")
+			assert.False(t, hasSize, "顶层像素尺寸会被心笔当成比例误读，必须剥掉")
+
+			metadata, ok := body["metadata"].(map[string]interface{})
+			require.True(t, ok, "metadata 必须是对象")
+			assert.NotContains(t, metadata, "resolution", "metadata 里的分辨率同样要剥掉")
+			if tc.wantRatio != "" {
+				assert.Equal(t, tc.wantRatio, metadata["ratio"],
+					"比例仍要从像素尺寸推断后保留，不能连画幅一起丢掉")
+			}
+		})
+	}
 }
 
 // 规则二/三已经把计费原点设成促销族时，分流不能把它覆写成特惠。

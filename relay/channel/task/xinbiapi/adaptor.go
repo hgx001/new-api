@@ -86,13 +86,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err := rejectNonImageMedia(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
-	// 档位锁定：对外只卖 720P。
+	// 档位锁定：按次档只卖 720P。
 	// 客户端显式要 480P/1080P 必须报错，不能静默改档 —— 那是「收 720P 的钱给 1080P 的承诺」。
-	if raw := strings.TrimSpace(req.Resolution); raw != "" && !strings.EqualFold(raw, deliveredResolution) {
-		// 同样不带模型名：会被脱敏成「上游-720p-按次」。
-		return service.TaskErrorWrapperLocal(
-			fmt.Errorf("resolution %q is not supported, this model always delivers %s", raw, deliveredResolution),
-			"invalid_resolution", http.StatusBadRequest)
+	//
+	// 特惠分流目标（按秒档）是**例外**：原 Wan3 特惠链路对分辨率参数的处理是
+	// 「无条件 480P 生成、统一提升到 720P」，传 480P/1080P 既不报错也不改变产物。
+	// 分流层如果在这里改成 400，同一条请求会因为「走了便宜链路」而行为突变 ——
+	// 客户看到的是同一个模型时好时坏。所以按秒档一律忽略该参数。
+	if err := rejectResolutionMismatch(req, executedModelName(info)); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
 	}
 	if _, err := collectReferenceImages(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
@@ -114,6 +116,27 @@ func rejectUnsupportedFields(req relaycommon.TaskSubmitReq) error {
 		return fmt.Errorf("field seed is not supported by this model, remove it and retry")
 	}
 	return nil
+}
+
+// rejectResolutionMismatch 校验客户端显式指定的分辨率档位。
+//
+// 按次档（wan3.0-720p-按次 / seedance2.5-活动）只卖 720P：传别的档位必须报错，
+// 不能静默改档 —— 那是「收 720P 的钱给 1080P 的承诺」。
+//
+// 按秒档（特惠分流目标）**不校验**：原 Wan3 特惠链路对分辨率参数是静默忽略
+// （无条件 480P 生成 + 提升到 720P），分流后改成 400 会让同一条请求
+// 「走官网能跑、走心笔报错」，客户看到的是同一个模型时好时坏。
+//
+// 错误文案刻意不带模型名：它会被脱敏成「上游-720p-按次」这种碎词。
+func rejectResolutionMismatch(req relaycommon.TaskSubmitReq, modelName string) error {
+	if isPerSecondRouteModel(modelName) {
+		return nil
+	}
+	raw := strings.TrimSpace(req.Resolution)
+	if raw == "" || strings.EqualFold(raw, deliveredResolution) {
+		return nil
+	}
+	return fmt.Errorf("resolution %q is not supported, this model always delivers %s", raw, deliveredResolution)
 }
 
 // EstimateBilling 返回计费倍率。
@@ -276,11 +299,23 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 
 	// 回给客户端的 ID 一律是本站公开 ID，不能泄露上游 taskId。
+	//
+	// resolution 报的是**实际交付档位**，不是客户请求值：本渠道所有模型
+	// 都以 480P 生成、交付 720P，客户端传 1080P 也只会拿到 720P。
+	// 回执再回一个 "1080P"，等于把「参数被忽略」包装成承诺。
+	seconds := perSecondDefaultDuration
+	if req, err := relaycommon.GetTaskRequest(c); err == nil {
+		if resolved, durationErr := resolveDuration(req, executedModelName(info)); durationErr == nil {
+			seconds = resolved
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"id":     info.PublicTaskID,
-		"object": "video",
-		"model":  info.PublicModelName(),
-		"status": "queued",
+		"id":         info.PublicTaskID,
+		"object":     "video",
+		"model":      info.PublicModelName(),
+		"status":     "queued",
+		"resolution": deliveredResolution,
+		"seconds":    strconv.Itoa(seconds),
 	})
 	return upstreamID, responseBody, nil
 }

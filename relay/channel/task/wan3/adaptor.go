@@ -667,6 +667,12 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 
 	req, _ := relaycommon.GetTaskRequest(c)
 	resolution := resolveResolution(req)
+	// 特惠只有一个交付档位（720P）：生成固定 480P，再把成片提升到 720P。
+	// 客户端传 480P/1080P 不会改变产物，回执也就不能把它原样回显 ——
+	// 否则客户拿到的是一份「写着 1080P、实际 720P」的订单凭证。
+	if info != nil && isOfficial720PModel(info.OriginModelName) {
+		resolution = official720POutputResolution
+	}
 	publicID := ""
 	modelName := ""
 	if info != nil {

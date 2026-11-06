@@ -125,12 +125,16 @@ func tehuiXinbiCompatible(c *gin.Context, body map[string]interface{}) bool {
 		logger.LogInfo(c, "条件路由跳过特惠分流：请求带 seed")
 		return false
 	}
-	// 分辨率：心笔只交付 720P。客户端明确要 480P/1080P 时留在原链路 ——
-	// 特惠在 Wan3 那边同样只交付 720P，但至少不会因为「参数不被接受」而 400。
-	if tehuiXinbiResolutionBlocked(body) {
-		logger.LogInfo(c, "条件路由跳过特惠分流：客户端指定了非 720P 分辨率")
-		return false
-	}
+	// 分辨率**不参与**分流判断。
+	//
+	// 特惠只有一个交付档位（720P）：原 Wan3 链路对它的处理是
+	// resolveGenerationResolution() 里无条件返回 480P，客户端传的
+	// 480P / 720P / 1080P 全部被忽略，成片统一提升到 720P。
+	// 心笔这边 generationResolution 同样锁 480P、交付同样锁 720P，
+	// 两条链路产物一致，所以「传了 1080P」不该把请求赶回贵链路。
+	//
+	// 参数本身仍要剥掉（见 rewriteBodyForXinbiPerSecond）：
+	// 心笔的顶层 size 会被当成比例误读。
 	// 比例：上游只认固定枚举，别的比例分流过去必被 400。
 	if ratio, ok := resolveRequestRatio(body); ok && !xinbiRatioSet[ratio] {
 		logger.LogInfo(c, fmt.Sprintf("条件路由跳过特惠分流：比例 %s 不在目标链路枚举内", ratio))
@@ -166,25 +170,6 @@ func tehuiXinbiCompatible(c *gin.Context, body map[string]interface{}) bool {
 		return false
 	}
 	return true
-}
-
-// tehuiXinbiResolutionBlocked 判断客户端是否明确指定了 720P 以外的档位。
-//
-// 四个位置都要看：顶层 resolution / size、metadata.resolution / metadata.size。
-func tehuiXinbiResolutionBlocked(body map[string]interface{}) bool {
-	if tehuiXinbiTierBlocked(body["resolution"]) || tehuiXinbiTierBlocked(body["size"]) {
-		return true
-	}
-	metadata, ok := body["metadata"].(map[string]interface{})
-	if !ok {
-		return false
-	}
-	return tehuiXinbiTierBlocked(metadata["resolution"]) || tehuiXinbiTierBlocked(metadata["size"])
-}
-
-func tehuiXinbiTierBlocked(value interface{}) bool {
-	tier := explicitResolutionTier(value)
-	return tier != "" && tier != "720P"
 }
 
 // tehuiXinbiSeconds 复刻 Wan3 的时长归一：duration 优先、再 seconds、

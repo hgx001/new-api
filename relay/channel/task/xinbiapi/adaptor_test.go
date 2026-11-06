@@ -439,6 +439,38 @@ func TestTehuiRouteModelIsNotPerCall(t *testing.T) {
 	assert.True(t, constant.IsTaskPerCallModel(constant.Seedance25HuoDongModel), "活动版必须仍按次")
 }
 
+func TestRejectResolutionMismatch(t *testing.T) {
+	cases := []struct {
+		name    string
+		model   string
+		req     relaycommon.TaskSubmitReq
+		wantErr bool
+	}{
+		// 按次档：只卖 720P，其它档位必须报错。
+		{name: "按次 不传", model: ModelNamePayPerCall, req: relaycommon.TaskSubmitReq{}},
+		{name: "按次 720P", model: ModelNamePayPerCall, req: relaycommon.TaskSubmitReq{Resolution: "720P"}},
+		{name: "按次 720p 小写", model: ModelNamePayPerCall, req: relaycommon.TaskSubmitReq{Resolution: "720p"}},
+		{name: "按次 1080P 报错", model: ModelNamePayPerCall, req: relaycommon.TaskSubmitReq{Resolution: "1080P"}, wantErr: true},
+		{name: "按次 480P 报错", model: ModelNamePayPerCall, req: relaycommon.TaskSubmitReq{Resolution: "480P"}, wantErr: true},
+		{name: "活动版 1080P 报错", model: constant.Seedance25HuoDongModel, req: relaycommon.TaskSubmitReq{Resolution: "1080P"}, wantErr: true},
+
+		// 按秒档（特惠分流目标）：与 Wan3 特惠链路一致，分辨率参数被忽略，不报错。
+		{name: "特惠分流 1080P 放行", model: ModelNameTehuiRoute, req: relaycommon.TaskSubmitReq{Resolution: "1080P"}},
+		{name: "特惠分流 480P 放行", model: ModelNameTehuiRoute, req: relaycommon.TaskSubmitReq{Resolution: "480P"}},
+		{name: "特惠分流 不传放行", model: ModelNameTehuiRoute, req: relaycommon.TaskSubmitReq{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := rejectResolutionMismatch(tc.req, tc.model)
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestBuildRequestURLEndpoints(t *testing.T) {
 	a := &TaskAdaptor{baseURL: "https://www.xinbiapi.com/", apiKey: "k"}
 	url, err := a.BuildRequestURL(&relaycommon.RelayInfo{})

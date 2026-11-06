@@ -3,7 +3,9 @@ package wan3
 import (
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -277,4 +279,66 @@ func TestWan3ParseTaskResultReadsOfficialOutput(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusSuccess, result.Status)
 	require.Equal(t, "https://example.com/video.mp4", result.Url)
+}
+
+// 特惠只有一个交付档位：客户端传 1080P 也只会拿到 720P，
+// 回执必须报实际交付档位，不能把请求值原样回显成「订单承诺」。
+func TestWan3DoResponseReportsDeliveredResolutionForOfficial720P(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:      Official720PModelName,
+		Resolution: "1080P",
+		Seconds:    "2",
+	})
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(
+			`{"request_id":"req-1","output":{"task_id":"up-1","task_status":"PENDING"}}`)),
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: Official720PModelName,
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	}
+
+	adaptor := &TaskAdaptor{}
+	_, _, taskErr := adaptor.DoResponse(c, resp, info)
+	require.Nil(t, taskErr)
+
+	var out map[string]interface{}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &out))
+	require.Equal(t, "720P", out["resolution"], "特惠只交付 720P，回执不能回显 1080P")
+	require.Equal(t, "2", out["seconds"])
+}
+
+// 非特惠模型的分辨率照旧由请求决定，不能被这次修复带偏。
+func TestWan3DoResponseKeepsRequestedResolutionForOtherModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:      "wan3.0-video",
+		Resolution: "1080P",
+		Seconds:    "2",
+	})
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Body: io.NopCloser(strings.NewReader(
+			`{"request_id":"req-2","output":{"task_id":"up-2","task_status":"PENDING"}}`)),
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "wan3.0-video",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_2"},
+	}
+
+	adaptor := &TaskAdaptor{}
+	_, _, taskErr := adaptor.DoResponse(c, resp, info)
+	require.Nil(t, taskErr)
+
+	var out map[string]interface{}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &out))
+	require.Equal(t, "1080P", out["resolution"])
 }
