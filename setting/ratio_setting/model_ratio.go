@@ -15,6 +15,9 @@ const (
 	RMB     = USD / USD2RMB
 	// AutoDL video base price: ¥0.10 per second, stored as USD for billing.
 	autoDLVideoBasePrice = 0.1 / USD2RMB
+	// SeetaCloud video base price: ¥0.03 per second (480P 档), stored as USD for billing.
+	// 768p（720P 档）走分辨率倍率 1.667 → ¥0.05/秒，见 seeta 适配器的 ResolutionRatios。
+	seetaVideoBasePrice = 0.03 / USD2RMB
 )
 
 // modelRatio
@@ -412,6 +415,11 @@ var defaultModelPrice = map[string]float64{
 	"autodl:minimax-h3-image-audio-10s": autoDLVideoBasePrice,
 	"autodl:minimax-h3-image-audio-15s": autoDLVideoBasePrice,
 	"autodl:minimax-h3-lipsync":         autoDLVideoBasePrice,
+	// SeetaCloud（2026-11-06 接入）：自建 ComfyUI 实例的 H3 蒸馏工作流。
+	// 480P ¥0.03/秒（基准），768p（720P 档）¥0.05/秒（分辨率倍率 1.667）。
+	// 两个模型同一套规格，按秒计费，duration 1-15s。
+	"minimax_h3-文生": seetaVideoBasePrice,
+	"minimax_h3-图生": seetaVideoBasePrice,
 	"veo-3.0-generate-001":              0.4,
 	"veo-3.0-fast-generate-001":         0.15,
 	"veo-3.1-generate-preview":          0.4,

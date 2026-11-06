@@ -77,7 +77,12 @@ const (
 	// 轮询 GET /vr/api/tasks（**列表接口**，无单任务查询）。
 	// 每条任务固定扣 1 次（充值 1 元 = 1 次），成片直链约 24 小时过期。
 	ChannelTypeYuanmeng = 69
-	ChannelTypeDummy    = 70 // this one is only for count, do not add any channel after this
+	// ChannelTypeSeeta SeetaCloud 自建 ComfyUI 实例（ArcReel-H3 工作流）：
+	// 提交 POST /api/v1/comfyui/comfyui_workflow/{workflow}，
+	// 轮询 GET /api/v1/comfyui/comfyui_workflow/result/{id}。
+	// 鉴权走裸 token（Authorization: <token>），参考图**只收 data URI**。
+	ChannelTypeSeeta = 70
+	ChannelTypeDummy = 71 // this one is only for count, do not add any channel after this
 
 )
 
@@ -151,6 +156,8 @@ var ChannelBaseURLs = []string{
 	"https://arcreel.heibaidao.cn",              //66 (漫屋 ArcReel)
 	"http://47.93.118.167:5000",                 //67 (三元巡狩)
 	"https://www.xinbiapi.com",                  //68 (心笔 Model Router)
+	"",                                          //69 (视频生成车站)
+	"https://u1133789-a936-c07acd4f.westd.seetacloud.com:8443", //70 (SeetaCloud)
 }
 
 // GetChannelBaseURL returns the built-in base URL for a channel type.
@@ -228,6 +235,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSanyuan:        "三元巡狩",
 	ChannelTypeXinbi:          "心笔 Model Router",
 	ChannelTypeYuanmeng:       "视频生成车站",
+	ChannelTypeSeeta:          "SeetaCloud",
 }
 
 func GetChannelTypeName(channelType int) string {

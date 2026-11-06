@@ -100,6 +100,12 @@ var upstreamVendorLiterals = []string{
 	// 视频生成车站（2026-11-04 加）：上游站点域名与品牌词。
 	// 出现在上游回执/报错里的这些字样等于直接报出货源。
 	"视频生成车站", "yuanmengstudio", "yuanmeng",
+	// SeetaCloud（2026-11-06 加）：自建实例的域名与品牌词。
+	// 上游报错与回执里出现这些字样等于直接报出货源。
+	//
+	// ⚠️ 只放 "seetacloud" 这个完整词。裸 "seeta" 会被当成子串误伤
+	// 其它正常英文词（字面量匹配没有词边界），所以短词走下面的 patterns。
+	"seetacloud",
 }
 
 // upstreamModelLiterals 是**上游模型名**：只对别名模型替换。
@@ -142,6 +148,8 @@ var upstreamVendorPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bali\b`),
 	// LK888 这类渠道编号
 	regexp.MustCompile(`(?i)\bLK[0-9]+\b`),
+	// SeetaCloud 的短品牌词：必须带词边界，否则 "seeta" 会误伤正常英文词
+	regexp.MustCompile(`(?i)\bseeta\b`),
 }
 
 // upstreamModelPatterns 是字面量覆盖不到的上游模型名写法。

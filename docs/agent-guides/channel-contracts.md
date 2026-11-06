@@ -82,3 +82,34 @@
 - 内部名**不进模型广场**、不配 ModelPrice（取价走 BillingModelName = 特惠）；生产需把该名字加进 channel 25 的 models 与 abilities。
 - 不同公开模型分别维护基础价与分辨率倍率；调价一起核对代码默认、生产option、各模型回归与前端展示，不把官网档倍率套给标准版。
 - 通用TaskSubmitReq不支持的顶层ratio会丢失，需要metadata.ratio；网关接不同适配器时不能假设字段位置相同。
+
+## SeetaCloud：自建 ComfyUI 实例（2026-11-06）
+
+新渠道 type=70「SeetaCloud」。上游是自建的 ArcReel-H3 ComfyUI 实例，
+协议与 autodl.art 接近但**有三处不能照抄**，本节记录差异。
+
+| | SeetaCloud | autodl.art |
+|---|---|---|
+| 提交响应 | `{"data":{"task_id":"..."}}`，**无 code/msg 外层** | `{"code":"Success","data":{...}}` |
+| 失败响应 | `{"error":{"message":"...","type":"..."}}` | `code != "Success"` |
+| 参考图 | **只收 data URI**，传 URL 直接 400 | 收 URL |
+
+- 鉴权用**裸 token**（`Authorization: <token>`），与 autodl.art 一致；带 Bearer 也能过，
+  但裸 token 是原生写法。
+- 提交 `POST /api/v1/comfyui/comfyui_workflow/{workflow}`，
+  轮询 `GET /api/v1/comfyui/comfyui_workflow/result/{id}`。
+  轮询返回 `data.status` / `data.results[].url`，成片直链**下载不需要鉴权**。
+- ⚠️ **上游不校验工作流名**：传一个根本不存在的 workflow 也照样建单、照样出片。
+  所以模型→工作流的映射必须由网关本地白名单兜底，不能依赖上游报错。
+- 分辨率只有 **480p / 768p × 横竖(1:1)**，**不支持 1080p**；时长 **1–15 秒**。
+  分辨率 token 是「档位+方向」写法（`480p横` / `768p竖` / `480p(1:1)`），
+  裸 `480p` 虽然也返回 200，但那是服务端兜底，不是契约。
+- **参考图只收 data URI**：客户给 http(s) 链接时，网关要先下载再转成 data URI
+  下发（本地做 SSRF 校验、体积上限 10MB）。这一步让建单变慢，所以图片下载
+  要有独立超时，不能占着建单连接无限等。
+- 对外模型名 `minimax_h3-文生` / `minimax_h3-图生`（带中文后缀，直面客户）。
+  上游工作流名 `minimax_h3_lightx2v_no_pic` / `minimax_h3_lightx2v` 只在适配器
+  内部映射，不出现在任何对外出口。
+- 计费：**按秒**，480P ¥0.03/秒（基准），768p（720P 档）¥0.05/秒（倍率 1.667）。
+- 脱敏：`seetacloud` 走字面量；`seeta` 短词走 `\bseeta\b` 词边界模式 ——
+  字面量匹配没有词边界，裸 `seeta` 会误伤正常英文词。

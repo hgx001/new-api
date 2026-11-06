@@ -419,9 +419,143 @@ export function buildAutoDLAudioVideoSample(
   ].join('\n')
 }
 
+// SeetaCloud 视频样例。
+//
+// 与其它 openai-video 模型的差异：
+// 1. resolution 是「档位+方向」格式（480p横 / 768p横），不是 autoDL 的 768p竖；
+// 2. 文生模型（minimax_h3-文生）**不接受参考图**，带参考图会被上游拒；
+// 3. 时长上限 15 秒，示例写 5 秒（缺省值，安全）。
+export function buildSeetaVideoSample(lang: Lang, ctx: SampleContext): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+  const modelName = ctx.modelName
+  const isTextToVideo = modelName === 'minimax_h3-文生'
+  const resolution = '480p横'
+
+  if (lang === 'typescript' || lang === 'javascript') {
+    return buildSeetaVideoFetchSample(lang, ctx)
+  }
+
+  if (lang === 'curl') {
+    const fields = [
+      `curl ${url} \\`,
+      `  -H "Authorization: Bearer $${ctx.apiKeyEnv}" \\`,
+      `  -F "model=${modelName}" \\`,
+      `  -F "prompt=A cinematic scene at sunrise" \\`,
+      `  -F "seconds=5" \\`,
+      `  -F "resolution=${resolution}"`,
+    ]
+    if (!isTextToVideo) {
+      fields[fields.length - 1] += ' \\'
+      fields.push('  -F "input_reference=@reference.png"')
+    }
+    return fields.join('\n')
+  }
+
+  if (lang === 'python') {
+    const data = [
+      `    ("model", "${modelName}"),`,
+      '    ("prompt", "A cinematic scene at sunrise"),',
+      '    ("seconds", "5"),',
+      `    ("resolution", "${resolution}"),`,
+    ]
+    if (!isTextToVideo) {
+      data.push('    ("input_reference", open("reference.png", "rb")),')
+    }
+    return [
+      'import os',
+      'import requests',
+      '',
+      `url = "${url}"`,
+      'headers = {"Authorization": "Bearer " + os.environ["NEW_API_KEY"]}',
+      'data = [',
+      ...data,
+      ']',
+      'response = requests.post(url, headers=headers, data=data)',
+      'response.raise_for_status()',
+      'print(response.json())',
+    ].join('\n')
+  }
+
+  const formLines = [
+    `form.append('model', '${modelName}')`,
+    `form.append('prompt', 'A cinematic scene at sunrise')`,
+    `form.append('seconds', '5')`,
+    `form.append('resolution', '${resolution}')`,
+  ]
+  if (!isTextToVideo) {
+    formLines.push(`form.append('input_reference', referenceFile)`)
+  }
+  formLines.push(
+    '',
+    'response = requests.post(url, headers=headers, data=form)',
+    'response.raise_for_status()',
+    'print(response.json())'
+  )
+  return [
+    'import os',
+    'import requests',
+    '',
+    `url = "${url}"`,
+    'headers = {"Authorization": "Bearer " + os.environ["NEW_API_KEY"]}',
+    "with open('reference.png', 'rb') as referenceFile:",
+    '    form = {',
+    ...formLines.map((line) => `    ${line}`),
+    '    ]',
+    'response = requests.post(url, headers=headers, data=form)',
+    'response.raise_for_status()',
+    'print(response.json())',
+  ].join('\n')
+}
+
+// SeetaCloud 的 TypeScript / JavaScript 样例。
+//
+// 用 fetch + FormData 而不是 OpenAI SDK：OpenAI SDK 的 videos.create 不接受
+// resolution 这类非标准字段，而 SeetaCloud 的分辨率枚举是「档位+方向」格式，
+// 必须原样传给上游。
+export function buildSeetaVideoFetchSample(
+  _lang: Lang,
+  ctx: SampleContext
+): string {
+  const url = `${ctx.baseUrl}${ctx.endpointPath}`
+  const modelName = ctx.modelName
+  const isTextToVideo = modelName === 'minimax_h3-文生'
+  const resolution = '480p横'
+
+  const formLines = [
+    `form.append('model', '${modelName}')`,
+    `form.append('prompt', 'A cinematic scene at sunrise')`,
+    `form.append('seconds', '5')`,
+    `form.append('resolution', '${resolution}')`,
+  ]
+  if (!isTextToVideo) {
+    formLines.push(`form.append('input_reference', referenceFile)`)
+  }
+
+  return [
+    'const form = new FormData()',
+    ...formLines,
+    '',
+    `const response = await fetch('${url}', {`,
+    `  method: 'POST',`,
+    `  headers: {`,
+    `    Authorization: \`Bearer \${process.env.${ctx.apiKeyEnv}}\`,`,
+    `  },`,
+    `  body: form,`,
+    `})`,
+    '',
+    'const data = await response.json()',
+    'console.log(data)',
+  ].join('\n')
+}
+
 export function buildVideoSample(lang: Lang, ctx: SampleContext): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`
   const isAutoDL = ctx.modelName.startsWith('autodl:')
+  // SeetaCloud（自建 ComfyUI 实例）走自己的样例：分辨率枚举是「档位+方向」
+  // 格式（480p横 / 768p横），与 autoDL 的 768p竖 不是同一套。
+  if (ctx.modelName === 'minimax_h3-文生' || ctx.modelName === 'minimax_h3-图生') {
+    return buildSeetaVideoSample(lang, ctx)
+  }
   // 参考图行为沿用历史：标准版 wan3.0-video / wan3.0-video-prime 的示例不带参考图。
   const isLegacyWan3 = /^wan3\.0-video(?:-prime)?$/.test(ctx.modelName)
   // wan3 系（官网/有赞）支持 resolution 参数；其余模型无该参数。

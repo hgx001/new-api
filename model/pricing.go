@@ -502,6 +502,12 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "autodl:") {
 		return true
 	}
+	// SeetaCloud（2026-11-06 接入）：自建 ComfyUI 实例的 H3 蒸馏工作流。
+	// 模型名带中文后缀，直接面向客户可见；上游工作流名（minimax_h3_lightx2v*）
+	// 只在适配器内部做映射，不对外暴露。
+	if name == "minimax_h3-文生" || name == "minimax_h3-图生" {
+		return true
+	}
 	// Youkou Seedance（volcengine-ark-video 协议，最小成本逐个接入）
 	if name == "hmseedance_v2.0不支持真人" {
 		return true

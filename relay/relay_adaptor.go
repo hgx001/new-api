@@ -43,6 +43,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/manwu"
 	taskmegabyai "github.com/QuantumNous/new-api/relay/channel/task/megabyai"
 	"github.com/QuantumNous/new-api/relay/channel/task/sanyuan"
+	"github.com/QuantumNous/new-api/relay/channel/task/seeta"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
@@ -192,6 +193,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &xinbiapi.TaskAdaptor{}
 		case constant.ChannelTypeYuanmeng:
 			return &yuanmeng.TaskAdaptor{}
+		case constant.ChannelTypeSeeta:
+			return &seeta.TaskAdaptor{}
 		}
 	}
 	return nil
