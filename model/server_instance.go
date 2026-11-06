@@ -43,6 +43,9 @@ const (
 const (
 	ServerOrderProvisionAwaiting = "awaiting" // 已支付，待管理员分配
 	ServerOrderProvisionAssigned = "assigned" // 已分配，凭据已交付
+	// ServerOrderProvisionCanceled 表示机器还没交付就被用户释放了。
+	// 这类订单必须退出待办队列，否则管理员会一直看到一条点了必然失败的幽灵任务。
+	ServerOrderProvisionCanceled = "canceled"
 )
 
 const (
@@ -860,6 +863,12 @@ func RenewServerInstance(
 		if current.Status == ServerInstanceStatusReleased {
 			return ErrServerInstanceReleased
 		}
+		// 还没分配就续费：实例既没有 IP 也没有凭据，续费却会把状态直接改成
+		// running —— 用户花钱买了一台「运行中」的空壳，而且待分配订单从此
+		// 再也分配不出去（AssignServerOrder 只认 provisioning）。只能拒绝。
+		if current.Status == ServerInstanceStatusProvisioning {
+			return ErrServerInstancePending
+		}
 		base := current.ExpireAt
 		if base < now {
 			base = now
@@ -1053,6 +1062,18 @@ func ReleaseServerInstance(userId, instanceId int) (*ServerOrder, *ServerInstanc
 		}
 		if res.RowsAffected != 1 {
 			return ErrServerConcurrentUpdate
+		}
+
+		// 未交付就释放：把这笔购买订单从待分配队列里摘掉。
+		// 否则管理员侧会留下一条「点分配必然报该订单不在待分配状态」的幽灵待办，
+		// 既污染角标计数，也会让人误以为还有活没干。
+		if current.Status == ServerInstanceStatusProvisioning {
+			if err := tx.Model(&ServerOrder{}).
+				Where("instance_id = ? AND type = ? AND provision_status = ?",
+					current.Id, ServerOrderTypePurchase, ServerOrderProvisionAwaiting).
+				Update("provision_status", ServerOrderProvisionCanceled).Error; err != nil {
+				return err
+			}
 		}
 
 		if refundQuota > 0 {

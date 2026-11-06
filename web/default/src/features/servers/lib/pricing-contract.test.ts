@@ -491,9 +491,9 @@ describe('续费可选时长', () => {
 
   test('跨口径只放一个月，半年与一年必须挡住', () => {
     // 「按小时续一年」会在两套单价之间套利，后端也会拒绝
-    const ids = renewDurationsFor('hourly').map((item) => item.id)
+    const ids = new Set(renewDurationsFor('hourly').map((item) => item.id))
     for (const forbidden of ['3mo', '6mo', '1y', '3y']) {
-      assert.equal(ids.includes(forbidden), false)
+      assert.equal(ids.has(forbidden), false)
     }
   })
 })

@@ -199,6 +199,32 @@ func TestReleaseProvisioningInstanceRefundsInFull(t *testing.T) {
 	require.NotNil(t, refundOrder)
 	// 等待时间不扣钱：实付多少退多少。
 	assert.Equal(t, quote.Total, released.RefundedAmount)
+
+	// 订单必须退出待分配队列，否则管理员会看到一条点了必然失败的幽灵待办。
+	var order ServerOrder
+	require.NoError(t, DB.Where("instance_id = ? AND type = ?",
+		instance.Id, ServerOrderTypePurchase).First(&order).Error)
+	assert.Equal(t, ServerOrderProvisionCanceled, order.ProvisionStatus)
+}
+
+// 未分配的实例不能被续费：续费会把状态直接改成 running，
+// 用户拿到一台既没有凭据、也再分配不出去的空壳机器。
+func TestRenewServerInstanceRejectsProvisioning(t *testing.T) {
+	truncateTables(t)
+	user := createServerTestUser(t, 100_000_000)
+	config := liteServerConfig("1mo")
+	quote := serverTestQuote(t, config)
+	_, instance, err := PurchaseServerInstance(user.Id, config, quote, PaymentMethodBalance, "")
+	require.NoError(t, err)
+	require.Equal(t, ServerInstanceStatusProvisioning, instance.Status)
+
+	_, _, err = RenewServerInstance(user.Id, instance.Id, quote, PaymentMethodBalance, "")
+	require.ErrorIs(t, err, ErrServerInstancePending)
+
+	var after ServerInstance
+	require.NoError(t, DB.First(&after, instance.Id).Error)
+	assert.Equal(t, ServerInstanceStatusProvisioning, after.Status)
+	assert.Zero(t, after.ExpireAt)
 }
 
 func TestExpireServerInstancesSkipsProvisioning(t *testing.T) {

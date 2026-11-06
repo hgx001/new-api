@@ -173,6 +173,9 @@ function remainingHintOf(
 ): string | undefined {
   const status = resolveStatus(server)
   if (status === 'released') return undefined
+  // 还没分配就还没开始计时：expire_at 是 0，任何「剩余 X 天」都是假的，
+  // 会在「Not counting yet」下面紧跟着显示「0 days left」，像要过期一样。
+  if (status === 'provisioning') return undefined
   if (server.billing === 'hourly') {
     return t('{{hours}} hours left', { hours: hoursLeft(server) })
   }
@@ -1046,6 +1049,19 @@ function InstanceDetails({
   const running = status === 'running'
   const isHourly = server.billing === 'hourly'
   const released = status === 'released'
+  // 未分配：没有 IP、没有凭据，开机/改密/续费全部无从谈起。
+  // 按钮留着只会让用户点了收到一串报错，直接收起。
+  const provisioning = status === 'provisioning'
+  const locked = released || provisioning
+
+  // 未分配时还没开始计时，expire_at 是 0，直接格式化会显示 1970 年。
+  let releaseValue = formatDateTime(server.expire_at)
+  if (released) {
+    releaseValue = t('Released')
+  } else if (provisioning) {
+    releaseValue = t('Not counting yet')
+  }
+
   const metricsQuery = useServerMetrics(server.id, tab === 'monitor')
   const metrics = metricsQuery.data ?? emptyMetrics(server)
 
@@ -1088,7 +1104,7 @@ function InstanceDetails({
               </div>
             </div>
             <div className='flex flex-wrap items-center gap-2'>
-              {!released && (
+              {!locked && (
                 <>
                   <Button
                     size='sm'
@@ -1174,9 +1190,7 @@ function InstanceDetails({
                   />
                   <InfoRow
                     label={t('Auto release time')}
-                    value={
-                      released ? t('Released') : formatDateTime(server.expire_at)
-                    }
+                    value={releaseValue}
                   />
                   <InfoRow
                     label={t('Region')}
