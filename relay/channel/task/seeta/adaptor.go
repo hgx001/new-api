@@ -756,7 +756,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	openAIResp.CreatedAt = task.CreatedAt
 	openAIResp.CompletedAt = task.UpdatedAt
 	// 以本站任务状态为基准，轮询还没同步到上游状态时也不会退化成 unknown。
-	openAIResp.Status = task.Status.ToVideoStatus()
+	openAIResp.Status = seetaVideoStatus(task)
 
 	if res.Error != nil {
 		openAIResp.Status = dto.VideoStatusFailed
@@ -789,6 +789,33 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		openAIResp.SetMetadata("url", taskcommon.BuildProxyURL(task.TaskID))
 	}
 	return common.Marshal(openAIResp)
+}
+
+// seetaVideoStatus 把本站任务状态映射成 OpenAI video 的 status。
+//
+// 为什么不用 model.TaskStatus.ToVideoStatus()：任务刚提交、轮询还没跑过时，
+// 库里状态是 NOT_START，而框架的映射表没有这一项 → 落到 default →
+// 返回 status=unknown。客户提交完立刻查一次，看到的就是「unknown」，
+// 会以为任务挂了（实测 2026-11-06：提交后前几秒查询确实返回 unknown）。
+//
+// 正确口径：NOT_START 与 QUEUED/SUBMITTED 一样都是「已受理、在排队」，
+// 应当报 queued。
+func seetaVideoStatus(task *model.Task) string {
+	if task == nil {
+		return dto.VideoStatusUnknown
+	}
+	switch task.Status {
+	case model.TaskStatusNotStart, model.TaskStatusSubmitted, model.TaskStatusQueued:
+		return dto.VideoStatusQueued
+	case model.TaskStatusInProgress:
+		return dto.VideoStatusInProgress
+	case model.TaskStatusSuccess:
+		return dto.VideoStatusCompleted
+	case model.TaskStatusFailure:
+		return dto.VideoStatusFailed
+	default:
+		return dto.VideoStatusUnknown
+	}
 }
 
 // firstNonEmpty 返回第一个非空字符串。

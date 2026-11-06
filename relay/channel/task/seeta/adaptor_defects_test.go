@@ -226,6 +226,32 @@ func TestConvertToOpenAIVideoUsesTaskStatus(t *testing.T) {
 	assert.Equal(t, 30, video.Progress)
 }
 
+// TestConvertToOpenAIVideoNotStartIsQueued 任务刚提交、轮询还没跑过时，
+// 库里状态是 NOT_START —— 它和 QUEUED 一样是「已受理在排队」，
+// 不能报 unknown（客户提交完立刻查一次会以为任务挂了）。
+func TestConvertToOpenAIVideoNotStartIsQueued(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+
+	for _, status := range []model.TaskStatus{
+		model.TaskStatusNotStart,
+		model.TaskStatusSubmitted,
+		model.TaskStatusQueued,
+	} {
+		task := &model.Task{
+			TaskID: "task_test",
+			Status: status,
+			Data:   json.RawMessage(`{"data":{"task_id":"up-123"}}`),
+		}
+
+		out, err := adaptor.ConvertToOpenAIVideo(task)
+		require.NoError(t, err)
+
+		var video dto.OpenAIVideo
+		require.NoError(t, json.Unmarshal(out, &video))
+		assert.Equal(t, dto.VideoStatusQueued, video.Status, "status=%s", status)
+	}
+}
+
 // TestConvertToOpenAIVideoUsesProxyURL 查询态的 metadata.url 必须是站内代理地址，
 // 不能把上游实例地址（u113...seetacloud.com:8443）直接吐给客户 ——
 // 那等于把自建实例的入口暴露出去。
