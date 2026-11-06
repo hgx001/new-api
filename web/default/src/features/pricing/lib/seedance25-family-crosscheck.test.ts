@@ -208,10 +208,7 @@ function resolveBackendFixedResolution(
   youzanSource: string,
   familySource: string
 ): string {
-  const derived = parseGoDerivedConst(
-    youzanSource,
-    'perCallFixedResolution'
-  )
+  const derived = parseGoDerivedConst(youzanSource, 'perCallFixedResolution')
   if (derived) {
     return parseGoConstStrings(familySource).get(derived) ?? ''
   }
@@ -305,7 +302,10 @@ describe('前端促销族定义 × 后端 Go 源码', () => {
 
   // 固定时长：前端必须与后端**最终生效**的值一致（沿派生链追溯）。
   test('前端固定时长与后端 perCallFixedDuration 一致', () => {
-    const backendSeconds = resolveBackendFixedSeconds(youzanSource, familySource)
+    const backendSeconds = resolveBackendFixedSeconds(
+      youzanSource,
+      familySource
+    )
     const spec = getSeedance25SampleSpec(SEEDANCE25_HUODONG)
     assert.ok(spec, '活动版必须有固定档定义')
     assert.equal(

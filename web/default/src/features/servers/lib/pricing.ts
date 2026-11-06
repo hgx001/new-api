@@ -130,10 +130,7 @@ export function specMachinePrice(
  *
  * 与后端 `serverSpecGpuPrice` 同口径。
  */
-export function specGpuPrice(
-  spec: ServerSpec,
-  billing: BillingMode
-): number {
+export function specGpuPrice(spec: ServerSpec, billing: BillingMode): number {
   if (!spec.gpu) return 0
   if (billing === 'hourly' && spec.gpuHourlyPrice !== undefined) {
     return roundMoney(spec.gpuHourlyPrice)

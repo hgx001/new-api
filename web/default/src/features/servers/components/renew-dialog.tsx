@@ -57,7 +57,8 @@ export function RenewDialog(props: RenewDialogProps) {
     [props.instance.billing]
   )
   const [durationId, setDurationId] = useState(
-    durations.find((item) => item.id === props.instance.config.durationId)?.id ??
+    durations.find((item) => item.id === props.instance.config.durationId)
+      ?.id ??
       durations[0]?.id ??
       ''
   )
@@ -83,10 +84,7 @@ export function RenewDialog(props: RenewDialogProps) {
   const duration = durations.find((item) => item.id === durationId)
   const fallbackTotal = duration
     ? Math.round(
-        props.instance.unit_price *
-          duration.amount *
-          duration.discount *
-          100
+        props.instance.unit_price * duration.amount * duration.discount * 100
       ) / 100
     : 0
   const total = quote?.total ?? fallbackTotal
@@ -157,7 +155,7 @@ export function RenewDialog(props: RenewDialogProps) {
             <div className='text-muted-foreground text-xs'>
               {t('Renewal amount')}
             </div>
-            <div className='mt-0.5 text-xl font-bold text-foreground'>
+            <div className='text-foreground mt-0.5 text-xl font-bold'>
               {formatAmount(total)}
             </div>
             <div className='text-muted-foreground mt-1 text-[11px]'>
@@ -174,7 +172,11 @@ export function RenewDialog(props: RenewDialogProps) {
         </div>
 
         <DialogFooter>
-          <Button variant='outline' disabled={submitting} onClick={props.onClose}>
+          <Button
+            variant='outline'
+            disabled={submitting}
+            onClick={props.onClose}
+          >
             {t('Cancel')}
           </Button>
           <Button

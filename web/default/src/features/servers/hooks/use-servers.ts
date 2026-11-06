@@ -122,10 +122,7 @@ export function useServerPayMethods(enabled = true) {
  * 第三方支付是异步的：用户跳去收银台付款，回来后机器还没开 —— 要等
  * 网关异步回调。前端靠轮询这个接口确认「钱到了、机器开了」。
  */
-export function useServerOrderStatus(
-  tradeNo: string | null,
-  enabled = true
-) {
+export function useServerOrderStatus(tradeNo: string | null, enabled = true) {
   return useQuery({
     queryKey: serverKeys.orderStatus(tradeNo ?? ''),
     queryFn: () => getServerOrderStatus(tradeNo as string),
@@ -221,7 +218,9 @@ export function useServerActions() {
 
   const power = useMutation({
     mutationFn: (input: { instanceId: number; start: boolean }) =>
-      input.start ? startServer(input.instanceId) : stopServer(input.instanceId),
+      input.start
+        ? startServer(input.instanceId)
+        : stopServer(input.instanceId),
     onSuccess: (_, input) => {
       invalidate()
       // 开关机会写一条操作记录，不刷新的话详情里的日志少一条
@@ -252,7 +251,15 @@ export function useServerActions() {
     },
   })
 
-  return { purchase, launchAlipay, renew, release, power, reboot, resetPassword }
+  return {
+    purchase,
+    launchAlipay,
+    renew,
+    release,
+    power,
+    reboot,
+    resetPassword,
+  }
 }
 
 /* ---------------------------------------------------------------------------

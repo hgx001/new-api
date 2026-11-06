@@ -50,7 +50,9 @@ export function isExpired(instance: ServerInstance): boolean {
   if (instance.status === 'provisioning' || instance.status === 'pending') {
     return false
   }
-  return instance.status === 'expired' || instance.expire_at * 1000 <= Date.now()
+  return (
+    instance.status === 'expired' || instance.expire_at * 1000 <= Date.now()
+  )
 }
 
 /** 实例的**有效**状态：已释放是终态，不能被到期时间覆盖。 */

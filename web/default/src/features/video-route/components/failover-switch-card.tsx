@@ -245,7 +245,7 @@ export function FailoverSwitchCard({ channelModels }: FailoverSwitchCardProps) {
             </Button>
           )}
           {!view.targetReady ? (
-            <span className='text-amber-600 text-[11px]'>
+            <span className='text-[11px] text-amber-600'>
               {t('The backup model has no available channel.')}
             </span>
           ) : null}

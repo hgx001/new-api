@@ -88,7 +88,7 @@ export function MetricChart({
         <span className='text-muted-foreground text-xs font-medium'>
           {title}
         </span>
-        <span className='text-[11px] font-semibold text-foreground'>
+        <span className='text-foreground text-[11px] font-semibold'>
           {isFlat
             ? t('No data')
             : t('Peak {{value}}{{unit}} · Avg {{avg}}{{unit}}', {
@@ -178,7 +178,7 @@ export function MetricBar({
     <div>
       <div className='flex items-baseline justify-between gap-2'>
         <span className='text-muted-foreground text-xs'>{label}</span>
-        <span className='text-xs font-medium text-foreground'>
+        <span className='text-foreground text-xs font-medium'>
           {value}
           {unit}
         </span>

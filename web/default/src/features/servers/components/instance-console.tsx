@@ -90,12 +90,7 @@ interface InstanceConsoleProps {
   onRelease: (server: ServerInstance) => Promise<boolean>
 }
 
-type StatusFilter =
-  | 'all'
-  | 'provisioning'
-  | 'running'
-  | 'stopped'
-  | 'expiring'
+type StatusFilter = 'all' | 'provisioning' | 'running' | 'stopped' | 'expiring'
 
 const FILTERS: { id: StatusFilter; labelKey: string }[] = [
   { id: 'all', labelKey: 'All' },
@@ -143,12 +138,7 @@ function statusTone(key: InstanceStatusKey): string {
  * 机器本身是健康的，把它显示成红色会让人以为机器坏了。
  * 「Healthy」只在这里出现，所以单独给它一个类型，不塞进 InstanceStatusKey。
  */
-type HealthKey =
-  | 'Healthy'
-  | 'Stopped'
-  | 'Provisioning'
-  | 'Expired'
-  | 'Released'
+type HealthKey = 'Healthy' | 'Stopped' | 'Provisioning' | 'Expired' | 'Released'
 
 function healthKeyOf(server: ServerInstance): HealthKey {
   const status = resolveStatus(server)
@@ -408,9 +398,7 @@ export function InstanceConsole(props: InstanceConsoleProps) {
               onToggleExpand={() =>
                 setExpandedId(expandedId === server.id ? null : server.id)
               }
-              onOpenDetail={(tab) =>
-                setDetailTarget({ id: server.id, tab })
-              }
+              onOpenDetail={(tab) => setDetailTarget({ id: server.id, tab })}
               onChangePassword={props.onChangePassword}
               onTogglePower={props.onTogglePower}
               onReboot={props.onReboot}
@@ -593,7 +581,9 @@ function InstanceRow({
 
         {/* 状态 */}
         <Cell label={t('Status')}>
-          <Badge className={cn('shrink-0 gap-1', statusTone(statusKeyOf(server)))}>
+          <Badge
+            className={cn('shrink-0 gap-1', statusTone(statusKeyOf(server)))}
+          >
             <span className='size-1.5 rounded-full bg-current' />
             {t(statusKeyOf(server))}
           </Badge>
@@ -628,7 +618,7 @@ function InstanceRow({
         {/* 本地磁盘：系统盘 / 数据盘分开报 */}
         <Cell label={t('Local disks')}>
           <div className='text-foreground flex items-start gap-1.5 text-[12px]'>
-            <HardDrive className='mt-0.5 size-3 shrink-0 text-muted-foreground' />
+            <HardDrive className='text-muted-foreground mt-0.5 size-3 shrink-0' />
             <span className='min-w-0'>
               {formatDiskBreakdown(server.spec, t)}
             </span>
@@ -688,108 +678,108 @@ function InstanceRow({
               </span>
             </div>
           ) : (
-          <div className='flex flex-wrap items-center justify-end gap-1.5'>
-            <button
-              type='button'
-              onClick={() =>
-                onCopy(
-                  `ssh ${server.username}@${server.ip}`,
-                  'SSH command copied'
-                )
-              }
-              title={`ssh ${server.username}@${server.ip}`}
-              className='text-muted-foreground hover:text-foreground inline-flex max-w-[9.5rem] items-center gap-1 truncate font-mono text-[11px] transition-colors'
-            >
-              <span className='truncate'>
-                {server.username}@{server.ip}
-              </span>
-              <Copy className='size-3 shrink-0' />
-            </button>
-            {!locked && (
-              <Button
-                size='sm'
-                variant='outline'
-                className='h-7 rounded-md px-2 text-[11px]'
-                onClick={() => onTogglePower(server, !running)}
-              >
-                {running ? (
-                  <>
-                    <Square className='mr-1 size-3' />
-                    {t('Stop')}
-                  </>
-                ) : (
-                  <>
-                    <Play className='mr-1 size-3' />
-                    {t('Start')}
-                  </>
-                )}
-              </Button>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    size='sm'
-                    variant='ghost'
-                    className='h-7 rounded-md px-2 text-[11px]'
-                    aria-label={t('More actions')}
-                  />
+            <div className='flex flex-wrap items-center justify-end gap-1.5'>
+              <button
+                type='button'
+                onClick={() =>
+                  onCopy(
+                    `ssh ${server.username}@${server.ip}`,
+                    'SSH command copied'
+                  )
                 }
+                title={`ssh ${server.username}@${server.ip}`}
+                className='text-muted-foreground hover:text-foreground inline-flex max-w-[9.5rem] items-center gap-1 truncate font-mono text-[11px] transition-colors'
               >
-                {t('More')}
-                <ChevronDown className='ml-1 size-3' />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align='end'>
-                <DropdownMenuItem onClick={onToggleExpand}>
-                  <Gauge className='size-4' />
-                  {t('Details')}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onOpenDetail('monitor')}>
-                  <Activity className='size-4' />
-                  {t('Monitoring')}
-                </DropdownMenuItem>
-                {!locked && (
-                  <DropdownMenuItem onClick={() => onChangePassword(server)}>
-                    <KeyRound className='size-4' />
-                    {t('Change password')}
+                <span className='truncate'>
+                  {server.username}@{server.ip}
+                </span>
+                <Copy className='size-3 shrink-0' />
+              </button>
+              {!locked && (
+                <Button
+                  size='sm'
+                  variant='outline'
+                  className='h-7 rounded-md px-2 text-[11px]'
+                  onClick={() => onTogglePower(server, !running)}
+                >
+                  {running ? (
+                    <>
+                      <Square className='mr-1 size-3' />
+                      {t('Stop')}
+                    </>
+                  ) : (
+                    <>
+                      <Play className='mr-1 size-3' />
+                      {t('Start')}
+                    </>
+                  )}
+                </Button>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      size='sm'
+                      variant='ghost'
+                      className='h-7 rounded-md px-2 text-[11px]'
+                      aria-label={t('More actions')}
+                    />
+                  }
+                >
+                  {t('More')}
+                  <ChevronDown className='ml-1 size-3' />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align='end'>
+                  <DropdownMenuItem onClick={onToggleExpand}>
+                    <Gauge className='size-4' />
+                    {t('Details')}
                   </DropdownMenuItem>
-                )}
-                {!locked && running && (
-                  <DropdownMenuItem onClick={() => onReboot(server)}>
-                    <RefreshCcw className='size-4' />
-                    {t('Reboot')}
+                  <DropdownMenuItem onClick={() => onOpenDetail('monitor')}>
+                    <Activity className='size-4' />
+                    {t('Monitoring')}
                   </DropdownMenuItem>
-                )}
-                <DropdownMenuItem onClick={() => onOpenDetail('events')}>
-                  <Receipt className='size-4' />
-                  {t('Operation log')}
-                </DropdownMenuItem>
-                {!released && (
-                  <>
-                    <DropdownMenuSeparator />
-                    {!locked && (
-                      <DropdownMenuItem onClick={onRenew}>
-                        <RefreshCcw className='size-4' />
-                        {t('Renew')}
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem
-                      onClick={onRelease}
-                      className='text-destructive'
-                    >
-                      <Trash2 className='size-4' />
-                      {t('Release instance')}
+                  {!locked && (
+                    <DropdownMenuItem onClick={() => onChangePassword(server)}>
+                      <KeyRound className='size-4' />
+                      {t('Change password')}
                     </DropdownMenuItem>
-                  </>
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onOpenDetail('basic')}>
-                  <LifeBuoy className='size-4' />
-                  {t('Support')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+                  )}
+                  {!locked && running && (
+                    <DropdownMenuItem onClick={() => onReboot(server)}>
+                      <RefreshCcw className='size-4' />
+                      {t('Reboot')}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem onClick={() => onOpenDetail('events')}>
+                    <Receipt className='size-4' />
+                    {t('Operation log')}
+                  </DropdownMenuItem>
+                  {!released && (
+                    <>
+                      <DropdownMenuSeparator />
+                      {!locked && (
+                        <DropdownMenuItem onClick={onRenew}>
+                          <RefreshCcw className='size-4' />
+                          {t('Renew')}
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem
+                        onClick={onRelease}
+                        className='text-destructive'
+                      >
+                        <Trash2 className='size-4' />
+                        {t('Release instance')}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => onOpenDetail('basic')}>
+                    <LifeBuoy className='size-4' />
+                    {t('Support')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           )}
         </Cell>
       </div>
@@ -826,7 +816,9 @@ function InstanceRow({
                 icon={HardDrive}
                 label={t('Data disk')}
                 value={
-                  server.spec.data_disk ? `${server.spec.data_disk} GB` : t('None')
+                  server.spec.data_disk
+                    ? `${server.spec.data_disk} GB`
+                    : t('None')
                 }
               />
               <DetailItem
@@ -862,75 +854,75 @@ function InstanceRow({
                 </div>
               </div>
             ) : (
-            <div className='grid gap-2 sm:grid-cols-3'>
-              <CredentialField
-                label={t('Public IP')}
-                value={server.ip}
-                dense
-              />
-              <CredentialField
-                label={t('Username')}
-                value={server.username}
-                dense
-              />
-              <CredentialField
-                label={t('Password')}
-                value={
-                  server.password_readable
-                    ? server.password
-                    : t('Unavailable, please reset the password')
-                }
-                secret={server.password_readable}
-                dense
-              />
-            </div>
+              <div className='grid gap-2 sm:grid-cols-3'>
+                <CredentialField
+                  label={t('Public IP')}
+                  value={server.ip}
+                  dense
+                />
+                <CredentialField
+                  label={t('Username')}
+                  value={server.username}
+                  dense
+                />
+                <CredentialField
+                  label={t('Password')}
+                  value={
+                    server.password_readable
+                      ? server.password
+                      : t('Unavailable, please reset the password')
+                  }
+                  secret={server.password_readable}
+                  dense
+                />
+              </div>
             )}
             {!provisioning && (
-            <div className='mt-2.5 flex flex-wrap gap-2'>
-              <Button
-                size='sm'
-                variant='outline'
-                className='h-7 rounded-md px-2.5 text-[11px]'
-                onClick={() =>
-                  onCopy(
-                    `ssh ${server.username}@${server.ip}`,
-                    'SSH command copied'
-                  )
-                }
-              >
-                <Copy className='mr-1 size-3' />
-                {t('Copy SSH command')}
-              </Button>
-              <Button
-                size='sm'
-                variant='outline'
-                className='h-7 rounded-md px-2.5 text-[11px]'
-                onClick={() => onOpenDetail('monitor')}
-              >
-                <Activity className='mr-1 size-3' />
-                {t('Monitoring')}
-              </Button>
-              <Button
-                size='sm'
-                variant='outline'
-                className='h-7 rounded-md px-2.5 text-[11px]'
-                onClick={() => onOpenDetail('events')}
-              >
-                <Receipt className='mr-1 size-3' />
-                {t('Operation log')}
-              </Button>
-              {!locked && (
+              <div className='mt-2.5 flex flex-wrap gap-2'>
                 <Button
                   size='sm'
                   variant='outline'
                   className='h-7 rounded-md px-2.5 text-[11px]'
-                  onClick={onRenew}
+                  onClick={() =>
+                    onCopy(
+                      `ssh ${server.username}@${server.ip}`,
+                      'SSH command copied'
+                    )
+                  }
                 >
-                  <RefreshCcw className='mr-1 size-3' />
-                  {t('Renew')}
+                  <Copy className='mr-1 size-3' />
+                  {t('Copy SSH command')}
                 </Button>
-              )}
-            </div>
+                <Button
+                  size='sm'
+                  variant='outline'
+                  className='h-7 rounded-md px-2.5 text-[11px]'
+                  onClick={() => onOpenDetail('monitor')}
+                >
+                  <Activity className='mr-1 size-3' />
+                  {t('Monitoring')}
+                </Button>
+                <Button
+                  size='sm'
+                  variant='outline'
+                  className='h-7 rounded-md px-2.5 text-[11px]'
+                  onClick={() => onOpenDetail('events')}
+                >
+                  <Receipt className='mr-1 size-3' />
+                  {t('Operation log')}
+                </Button>
+                {!locked && (
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    className='h-7 rounded-md px-2.5 text-[11px]'
+                    onClick={onRenew}
+                  >
+                    <RefreshCcw className='mr-1 size-3' />
+                    {t('Renew')}
+                  </Button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -980,7 +972,9 @@ function OperationLog({ instanceId }: { instanceId: number }) {
   }
 
   if (events.length === 0) {
-    return <p className='text-muted-foreground text-sm'>{t('No operations yet')}</p>
+    return (
+      <p className='text-muted-foreground text-sm'>{t('No operations yet')}</p>
+    )
   }
 
   return (
@@ -1090,7 +1084,9 @@ function InstanceDetails({
                 <h2 className='text-foreground truncate text-lg font-bold'>
                   {server.name}
                 </h2>
-                <Badge className={cn('shrink-0', statusTone(statusKeyOf(server)))}>
+                <Badge
+                  className={cn('shrink-0', statusTone(statusKeyOf(server)))}
+                >
                   {t(statusKeyOf(server))}
                 </Badge>
                 {server.provision_mode === 'simulated' && (

@@ -36,10 +36,10 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
-import { useAssignServerOrder } from '../hooks/use-servers'
-import { formatAmount } from '../lib/pricing'
-import { formatDateTime } from '../lib/instance-runtime'
 import { formatDiskBreakdown, formatGpu } from '../constants'
+import { useAssignServerOrder } from '../hooks/use-servers'
+import { formatDateTime } from '../lib/instance-runtime'
+import { formatAmount } from '../lib/pricing'
 import type { ServerInstance, ServerProvisionOrder } from '../types'
 
 interface AssignDialogProps {
@@ -90,8 +90,12 @@ export function AssignDialog({ order, onClose, onDone }: AssignDialogProps) {
         `${delivered.name} · ${t('Cloud servers')}`,
         `IP: ${delivered.ip}`,
         `SSH: ssh ${delivered.username}@${delivered.ip} -p ${delivered.ssh_port ?? 22}`,
-        delivered.password_readable ? `${t('Password')}: ${delivered.password}` : '',
-        delivered.private_key_ready ? t('Login with the private key you were given') : '',
+        delivered.password_readable
+          ? `${t('Password')}: ${delivered.password}`
+          : '',
+        delivered.private_key_ready
+          ? t('Login with the private key you were given')
+          : '',
         `${t('Expires at')}: ${formatDateTime(delivered.expire_at)}`,
         delivered.admin_note,
       ]
@@ -157,7 +161,10 @@ export function AssignDialog({ order, onClose, onDone }: AssignDialogProps) {
         {/* 订单摘要：填之前先确认没开错机器 */}
         <div className='border-border/70 bg-muted/40 rounded-xl border px-3.5 py-3'>
           <div className='grid gap-2 text-[12px] sm:grid-cols-2'>
-            <SummaryRow label={t('User')} value={order.username || `#${order.user_id}`} />
+            <SummaryRow
+              label={t('User')}
+              value={order.username || `#${order.user_id}`}
+            />
             <SummaryRow label={t('Order number')} value={order.trade_no} mono />
             <SummaryRow
               label={t('Configuration')}
@@ -286,7 +293,9 @@ export function AssignDialog({ order, onClose, onDone }: AssignDialogProps) {
                 className='text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-[12px] transition-colors'
               >
                 <RefreshCw className='size-3' />
-                {showKey ? t('Hide private key') : t('Add an SSH private key (optional)')}
+                {showKey
+                  ? t('Hide private key')
+                  : t('Add an SSH private key (optional)')}
               </button>
               {showKey && (
                 <Textarea
@@ -318,7 +327,11 @@ export function AssignDialog({ order, onClose, onDone }: AssignDialogProps) {
             <Button onClick={onClose}>{t('Done')}</Button>
           ) : (
             <>
-              <Button variant='outline' onClick={onClose} disabled={assign.isPending}>
+              <Button
+                variant='outline'
+                onClick={onClose}
+                disabled={assign.isPending}
+              >
                 {t('Cancel')}
               </Button>
               <Button onClick={handleAssign} disabled={assign.isPending}>

@@ -66,18 +66,21 @@ export function ReleaseDialog(props: ReleaseDialogProps) {
       <DialogContent className='sm:max-w-md'>
         <DialogHeader>
           <DialogTitle className='flex items-center gap-2'>
-            <AlertTriangle className='size-5 text-destructive' />
+            <AlertTriangle className='text-destructive size-5' />
             {t('Release instance')}
           </DialogTitle>
           <DialogDescription>
-            {t('{{name}} will be destroyed immediately. This cannot be undone.', {
-              name: props.instance.name,
-            })}
+            {t(
+              '{{name}} will be destroyed immediately. This cannot be undone.',
+              {
+                name: props.instance.name,
+              }
+            )}
           </DialogDescription>
         </DialogHeader>
 
         <div className='border-destructive/30 bg-destructive/5 space-y-1.5 rounded-xl border p-3.5 text-xs leading-relaxed'>
-          <p className='font-medium text-destructive'>
+          <p className='text-destructive font-medium'>
             {t('The instance, its public IP and its data will be removed.')}
           </p>
           <p className='text-muted-foreground'>
@@ -93,7 +96,11 @@ export function ReleaseDialog(props: ReleaseDialogProps) {
         </div>
 
         <DialogFooter>
-          <Button variant='outline' disabled={submitting} onClick={props.onClose}>
+          <Button
+            variant='outline'
+            disabled={submitting}
+            onClick={props.onClose}
+          >
             {t('Cancel')}
           </Button>
           <Button

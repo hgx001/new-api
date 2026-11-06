@@ -65,13 +65,10 @@ import {
 } from './hooks/use-servers'
 import { localizedServerError } from './lib/errors'
 import { defaultConfigFor } from './lib/pricing'
-import type {
-  ServerConfig,
-  ServerInstance,
-  ServerQuoteResult,
-} from './types'
+import type { ServerConfig, ServerInstance, ServerQuoteResult } from './types'
 
-const ADVANTAGES = [  {
+const ADVANTAGES = [
+  {
     icon: Clock3,
     titleKey: 'Instant delivery',
     descKey:
@@ -321,14 +318,23 @@ export function ServersContent({
       }
       window.location.assign(launch.url)
       toast.success(
-        t('Payment page opened. Your server will be ready once the payment is confirmed.')
+        t(
+          'Payment page opened. Your server will be ready once the payment is confirmed.'
+        )
       )
     } catch (error) {
       toast.error(localizedServerError(error, t))
     } finally {
       setPaying(false)
     }
-  }, [actions.launchAlipay, actions.purchase, checkoutRequestId, config, selectedMethod, t])
+  }, [
+    actions.launchAlipay,
+    actions.purchase,
+    checkoutRequestId,
+    config,
+    selectedMethod,
+    t,
+  ])
 
   // 第三方支付到账后：展示凭据，并停掉轮询
   useEffect(() => {

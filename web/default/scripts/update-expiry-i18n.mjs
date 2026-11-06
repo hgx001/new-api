@@ -42,7 +42,8 @@ for (const [lang, value] of Object.entries(NEW_VALUE)) {
   }
   const comma = lines[idx].trimEnd().endsWith(',') ? ',' : ''
   // JSON 字符串里不能直接出现未转义的换行/引号；这批文案没有双引号
-  lines[idx] = `    ${JSON.stringify(NEW_KEY)}: ${JSON.stringify(value)}${comma}`
+  lines[idx] =
+    `    ${JSON.stringify(NEW_KEY)}: ${JSON.stringify(value)}${comma}`
 
   const monthly = `    ${JSON.stringify(MONTHLY_KEY)}: ${JSON.stringify(MONTHLY_VALUE[lang])},`
   const already = lines.some((line) => line.startsWith(`    "${MONTHLY_KEY}"`))

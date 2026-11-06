@@ -68,7 +68,10 @@ export function ResourceNotice({
               isBanner ? 'size-10' : 'size-8'
             )}
           >
-            <Radio className={isBanner ? 'size-5' : 'size-4'} aria-hidden='true' />
+            <Radio
+              className={isBanner ? 'size-5' : 'size-4'}
+              aria-hidden='true'
+            />
             {/* 呼吸点：表示「正在人工调度」 */}
             <span className='absolute -top-0.5 -right-0.5 flex size-2.5'>
               <span className='absolute inline-flex size-full animate-ping rounded-full bg-[#e59a2b] opacity-60' />

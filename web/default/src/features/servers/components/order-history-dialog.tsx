@@ -82,7 +82,7 @@ function OrderRow({ order }: { order: ServerOrderRecord }) {
           >
             {t(typeKeyOf(order))}
           </span>
-          <span className='truncate text-sm font-medium text-foreground'>
+          <span className='text-foreground truncate text-sm font-medium'>
             {order.instance_name || `${t('Instance ID')} #${order.instance_id}`}
           </span>
         </div>

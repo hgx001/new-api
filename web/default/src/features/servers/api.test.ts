@@ -266,7 +266,9 @@ describe('服务端错误码的本地化', () => {
       'payment_launch_failed',
     ] as const
     for (const code of codes) {
-      const key = serverErrorMessageKey(new ServerApiError(code, '服务端中文兜底'))
+      const key = serverErrorMessageKey(
+        new ServerApiError(code, '服务端中文兜底')
+      )
       assert.ok(key, `${code} 必须有本地化文案`)
       assert.notEqual(key, '服务端中文兜底', `${code} 不该退回服务端原文`)
     }

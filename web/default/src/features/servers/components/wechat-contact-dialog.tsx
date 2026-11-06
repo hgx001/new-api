@@ -134,7 +134,10 @@ export function WeChatContactDialog({
                 <span className='flex size-6 items-center justify-center rounded-full bg-[#3a8f7a] text-[10px] font-bold text-white'>
                   {index + 1}
                 </span>
-                <step.icon className='size-3.5 text-[#3a8f7a]' aria-hidden='true' />
+                <step.icon
+                  className='size-3.5 text-[#3a8f7a]'
+                  aria-hidden='true'
+                />
                 <span className='text-[10px] leading-tight text-[#4b6b61]'>
                   {step.label}
                 </span>

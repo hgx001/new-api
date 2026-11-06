@@ -132,10 +132,10 @@ export async function markVideoRouteFailoverUnavailable(
   until?: number,
   reason?: string
 ): Promise<VideoRouteFailoverState> {
-  const res = await api.post(
-    '/api/video-route/policy/failover/unavailable',
-    { until: until ?? 0, reason: reason ?? '' }
-  )
+  const res = await api.post('/api/video-route/policy/failover/unavailable', {
+    until: until ?? 0,
+    reason: reason ?? '',
+  })
   return res.data.data
 }
 

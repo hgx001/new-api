@@ -71,7 +71,7 @@ export function ServerConsolePage() {
       <div className='border-border/70 bg-card border-b px-6 py-5'>
         <div className='flex flex-wrap items-center justify-between gap-3'>
           <div>
-            <h1 className='flex items-center gap-2 text-xl font-bold text-foreground'>
+            <h1 className='text-foreground flex items-center gap-2 text-xl font-bold'>
               <ServerCog className='size-5' />
               {t('Cloud servers')}
             </h1>
@@ -90,9 +90,7 @@ export function ServerConsolePage() {
             >
               <RefreshCcw
                 className={
-                  instancesQuery.isFetching
-                    ? 'size-4 animate-spin'
-                    : 'size-4'
+                  instancesQuery.isFetching ? 'size-4 animate-spin' : 'size-4'
                 }
               />
               {t('Refresh')}

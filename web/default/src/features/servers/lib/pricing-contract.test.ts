@@ -461,7 +461,10 @@ describe('servers: 旧配置的时长映射', () => {
     // resolveDurationId 原样透传已存的 id，由 getDuration 负责兜底：
     // 落到列表第一项（1 小时）等于把老订单悄悄改成按量。
     assert.equal(getDuration('nope').id, '1y')
-    assert.equal(resolveBilling({ durationId: 'nope' } as ServerConfig), 'prepaid')
+    assert.equal(
+      resolveBilling({ durationId: 'nope' } as ServerConfig),
+      'prepaid'
+    )
   })
 })
 

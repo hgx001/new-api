@@ -1,10 +1,4 @@
-import {
-  CheckCircle2,
-  Info,
-  Loader2,
-  ShieldCheck,
-  Wallet,
-} from 'lucide-react'
+import { CheckCircle2, Info, Loader2, ShieldCheck, Wallet } from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 

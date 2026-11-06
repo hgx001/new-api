@@ -73,7 +73,9 @@ export function useInstanceActions() {
           durationId,
           requestId: newRequestId(),
         })
-        toast.success(t('Renewal successful, the expiry time has been extended'))
+        toast.success(
+          t('Renewal successful, the expiry time has been extended')
+        )
         return true
       } catch (error) {
         toast.error(localizedServerError(error, t))
