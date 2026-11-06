@@ -29,6 +29,7 @@ import {
   REGIONS,
   formatGpu,
   formatSpec,
+  formatDataDiskExpand,
   getDuration,
   getSpec,
   planGpuSummary,
@@ -237,7 +238,7 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                     : 'border-border bg-background hover:border-[#7dd3c0]/60'
                 )}
               >
-                <span className='block'>{formatSpec(item)}</span>
+                <span className='block'>{formatSpec(item, t)}</span>
                 {/* 规格价：选之前就能横向比价，选中后右侧摘要的
                     「套餐」行 + 「配置」行也正好等于这个数 */}
                 <span className='text-muted-foreground mt-0.5 block text-[11px]'>
@@ -246,6 +247,11 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                 {item.gpu && (
                   <span className='mt-1 block text-[11px] font-semibold text-[#3a8f7a]'>
                     {formatGpu(item.gpu)}
+                  </span>
+                )}
+                {item.cpuModel && (
+                  <span className='text-muted-foreground mt-0.5 block text-[11px]'>
+                    {item.cpuModel}
                   </span>
                 )}
               </button>
@@ -262,6 +268,20 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
           <span className='inline-flex items-center gap-1.5'>
             <HardDrive className='size-3.5' /> {spec.disk} GB NVMe
           </span>
+          {spec.dataDisk && (
+            <span className='inline-flex items-center gap-1.5'>
+              <HardDrive className='size-3.5' /> {spec.dataDisk} GB{' '}
+              {t('Data disk')}
+              {formatDataDiskExpand(spec, t) && (
+                <span className='text-muted-foreground'>
+                  （{formatDataDiskExpand(spec, t)}）
+                </span>
+              )}
+            </span>
+          )}
+          {spec.cpuModel && (
+            <span className='text-muted-foreground'>{spec.cpuModel}</span>
+          )}
           {spec.gpu && (
             <span className='inline-flex items-center gap-1.5 font-semibold text-[#3a8f7a]'>
               <Gpu className='size-3.5' /> {formatGpu(spec.gpu)}

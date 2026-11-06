@@ -112,7 +112,7 @@ export function BillingPanel({
     },
     {
       label: t('Specifications'),
-      value: formatSpec(spec),
+      value: formatSpec(spec, t),
       price:
         price.specPrice > 0
           ? formatUnitSurcharge(price.specPrice)

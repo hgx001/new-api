@@ -19,218 +19,351 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { api } from '@/lib/api'
 
-import { getDuration } from './constants'
-import { resolveDurationId } from './lib/pricing'
-import type { OwnedServer, PayMethod, ServerConfig, ServerOrder } from './types'
+import type {
+  ServerConfig,
+  ServerInstance,
+  ServerInstanceEvent,
+  ServerMetrics,
+  ServerOrderRecord,
+  ServerQuoteResult,
+} from './types'
 
 /**
- * 服务器租赁的数据访问层。
+ * 云服务器租赁的数据访问层。
  *
- * ⚠️ **当前为前端演示实现**（后端接口尚未提供）。
- *    - 支付方式列表走真实接口 `/api/user/topup/info`（复用钱包充值，已上线）
- *    - 下单 / 支付 / 改密走本地模拟，接口形状已按后端 REST 约定预留
- *    后端接入时，只需把 `createServerOrder` / `payServerOrder` / `changePassword`
- *    三个函数内部换成真实请求，调用方无需改动。
+ * 所有金额都由服务端计算：下单只提交「地区/机型/规格/带宽/时长」，
+ * 前端算出的价格仅用于展示。这样改请求体改不动价格。
  */
 
-/**
- * 后端接入后置为 true。
- *
- * 为 true 时不再提供演示支付渠道，支付方式完全以服务端下发的为准；
- * 同时 `createServerOrder` / `payServerOrder` / `changeServerPassword`
- * 换成真实请求。
- */
-export const PAYMENT_BACKEND_ENABLED = false
+/** 业务失败的稳定错误码，前端据此做本地化提示 */
+export type ServerErrorCode =
+  | 'insufficient_quota'
+  | 'instance_not_found'
+  | 'instance_released'
+  | 'instance_expired'
+  | 'instance_not_active'
+  | 'concurrent_update'
+  | 'invalid_config'
+  | 'password_too_short'
+  | 'order_not_found'
+  | 'order_paid'
+  | 'order_not_payable'
+  | 'order_expired'
+  | 'payment_method_invalid'
+  | 'payment_not_configured'
+  | 'payment_launch_failed'
+  | 'server_error'
 
-/**
- * 演示支付渠道。
- *
- * 只在后端未接入、且站点没有开通在线支付时出现，并且**明确标注为演示**，
- * 不冒充支付宝 / 微信等真实渠道，避免用户以为站点真的能收款。
- */
-const DEMO_PAY_METHOD: PayMethod = {
-  type: 'demo',
-  nameKey: 'Demo payment (no real charge)',
-  demo: true,
-}
+export class ServerApiError extends Error {
+  code: ServerErrorCode
 
-/** 后端 pay_methods 的原始结构（min_topup 是字符串） */
-interface RawPayMethod {
-  name?: string
-  type?: string
-  icon?: string
-  min_topup?: string | number
-}
-
-function parsePayMethods(raw: unknown): PayMethod[] {
-  if (!Array.isArray(raw)) return []
-  return raw
-    .filter((m): m is RawPayMethod => !!m && typeof m === 'object')
-    .filter((m) => !!m.type)
-    .map((m) => ({
-      name: m.name,
-      type: m.type as string,
-      icon: m.icon,
-      min_topup: Number(m.min_topup) || 0,
-    }))
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function randomId(prefix: string) {
-  const rand = Math.random().toString(36).slice(2, 10)
-  return `${prefix}_${Date.now().toString(36)}${rand}`
-}
-
-/**
- * 生成高强度随机密码。
- *
- * 密码会明文展示给用户并写在「我的服务器」里，必须满足：
- * 大小写字母 + 数字 + 符号各至少一个，且不用易混字符（0/O、1/l/I）。
- * 长度 20 位，前 4 位强制各取自一类（保证类别不缺失），
- * 剩余位从全集随机，最后再打乱顺序（避免「类别固定在前几位」的结构特征）。
- */
-function randomPassword() {
-  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
-  const lower = 'abcdefghijkmnpqrstuvwxyz'
-  const digits = '23456789'
-  const symbols = '!@#$%^&*-_=+'
-  const all = upper + lower + digits + symbols
-  const pick = (chars: string) =>
-    chars[Math.floor(Math.random() * chars.length)]
-
-  const length = 20
-  const chars = [
-    pick(upper),
-    pick(lower),
-    pick(digits),
-    pick(symbols),
-    ...Array.from({ length: length - 4 }, () => pick(all)),
-  ]
-
-  // Fisher-Yates 打乱：强制类别的那 4 位不能留在固定位置
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1))
-    ;[chars[i], chars[j]] = [chars[j], chars[i]]
+  constructor(code: ServerErrorCode, message: string) {
+    super(message)
+    this.name = 'ServerApiError'
+    this.code = code
   }
+}
 
-  return chars.join('')
+interface Envelope<T> {
+  success?: boolean
+  message?: string
+  code?: ServerErrorCode
+  data?: T
 }
 
 /**
- * 演示态的公网 IP 与登录用户。
+ * 稳定错误码 → i18n key。
  *
- * 演示态没有真实机器池，IP / 用户名是**固定**的（用户指定）。
- * 后端接入后这两个值由开台接口返回，这里只是占位。
+ * 服务端只回中文兜底文案；要跟站点语言一致，必须由前端按 code 翻译。
+ * 未识别的 code 退回服务端 message（至少能看到具体原因）。
  */
-const DEMO_SERVER_IP = '43.142.108.151'
-const DEMO_SERVER_USERNAME = 'ubuntu'
-
-/**
- * 获取可用支付方式。
- *
- * ⚠️ **后端未接入时，只返回演示渠道 —— 绝不返回站点的真实渠道。**
- *
- * 原因：`payServerOrder` 目前是本地模拟（必定成功、不扣款）。如果把站点
- * 真实的「支付宝 / 微信」渠道摆出来，用户会以为点下去真的付了钱，
- * 实际既没扣款也没开台 —— 支付闭环直接断裂，还可能被当成站点在收钱。
- * 所以真实渠道只在 `PAYMENT_BACKEND_ENABLED = true`（即 `payServerOrder`
- * 换成真实请求）之后才允许出现。
- *
- * 返回空数组表示「站点当前没有可用的在线支付渠道」，调用方需要禁用支付并提示。
- */
-export async function getServerPayMethods(): Promise<PayMethod[]> {
-  // 后端未接入：无论站点配了什么支付渠道，一律只给演示渠道
-  if (!PAYMENT_BACKEND_ENABLED) {
-    return [DEMO_PAY_METHOD]
+export function serverErrorMessageKey(error: unknown): string | null {
+  if (!(error instanceof ServerApiError)) return null
+  switch (error.code) {
+    case 'insufficient_quota':
+      return 'Insufficient balance, please top up first'
+    case 'instance_not_found':
+      return 'Instance not found'
+    case 'instance_released':
+      return 'This instance has been released'
+    case 'instance_expired':
+      return 'This instance has expired, please renew it first'
+    case 'instance_not_active':
+      return 'This operation is not available in the current state'
+    case 'concurrent_update':
+      return 'The instance changed, please refresh and try again'
+    case 'invalid_config':
+      return 'Invalid server configuration'
+    case 'password_too_short':
+      return 'Password must be at least 8 characters'
+    case 'order_not_found':
+      return 'Order not found'
+    case 'order_paid':
+      return 'This order has already been paid'
+    case 'order_not_payable':
+      return 'This order cannot be paid'
+    case 'order_expired':
+      return 'This order has expired, please place a new one'
+    case 'payment_method_invalid':
+      return 'This payment method is not available'
+    case 'payment_not_configured':
+      return 'Online payment is not configured yet'
+    case 'payment_launch_failed':
+      return 'Failed to open the payment page'
+    default:
+      return null
   }
-  try {
-    const res = await api.get('/api/user/topup/info', {
-      skipBusinessError: true,
-      // 未登录时这个接口必然 401，这里自己兜底，不要弹全局的「会话已过期」
-      skipErrorHandler: true,
-    })
-    const info = res.data?.data as
-      | { pay_methods?: unknown; enable_online_topup?: boolean }
-      | undefined
-    const methods = parsePayMethods(info?.pay_methods)
-    if (info?.enable_online_topup && methods.length > 0) {
-      return methods
-    }
-  } catch {
-    // 网络异常：按「站点未开通在线支付」处理，不伪造渠道
-  }
-  return []
 }
 
-/** 创建订单（模拟后端下单） */
-export async function createServerOrder(
-  config: ServerConfig,
-  amount: number,
-  paymentMethod: string
-): Promise<ServerOrder> {
-  await delay(420)
-  const now = Date.now()
+/**
+ * 写操作的统一请求配置。
+ *
+ * - `skipBusinessError` / `skipErrorHandler`：错误由调用方翻译后自己提示，
+ *   否则全局拦截器会先弹一条中文、我们再弹一条本地化的，用户看到两条。
+ * - `disableDuplicate`：关掉同 URL 的并发去重 —— 幂等由 `client_request_id`
+ *   在服务端保证，前端去重只会在「关掉弹窗立刻重开」时把新请求吞掉。
+ */
+const WRITE_OPTIONS = {
+  skipBusinessError: true,
+  skipErrorHandler: true,
+  disableDuplicate: true,
+} as const
+
+async function unwrap<T>(request: Promise<{ data: Envelope<T> }>): Promise<T> {
+  const response = await request
+  const payload = response.data
+  if (payload?.success === false) {
+    throw new ServerApiError(
+      payload.code ?? 'server_error',
+      payload.message || 'Request failed'
+    )
+  }
+  if (!payload?.data) {
+    throw new ServerApiError(
+      'server_error',
+      payload?.message || 'Empty response'
+    )
+  }
+  return payload.data
+}
+
+/** 生成一次下单/续费请求的幂等号：双击或重试不会买出两台机器。 */
+export function newRequestId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID()
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+function configBody(config: ServerConfig) {
   return {
-    id: randomId('srv'),
-    tradeNo: `HBD${now.toString().slice(-10)}`,
-    config,
-    amount,
-    paymentMethod,
-    status: 'pending',
-    createdAt: now,
+    region: config.region,
+    plan: config.plan,
+    spec_id: config.specId,
+    mbps: config.mbps,
+    duration_id: config.durationId ?? '',
   }
+}
+
+export interface ServerWalletSnapshot {
+  quota: number
+  balance_amount: number
+}
+
+export interface PurchaseResult extends ServerWalletSnapshot {
+  order: ServerOrderRecord
+  /** 站内余额支付时立即返回；第三方支付要等回调，此刻为空 */
+  instance?: ServerInstance
+  /** balance：余额同步开通；epay：先拉起收银台，机器在回调后开通 */
+  pay_mode: 'balance' | 'epay'
+}
+
+/** 收银台上的一个支付方式 */
+export interface ServerPayMethod {
+  name: string
+  type: string
+  icon?: string
+}
+
+/** 可用支付方式（余额 + 服务端下发的第三方渠道） */
+export interface ServerPayMethodsResult extends ServerWalletSnapshot {
+  methods: ServerPayMethod[]
+}
+
+/** 第三方收银台参数：需要前端提交表单跳转到网关 */
+export interface ServerPayLaunch {
+  pay_mode: 'form' | 'redirect'
+  url: string
+  params: Record<string, string>
+  trade_no: string
+}
+
+/** 订单支付状态（前端轮询用） */
+export interface ServerOrderStatus extends ServerWalletSnapshot {
+  order: ServerOrderRecord
+  paid: boolean
+  instance?: ServerInstance
+}
+
+/** 服务端报价（下单前的权威金额） */
+export async function quoteServer(
+  config: ServerConfig
+): Promise<ServerQuoteResult> {
+  // 报价是只读的，但用户改了配置就立刻重报，不能被并发去重挡住
+  return unwrap<ServerQuoteResult>(
+    api.post('/api/server/quote', configBody(config), WRITE_OPTIONS)
+  )
+}
+
+/** 可用的支付方式（余额 + 第三方渠道） */
+export async function listServerPayMethods(): Promise<ServerPayMethodsResult> {
+  return unwrap(api.get('/api/server/pay-methods'))
 }
 
 /**
- * 发起支付并等待结果。
+ * 下单购买一台服务器。
  *
- * 模拟真实收银台的异步过程：拉起 → 用户确认 → 回调。
- * 后端接入后，这个函数应替换为「拉起支付 + 轮询订单状态」。
+ * paymentMethod 为 'balance' 时同步开通并返回 instance；
+ * 第三方渠道则返回 pending 订单与 trade_no，需要再调 requestServerEpayPay。
  */
-export async function payServerOrder(
-  order: ServerOrder
-): Promise<{ success: boolean; server?: OwnedServer; messageKey?: string }> {
-  await delay(1400)
-
-  const duration = getDuration(resolveDurationId(order.config))
-  // 到期时间跟着选中的时长档走：
-  // 按量档（小时/天）= 买的小时数之后释放；包月档 = 月数 × 30 天
-  const durationMs =
-    duration.pricing === 'hourly'
-      ? duration.amount * 3600 * 1000
-      : duration.amount * 30 * 24 * 3600 * 1000
-  const expireAt = Math.floor((Date.now() + durationMs) / 1000)
-
-  const server: OwnedServer = {
-    id: randomId('node'),
-    orderId: order.id,
-    config: order.config,
-    ip: DEMO_SERVER_IP,
-    username: DEMO_SERVER_USERNAME,
-    password: randomPassword(),
-    status: 'running',
-    expireAt,
-    createdAt: Date.now(),
-    demo: true,
-  }
-
-  return { success: true, server }
+export async function purchaseServer(
+  config: ServerConfig,
+  clientRequestId: string,
+  paymentMethod = 'balance'
+): Promise<PurchaseResult> {
+  return unwrap<PurchaseResult>(
+    api.post(
+      '/api/server/orders',
+      {
+        ...configBody(config),
+        client_request_id: clientRequestId,
+        payment_method: paymentMethod,
+      },
+      WRITE_OPTIONS
+    )
+  )
 }
 
-/** 修改登录密码（模拟后端接口） */
-export async function changeServerPassword(
-  _serverId: string,
+/** 拉起第三方收银台：拿到网关地址与表单参数 */
+export async function requestServerEpayPay(
+  tradeNo: string,
+  paymentMethod: string
+): Promise<ServerPayLaunch> {
+  return unwrap<ServerPayLaunch>(
+    api.post(
+      '/api/server/pay/epay',
+      { trade_no: tradeNo, payment_method: paymentMethod },
+      WRITE_OPTIONS
+    )
+  )
+}
+
+/** 查询订单支付状态（收银台跳回来后轮询） */
+export async function getServerOrderStatus(
+  tradeNo: string
+): Promise<ServerOrderStatus> {
+  return unwrap<ServerOrderStatus>(
+    api.get(`/api/server/orders/${encodeURIComponent(tradeNo)}`)
+  )
+}
+
+/** 续费：余额同步扣款，实例立即更新，所以 instance 一定存在 */
+export interface RenewResult extends ServerWalletSnapshot {
+  order: ServerOrderRecord
+  instance: ServerInstance
+}
+
+/** 续费 */
+export async function renewServer(
+  instanceId: number,
+  durationId: string,
+  clientRequestId: string
+): Promise<RenewResult> {
+  return unwrap<RenewResult>(
+    api.post(
+      `/api/server/instances/${instanceId}/renew`,
+      { duration_id: durationId, client_request_id: clientRequestId },
+      WRITE_OPTIONS
+    )
+  )
+}
+
+export interface ReleaseResult extends ServerWalletSnapshot {
+  instance: ServerInstance
+  refunded: number
+  refund_order?: ServerOrderRecord
+}
+
+/** 释放实例（按剩余时长退款） */
+export async function releaseServer(
+  instanceId: number
+): Promise<ReleaseResult> {
+  return unwrap<ReleaseResult>(
+    api.post(
+      `/api/server/instances/${instanceId}/release`,
+      undefined,
+      WRITE_OPTIONS
+    )
+  )
+}
+
+export async function listServerInstances(
+  includeReleased = false
+): Promise<{ items: ServerInstance[] } & ServerWalletSnapshot> {
+  return unwrap(
+    api.get('/api/server/instances', {
+      params: { include_released: includeReleased ? 'true' : 'false' },
+    })
+  )
+}
+
+export async function getServerInstance(id: number): Promise<ServerInstance> {
+  return unwrap(api.get(`/api/server/instances/${id}`))
+}
+
+export async function getServerMetrics(id: number): Promise<ServerMetrics> {
+  return unwrap(api.get(`/api/server/instances/${id}/metrics`))
+}
+
+export async function getServerEvents(
+  id: number
+): Promise<{ items: ServerInstanceEvent[] }> {
+  return unwrap(api.get(`/api/server/instances/${id}/events`))
+}
+
+export async function listServerOrders(): Promise<{
+  items: ServerOrderRecord[]
+}> {
+  return unwrap(api.get('/api/server/orders'))
+}
+
+export async function startServer(id: number): Promise<ServerInstance> {
+  return unwrap(
+    api.post(`/api/server/instances/${id}/start`, undefined, WRITE_OPTIONS)
+  )
+}
+
+export async function stopServer(id: number): Promise<ServerInstance> {
+  return unwrap(
+    api.post(`/api/server/instances/${id}/stop`, undefined, WRITE_OPTIONS)
+  )
+}
+
+export async function rebootServer(id: number): Promise<ServerInstance> {
+  return unwrap(
+    api.post(`/api/server/instances/${id}/reboot`, undefined, WRITE_OPTIONS)
+  )
+}
+
+export async function resetServerPassword(
+  id: number,
   password: string
-): Promise<{ success: boolean; messageKey?: string }> {
-  await delay(600)
-  if (!password || password.length < 8) {
-    return {
-      success: false,
-      messageKey: 'Password must be at least 8 characters',
-    }
-  }
-  return { success: true }
+): Promise<{ password: string }> {
+  return unwrap(
+    api.post(
+      `/api/server/instances/${id}/reset-password`,
+      { password },
+      WRITE_OPTIONS
+    )
+  )
 }

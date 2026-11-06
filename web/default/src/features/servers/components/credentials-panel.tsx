@@ -31,11 +31,11 @@ import { toast } from 'sonner'
 
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
-import type { OwnedServer } from '../types'
+import type { ServerInstance } from '../types'
 import { CredentialField } from './credential-field'
 
 interface CredentialsPanelProps {
-  server: OwnedServer
+  server: ServerInstance
   /** 是否显示底部的 SSH 命令行 */
   showSshCommand?: boolean
 }
@@ -73,11 +73,11 @@ export function CredentialsPanel({
       <div className='flex items-center gap-2 text-xs font-semibold text-[#1a4a3f]'>
         <Server className='size-3.5 text-[#3a8f7a]' />
         {t('Server credentials')}
-        {/* 演示态必须显式标出来：否则用户会以为这台机器真的开出来了，
+        {/* 模拟开台必须显式标出来：否则用户会以为这台机器真的开出来了，
             拿着 IP 去连却连不上 —— 这是「闭环断裂」最容易被误判成 bug 的地方 */}
-        {server.demo && (
+        {server.provision_mode === 'simulated' && (
           <span className='rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-amber-600'>
-            {t('Demo')}
+            {t('Simulated instance')}
           </span>
         )}
       </div>
@@ -95,12 +95,28 @@ export function CredentialsPanel({
         />
         {/* 密码最长，单独占满一行 —— 放在两列网格里会在右侧留一块空白 */}
         <div className='sm:col-span-2'>
-          <CredentialField
-            label={t('Password')}
-            value={server.password}
-            secret
-            icon={<KeyRound className='size-3' />}
-          />
+          {server.password_readable ? (
+            <CredentialField
+              label={t('Password')}
+              value={server.password}
+              secret
+              icon={<KeyRound className='size-3' />}
+            />
+          ) : (
+            /* 密码只存密文时（服务端换过 CRYPTO_SECRET、或历史数据），
+               不能渲染一个空输入框让用户以为密码丢了 */
+            <div className='rounded-xl border border-dashed border-[#cfe8e1] bg-[#f8fbfa] px-3.5 py-3'>
+              <div className='flex items-center gap-1.5 text-[11px] font-medium text-[#3a8f7a]'>
+                <KeyRound className='size-3' />
+                {t('Password')}
+              </div>
+              <p className='text-muted-foreground mt-1 text-[11px] leading-relaxed'>
+                {t(
+                  'Password cannot be displayed. Reset it from My servers before logging in.'
+                )}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

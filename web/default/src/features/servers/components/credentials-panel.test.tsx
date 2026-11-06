@@ -25,32 +25,35 @@ import ja from '../../../i18n/locales/ja.json'
 import ru from '../../../i18n/locales/ru.json'
 import vi from '../../../i18n/locales/vi.json'
 import zh from '../../../i18n/locales/zh.json'
-import { payServerOrder } from '../api'
 import { renderWithI18n } from '../test-render'
-import type { OwnedServer } from '../types'
+import type { ServerInstance } from '../types'
 import { CredentialsPanel } from './credentials-panel'
 
 /**
  * 付款成功后的凭据展示契约。
  *
  * 用户原话：「用户选择付款后成功后显示：ip、用户、密码」。
- * 之前支付成功弹窗只有一句「可在我的服务器中查看」，
- * 用户要再点一次、翻一个 Tab 才能拿到 IP / 用户名 / 密码。
- * 现在凭据直接摆在支付成功弹窗里，并且密码是**高强度随机**的
- * （不是固定串，也不是「root / 123456」这种弱口令）。
  *
  * 这里锁住三件事：
  *   1. 弹窗里能看到 IP、用户名、密码三个字段与可复制的 SSH 命令
- *   2. 密码默认打码，但明文值确实存在于渲染结果里（可复制）
- *   3. 生成的密码满足强度要求（长度 + 四类字符齐全 + 不用易混字符）
+ *   2. 密码默认打码，明文不落进 DOM（截图/看源码都拿不到）
+ *   3. 未接入真实开台时必须自曝「Simulated instance」
+ *
+ * 密码强度、随机性、只存密文由服务端保证，锁在
+ * `model/server_instance_test.go`，不在前端重复断言。
  */
 
 const locales = { en, zh, fr, ja, ru, vi }
 
-function serverFor(overrides: Partial<OwnedServer> = {}): OwnedServer {
+function serverFor(overrides: Partial<ServerInstance> = {}): ServerInstance {
   return {
-    id: 'srv-1',
-    orderId: 'order-1',
+    id: 1,
+    name: 'ns-1',
+    status: 'running',
+    ip: '43.142.108.151',
+    username: 'ubuntu',
+    password: 'Xk9$mQ2#pL7@vN4&wR6z',
+    password_readable: true,
     config: {
       region: 'guangzhou',
       plan: 'lite',
@@ -58,13 +61,26 @@ function serverFor(overrides: Partial<OwnedServer> = {}): OwnedServer {
       mbps: 20,
       durationId: '1mo',
     },
-    ip: '43.142.108.151',
-    username: 'ubuntu',
-    password: 'Xk9$mQ2#pL7@vN4&wR6z',
-    status: 'running',
-    expireAt: 4102444800,
-    createdAt: 1790000000,
-    demo: true,
+    spec: {
+      id: 'lite-2c2g',
+      cpu: 2,
+      memory: 2,
+      disk: 40,
+      multiplier: 1,
+    },
+    region: 'guangzhou',
+    plan: 'lite',
+    mbps: 20,
+    billing: 'prepaid',
+    unit_price: 60,
+    paid_amount: 60,
+    refunded_amount: 0,
+    provision_mode: 'simulated',
+    expire_at: 4102444800,
+    created_at: 1790000000,
+    released_at: 0,
+    remaining_seconds: 86_400,
+    order_id: 1,
     ...overrides,
   }
 }
@@ -83,7 +99,6 @@ describe('servers: 付款成功后的凭据面板', () => {
     const html = await renderWithI18n(<CredentialsPanel server={serverFor()} />)
     assert.ok(html.includes('••••••••••••'), '密码没有默认打码')
     // 打码的真正价值：明文不落在 DOM 里，截图/看源码都拿不到。
-    // 明文只通过「显示」按钮或复制按钮取用。
     assert.ok(
       !html.includes('Xk9$mQ2#pL7@vN4&wR6z'),
       '打码状态下密码明文仍然出现在 DOM 里'
@@ -108,62 +123,35 @@ describe('servers: 付款成功后的凭据面板', () => {
       '缺少首次登录改密提示'
     )
   })
-})
 
-describe('servers: 开台返回的凭据', () => {
-  test('公网 IP 与用户名是约定的固定值', async () => {
-    const order = {
-      id: 'srv_test',
-      tradeNo: 'HBDTEST',
-      config: serverFor().config,
-      amount: 100,
-      paymentMethod: 'demo',
-      status: 'pending' as const,
-      createdAt: Date.now(),
-    }
-    const result = await payServerOrder(order)
-    assert.ok(result.server)
-    assert.equal(result.server.ip, '43.142.108.151')
-    assert.equal(result.server.username, 'ubuntu')
+  test('模拟开台必须自曝身份，不能冒充真实机器', async () => {
+    const simulated = await renderWithI18n(
+      <CredentialsPanel server={serverFor()} />
+    )
+    assert.ok(
+      simulated.includes('Simulated instance'),
+      '模拟实例没有标注，用户会以为拿到了真实机器'
+    )
+
+    const live = await renderWithI18n(
+      <CredentialsPanel server={serverFor({ provision_mode: 'live' })} />
+    )
+    assert.ok(!live.includes('Simulated instance'), '真实开台不该带模拟徽标')
   })
 
-  test('随机密码满足强度要求：20 位 + 大小写/数字/符号齐全，且不含易混字符', async () => {
-    const order = {
-      id: 'srv_test2',
-      tradeNo: 'HBDTEST2',
-      config: serverFor().config,
-      amount: 100,
-      paymentMethod: 'demo',
-      status: 'pending' as const,
-      createdAt: Date.now(),
-    }
-    const result = await payServerOrder(order)
-    assert.ok(result.server)
-    const password = result.server.password
-
-    assert.ok(password.length >= 20, `密码太短: ${password.length}`)
-    assert.match(password, /[A-Z]/, '缺大写字母')
-    assert.match(password, /[a-z]/, '缺小写字母')
-    assert.match(password, /[0-9]/, '缺数字')
-    assert.match(password, /[^A-Za-z0-9]/, '缺符号')
-    // 易混字符（0/O、1/l/I）在登录场景里最容易敲错
-    assert.doesNotMatch(password, /[0O1lI]/, `密码含易混字符: ${password}`)
-  })
-
-  test('不同订单生成的密码不一样', async () => {
-    const order = {
-      id: 'srv_test3',
-      tradeNo: 'HBDTEST3',
-      config: serverFor().config,
-      amount: 100,
-      paymentMethod: 'demo',
-      status: 'pending' as const,
-      createdAt: Date.now(),
-    }
-    const first = await payServerOrder(order)
-    const second = await payServerOrder(order)
-    assert.ok(first.server && second.server)
-    assert.notEqual(first.server.password, second.server.password)
+  test('密码不可回显时给出解释，而不是渲染空字段', async () => {
+    const html = await renderWithI18n(
+      <CredentialsPanel
+        server={serverFor({
+          password: '',
+          password_readable: false,
+        })}
+      />
+    )
+    assert.ok(
+      html.includes('Password cannot be displayed'),
+      '密码不可读时没有给出任何解释'
+    )
   })
 })
 
@@ -177,6 +165,8 @@ describe('servers: 凭据面板文案的 i18n 覆盖', () => {
     'Password',
     'SSH command copied',
     'Copied to clipboard',
+    'Simulated instance',
+    'Password cannot be displayed. Reset it from My servers before logging in.',
   ]
 
   for (const [locale, bundle] of Object.entries(locales)) {

@@ -31,6 +31,36 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/privacy-policy", controller.GetPrivacyPolicy)
 		apiRouter.GET("/about", controller.GetAbout)
 
+		// 云服务器租赁：价格目录与报价公开（购买页未登录也要能看价），
+		// 下单与实例管理必须登录。金额由服务端算，前端传价无效。
+		serverPublicRoute := apiRouter.Group("/server")
+		{
+			serverPublicRoute.GET("/catalog", controller.GetServerCatalog)
+			serverPublicRoute.POST("/quote", controller.QuoteServerPrice)
+		}
+		serverRoute := apiRouter.Group("/server")
+		serverRoute.Use(middleware.UserAuth())
+		{
+			serverRoute.POST("/orders", middleware.CriticalRateLimit(), controller.PurchaseServer)
+			serverRoute.GET("/orders", controller.GetServerOrders)
+			serverRoute.GET("/orders/:trade_no", controller.GetServerOrderStatus)
+			serverRoute.GET("/pay-methods", controller.GetServerPayMethods)
+			serverRoute.POST("/pay/epay", middleware.CriticalRateLimit(), controller.RequestServerEpayPay)
+			serverRoute.GET("/instances", controller.GetServerInstances)
+			serverRoute.GET("/instances/:id", controller.GetServerInstance)
+			serverRoute.GET("/instances/:id/metrics", controller.GetServerInstanceMetrics)
+			serverRoute.GET("/instances/:id/events", controller.GetServerInstanceEvents)
+			serverRoute.POST("/instances/:id/start", middleware.CriticalRateLimit(), controller.StartServerInstance)
+			serverRoute.POST("/instances/:id/stop", middleware.CriticalRateLimit(), controller.StopServerInstance)
+			serverRoute.POST("/instances/:id/reboot", middleware.CriticalRateLimit(), controller.RebootServerInstance)
+			serverRoute.POST("/instances/:id/reset-password", middleware.CriticalRateLimit(), controller.ResetServerInstancePassword)
+			serverRoute.POST("/instances/:id/renew", middleware.CriticalRateLimit(), controller.RenewServerInstance)
+			serverRoute.POST("/instances/:id/release", middleware.CriticalRateLimit(), controller.ReleaseServerInstance)
+		}
+		// 云服务器订单的支付回调：无需登录（网关服务器调用），但必须验签。
+		apiRouter.POST("/server/pay/epay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.ServerEpayNotify)
+		apiRouter.GET("/server/pay/epay/notify", middleware.PaymentNotifyRateLimit(), controller.ServerEpayNotify)
+
 		// 条件路由的运维开关（暂停 / 恢复「按时长改派到豆包」那条规则）。
 		//
 		// 调用方是客户端软件（每个操作员机器上的一份安装包），所以**不用**

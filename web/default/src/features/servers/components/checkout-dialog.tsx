@@ -1,4 +1,10 @@
-import { CheckCircle2, Info, Loader2, ShieldCheck, Wallet } from 'lucide-react'
+import {
+  CheckCircle2,
+  Info,
+  Loader2,
+  ShieldCheck,
+  Wallet,
+} from 'lucide-react'
 /*
 Copyright (C) 2023-2026 QuantumNous
 
@@ -17,7 +23,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -30,7 +35,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
-import { useSystemConfig } from '@/hooks/use-system-config'
 import { cn } from '@/lib/utils'
 
 import {
@@ -49,19 +53,30 @@ import {
   resolveBilling,
   resolveDurationId,
 } from '../lib/pricing'
-import type { OwnedServer, PayMethod, ServerConfig } from '../types'
+import type {
+  ServerConfig,
+  ServerInstance,
+  ServerPayMethod,
+  ServerQuoteResult,
+} from '../types'
 import { CredentialsPanel } from './credentials-panel'
 
 interface CheckoutDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   config: ServerConfig
-  payMethods: PayMethod[]
-  selectedMethod: string
-  onSelectMethod: (type: string) => void
   paying: boolean
-  /** 支付成功后的实例凭据；为空表示尚未支付成功 */
-  paidServer: OwnedServer | null
+  /** 支付成功后的实例；为空表示尚未支付成功 */
+  paidServer: ServerInstance | null
+  /** 服务端报价（权威金额）；为空时退回本地计算值展示 */
+  serverQuote: ServerQuoteResult | null
+  /** 账户余额（人民币） */
+  balance: number
+  /** 可用的支付方式（余额 + 服务端下发的第三方渠道） */
+  payMethods: ServerPayMethod[]
+  /** 当前选中的支付方式 */
+  selectedMethod: string
+  onSelectMethod: (method: string) => void
   onPay: () => void
   onDone: () => void
 }
@@ -77,16 +92,17 @@ export function CheckoutDialog({
   open,
   onOpenChange,
   config,
+  paying,
+  paidServer,
+  serverQuote,
+  balance,
   payMethods,
   selectedMethod,
   onSelectMethod,
-  paying,
-  paidServer,
   onPay,
   onDone,
 }: CheckoutDialogProps) {
   const { t } = useTranslation()
-  const { currency } = useSystemConfig()
 
   const plan = getPlan(config.plan)
   const spec = getSpec(plan, config.specId)
@@ -96,18 +112,18 @@ export function CheckoutDialog({
   const price = computePrice(config)
   const isHourly = resolveBilling(config) === 'hourly'
 
-  // 后端下发的 min_topup 是「美元单位」，本页价格是人民币，
-  // 与钱包页保持一致：按站点汇率换算后再比较门槛。
-  const usdExchangeRate =
-    currency?.quotaDisplayType === 'USD' ? 1 : currency?.usdExchangeRate || 1
-  const selectedIsDemo =
-    payMethods.find((m) => m.type === selectedMethod)?.demo ?? false
+  // 金额以服务端报价为准；本地算出来的只用于「报价还没回来」时的占位展示。
+  // 两者若不一致，说明前端常量落后于后端目录，以服务端为准才是对的。
+  const total = serverQuote?.total ?? price.total
+  const listTotal = serverQuote?.list_total ?? price.listTotal
+  const saved = serverQuote?.saved ?? price.saved
+  const quoteMismatch =
+    serverQuote !== null && Math.abs(serverQuote.total - price.total) > 0.01
 
-  useEffect(() => {
-    if (open && payMethods.length > 0 && !selectedMethod) {
-      onSelectMethod(payMethods[0].type)
-    }
-  }, [open, payMethods, selectedMethod, onSelectMethod])
+  // 余额支付要求余额充足；第三方支付直接付现金，没有余额门槛。
+  const isBalanceMethod = selectedMethod === 'balance'
+  const insufficient = isBalanceMethod && balance + 0.005 < total
+  const balanceAfter = Math.max(0, balance - total)
 
   // 与购买摘要同一套拆解：各行相加 = 单价，单价 × 时长 = 总价
   const formatUnitPrice = (value: number) =>
@@ -133,7 +149,7 @@ export function CheckoutDialog({
     },
     {
       label: t('Specifications'),
-      value: formatSpec(spec),
+      value: formatSpec(spec, t),
       price:
         price.specPrice > 0
           ? formatUnitSurcharge(price.specPrice)
@@ -207,7 +223,7 @@ export function CheckoutDialog({
                 {t('Confirm your order')}
               </DialogTitle>
               <DialogDescription>
-                {t('Review the configuration and choose a payment method.')}
+                {t('Review the configuration before paying.')}
               </DialogDescription>
             </DialogHeader>
 
@@ -235,77 +251,101 @@ export function CheckoutDialog({
 
               <Separator />
 
-              {/* 支付方式 */}
+              {/* 支付方式：站内余额（同步开通）或第三方收银台（异步开通）。
+                  两种方式的门槛不同 —— 余额付要余额充足，第三方付不需要。 */}
               <div className='space-y-2.5'>
                 <div className='text-sm font-semibold'>
                   {t('Payment Method')}
                 </div>
-                {payMethods.length === 0 ? (
+                <div className='space-y-2'>
+                  {payMethods.map((method) => {
+                    const active = method.type === selectedMethod
+                    const methodInsufficient =
+                      method.type === 'balance' && balance + 0.005 < total
+                    return (
+                      <button
+                        key={method.type}
+                        type='button'
+                        disabled={paying}
+                        onClick={() => onSelectMethod(method.type)}
+                        className={cn(
+                          'flex w-full items-center gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors',
+                          active
+                            ? 'border-[#7dd3c0] bg-[#7dd3c0]/[0.08]'
+                            : 'border-border hover:bg-muted/40',
+                          methodInsufficient && 'border-destructive/40'
+                        )}
+                      >
+                        <span className='flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#e8f4f0]'>
+                          <Wallet className='size-4 text-[#3a8f7a]' />
+                        </span>
+                        <div className='min-w-0 flex-1'>
+                          <div className='text-sm font-medium'>
+                            {method.type === 'balance'
+                              ? t('Account balance')
+                              : method.name}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {method.type === 'balance'
+                              ? t('Available: {{amount}}', {
+                                  amount: formatAmount(balance),
+                                })
+                              : t('Pay directly with {{method}}', {
+                                  method: method.name,
+                                })}
+                          </div>
+                        </div>
+                        <span
+                          className={cn(
+                            'shrink-0 text-sm font-semibold',
+                            methodInsufficient
+                              ? 'text-destructive'
+                              : 'text-[#1a4a3f]'
+                          )}
+                        >
+                          {method.type === 'balance'
+                            ? formatAmount(balance)
+                            : formatAmount(total)}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {insufficient && (
                   <div className='border-destructive/30 bg-destructive/5 text-destructive flex items-start gap-2 rounded-xl border px-3.5 py-3 text-xs leading-relaxed'>
                     <Info className='mt-0.5 size-4 shrink-0' />
                     <span>
                       {t(
-                        'Online payment is not available yet, please contact the administrator'
+                        'Insufficient balance. Top up {{amount}} more to place this order.',
+                        { amount: formatAmount(total - balance) }
                       )}
                     </span>
                   </div>
-                ) : (
-                  <>
-                    <div className='grid gap-2 sm:grid-cols-2'>
-                      {payMethods.map((method) => {
-                        const active = selectedMethod === method.type
-                        const isAlipay = method.type === 'alipay'
-                        const minTopup = method.min_topup ?? 0
-                        const minTopupCny = minTopup * usdExchangeRate
-                        const belowMin =
-                          minTopup > 0 && minTopupCny > price.total
-                        const label = method.nameKey
-                          ? t(method.nameKey)
-                          : method.name || method.type
-                        return (
-                          <button
-                            key={method.type}
-                            type='button'
-                            disabled={paying || belowMin}
-                            title={
-                              belowMin
-                                ? t('Minimum topup amount: {{amount}}', {
-                                    amount: formatAmount(minTopupCny),
-                                  })
-                                : undefined
-                            }
-                            onClick={() => onSelectMethod(method.type)}
-                            className={cn(
-                              'flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left text-sm transition-all disabled:opacity-60',
-                              active
-                                ? 'border-[#7dd3c0] bg-[#7dd3c0]/[0.08] shadow-[0_0_0_3px_rgba(125,211,192,0.16)]'
-                                : 'border-border hover:border-[#7dd3c0]/60'
-                            )}
-                          >
-                            {isAlipay ? (
-                              <span className='flex size-6 shrink-0 items-center justify-center rounded-md bg-[#1677ff] text-[11px] font-bold text-white'>
-                                支
-                              </span>
-                            ) : (
-                              <span className='bg-muted flex size-6 shrink-0 items-center justify-center rounded-md'>
-                                <Wallet className='text-muted-foreground size-3.5' />
-                              </span>
-                            )}
-                            <span className='truncate font-medium'>
-                              {label}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                    {selectedIsDemo && (
-                      <p className='text-muted-foreground text-[11px] leading-relaxed'>
-                        {t(
-                          'Demo mode: the payment is simulated and no real money is charged.'
-                        )}
-                      </p>
+                )}
+
+                {isBalanceMethod && !insufficient && (
+                  <p className='text-muted-foreground text-[11px] leading-relaxed'>
+                    {t('Balance after payment: {{amount}}', {
+                      amount: formatAmount(balanceAfter),
+                    })}
+                  </p>
+                )}
+
+                {!isBalanceMethod && (
+                  <p className='text-muted-foreground text-[11px] leading-relaxed'>
+                    {t(
+                      'You will be redirected to the payment page. The server is provisioned once the payment is confirmed.'
                     )}
-                  </>
+                  </p>
+                )}
+
+                {quoteMismatch && (
+                  <p className='text-[11px] leading-relaxed text-amber-600'>
+                    {t(
+                      'The price has been updated by the server; the amount below is the final one.'
+                    )}
+                  </p>
                 )}
               </div>
 
@@ -316,17 +356,17 @@ export function CheckoutDialog({
                       {t('You pay')}
                     </div>
                     <div className='text-2xl font-bold text-[#1a4a3f]'>
-                      {formatAmount(price.total)}
+                      {formatAmount(total)}
                     </div>
                   </div>
-                  {price.saved > 0 && (
+                  {saved > 0 && (
                     <div className='text-muted-foreground text-right text-xs'>
                       <div className='line-through'>
-                        {formatAmount(price.listTotal)}
+                        {formatAmount(listTotal)}
                       </div>
                       <div className='font-medium text-[#3a8f7a]'>
                         {t('Save {{amount}}', {
-                          amount: formatAmount(price.saved),
+                          amount: formatAmount(saved),
                         })}
                       </div>
                     </div>
@@ -338,7 +378,9 @@ export function CheckoutDialog({
             <DialogFooter className='bg-muted/30 gap-2 border-t px-6 py-4 sm:justify-between'>
               <span className='text-muted-foreground inline-flex items-center gap-1.5 text-[11px]'>
                 <ShieldCheck className='size-3.5 text-[#3a8f7a]' />
-                {t('Encrypted checkout')}
+                {isBalanceMethod
+                  ? t('Deducted from your balance instantly')
+                  : t('Payment is confirmed by the payment gateway')}
               </span>
               <div className='flex gap-2'>
                 <Button
@@ -350,7 +392,10 @@ export function CheckoutDialog({
                 </Button>
                 <Button
                   disabled={
-                    paying || !selectedMethod || payMethods.length === 0
+                    paying ||
+                    insufficient ||
+                    payMethods.length === 0 ||
+                    !selectedMethod
                   }
                   onClick={onPay}
                   className='bg-[#3a8f7a] text-white hover:bg-[#2f7a66]'
@@ -363,7 +408,7 @@ export function CheckoutDialog({
                   ) : (
                     <>
                       {t('Pay {{amount}}', {
-                        amount: formatAmount(price.total),
+                        amount: formatAmount(total),
                       })}
                     </>
                   )}

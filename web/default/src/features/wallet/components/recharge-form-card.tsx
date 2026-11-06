@@ -121,8 +121,7 @@ export function RechargeFormCard({
   const cnyToUsd = (cny: number) =>
     usdExchangeRate > 0 ? Math.max(1, Math.round(cny / usdExchangeRate)) : 0
 
-  const usdToCny = (usd: number) =>
-    Number((usd * usdExchangeRate).toFixed(2))
+  const usdToCny = (usd: number) => Number((usd * usdExchangeRate).toFixed(2))
 
   const handleAmountChange = (value: string) => {
     setLocalAmount(value)

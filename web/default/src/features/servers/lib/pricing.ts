@@ -77,12 +77,20 @@ export function planBasePrice(plan: ServerPlan, billing: BillingMode): number {
  * 某个规格的机型价（不含带宽、不含地区），按当前口径。
  *
  * 左侧规格按钮标的就是它；右侧摘要的「套餐」行 + 「配置」行相加也等于它。
+ *
+ * 包月口径下规格若显式指定了月价（`monthlyPrice`），以它为准 ——
+ * 按量与包月是两套独立定价，不总能由同一个系数互推。
+ * RTX PRO 6000 档按量 ¥15/小时（系数 6），包月 ¥6,580/月
+ * （÷ ¥1,280 = 5.140625）；硬套系数会算成 ¥7,680，比用户要的贵 ¥1,100。
  */
 export function specMachinePrice(
   plan: ServerPlan,
   spec: ServerSpec,
   billing: BillingMode
 ): number {
+  if (billing === 'prepaid' && spec.monthlyPrice !== undefined) {
+    return roundMoney(spec.monthlyPrice)
+  }
   return roundMoney(planBasePrice(plan, billing) * spec.multiplier)
 }
 

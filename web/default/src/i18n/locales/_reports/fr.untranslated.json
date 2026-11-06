@@ -1,0 +1,8 @@
+{
+  "Requests of {{seconds}}s are routed to {{target}}": "Requests of {{seconds}}s are routed to {{target}}",
+  "Takes effect immediately. No need to save.": "Takes effect immediately. No need to save.",
+  "Routing paused until the selected time": "Routing paused until the selected time",
+  "Failed to update routing policy": "Failed to update routing policy",
+  "Please pick a valid deadline": "Please pick a valid deadline",
+  "Deadline must be in the future": "Deadline must be in the future"
+}

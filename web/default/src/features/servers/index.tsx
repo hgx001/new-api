@@ -32,18 +32,14 @@ import { toast } from 'sonner'
 import { PublicLayout } from '@/components/layout'
 import { Footer } from '@/components/layout/components/footer'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { submitPaymentForm } from '@/features/wallet/lib/payment'
 import { useAuthStore } from '@/stores/auth-store'
 
-import {
-  changeServerPassword,
-  createServerOrder,
-  getServerPayMethods,
-  payServerOrder,
-} from './api'
+import { newRequestId, quoteServer } from './api'
 import { BillingPanel } from './components/billing-panel'
 import { CheckoutDialog } from './components/checkout-dialog'
 import { ConfigSection } from './components/config-section'
-import { MyServers } from './components/my-servers'
+import { InstanceConsole } from './components/instance-console'
 import { PasswordDialog } from './components/password-dialog'
 import { ServerHero } from './components/server-hero'
 import {
@@ -52,12 +48,23 @@ import {
   DEFAULT_PLAN,
   DEFAULT_REGION,
 } from './constants'
-import { computePrice, defaultConfigFor } from './lib/pricing'
-import { useOwnedServers, useServerStore } from './store'
-import type { OwnedServer, PayMethod, ServerConfig } from './types'
+import { useInstanceActions } from './hooks/use-instance-actions'
+import {
+  useServerActions,
+  useServerInstances,
+  useServerOrderStatus,
+  useServerOrders,
+  useServerPayMethods,
+} from './hooks/use-servers'
+import { localizedServerError } from './lib/errors'
+import { defaultConfigFor } from './lib/pricing'
+import type {
+  ServerConfig,
+  ServerInstance,
+  ServerQuoteResult,
+} from './types'
 
-const ADVANTAGES = [
-  {
+const ADVANTAGES = [  {
     icon: Clock3,
     titleKey: 'Instant delivery',
     descKey:
@@ -131,20 +138,60 @@ export function ServersContent({
   const [activeView, setActiveView] = useState<'configure' | 'owned'>(
     'configure'
   )
-  const [payMethods, setPayMethods] = useState<PayMethod[]>([])
-  const [selectedMethod, setSelectedMethod] = useState('')
   const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [serverQuote, setServerQuote] = useState<ServerQuoteResult | null>(null)
+  const [checkoutRequestId, setCheckoutRequestId] = useState('')
   const [paying, setPaying] = useState(false)
   // 支付成功后拿到实例凭据：收银台要直接展示 IP / 用户名 / 密码
-  const [paidServer, setPaidServer] = useState<OwnedServer | null>(null)
-  const [passwordTarget, setPasswordTarget] = useState<OwnedServer | null>(null)
+  const [paidServer, setPaidServer] = useState<ServerInstance | null>(null)
+  // 第三方支付：下单后拿到的订单号，收银台跳回来后靠它轮询支付结果
+  const [pendingTradeNo, setPendingTradeNo] = useState<string | null>(null)
+  // 收银台里选中的支付方式
+  const [selectedMethod, setSelectedMethod] = useState('balance')
+  const [passwordTarget, setPasswordTarget] = useState<ServerInstance | null>(
+    null
+  )
   const [passwordSubmitting, setPasswordSubmitting] = useState(false)
 
-  const servers = useOwnedServers()
-  const addOrder = useServerStore((s) => s.addOrder)
-  const settleOrder = useServerStore((s) => s.settleOrder)
-  const failOrder = useServerStore((s) => s.failOrder)
-  const updatePassword = useServerStore((s) => s.updatePassword)
+  const instancesQuery = useServerInstances(isAuthenticated)
+  const servers = instancesQuery.data?.items ?? []
+  const balance = instancesQuery.data?.balance_amount ?? 0
+  const payMethodsQuery = useServerPayMethods(isAuthenticated)
+  const payMethods = payMethodsQuery.data?.methods ?? []
+  const ordersQuery = useServerOrders(isAuthenticated)
+  const actions = useServerActions()
+  // 实例运维操作（开关机/重启/续费/释放/改密）与控制台共用一份实现
+  const instanceActions = useInstanceActions()
+
+  // 第三方支付的订单状态轮询：钱到了、机器开了就停
+  const orderStatusQuery = useServerOrderStatus(pendingTradeNo)
+  const paidFromOrder = orderStatusQuery.data?.instance ?? null
+
+  /**
+   * 从收银台跳回来时：把之前挂起的订单接上，继续轮询支付结果。
+   *
+   * 第三方支付是「下单 → 跳网关 → 回调开通」的异步链路。用户在网关付完钱
+   * 会跳回本站（return_url 带 ?paid=1），此时网关回调可能还没到 ——
+   * 所以要接上订单号继续轮询，而不是直接判定失败。
+   */
+  useEffect(() => {
+    if (!isAuthenticated || pendingTradeNo) return
+    const search = new URLSearchParams(window.location.search)
+    if (search.get('paid') !== '1') return
+
+    const orders = ordersQuery.data?.items ?? []
+    // 找最近一笔还没付掉的购买订单。
+    const pending = orders.find(
+      (order) =>
+        order.type === 'purchase' &&
+        order.status === 'pending' &&
+        !!order.trade_no
+    )
+    if (pending) {
+      setPendingTradeNo(pending.trade_no)
+      setCheckoutOpen(true)
+    }
+  }, [isAuthenticated, ordersQuery.data?.items, pendingTradeNo])
 
   const configRef = useRef<HTMLDivElement>(null)
   const ownedRef = useRef<HTMLDivElement>(null)
@@ -153,7 +200,7 @@ export function ServersContent({
     // 本页（与首页一致）固定浅色。站点全局主题可能是暗色，会以两种方式渗进来：
     // 1) CSS 变量：弹窗等 Portal 内容挂在 body 上，不在 .light 作用域内，会整体变暗；
     // 2) dark: 变体：只要 html 上还带 .dark，共享组件里的 dark: 样式就会命中。
-    // 因此本页挂载期间把文档切成浅色，卸载时还原。
+    // 因此本页挂载期间把文档切回浅色，卸载时还原。
     const root = document.documentElement
     const wasDark = root.classList.contains('dark')
     root.classList.remove('dark')
@@ -161,20 +208,6 @@ export function ServersContent({
       if (wasDark) root.classList.add('dark')
     }
   }, [])
-
-  useEffect(() => {
-    // 支付方式列表要登录后才有意义，未登录时不必去请求（否则必然 401）
-    if (!isAuthenticated) return
-    getServerPayMethods()
-      .then((methods) => {
-        setPayMethods(methods)
-        // 空列表表示站点当前没有可用的在线支付渠道，收银台会提示并禁用支付
-        setSelectedMethod((current) => current || methods[0]?.type || '')
-      })
-      .catch(() => {
-        setPayMethods([])
-      })
-  }, [isAuthenticated])
 
   const handleConfigChange = useCallback((patch: Partial<ServerConfig>) => {
     setConfig((current) => ({ ...current, ...patch }))
@@ -203,35 +236,77 @@ export function ServersContent({
       return
     }
     setPaidServer(null)
+    setServerQuote(null)
+    setPendingTradeNo(null)
+    // 默认选余额支付：不需要跳网关，是最快的路径。
+    setSelectedMethod('balance')
+    // 每次打开收银台生成一个幂等号：双击或网络重试都只会成交一台机器
+    setCheckoutRequestId(newRequestId())
     setCheckoutOpen(true)
-  }, [isAuthenticated, navigate, t])
+    // 金额以服务端报价为准；报价失败时退回本地计算值展示，支付时服务端仍会校验
+    quoteServer(config)
+      .then(setServerQuote)
+      .catch(() => setServerQuote(null))
+  }, [config, isAuthenticated, navigate, t])
 
+  /**
+   * 支付。
+   *
+   * 两条路径：
+   *  1. 余额支付 —— 同步扣款、机器立刻开，直接展示凭据；
+   *  2. 第三方支付 —— 先落一张 pending 订单，再拉起网关收银台。
+   *     机器要等网关异步回调才开通，所以这里跳出去后由订单轮询接管，
+   *     支付完成后在同一个弹窗里展示凭据。
+   */
   const handlePay = useCallback(async () => {
     setPaying(true)
-    let orderId = ''
     try {
-      const price = computePrice(config)
-      const order = await createServerOrder(config, price.total, selectedMethod)
-      orderId = order.id
-      addOrder(order)
-      const result = await payServerOrder(order)
-      if (result.success && result.server) {
-        settleOrder(order.id, result.server)
-        // 凭据直接交给收银台展示，用户不必再翻「我的服务器」
-        setPaidServer(result.server)
+      const result = await actions.purchase.mutateAsync({
+        config,
+        requestId: checkoutRequestId,
+        paymentMethod: selectedMethod,
+      })
+
+      // 余额支付：服务端已同步开通，直接展示凭据
+      if (result.instance) {
+        setPaidServer(result.instance)
         toast.success(t('Payment successful, your server is ready'))
-      } else {
-        // 订单要落成「失败」，否则永远停在 pending —— 状态与事实不符
-        failOrder(order.id)
-        toast.error(t('Payment failed, please try again'))
+        return
       }
-    } catch {
-      if (orderId) failOrder(orderId)
-      toast.error(t('Network error, please try again later'))
+
+      // 第三方支付：机器还没开，等回调。先记下订单号，再拉起收银台。
+      setPendingTradeNo(result.order.trade_no)
+      const launch = await actions.launchEpay.mutateAsync({
+        tradeNo: result.order.trade_no,
+        paymentMethod: selectedMethod,
+      })
+      if (!launch?.url) {
+        toast.error(t('Failed to open the payment page'))
+        return
+      }
+      if (launch.pay_mode === 'redirect') {
+        window.location.assign(launch.url)
+        return
+      }
+      // 易支付网关：浏览器要 POST 一张表单过去
+      submitPaymentForm(launch.url, launch.params ?? {})
+      toast.success(
+        t('Payment page opened. Your server will be ready once the payment is confirmed.')
+      )
+    } catch (error) {
+      toast.error(localizedServerError(error, t))
     } finally {
       setPaying(false)
     }
-  }, [addOrder, config, failOrder, selectedMethod, settleOrder, t])
+  }, [actions.launchEpay, actions.purchase, checkoutRequestId, config, selectedMethod, t])
+
+  // 第三方支付到账后：展示凭据，并停掉轮询
+  useEffect(() => {
+    if (!paidFromOrder) return
+    setPaidServer(paidFromOrder)
+    setPendingTradeNo(null)
+    toast.success(t('Payment successful, your server is ready'))
+  }, [paidFromOrder, t])
 
   const handleCheckoutDone = useCallback(() => {
     setCheckoutOpen(false)
@@ -251,21 +326,12 @@ export function ServersContent({
     async (password: string) => {
       if (!passwordTarget) return
       setPasswordSubmitting(true)
-      const result = await changeServerPassword(passwordTarget.id, password)
+      const ok = await instanceActions.resetPassword(passwordTarget, password)
       setPasswordSubmitting(false)
-      if (result.success) {
-        updatePassword(passwordTarget.id, password)
-        setPasswordTarget(null)
-        toast.success(t('Password updated'))
-      } else {
-        toast.error(
-          result.messageKey
-            ? t(result.messageKey)
-            : t('Failed to update the password')
-        )
-      }
+      // 失败时不关闭弹窗，用户可以直接改一个密码重试
+      if (ok) setPasswordTarget(null)
     },
-    [passwordTarget, t, updatePassword]
+    [instanceActions, passwordTarget]
   )
 
   return (
@@ -325,10 +391,15 @@ export function ServersContent({
               </div>
             ) : (
               <div ref={ownedRef} className='scroll-mt-24'>
-                <MyServers
+                <InstanceConsole
                   servers={servers}
+                  loading={instancesQuery.isLoading}
                   onChangePassword={setPasswordTarget}
                   onBrowse={scrollToConfig}
+                  onTogglePower={instanceActions.togglePower}
+                  onReboot={instanceActions.reboot}
+                  onRenew={instanceActions.renew}
+                  onRelease={instanceActions.release}
                 />
               </div>
             )}
@@ -399,11 +470,13 @@ export function ServersContent({
         open={checkoutOpen}
         onOpenChange={setCheckoutOpen}
         config={config}
+        paying={paying}
+        paidServer={paidServer}
+        serverQuote={serverQuote}
+        balance={balance}
         payMethods={payMethods}
         selectedMethod={selectedMethod}
         onSelectMethod={setSelectedMethod}
-        paying={paying}
-        paidServer={paidServer}
         onPay={handlePay}
         onDone={handleCheckoutDone}
       />
@@ -413,7 +486,7 @@ export function ServersContent({
         onOpenChange={(open) => {
           if (!open) setPasswordTarget(null)
         }}
-        serverId={passwordTarget?.id ?? ''}
+        serverId={String(passwordTarget?.id ?? '')}
         serverLabel={
           passwordTarget
             ? `${passwordTarget.ip} (${passwordTarget.username})`

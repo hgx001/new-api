@@ -54,6 +54,9 @@ func TestMain(m *testing.M) {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&ServerOrder{},
+		&ServerInstance{},
+		&ServerInstanceEvent{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -82,6 +85,9 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM system_instances")
 		DB.Exec("DELETE FROM system_task_locks")
 		DB.Exec("DELETE FROM system_tasks")
+		DB.Exec("DELETE FROM server_orders")
+		DB.Exec("DELETE FROM server_instances")
+		DB.Exec("DELETE FROM server_instance_events")
 	})
 }
 

@@ -357,6 +357,12 @@ func InitResources() error {
 	// 启动系统监控
 	common.StartSystemMonitor()
 
+	// 云服务器实例到期扫描：标记到期、超过宽限期自动释放
+	model.StartServerExpiryWorker()
+
+	// 云服务器未支付订单作废扫描：超时未付款的订单不能一直挂着
+	controller.StartServerOrderExpiryWorker()
+
 	// Initialize i18n
 	err = i18n.Init()
 	if err != nil {

@@ -482,8 +482,12 @@ export function PaymentSettingsSection({
       AlipayPrivateKey: initialRef.current.AlipayPrivateKey.trim(),
       AlipayPublicKey: initialRef.current.AlipayPublicKey.trim(),
       AlipayProduction: initialRef.current.AlipayProduction,
-      AlipayNotifyURL: removeTrailingSlash(initialRef.current.AlipayNotifyURL.trim()),
-      AlipayReturnURL: removeTrailingSlash(initialRef.current.AlipayReturnURL.trim()),
+      AlipayNotifyURL: removeTrailingSlash(
+        initialRef.current.AlipayNotifyURL.trim()
+      ),
+      AlipayReturnURL: removeTrailingSlash(
+        initialRef.current.AlipayReturnURL.trim()
+      ),
       Price: initialRef.current.Price,
       MinTopUp: initialRef.current.MinTopUp,
       CustomCallbackAddress: removeTrailingSlash(
@@ -547,14 +551,26 @@ export function PaymentSettingsSection({
     if (sanitized.AlipayAppID !== initial.AlipayAppID) {
       updates.push({ key: 'AlipayAppID', value: sanitized.AlipayAppID })
     }
-    if (sanitized.AlipayPrivateKey && sanitized.AlipayPrivateKey !== initial.AlipayPrivateKey) {
-      updates.push({ key: 'AlipayPrivateKey', value: sanitized.AlipayPrivateKey })
+    if (
+      sanitized.AlipayPrivateKey &&
+      sanitized.AlipayPrivateKey !== initial.AlipayPrivateKey
+    ) {
+      updates.push({
+        key: 'AlipayPrivateKey',
+        value: sanitized.AlipayPrivateKey,
+      })
     }
-    if (sanitized.AlipayPublicKey && sanitized.AlipayPublicKey !== initial.AlipayPublicKey) {
+    if (
+      sanitized.AlipayPublicKey &&
+      sanitized.AlipayPublicKey !== initial.AlipayPublicKey
+    ) {
       updates.push({ key: 'AlipayPublicKey', value: sanitized.AlipayPublicKey })
     }
     if (sanitized.AlipayProduction !== initial.AlipayProduction) {
-      updates.push({ key: 'AlipayProduction', value: sanitized.AlipayProduction })
+      updates.push({
+        key: 'AlipayProduction',
+        value: sanitized.AlipayProduction,
+      })
     }
     if (sanitized.AlipayNotifyURL !== initial.AlipayNotifyURL) {
       updates.push({ key: 'AlipayNotifyURL', value: sanitized.AlipayNotifyURL })
@@ -1288,55 +1304,177 @@ export function PaymentSettingsSection({
             <TabsContent value='alipay' className={paymentTabContentClassName}>
               <div className='space-y-4'>
                 <div>
-                  <h3 className='text-lg font-medium'>{t('Alipay Official Gateway')}</h3>
+                  <h3 className='text-lg font-medium'>
+                    {t('Alipay Official Gateway')}
+                  </h3>
                   <p className='text-muted-foreground text-sm'>
-                    {t('Direct Alipay computer website payment; keep disabled until credentials and callback URL are verified.')}
+                    {t(
+                      'Direct Alipay computer website payment; keep disabled until credentials and callback URL are verified.'
+                    )}
                   </p>
                 </div>
                 <Alert>
                   <ShieldAlert className='h-4 w-4' />
-                  <AlertTitle>{t('Alipay production safety reminder')}</AlertTitle>
+                  <AlertTitle>
+                    {t('Alipay production safety reminder')}
+                  </AlertTitle>
                   <AlertDescription>
-                    {t('The return page never credits quota. Only a verified asynchronous notification can complete an order.')}
+                    {t(
+                      'The return page never credits quota. Only a verified asynchronous notification can complete an order.'
+                    )}
                   </AlertDescription>
                 </Alert>
                 <div className='grid gap-6 md:grid-cols-2'>
-                  <FormField control={form.control} name='AlipayEnabled' render={({ field }) => (
-                    <FormItem className='flex items-center justify-between rounded-md border p-4'>
-                      <div>
-                        <FormLabel>{t('Enable official Alipay')}</FormLabel>
-                        <FormDescription>{t('When enabled, the Alipay payment method uses the official merchant account instead of Epay.')}</FormDescription>
-                      </div>
-                      <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} /></FormControl>
-                    </FormItem>
-                  )} />
-                  <FormField control={form.control} name='AlipayProduction' render={({ field }) => (
-                    <FormItem className='flex items-center justify-between rounded-md border p-4'>
-                      <div>
-                        <FormLabel>{t('Production mode')}</FormLabel>
-                        <FormDescription>{t('Disable only when using the Alipay sandbox endpoint.')}</FormDescription>
-                      </div>
-                      <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} /></FormControl>
-                    </FormItem>
-                  )} />
+                  <FormField
+                    control={form.control}
+                    name='AlipayEnabled'
+                    render={({ field }) => (
+                      <FormItem className='flex items-center justify-between rounded-md border p-4'>
+                        <div>
+                          <FormLabel>{t('Enable official Alipay')}</FormLabel>
+                          <FormDescription>
+                            {t(
+                              'When enabled, the Alipay payment method uses the official merchant account instead of Epay.'
+                            )}
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name='AlipayProduction'
+                    render={({ field }) => (
+                      <FormItem className='flex items-center justify-between rounded-md border p-4'>
+                        <div>
+                          <FormLabel>{t('Production mode')}</FormLabel>
+                          <FormDescription>
+                            {t(
+                              'Disable only when using the Alipay sandbox endpoint.'
+                            )}
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
                 </div>
                 <div className='grid gap-6 md:grid-cols-2'>
-                  <FormField control={form.control} name='AlipayAppID' render={({ field }) => (
-                    <FormItem><FormLabel>{t('Alipay APPID')}</FormLabel><FormControl><Input autoComplete='off' {...field} /></FormControl><FormMessage /></FormItem>
-                  )} />
-                  <FormField control={form.control} name='AlipayNotifyURL' render={({ field }) => (
-                    <FormItem><FormLabel>{t('Alipay notify URL')}</FormLabel><FormControl><Input placeholder='https://api.example.com/api/user/alipay/notify' {...field} /></FormControl><FormDescription>{t('Must be publicly reachable over HTTPS and point to the asynchronous notification endpoint.')}</FormDescription><FormMessage /></FormItem>
-                  )} />
+                  <FormField
+                    control={form.control}
+                    name='AlipayAppID'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Alipay APPID')}</FormLabel>
+                        <FormControl>
+                          <Input autoComplete='off' {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name='AlipayNotifyURL'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Alipay notify URL')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder='https://api.example.com/api/user/alipay/notify'
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(
+                            'Must be publicly reachable over HTTPS and point to the asynchronous notification endpoint.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 </div>
-                <FormField control={form.control} name='AlipayReturnURL' render={({ field }) => (
-                  <FormItem><FormLabel>{t('Alipay return URL')}</FormLabel><FormControl><Input placeholder='https://api.example.com/console/log' {...field} /></FormControl><FormDescription>{t('Optional browser return URL; it does not determine whether quota is credited.')}</FormDescription><FormMessage /></FormItem>
-                )} />
-                <FormField control={form.control} name='AlipayPrivateKey' render={({ field }) => (
-                  <FormItem><FormLabel>{t('Alipay application private key')}</FormLabel><FormControl><Textarea rows={5} className='font-mono text-xs' autoComplete='new-password' placeholder={t('Enter new key to update')} {...field} /></FormControl><FormDescription>{t('RSA2 private key. Store it securely and do not paste it into chat.')}</FormDescription><FormMessage /></FormItem>
-                )} />
-                <FormField control={form.control} name='AlipayPublicKey' render={({ field }) => (
-                  <FormItem><FormLabel>{t('Alipay public key')}</FormLabel><FormControl><Textarea rows={5} className='font-mono text-xs' {...field} /></FormControl><FormDescription>{t('Alipay public key used to verify asynchronous notifications.')}</FormDescription><FormMessage /></FormItem>
-                )} />
+                <FormField
+                  control={form.control}
+                  name='AlipayReturnURL'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Alipay return URL')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder='https://api.example.com/console/log'
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          'Optional browser return URL; it does not determine whether quota is credited.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='AlipayPrivateKey'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {t('Alipay application private key')}
+                      </FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={5}
+                          className='font-mono text-xs'
+                          autoComplete='new-password'
+                          placeholder={t('Enter new key to update')}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          'RSA2 private key. Store it securely and do not paste it into chat.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name='AlipayPublicKey'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Alipay public key')}</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={5}
+                          className='font-mono text-xs'
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {t(
+                          'Alipay public key used to verify asynchronous notifications.'
+                        )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
               </div>
             </TabsContent>
 

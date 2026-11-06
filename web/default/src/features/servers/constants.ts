@@ -134,7 +134,7 @@ export const PLANS: ServerPlan[] = [
     // 单卡 4090 的量级参照 AutoDL 同档卡型（¥1.8~2.6/小时）
     basePricePerHour: 2.5,
     badgeKey: 'New',
-    // 按价格从低到高排：单卡 4090 → 单卡 5090 → 双卡 4090
+    // 按价格从低到高排：单卡 4090 → 单卡 5090 → 单卡 RTX PRO 6000
     specs: [
       {
         id: 'gpu-16c64g',
@@ -165,12 +165,25 @@ export const PLANS: ServerPlan[] = [
         gpu: { model: 'RTX 5090', vram: 32, count: 1 },
       },
       {
-        id: 'gpu-24c96g',
+        /**
+         * RTX PRO 6000 单卡档：¥15.00/小时。
+         *
+         * 按量卖 ¥15.00/小时：系数 = ¥15.00 ÷ 基准时价 ¥2.50 = 6.00。
+         *
+         * 包月卖 ¥6,580/月（用户指定）。注意这**不是** ¥1,280 × 6：
+         * ¥6,580 ÷ ¥1,280 = 5.140625，与按量系数 6 不一致 —— 按量与包月
+         * 是两套独立定价，不能用同一个系数推导。所以这里用 monthlyPrice
+         * 显式指定包月机型价，按量仍走系数 6。
+         *
+         * 主机配置：24 vCPU / 96 GB / 1000 GB，单卡 RTX PRO 6000 96 GB。
+         */
+        id: 'gpu-24c96g-rtxpro6000',
         cpu: 24,
         memory: 96,
         disk: 1000,
-        multiplier: 1.7,
-        gpu: { model: 'RTX 4090', vram: 24, count: 2 },
+        multiplier: 6,
+        monthlyPrice: 6580,
+        gpu: { model: 'RTX PRO 6000', vram: 96, count: 1 },
       },
     ],
   },
@@ -181,23 +194,63 @@ export const PLANS: ServerPlan[] = [
  *
  * 规格 id 里编码了规格本身（`gpu-16c64g` = 16 vCPU / 64 GB，
  * 带卡的档位还会在后缀里带上卡型，如 `gpu-16c64g-rtx5090`），
- * 内存翻倍后 id 跟着变。演示态的订单与实例存在浏览器 localStorage 里，
+ * 内存翻倍后 id 跟着变。历史订单与实例存在服务端数据库里，
  * 老记录仍带旧 id；没有这张映射的话 `specs.find(...)` 会落空并回落到
  * `specs[0]`，把「双卡 96 GB」的老实例显示成「单卡 64 GB」——
  * 卡数、内存、倍率全错，而且没有任何报错。
+ *
+ * `gpu-24c96g`（双卡 4090）已经下线，被单卡 RTX PRO 6000 顶替。
+ * 老实例**不能**直接落到新档位上 —— 那是另一块卡、另一个价，
+ * 用户会以为自己的机器被换过。所以下线档位单独留一份定义，
+ * 老实例照旧显示「双卡 4090 / 96 GB」，价格也按原系数算。
  */
 const LEGACY_SPEC_IDS: Record<string, string> = {
   'gpu-16c32g': 'gpu-16c64g',
   'gpu-24c48g': 'gpu-24c96g',
+  'gpu-24c96g': 'gpu-24c96g',
 }
 
-/** 可选带宽（独立于型号，价格按月加价） */
+/**
+ * 已下线的规格定义（只用于让历史订单/实例仍能正确显示与计价）。
+ *
+ * 这些档位不出现在购买页的规格选择器里 —— 它们已经卖完了。
+ * 但历史订单、老实例还带着这些 id，
+ * 没有这份定义的话 `getSpec` 会回落到 specs[0]，
+ * 把「双卡 4090 / 24 vCPU / 96 GB」显示成「单卡 4090 / 16 vCPU / 64 GB」，
+ * 卡数、内存、倍率全错且不报错。
+ */
+const RETIRED_SPECS: Record<string, ServerSpec[]> = {
+  gpu: [
+    {
+      id: 'gpu-24c96g',
+      cpu: 24,
+      memory: 96,
+      disk: 1000,
+      // 原双卡 4090 档的价格系数，保持不变，老订单的价格才对得上账
+      multiplier: 1.7,
+      gpu: { model: 'RTX 4090', vram: 24, count: 2 },
+    },
+  ],
+}
+
+/**
+ * 可选带宽（独立于型号，价格按月加价）
+ *
+ * 定价口径：**以 10 Mbps 为基准单价**，带宽越大单位价格越低（规模效应），
+ * 且 100 Mbps 的价格恰好是 10 Mbps 的 3 倍（¥54 = ¥18 × 3）。
+ *
+ * 为什么这么定：用户明确要求「100M 是 10M 价格的 3 倍，以 10M 的价格为基准」。
+ * 如果只把 100M 改小而中间档不动，价格曲线会倒挂
+ * （100M 比 50M 还便宜），用户一比价就发现算错了。
+ * 所以整条阶梯一起重排：单位价格从 1.80 元/Mbps 递减到 0.54 元/Mbps，
+ * 既满足 3 倍锚点，又保持「带宽越大越便宜、总额越大」的单调性。
+ */
 export const BANDWIDTHS: BandwidthOption[] = [
   { mbps: 5, pricePerMonth: 0, descriptionKey: '5 Mbps dedicated' },
   { mbps: 10, pricePerMonth: 18, descriptionKey: '10 Mbps dedicated' },
-  { mbps: 20, pricePerMonth: 45, descriptionKey: '20 Mbps dedicated' },
-  { mbps: 50, pricePerMonth: 120, descriptionKey: '50 Mbps dedicated' },
-  { mbps: 100, pricePerMonth: 260, descriptionKey: '100 Mbps dedicated' },
+  { mbps: 20, pricePerMonth: 30, descriptionKey: '20 Mbps dedicated' },
+  { mbps: 50, pricePerMonth: 42, descriptionKey: '50 Mbps dedicated' },
+  { mbps: 100, pricePerMonth: 54, descriptionKey: '100 Mbps dedicated' },
 ]
 
 /**
@@ -328,15 +381,21 @@ export function getBandwidth(mbps: number): BandwidthOption {
  *
  * 三级回落：直接命中 → 旧 id 兼容映射 → 该机型第一档。
  * 中间那级不能省：规格 id 里带内存，内存翻倍后 id 变了，
- * localStorage 里的老订单/实例还带旧 id，直接回落第一档会把双卡老实例
+ * 历史订单与实例还带旧 id，直接回落第一档会把双卡老实例
  * 显示成单卡（卡数、内存、倍率全错且不报错）。
+ *
+ * 已下线的档位（如双卡 4090）走 `RETIRED_SPECS`：老实例仍按原卡型、
+ * 原系数显示与计价，不会被悄悄换成新卡。
  */
 export function getSpec(plan: ServerPlan, specId: string): ServerSpec {
   const direct = plan.specs.find((s) => s.id === specId)
   if (direct) return direct
-  const alias = LEGACY_SPEC_IDS[specId]
-  const mapped = alias ? plan.specs.find((s) => s.id === alias) : undefined
-  return mapped ?? plan.specs[0]
+  // 旧 id 先过一层兼容映射，再在「在售档位」与「已下线档位」里找
+  const alias = LEGACY_SPEC_IDS[specId] ?? specId
+  const mapped = plan.specs.find((s) => s.id === alias)
+  if (mapped) return mapped
+  const retired = RETIRED_SPECS[plan.id]?.find((s) => s.id === alias)
+  return retired ?? plan.specs[0]
 }
 
 /**
@@ -366,9 +425,45 @@ export function formatGpu(gpu?: ServerGpu): string {
   return `${gpu.count}× ${gpu.model} ${gpu.vram}GB`
 }
 
-/** 规格的 CPU / 内存 / 磁盘摘要（不含显卡，显卡单独一行） */
-export function formatSpec(spec: ServerSpec): string {
-  return `${spec.cpu} vCPU · ${spec.memory} GB · ${spec.disk} GB`
+/**
+ * 规格的 CPU / 内存 / 磁盘摘要（不含显卡，显卡单独一行）。
+ *
+ * `t` 由调用方传入 —— 磁盘文案要跟随界面语言，不能在这里写死中文。
+ */
+export function formatSpec(
+  spec: ServerSpec,
+  t?: (key: string) => string
+): string {
+  const disk = spec.dataDisk
+    ? `${spec.disk} GB ${t?.('System disk') ?? 'System disk'} + ${spec.dataDisk} GB ${t?.('Data disk') ?? 'Data disk'}`
+    : `${spec.disk} GB`
+  return `${spec.cpu} vCPU · ${spec.memory} GB · ${disk}`
+}
+
+/**
+ * 数据盘信息 —— 购买页用 camelCase，实例快照是后端原样的 snake_case，
+ * 两边字段名不同。这里只取算扩容余量需要的两个数，两种命名都收。
+ */
+export interface DataDiskInfo {
+  dataDisk?: number
+  dataDiskMax?: number
+  data_disk?: number
+  data_disk_max?: number
+}
+
+/** 数据盘可扩容说明，例如「可扩容 23 GB」；没有扩容能力时返回空串 */
+export function formatDataDiskExpand(
+  spec: DataDiskInfo,
+  t?: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const current = spec.dataDisk ?? spec.data_disk
+  const max = spec.dataDiskMax ?? spec.data_disk_max
+  if (!current || !max) return ''
+  const room = max - current
+  if (room <= 0) return ''
+  return t
+    ? t('Expandable by {{size}} GB', { size: room })
+    : `Expandable by ${room} GB`
 }
 
 /** 套餐卡的显卡概要（取基准档的显卡）；非 GPU 机型返回空串 */

@@ -31,8 +31,6 @@ export type TermId = 'half' | 'year' | 'triple'
  */
 export type BillingMode = 'hourly' | 'prepaid'
 
-export type ServerStatus = 'running' | 'pending' | 'expired'
-
 export interface Region {
   id: RegionId
   /** i18n key: region display name */
@@ -64,8 +62,37 @@ export interface ServerSpec {
   memory: number
   /** 系统盘 GB */
   disk: number
+  /**
+   * 数据盘 GB（可选）。
+   *
+   * 为什么和 disk 分开：真实机器的盘不是一个数 —— 系统盘 30 GB 装系统，
+   * 数据盘 50 GB 放数据集，扩容时也是只扩数据盘。合成一个数字会
+   * 让「总共 80 GB」看起来像单个盘，和真实交付对不上。
+   */
+  dataDisk?: number
+  /**
+   * 数据盘可扩容上限 GB（可选）。
+   *
+   * 「数据盘 50 GB，可扩容 23 GB」= 当前 50 GB，最多能扩到 73 GB。
+   */
+  dataDiskMax?: number
+  /** CPU 型号，例如 Xeon(R) Gold 6430 */
+  cpuModel?: string
   /** 规格价格系数（相对该型号基准档） */
   multiplier: number
+  /**
+   * 包月口径的机型月价（¥/月），可选。
+   *
+   * 什么时候需要它：按量与包月是两个独立的价格体系，不总能由同一个
+   * 系数推出来。RTX PRO 6000 档就是这种 —— 按量卖 ¥15/小时
+   * （系数 6 × 基准时价 ¥2.50），包月卖 ¥6,580/月，
+   * 而 ¥6,580 ÷ ¥1,280 = 5.140625 与按量系数 6 对不上：
+   * 硬套系数会算出 ¥7,680，比用户要的贵 ¥1,100/月，且没有任何报错。
+   *
+   * 语义：填了就**直接作为该档的包月机型价**，覆盖「基准月价 × 系数」；
+   * 不填则回落到系数推导（绝大多数档位保持单一系数，两口径天然自洽）。
+   */
+  monthlyPrice?: number
   /**
    * 显卡配置（只有 GPU 型套餐才有）。
    *
@@ -206,51 +233,145 @@ export interface PriceBreakdown {
   regionFactor: number
 }
 
-export interface ServerOrder {
+export type ServerStatus = 'pending' | 'running' | 'stopped' | 'expired' | 'released'
+
+/** 服务端报价：与前端 computePrice 同口径，但金额以下单时服务端返回为准 */
+export interface ServerQuoteResult {
+  billing: BillingMode
+  unit: 'month' | 'hour'
+  units: number
+  unit_price: number
+  discount: number
+  list_total: number
+  total: number
+  saved: number
+  monthly_equivalent: number
+  plan_price: number
+  spec_price: number
+  bandwidth_price: number
+  region_factor: number
+  period_seconds: number
+  region: string
+  plan: string
+  spec_id: string
+  mbps: number
+  duration_id: string
+}
+
+/**
+ * 实例规格快照。
+ *
+ * 不能再按 specId 去目录里查：目录会改价、会下架旧档，而实例是**按购买时
+ * 的规格**交付的。服务端在下单时把规格冻结进实例记录，控制台只读这份快照。
+ */
+/**
+ * 实例上的规格快照。
+ *
+ * 字段名与后端 JSON 一致（snake_case）—— 实例接口直接透传后端结构，
+ * 这里不做命名转换，避免多一层映射出错。
+ */
+export interface ServerInstanceSpec {
   id: string
-  /** 订单号 */
-  tradeNo: string
-  config: ServerConfig
-  /** 应付金额 */
+  cpu: number
+  memory: number
+  disk: number
+  /** 数据盘 GB */
+  data_disk?: number
+  /** 数据盘可扩容上限 GB */
+  data_disk_max?: number
+  /** CPU 型号 */
+  cpu_model?: string
+  multiplier: number
+  /** 包月机型价（¥/月）；后端 snake_case，与实例快照其余字段一致 */
+  monthly_price?: number
+  gpu?: ServerGpu
+}
+
+/** 一笔资金流水：购买 / 续费 / 退款 */
+export interface ServerOrderRecord {
+  id: number
+  trade_no: string
+  type: 'purchase' | 'renew' | 'refund'
+  instance_id: number
+  instance_name: string
+  plan: string
+  spec_id: string
+  region: string
+  mbps: number
+  duration_id: string
+  billing: BillingMode
+  /** 人民币金额；退款为负数 */
   amount: number
-  paymentMethod: string
-  status: 'pending' | 'success' | 'failed'
-  createdAt: number
-  paidAt?: number
-  /** 下单账号的 user id（演示态用于多账号隔离） */
-  ownerUid?: string
+  /** 站内额度变动；退款为正数、扣款为负数 */
+  quota_delta: number
+  payment_method: string
+  /** 支付网关：balance（站内余额）/ epay（第三方）；历史订单可能为空 */
+  payment_provider?: string
+  status: string
+  description: string
+  create_time: number
+  complete_time: number
 }
 
-export interface OwnedServer {
-  id: string
-  orderId: string
-  config: ServerConfig
-  /** 公网 IP */
-  ip: string
-  /** 登录用户名 */
-  username: string
-  /** 登录密码 */
-  password: string
-  status: ServerStatus
-  /** 到期时间戳（秒） */
-  expireAt: number
-  createdAt: number
-  /** 是否为演示数据（前端模拟） */
-  demo: boolean
-  /** 所属账号的 user id（演示态用于多账号隔离） */
-  ownerUid?: string
-}
-
-export interface PayMethod {
-  /** 后端下发的渠道名（可能是中文，前端不翻译） */
-  name?: string
-  /** 渠道标识，例如 alipay / wechat / balance / demo */
+/** 收银台上的一个支付方式 */
+export interface ServerPayMethod {
+  name: string
   type: string
   icon?: string
-  /** 展示名 i18n key；内置渠道用它替代后端返回的原文 */
-  nameKey?: string
-  /** 渠道最低金额（后端 min_topup 是字符串，这里已转成数字） */
-  min_topup?: number
-  /** 是否为演示渠道（不产生真实扣费） */
-  demo?: boolean
+}
+
+/** 服务端下发的实例视图（控制台唯一数据源） */
+export interface ServerInstance {
+  id: number
+  name: string
+  status: ServerStatus
+  ip: string
+  username: string
+  password: string
+  password_readable: boolean
+  config: ServerConfig
+  spec: ServerInstanceSpec
+  region: string
+  plan: string
+  mbps: number
+  billing: BillingMode
+  unit_price: number
+  paid_amount: number
+  refunded_amount: number
+  /** simulated = 未接入真实开台，控制台必须如实标注 */
+  provision_mode: 'simulated' | 'live'
+  expire_at: number
+  created_at: number
+  released_at: number
+  remaining_seconds: number
+  order_id: number
+}
+
+export interface ServerMetricPoint {
+  label: string
+  value: number
+}
+
+/** 服务端下发的监控数据（与实例规格自洽：无卡不出 GPU、网络不超带宽） */
+export interface ServerMetrics {
+  cpu: ServerMetricPoint[]
+  memory: ServerMetricPoint[]
+  network: ServerMetricPoint[]
+  disk: number
+  gpu: number
+  temperature: number
+  has_gpu: boolean
+  bandwidth_mbps: number
+  range: string
+  generated_at: number
+  status: ServerStatus
+}
+
+export interface ServerInstanceEvent {
+  id: number
+  instance_id: number
+  user_id: number
+  action: string
+  detail: string
+  created_at: number
 }
