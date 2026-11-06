@@ -26,6 +26,7 @@ import {
   formatGpu,
   formatSpec,
   formatDataDiskExpand,
+  formatDiskBreakdown,
   getDuration,
   getPlan,
   getSpec,
@@ -35,6 +36,7 @@ import type { ServerConfig } from '../types'
 import {
   HOURS_PER_MONTH,
   computePrice,
+  planFromPrice,
   resolveBilling,
   resolveDurationId,
 } from './pricing'
@@ -60,22 +62,36 @@ function config(overrides: Partial<ServerConfig> = {}): ServerConfig {
 }
 
 describe('servers: RTX PRO 6000 的定价', () => {
-  test('包月：机型价 ¥1,280 + 规格加价 ¥5,300 + 带宽 ¥30 = ¥6,610', () => {
+  test('包月：套餐 ¥300 + 配置 ¥180 + 显卡 ¥6,100 + 带宽 ¥30 = ¥6,610', () => {
     const price = computePrice(config())
-    assert.equal(price.planPrice, 1280)
-    assert.equal(price.specPrice, 5300)
+    assert.equal(price.planPrice, 300)
+    assert.equal(price.specPrice, 180)
+    assert.equal(price.gpuPrice, 6100)
     assert.equal(price.bandwidthPrice, 30)
     assert.equal(price.unitPrice, 6610)
     assert.equal(price.total, 6610)
   })
 
-  test('按量：¥2.50 + ¥17.40 = ¥19.90/小时', () => {
+  test('按量：套餐 ¥2.50 + 配置 ¥0.50 + 显卡 ¥16.90 = ¥19.90/小时', () => {
     const price = computePrice(config({ mbps: 5, durationId: '1h' }))
     assert.equal(price.billing, 'hourly')
     assert.equal(price.planPrice, 2.5)
-    assert.equal(price.specPrice, 17.4)
+    assert.equal(price.specPrice, 0.5)
+    assert.equal(price.gpuPrice, 16.9)
     assert.equal(price.unitPrice, 19.9)
     assert.equal(price.total, 19.9)
+  })
+
+  test('显卡必须是机型价里最贵的一项（用户明确要求的观感）', () => {
+    // 「配置 +¥17.40，显卡 0」那种拆账会让人觉得主机贵得没道理。
+    // 显卡要占大头，主机只收成本价。
+    for (const durationId of ['1h', '1mo']) {
+      const price = computePrice(config({ mbps: 5, durationId }))
+      assert.ok(
+        price.gpuPrice > price.specPrice + price.planPrice,
+        `${durationId} 口径下显卡没有占大头：显卡 ${price.gpuPrice} vs 其余 ${price.specPrice + price.planPrice}`
+      )
+    }
   })
 
   test('按量仍比包月贵：19.9 × 730 = ¥14,527 > ¥6,580', () => {
@@ -225,7 +241,7 @@ describe('servers: 地区系数', () => {
 })
 
 describe('servers: 摘要各分项相加等于单价', () => {
-  test('广州（系数 1）下，套餐 + 配置 + 带宽 = 单价', () => {
+  test('广州（系数 1）下，套餐 + 配置 + 显卡 + 带宽 = 单价', () => {
     const cases: ServerConfig[] = [
       config(),
       config({ specId: 'gpu-16c64g', mbps: 5 }),
@@ -235,13 +251,24 @@ describe('servers: 摘要各分项相加等于单价', () => {
     ]
     for (const item of cases) {
       const price = computePrice(item)
-      const sum = price.planPrice + price.specPrice + price.bandwidthPrice
+      const sum =
+        price.planPrice +
+        price.specPrice +
+        price.gpuPrice +
+        price.bandwidthPrice
       assert.equal(
         Math.round(sum * 100) / 100,
         price.unitPrice,
         `${item.specId} @ ${item.mbps}Mbps 的分项加不出单价`
       )
     }
+  })
+
+  test('没有显卡的机型，显卡一项恒为 0', () => {
+    const price = computePrice(
+      config({ plan: 'general', specId: 'general-8c16g', mbps: 10 })
+    )
+    assert.equal(price.gpuPrice, 0)
   })
 })
 
@@ -256,11 +283,15 @@ describe('servers: 已下线的双卡 4090 档', () => {
     assert.equal(spec.cpu, 24)
   })
 
-  test('老实例的账照旧算：¥1,280 + ¥896 = ¥2,176/月', () => {
+  test('老实例的账照旧算：总价仍是 ¥2,176/月（基准价改了也不受影响）', () => {
+    // 机型基准月价从 ¥1,280 改到 ¥300 后，光靠 multiplier 1.7 会算成
+    // ¥510/月。老档位的两个口径都写死了原价，所以总价一分不变。
     const price = computePrice(
       config({ specId: 'gpu-24c96g', mbps: 5, durationId: '1mo' })
     )
-    assert.equal(price.specPrice, 896)
+    assert.equal(price.planPrice, 300)
+    assert.equal(price.gpuPrice, 0)
+    assert.equal(price.specPrice, 1876)
     assert.equal(price.unitPrice, 2176)
   })
 
@@ -271,19 +302,23 @@ describe('servers: 已下线的双卡 4090 档', () => {
 })
 
 describe('servers: GPU 三档按量时价', () => {
-  const cases: Array<[string, string, number]> = [
-    ['gpu-16c64g', 'RTX 4090', 5.6],
-    ['gpu-16c64g-rtx5090', 'RTX 5090', 7.8],
-    ['gpu-24c96g-rtxpro6000', 'RTX PRO 6000', 19.9],
+  const cases: Array<[string, string, number, number]> = [
+    ['gpu-16c64g', 'RTX 4090', 5.6, 3.1],
+    ['gpu-16c64g-rtx5090', 'RTX 5090', 7.8, 5.3],
+    ['gpu-24c96g-rtxpro6000', 'RTX PRO 6000', 19.9, 16.9],
   ]
-  for (const [specId, gpu, expected] of cases) {
+  for (const [specId, gpu, expected, gpuPrice] of cases) {
     test(`${gpu} 按量 ¥${expected}/小时`, () => {
       const price = computePrice(config({ specId, mbps: 5, durationId: '1h' }))
       assert.equal(price.unitPrice, expected)
       assert.equal(price.total, expected)
-      // 摘要分项自洽：套餐 ¥2.50 + 配置加价 = 该档时价
+      // 摘要分项自洽：套餐 ¥2.50 + 配置 + 显卡 = 该档时价
       assert.equal(price.planPrice, 2.5)
-      assert.equal(price.specPrice, Math.round((expected - 2.5) * 100) / 100)
+      assert.equal(price.gpuPrice, gpuPrice)
+      assert.equal(
+        price.specPrice,
+        Math.round((expected - 2.5 - gpuPrice) * 100) / 100
+      )
     })
   }
 
@@ -331,21 +366,33 @@ describe('servers: RTX PRO 6000 单卡档', () => {
     const price = computePrice(
       config({ specId: 'gpu-24c96g-rtxpro6000', mbps: 5, durationId: '1mo' })
     )
-    assert.equal(price.planPrice, 1280)
-    assert.equal(price.specPrice, 5300)
+    assert.equal(price.planPrice, 300)
+    assert.equal(price.specPrice, 180)
+    assert.equal(price.gpuPrice, 6100)
     assert.equal(price.unitPrice, 6580)
     // 明确锁住「不是按系数推出来的」：¥1,280 × 6 = ¥7,680 是错的
     assert.notEqual(price.unitPrice, 7680)
   })
 
-  test('配置与实物一致：24 核 / 96 GB / 1000 GB', () => {
+  test('配置与实物一致：24 核 / 96 GB / 系统盘 30 GB + 数据盘 200 GB', () => {
     const spec = getSpec(getPlan('gpu'), 'gpu-24c96g-rtxpro6000')
     assert.equal(spec.cpu, 24)
     assert.equal(spec.memory, 96)
-    assert.equal(spec.disk, 1000)
+    assert.equal(spec.disk, 30)
+    assert.equal(spec.dataDisk, 200)
     assert.equal(spec.gpu?.model, 'RTX PRO 6000')
     assert.equal(spec.gpu?.vram, 96)
     assert.equal(spec.gpu?.count, 1)
+  })
+
+  test('选中 PRO 6000 时带宽默认给到 100 Mbps', () => {
+    // 96 GB 显存的卡是拿来跑大模型的，默认 5M / 20M 第一步就卡住
+    assert.equal(
+      getSpec(getPlan('gpu'), 'gpu-24c96g-rtxpro6000').defaultMbps,
+      100
+    )
+    // 其余档位不指定，沿用页面默认带宽
+    assert.equal(getSpec(getPlan('gpu'), 'gpu-16c64g').defaultMbps, undefined)
   })
 
   test('GPU 机型只保留三档在售', () => {
@@ -356,12 +403,31 @@ describe('servers: RTX PRO 6000 单卡档', () => {
     )
   })
 
-  test('摘要里系统盘单列，不带数据盘', () => {
+  test('摘要报可用容量（数据盘），不把系统盘算进去', () => {
     const spec = getSpec(getPlan('gpu'), 'gpu-24c96g-rtxpro6000')
     const summary = formatSpec(spec, (key) => key)
     assert.ok(summary.includes('24 vCPU'))
     assert.ok(summary.includes('96 GB'))
-    assert.ok(summary.includes('1000 GB'))
+    assert.ok(summary.includes('200 GB'))
+  })
+
+  test('分盘明细能分清楚哪个盘装系统、哪个盘放数据', () => {
+    const spec = getSpec(getPlan('gpu'), 'gpu-24c96g-rtxpro6000')
+    const detail = formatDiskBreakdown(spec, (key) => key)
+    assert.equal(detail, '30 GB System disk · 200 GB Data disk')
+    // 单盘机型只报一个数
+    assert.equal(
+      formatDiskBreakdown(getSpec(getPlan('lite'), 'lite-2c2g'), (k) => k),
+      '40 GB System disk'
+    )
+  })
+
+  test('型号起步价是最便宜的可买整机价，不是裸机型基准价', () => {
+    // GPU 裸基准价 ¥2.50/小时 比它最便宜的整机 ¥5.60 低一半，
+    // 拿基准价当「From」会让人觉得显卡机器很便宜。
+    assert.equal(planFromPrice(getPlan('gpu'), 'hourly'), 5.6)
+    assert.equal(planFromPrice(getPlan('gpu'), 'prepaid'), 1280)
+    assert.equal(planFromPrice(getPlan('lite'), 'hourly'), 0.16)
   })
 
   test('没有数据盘的档位不报可扩容', () => {

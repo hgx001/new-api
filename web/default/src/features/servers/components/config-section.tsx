@@ -37,6 +37,7 @@ import {
 import {
   formatAmount,
   HOURS_PER_MONTH,
+  planFromPrice,
   resolveDurationId,
   specMachinePrice,
 } from '../lib/pricing'
@@ -162,6 +163,10 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                   onChange({
                     plan: item.id,
                     specId: item.specs[0].id,
+                    // 换机型时若首选档带默认带宽，一并套上（与规格按钮同规则）
+                    ...(item.specs[0].defaultMbps
+                      ? { mbps: item.specs[0].defaultMbps }
+                      : {}),
                   })
                 }
                 className={cn(
@@ -188,23 +193,25 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
                 )}
                 {/* 双口径起步价：右侧的时长选择器同时含按量与包月档，
                     卡片只标一个口径会让用户没法横向比机型，所以两个都给出。
-                    这两个数是「裸机型基准价」—— 与右侧摘要的「套餐」行同值 */}
+                    这两个数是「该机型最便宜那一档的整机价」—— 不能拿裸机型
+                    基准价充数，GPU 的基准价 ¥2.50 比它最便宜的整机 ¥5.60
+                    低一半，写上去等于误导。 */}
                 <div className='mt-3 text-sm font-medium text-[#1a4a3f]'>
                   {t('From {{price}} / month', {
-                    price: formatAmount(item.basePricePerMonth),
+                    price: formatAmount(planFromPrice(item, 'prepaid')),
                   })}
                 </div>
                 <div className='text-muted-foreground mt-0.5 text-[11px]'>
                   {t('From {{price}} / hour', {
-                    price: formatAmount(item.basePricePerHour),
+                    price: formatAmount(planFromPrice(item, 'hourly')),
                   })}
                 </div>
               </button>
             )
           })}
         </div>
-        {/* 口径说明：卡片上的价是裸机型基准价，右侧总价还含规格、带宽与地区。
-            不写清楚，读者只会看到「卡片 38、右侧 83」而不知道差在哪 */}
+        {/* 口径说明：卡片上的价是整机起步价（= 最低那一档的整机价，
+            对多数机型就是基准档），右侧总价还含带宽与地区系数。 */}
         <p className='text-muted-foreground mt-2 text-[11px]'>
           {t(
             'Plan prices are for the base spec and exclude bandwidth and regional pricing.'
@@ -230,7 +237,17 @@ export function ConfigSection({ config, onChange }: ConfigSectionProps) {
               <button
                 key={item.id}
                 type='button'
-                onClick={() => onChange({ specId: item.id })}
+                // 选到带默认带宽的规格（PRO 6000 → 100 Mbps）时一并套上：
+                // 显卡机器默认配 5M 没意义，拉几十 GB 权重会卡一整天。
+                // 反过来从旗舰档切到小档时不动用户已选的带宽 —— 静默把
+                // 100M 降到 20M 会让人以为自己选的档没生效。
+                onClick={() =>
+                  onChange(
+                    item.defaultMbps
+                      ? { specId: item.id, mbps: item.defaultMbps }
+                      : { specId: item.id }
+                  )
+                }
                 className={cn(
                   'rounded-xl border px-4 py-2.5 text-sm font-medium transition-all',
                   active

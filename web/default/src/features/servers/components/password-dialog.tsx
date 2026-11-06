@@ -83,7 +83,7 @@ export function PasswordDialog({
       <DialogContent className='sm:max-w-md'>
         <DialogHeader>
           <DialogTitle className='flex items-center gap-2'>
-            <KeyRound className='size-4.5 text-[#3a8f7a]' />
+            <KeyRound className='size-4.5 text-emerald-600 dark:text-emerald-400' />
             {t('Change root password')}
           </DialogTitle>
           <DialogDescription>

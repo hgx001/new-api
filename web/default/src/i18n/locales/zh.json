@@ -5390,7 +5390,13 @@
     "Source marked available again": "已标记源链路恢复可用",
     "Manually marked. It will not be cleared automatically by a successful task.": "人工标记，不会因任务成功而自动解除。",
     "The backup model has no available channel.": "备胎模型当前没有可用渠道。",
-    "Pricing is unchanged: customers are still billed for the model they requested.": "计费口径不变：客户仍按自己请求的模型计费。"
+    "Pricing is unchanged: customers are still billed for the model they requested.": "计费口径不变：客户仍按自己请求的模型计费。",
+    "No graphics card": "无显卡",
+    "Paid {{amount}}": "已付 {{amount}}",
+    "Local disks": "本地磁盘",
+    "SSH login": "SSH 登录",
+    "Hide details": "收起详情",
+    "Instances are released automatically once the rental period ends. Everything on them is deleted and cannot be recovered, so renew before it expires.": "实例租用到期后会自动释放，机器上的数据会全部清空且无法恢复，请在到期前及时续费。"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",

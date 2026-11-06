@@ -77,12 +77,12 @@ function OrderRow({ order }: { order: ServerOrderRecord }) {
               'rounded-md px-1.5 py-0.5 text-[11px] font-semibold',
               refund
                 ? 'bg-emerald-500/15 text-emerald-600'
-                : 'bg-[#e8f4f0] text-[#1a4a3f]'
+                : 'bg-emerald-500/12 text-foreground'
             )}
           >
             {t(typeKeyOf(order))}
           </span>
-          <span className='truncate text-sm font-medium text-[#1a4a3f]'>
+          <span className='truncate text-sm font-medium text-foreground'>
             {order.instance_name || `${t('Instance ID')} #${order.instance_id}`}
           </span>
         </div>
@@ -97,7 +97,7 @@ function OrderRow({ order }: { order: ServerOrderRecord }) {
         <div
           className={cn(
             'text-sm font-semibold tabular-nums',
-            refund ? 'text-emerald-600' : 'text-[#1a4a3f]'
+            refund ? 'text-emerald-600' : 'text-foreground'
           )}
         >
           {refund ? '+' : '−'}

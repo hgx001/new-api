@@ -5390,7 +5390,13 @@
     "Source marked available again": "Source marquée à nouveau disponible",
     "Manually marked. It will not be cleared automatically by a successful task.": "Marquage manuel. Il ne sera pas levé automatiquement par une tâche réussie.",
     "The backup model has no available channel.": "Le modèle de secours n’a aucun canal disponible.",
-    "Pricing is unchanged: customers are still billed for the model they requested.": "La tarification reste inchangée : les clients sont toujours facturés selon le modèle demandé."
+    "Pricing is unchanged: customers are still billed for the model they requested.": "La tarification reste inchangée : les clients sont toujours facturés selon le modèle demandé.",
+    "No graphics card": "Aucune carte graphique",
+    "Paid {{amount}}": "Payé {{amount}}",
+    "Local disks": "Disques locaux",
+    "SSH login": "Connexion SSH",
+    "Hide details": "Masquer les détails",
+    "Instances are released automatically once the rental period ends. Everything on them is deleted and cannot be recovered, so renew before it expires.": "Les instances sont libérées automatiquement à la fin de la période de location. Toutes leurs données sont supprimées et irrécupérables : pensez à renouveler avant l'expiration."
   },
   "Integration Tutorial": "Tutoriel d'intégration",
   "Claude Code Installation": "Installation de Claude Code",

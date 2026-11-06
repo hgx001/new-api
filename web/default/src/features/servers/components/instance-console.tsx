@@ -19,12 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 
 import {
   Activity,
+  AlertTriangle,
+  ChevronDown,
   Copy,
+  Cpu,
   Gauge,
   Gpu,
+  HardDrive,
   KeyRound,
   LifeBuoy,
-  MapPin,
+  MemoryStick,
   Network,
   Play,
   Power,
@@ -34,7 +38,6 @@ import {
   Square,
   Timer,
   Trash2,
-  Wrench,
 } from 'lucide-react'
 import { useMemo, useState, type ElementType, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -43,23 +46,16 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Separator } from '@/components/ui/separator'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { cn } from '@/lib/utils'
 
+import { formatDiskBreakdown } from '../constants'
 import { useServerEvents, useServerMetrics } from '../hooks/use-servers'
 import {
   daysLeft,
@@ -67,12 +63,11 @@ import {
   formatDate,
   formatDateTime,
   hoursLeft,
-  isExpired,
   resolveStatus,
   statusKeyOf,
+  type InstanceStatusKey,
 } from '../lib/instance-runtime'
 import { formatAmount } from '../lib/pricing'
-import { formatDataDiskExpand } from '../constants'
 import type { ServerInstance } from '../types'
 import { CredentialField } from './credential-field'
 import { MetricBar, MetricChart } from './metric-chart'
@@ -103,26 +98,91 @@ const FILTERS: { id: StatusFilter; labelKey: string }[] = [
   { id: 'expiring', labelKey: 'Expiring soon' },
 ]
 
-function statusBadgeClass(instance: ServerInstance): string {
-  const key = statusKeyOf(instance)
-  if (key === 'Running') return 'bg-emerald-500/15 text-emerald-600'
-  if (key === 'Stopped') return 'bg-slate-500/15 text-slate-600'
-  if (key === 'Expiring soon') return 'bg-amber-500/15 text-amber-600'
-  if (key === 'Provisioning') return 'bg-blue-500/15 text-blue-600'
-  return 'bg-red-500/15 text-red-600'
+/** 详情抽屉的初始页签，展开面板里的「监控 / 操作记录」直接跳到对应页 */
+type DetailTab = 'basic' | 'monitor' | 'network' | 'storage' | 'events'
+
+/**
+ * 表格列宽（xl 及以上）。
+ *
+ * 用 CSS Grid 而不是 <table>：同一份 DOM 在窄屏会自然堆成卡片，
+ * 不必为移动端再写一套标记。列的顺序与云厂商控制台一致 ——
+ * 实例 → 状态 → 规格 → 磁盘 → 健康 → 计费 → 释放时间 → 登录 → 操作。
+ */
+const ROW_GRID =
+  'grid gap-x-3 gap-y-3 px-4 py-4 sm:grid-cols-2 ' +
+  'xl:grid-cols-[minmax(0,1.35fr)_minmax(0,0.72fr)_minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.72fr)_minmax(0,0.95fr)_minmax(0,1.05fr)_auto] ' +
+  'xl:items-center'
+
+function statusTone(key: InstanceStatusKey): string {
+  if (key === 'Running') {
+    return 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400'
+  }
+  if (key === 'Stopped') {
+    return 'bg-slate-500/15 text-slate-700 dark:text-slate-300'
+  }
+  if (key === 'Expiring soon') {
+    return 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+  }
+  if (key === 'Provisioning') {
+    return 'bg-blue-500/15 text-blue-700 dark:text-blue-400'
+  }
+  return 'bg-red-500/15 text-red-700 dark:text-red-400'
+}
+
+/**
+ * 健康状态：只回答「这台机器现在能不能用」。
+ *
+ * 与生命周期状态（即将到期 / 已过期）不是一回事 —— 一台「即将到期」的
+ * 机器本身是健康的，把它显示成红色会让人以为机器坏了。
+ * 「Healthy」只在这里出现，所以单独给它一个类型，不塞进 InstanceStatusKey。
+ */
+type HealthKey = 'Healthy' | 'Stopped' | 'Expired' | 'Released'
+
+function healthKeyOf(server: ServerInstance): HealthKey {
+  const status = resolveStatus(server)
+  if (status === 'released') return 'Released'
+  if (status === 'expired') return 'Expired'
+  if (status === 'running') return 'Healthy'
+  return 'Stopped'
+}
+
+function healthTone(key: HealthKey): string {
+  if (key === 'Healthy') return 'text-emerald-600 dark:text-emerald-400'
+  if (key === 'Stopped') return 'text-muted-foreground'
+  return 'text-red-600 dark:text-red-400'
+}
+
+/** 剩余时间的文案：按量报小时、包月报天；已释放就不再提剩余时间。 */
+function remainingHintOf(
+  server: ServerInstance,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string | undefined {
+  const status = resolveStatus(server)
+  if (status === 'released') return undefined
+  if (server.billing === 'hourly') {
+    return t('{{hours}} hours left', { hours: hoursLeft(server) })
+  }
+  return t('{{days}} days left', { days: daysLeft(server) })
 }
 
 /**
  * 云服务器实例控制台。
  *
- * 参照云厂商（ECS 类）的实例管理视图：**列表 + 详情抽屉**，
- * 而不是购买页那种卡片墙。数据全部来自服务端：
- * 状态、到期时间、凭据、监控、操作记录都以接口返回为准。
+ * 参照云厂商（ECS 类）的实例管理视图：**表格式列表 + 行内展开详情**。
+ * 之前是卡片墙 —— 一屏只能放两三台，到期时间、计费口径、SSH 入口
+ * 这些高频信息要滚半天才看得到。表格化之后一屏能扫完所有实例，
+ * 展开行才看完整规格与凭据。
+ *
+ * 数据全部来自服务端：状态、到期时间、凭据、监控、操作记录都以接口为准。
  */
 export function InstanceConsole(props: InstanceConsoleProps) {
   const { t } = useTranslation()
   const [filter, setFilter] = useState<StatusFilter>('all')
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [detailTarget, setDetailTarget] = useState<{
+    id: number
+    tab: DetailTab
+  } | null>(null)
   const [renewTarget, setRenewTarget] = useState<ServerInstance | null>(null)
   const [releaseTarget, setReleaseTarget] = useState<ServerInstance | null>(
     null
@@ -149,7 +209,9 @@ export function InstanceConsole(props: InstanceConsoleProps) {
     }
   }, [props.servers, filter])
 
-  const selected = props.servers.find((server) => server.id === selectedId)
+  const selected = props.servers.find(
+    (server) => server.id === detailTarget?.id
+  )
 
   const runningCount = props.servers.filter(
     (server) => resolveStatus(server) === 'running'
@@ -172,8 +234,8 @@ export function InstanceConsole(props: InstanceConsoleProps) {
   if (props.servers.length === 0) {
     return (
       <div className='bg-card/60 rounded-2xl border border-dashed px-6 py-16 text-center'>
-        <div className='mx-auto flex size-14 items-center justify-center rounded-2xl bg-[#e8f4f0]'>
-          <ServerIcon className='size-6 text-[#3a8f7a]' />
+        <div className='mx-auto flex size-14 items-center justify-center rounded-2xl bg-emerald-500/10'>
+          <ServerIcon className='size-6 text-emerald-600 dark:text-emerald-400' />
         </div>
         <h3 className='mt-4 text-lg font-semibold'>
           {props.loading ? t('Loading your servers...') : t('No servers yet')}
@@ -184,7 +246,7 @@ export function InstanceConsole(props: InstanceConsoleProps) {
           )}
         </p>
         <Button
-          className='mt-6 rounded-full bg-[#3a8f7a] text-white hover:bg-[#2f7a66]'
+          className='mt-6 rounded-full bg-emerald-600 text-white hover:bg-emerald-700'
           onClick={props.onBrowse}
         >
           {t('Configure a server')}
@@ -200,16 +262,13 @@ export function InstanceConsole(props: InstanceConsoleProps) {
             {t('Billing history')}
           </Button>
         </div>
-        <OrderHistoryDialog
-          open={billingOpen}
-          onOpenChange={setBillingOpen}
-        />
+        <OrderHistoryDialog open={billingOpen} onOpenChange={setBillingOpen} />
       </div>
     )
   }
 
   return (
-    <div className='space-y-5'>
+    <div className='space-y-4'>
       {/* 概览统计条：云厂商控制台的第一屏是「我有多少资源」 */}
       <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
         <StatCard
@@ -237,6 +296,16 @@ export function InstanceConsole(props: InstanceConsoleProps) {
         />
       </div>
 
+      {/* 到期释放说明：这是用户最容易被坑的一条规则，常驻在第一屏 */}
+      <div className='flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs leading-relaxed text-amber-800 dark:text-amber-300'>
+        <AlertTriangle className='mt-0.5 size-3.5 shrink-0' />
+        <span>
+          {t(
+            'Instances are released automatically once the rental period ends. Everything on them is deleted and cannot be recovered, so renew before it expires.'
+          )}
+        </span>
+      </div>
+
       {/* 筛选条 */}
       <div className='border-border/70 bg-card flex flex-wrap items-center gap-2 rounded-xl border px-3 py-2.5'>
         {FILTERS.map((item) => (
@@ -247,7 +316,7 @@ export function InstanceConsole(props: InstanceConsoleProps) {
             className={cn(
               'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
               filter === item.id
-                ? 'bg-[#e8f4f0] text-[#1a4a3f]'
+                ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400'
                 : 'text-muted-foreground hover:bg-muted hover:text-foreground'
             )}
           >
@@ -267,7 +336,7 @@ export function InstanceConsole(props: InstanceConsoleProps) {
         </button>
       </div>
 
-      {/* 实例列表 */}
+      {/* 实例表 */}
       {filtered.length === 0 ? (
         <div className='bg-card/60 rounded-2xl border border-dashed px-6 py-14 text-center'>
           <div className='text-muted-foreground text-sm'>
@@ -275,14 +344,38 @@ export function InstanceConsole(props: InstanceConsoleProps) {
           </div>
         </div>
       ) : (
-        <div className='space-y-3'>
+        <div className='border-border/70 bg-card overflow-hidden rounded-xl border'>
+          {/* 表头只在宽屏出现：窄屏每格里自带标签，不需要再来一行 */}
+          <div
+            className={cn(
+              ROW_GRID,
+              'text-muted-foreground hidden border-b bg-muted/40 py-2.5 text-[11px] font-medium xl:grid'
+            )}
+          >
+            <span>{t('Instance')}</span>
+            <span>{t('Status')}</span>
+            <span>{t('Specifications')}</span>
+            <span>{t('Local disks')}</span>
+            <span>{t('Health status')}</span>
+            <span>{t('Billing type')}</span>
+            <span>{t('Auto release time')}</span>
+            <span className='text-right'>{t('Actions')}</span>
+          </div>
+
           {filtered.map((server) => (
             <InstanceRow
               key={server.id}
               server={server}
-              onOpen={() => setSelectedId(server.id)}
+              expanded={expandedId === server.id}
+              onToggleExpand={() =>
+                setExpandedId(expandedId === server.id ? null : server.id)
+              }
+              onOpenDetail={(tab) =>
+                setDetailTarget({ id: server.id, tab })
+              }
               onChangePassword={props.onChangePassword}
               onTogglePower={props.onTogglePower}
+              onReboot={props.onReboot}
               onRenew={() => setRenewTarget(server)}
               onRelease={() => setReleaseTarget(server)}
               onCopy={copyText}
@@ -291,10 +384,11 @@ export function InstanceConsole(props: InstanceConsoleProps) {
         </div>
       )}
 
-      {selected && (
+      {selected && detailTarget && (
         <InstanceDetails
           server={selected}
-          onClose={() => setSelectedId(null)}
+          initialTab={detailTarget.tab}
+          onClose={() => setDetailTarget(null)}
           onChangePassword={props.onChangePassword}
           onTogglePower={props.onTogglePower}
           onReboot={props.onReboot}
@@ -326,10 +420,7 @@ export function InstanceConsole(props: InstanceConsoleProps) {
         />
       )}
 
-      <OrderHistoryDialog
-        open={billingOpen}
-        onOpenChange={setBillingOpen}
-      />
+      <OrderHistoryDialog open={billingOpen} onOpenChange={setBillingOpen} />
     </div>
   )
 }
@@ -346,10 +437,10 @@ function StatCard({
   tone?: 'default' | 'emerald' | 'slate' | 'amber'
 }) {
   const toneClass = {
-    default: 'bg-[#e8f4f0] text-[#3a8f7a]',
-    emerald: 'bg-emerald-500/10 text-emerald-600',
-    slate: 'bg-slate-500/10 text-slate-600',
-    amber: 'bg-amber-500/10 text-amber-600',
+    default: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+    emerald: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+    slate: 'bg-slate-500/10 text-slate-600 dark:text-slate-300',
+    amber: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
   }[tone]
 
   return (
@@ -364,7 +455,7 @@ function StatCard({
       </span>
       <div>
         <div className='text-muted-foreground text-[11px]'>{label}</div>
-        <div className='text-lg leading-tight font-bold text-[#1a4a3f]'>
+        <div className='text-foreground text-lg leading-tight font-bold'>
           {value}
         </div>
       </div>
@@ -372,19 +463,50 @@ function StatCard({
   )
 }
 
+/**
+ * 表格里的一个单元格。
+ *
+ * 宽屏靠表头说明列名，窄屏（xl 以下）每格自带一行小标签 ——
+ * 同一份 DOM 兼顾两种布局，不用为移动端再写一遍。
+ */
+function Cell({
+  label,
+  className,
+  children,
+}: {
+  label: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <div className={cn('min-w-0', className)}>
+      <div className='text-muted-foreground mb-1 text-[11px] font-medium xl:hidden'>
+        {label}
+      </div>
+      {children}
+    </div>
+  )
+}
+
 function InstanceRow({
   server,
-  onOpen,
+  expanded,
+  onToggleExpand,
+  onOpenDetail,
   onChangePassword,
   onTogglePower,
+  onReboot,
   onRenew,
   onRelease,
   onCopy,
 }: {
   server: ServerInstance
-  onOpen: () => void
+  expanded: boolean
+  onToggleExpand: () => void
+  onOpenDetail: (tab: DetailTab) => void
   onChangePassword: (server: ServerInstance) => void
   onTogglePower: (server: ServerInstance, running: boolean) => void
+  onReboot: (server: ServerInstance) => void
   onRenew: () => void
   onRelease: () => void
   onCopy: (value: string, messageKey: string) => void
@@ -394,136 +516,199 @@ function InstanceRow({
   const running = status === 'running'
   const isHourly = server.billing === 'hourly'
   const released = status === 'released'
+  const expired = status === 'expired'
+  const locked = released || expired
 
   // 剩余时间按计费口径报：按量报小时、包月报天；已释放就不再提剩余时间。
-  let remainingHint: string | undefined
-  if (!released) {
-    remainingHint = isHourly
-      ? t('{{hours}} hours left', { hours: hoursLeft(server) })
-      : t('{{days}} days left', { days: daysLeft(server) })
-  }
+  const remainingHint = remainingHintOf(server, t)
+
+  // 健康状态回答「它现在能不能用」，与生命周期状态是两回事
+  const healthKey = healthKeyOf(server)
 
   return (
-    <Card
-      className={cn(
-        'border-border/70 transition-shadow hover:shadow-md',
-        (isExpired(server) || released) && 'opacity-75'
-      )}
-    >
-      <CardHeader className='gap-3 pb-3'>
-        <div className='flex flex-wrap items-start justify-between gap-3'>
-          <div className='min-w-0'>
-            <div className='flex flex-wrap items-center gap-2'>
-              <CardTitle className='text-base'>
-                <button
-                  type='button'
-                  onClick={onOpen}
-                  className='flex items-center gap-1.5 text-left transition-colors hover:text-[#3a8f7a]'
-                >
-                  <ServerIcon className='size-4 text-[#3a8f7a]' />
-                  {server.name}
-                </button>
-              </CardTitle>
-              <Badge className={cn('shrink-0', statusBadgeClass(server))}>
-                {t(statusKeyOf(server))}
-              </Badge>
-              {server.provision_mode === 'simulated' && (
-                <Badge className='shrink-0 bg-amber-500/15 text-amber-600'>
-                  {t('Simulated instance')}
-                </Badge>
-              )}
-            </div>
-            <CardDescription className='mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1'>
-              <span className='inline-flex items-center gap-1'>
-                <MapPin className='size-3' />
-                {server.config.region}
-              </span>
-              <span>
-                {server.spec.cpu} vCPU · {server.spec.memory} GB ·{' '}
-                {server.spec.disk} GB
-              </span>
-              {server.spec.gpu && (
-                <span className='inline-flex items-center gap-1 font-medium text-[#3a8f7a]'>
-                  <Gpu className='size-3' />
-                  {server.spec.gpu.count}× {server.spec.gpu.model}{' '}
-                  {server.spec.gpu.vram}GB
-                </span>
-              )}
-              <span className='inline-flex items-center gap-1'>
-                <Network className='size-3' />
-                {server.mbps} Mbps
-              </span>
-            </CardDescription>
+    <div className='border-border/70 border-t first:border-t-0'>
+      <div className={ROW_GRID}>
+        {/* 实例：名称 + ID。名称点开行内详情，是最自然的「看这台机器」入口 */}
+        <Cell label={t('Instance')}>
+          <button
+            type='button'
+            onClick={onToggleExpand}
+            className='text-foreground flex min-w-0 items-center gap-1.5 text-left font-semibold transition-colors hover:text-emerald-600 dark:hover:text-emerald-400'
+          >
+            <ServerIcon className='size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400' />
+            <span className='truncate'>{server.name}</span>
+          </button>
+          <div className='text-muted-foreground mt-0.5 font-mono text-[11px]'>
+            #{server.id} · {t(server.config.region)}
           </div>
+        </Cell>
 
-          {/* 行操作：云厂商把高频操作摆按钮，次要操作收进「更多」 */}
-          <div className='flex shrink-0 items-center gap-2'>
-            {!released && (
+        {/* 状态 */}
+        <Cell label={t('Status')}>
+          <Badge className={cn('shrink-0 gap-1', statusTone(statusKeyOf(server)))}>
+            <span className='size-1.5 rounded-full bg-current' />
+            {t(statusKeyOf(server))}
+          </Badge>
+        </Cell>
+
+        {/* 规格：先给显卡（选型第一依据），再给 CPU / 内存 / 磁盘 */}
+        <Cell label={t('Specifications')}>
+          <div className='text-foreground truncate text-[13px] font-medium'>
+            {server.spec.gpu
+              ? `${server.spec.gpu.count}× ${server.spec.gpu.model} ${server.spec.gpu.vram}GB`
+              : t('No graphics card')}
+          </div>
+          <div className='text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]'>
+            <span className='inline-flex items-center gap-1'>
+              <Cpu className='size-3' />
+              {server.spec.cpu} vCPU
+            </span>
+            <span className='inline-flex items-center gap-1'>
+              <MemoryStick className='size-3' />
+              {server.spec.memory} GB
+            </span>
+            <button
+              type='button'
+              onClick={onToggleExpand}
+              className='text-emerald-700 hover:underline dark:text-emerald-400'
+            >
+              {expanded ? t('Hide details') : t('Details')}
+            </button>
+          </div>
+        </Cell>
+
+        {/* 本地磁盘：系统盘 / 数据盘分开报 */}
+        <Cell label={t('Local disks')}>
+          <div className='text-foreground flex items-start gap-1.5 text-[12px]'>
+            <HardDrive className='mt-0.5 size-3 shrink-0 text-muted-foreground' />
+            <span className='min-w-0'>
+              {formatDiskBreakdown(server.spec, t)}
+            </span>
+          </div>
+        </Cell>
+
+        {/* 健康 */}
+        <Cell label={t('Health status')}>
+          <span
+            className={cn(
+              'inline-flex items-center gap-1.5 text-[12px] font-medium',
+              healthTone(healthKey)
+            )}
+          >
+            <span className='size-1.5 rounded-full bg-current' />
+            {t(healthKey)}
+          </span>
+        </Cell>
+
+        {/* 计费 */}
+        <Cell label={t('Billing type')}>
+          <div className='text-foreground text-[12px] font-medium'>
+            {isHourly ? t('Pay-as-you-go') : t('Prepaid')}
+          </div>
+          <div className='text-muted-foreground mt-0.5 text-[11px]'>
+            {t('Paid {{amount}}', { amount: formatAmount(server.paid_amount) })}
+          </div>
+        </Cell>
+
+        {/* 释放时间 */}
+        <Cell label={t('Auto release time')}>
+          <div className='text-foreground text-[12px] font-medium'>
+            {released ? t('Released') : formatDateTime(server.expire_at)}
+          </div>
+          {remainingHint && (
+            <div
+              className={cn(
+                'mt-0.5 text-[11px]',
+                statusKeyOf(server) === 'Expiring soon'
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : 'text-muted-foreground'
+              )}
+            >
+              {remainingHint}
+            </div>
+          )}
+        </Cell>
+
+        {/* SSH 登录：一行命令 + 一键复制。改密/重启这类非常用操作收进「更多」，
+            避免操作列把表格挤得只剩几个字 */}
+        <Cell label={t('SSH login')} className='sm:col-span-2 xl:col-span-1'>
+          <div className='flex flex-wrap items-center justify-end gap-1.5'>
+            <button
+              type='button'
+              onClick={() =>
+                onCopy(
+                  `ssh ${server.username}@${server.ip}`,
+                  'SSH command copied'
+                )
+              }
+              title={`ssh ${server.username}@${server.ip}`}
+              className='text-muted-foreground hover:text-foreground inline-flex max-w-[9.5rem] items-center gap-1 truncate font-mono text-[11px] transition-colors'
+            >
+              <span className='truncate'>
+                {server.username}@{server.ip}
+              </span>
+              <Copy className='size-3 shrink-0' />
+            </button>
+            {!locked && (
               <Button
                 size='sm'
                 variant='outline'
-                className='rounded-lg'
-                disabled={status === 'expired' && !running}
+                className='h-7 rounded-md px-2 text-[11px]'
                 onClick={() => onTogglePower(server, !running)}
               >
                 {running ? (
                   <>
-                    <Square className='mr-1.5 size-3.5' />
+                    <Square className='mr-1 size-3' />
                     {t('Stop')}
                   </>
                 ) : (
                   <>
-                    <Play className='mr-1.5 size-3.5' />
+                    <Play className='mr-1 size-3' />
                     {t('Start')}
                   </>
                 )}
               </Button>
             )}
-            <Button
-              size='sm'
-              variant='outline'
-              className='rounded-lg'
-              onClick={onOpen}
-            >
-              <Gauge className='mr-1.5 size-3.5' />
-              {t('Details')}
-            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
                   <Button
                     size='sm'
-                    variant='outline'
-                    className='rounded-lg'
+                    variant='ghost'
+                    className='h-7 rounded-md px-2 text-[11px]'
                     aria-label={t('More actions')}
                   />
                 }
               >
-                <Wrench className='size-3.5' />
+                {t('More')}
+                <ChevronDown className='ml-1 size-3' />
               </DropdownMenuTrigger>
               <DropdownMenuContent align='end'>
-                <DropdownMenuItem onClick={onOpen}>
+                <DropdownMenuItem onClick={onToggleExpand}>
+                  <Gauge className='size-4' />
+                  {t('Details')}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onOpenDetail('monitor')}>
                   <Activity className='size-4' />
                   {t('Monitoring')}
                 </DropdownMenuItem>
-                {!released && (
+                {!locked && (
                   <DropdownMenuItem onClick={() => onChangePassword(server)}>
                     <KeyRound className='size-4' />
                     {t('Change password')}
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem
-                  onClick={() =>
-                    onCopy(
-                      `ssh ${server.username}@${server.ip}`,
-                      'SSH command copied'
-                    )
-                  }
-                >
-                  <Copy className='size-4' />
-                  {t('Copy SSH command')}
+                {!locked && running && (
+                  <DropdownMenuItem onClick={() => onReboot(server)}>
+                    <RefreshCcw className='size-4' />
+                    {t('Reboot')}
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={() => onOpenDetail('events')}>
+                  <Receipt className='size-4' />
+                  {t('Operation log')}
                 </DropdownMenuItem>
-                {!released && (
+                {!locked && (
                   <>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={onRenew}>
@@ -540,88 +725,163 @@ function InstanceRow({
                   </>
                 )}
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={onOpen}>
+                <DropdownMenuItem onClick={() => onOpenDetail('basic')}>
                   <LifeBuoy className='size-4' />
                   {t('Support')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-        </div>
-      </CardHeader>
+        </Cell>
+      </div>
 
-      <CardContent className='pt-0'>
-        <Separator className='mb-4' />
-        <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
-          <Field
-            icon={Network}
-            label={t('Public IP')}
-            value={server.ip}
-            onCopy={() => onCopy(server.ip, 'Copied to clipboard')}
-          />
-          <Field
-            icon={KeyRound}
-            label={t('Username')}
-            value={server.username}
-          />
-          <Field
-            icon={Timer}
-            label={t('Expires on')}
-            value={released ? t('Released') : formatDate(server.expire_at)}
-            hint={remainingHint}
-          />
-          <Field
-            icon={RefreshCcw}
-            label={t('Amount paid')}
-            value={formatAmount(server.paid_amount)}
-            hint={
-              server.refunded_amount > 0
-                ? t('Refunded {{amount}}', {
-                    amount: formatAmount(server.refunded_amount),
-                  })
-                : undefined
-            }
-          />
+      {expanded && (
+        <div className='bg-muted/30 border-border/70 grid gap-5 border-t px-4 py-4 lg:grid-cols-2'>
+          {/* 规格明细 */}
+          <div>
+            <div className='text-muted-foreground mb-2 text-[11px] font-semibold tracking-wide uppercase'>
+              {t('Instance information')}
+            </div>
+            <dl className='grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]'>
+              <DetailItem
+                icon={Gpu}
+                label={t('Graphics card')}
+                value={
+                  server.spec.gpu
+                    ? `${server.spec.gpu.count}× ${server.spec.gpu.model} ${server.spec.gpu.vram}GB`
+                    : t('None')
+                }
+              />
+              <DetailItem
+                icon={Cpu}
+                label={t('CPU and memory')}
+                value={`${server.spec.cpu} vCPU · ${server.spec.memory} GB`}
+                hint={server.spec.cpu_model}
+              />
+              <DetailItem
+                icon={HardDrive}
+                label={t('System disk')}
+                value={`${server.spec.disk} GB NVMe`}
+              />
+              <DetailItem
+                icon={HardDrive}
+                label={t('Data disk')}
+                value={
+                  server.spec.data_disk ? `${server.spec.data_disk} GB` : t('None')
+                }
+              />
+              <DetailItem
+                icon={Network}
+                label={t('Public bandwidth')}
+                value={`${server.mbps} Mbps`}
+              />
+              <DetailItem
+                icon={Timer}
+                label={t('Created at')}
+                value={formatDate(server.created_at)}
+              />
+            </dl>
+          </div>
+
+          {/* 登录凭据 + 快捷入口 */}
+          <div>
+            <div className='text-muted-foreground mb-2 text-[11px] font-semibold tracking-wide uppercase'>
+              {t('Login credentials')}
+            </div>
+            <div className='grid gap-2 sm:grid-cols-3'>
+              <CredentialField
+                label={t('Public IP')}
+                value={server.ip}
+                dense
+              />
+              <CredentialField
+                label={t('Username')}
+                value={server.username}
+                dense
+              />
+              <CredentialField
+                label={t('Password')}
+                value={
+                  server.password_readable
+                    ? server.password
+                    : t('Unavailable, please reset the password')
+                }
+                secret={server.password_readable}
+                dense
+              />
+            </div>
+            <div className='mt-2.5 flex flex-wrap gap-2'>
+              <Button
+                size='sm'
+                variant='outline'
+                className='h-7 rounded-md px-2.5 text-[11px]'
+                onClick={() =>
+                  onCopy(
+                    `ssh ${server.username}@${server.ip}`,
+                    'SSH command copied'
+                  )
+                }
+              >
+                <Copy className='mr-1 size-3' />
+                {t('Copy SSH command')}
+              </Button>
+              <Button
+                size='sm'
+                variant='outline'
+                className='h-7 rounded-md px-2.5 text-[11px]'
+                onClick={() => onOpenDetail('monitor')}
+              >
+                <Activity className='mr-1 size-3' />
+                {t('Monitoring')}
+              </Button>
+              <Button
+                size='sm'
+                variant='outline'
+                className='h-7 rounded-md px-2.5 text-[11px]'
+                onClick={() => onOpenDetail('events')}
+              >
+                <Receipt className='mr-1 size-3' />
+                {t('Operation log')}
+              </Button>
+              {!locked && (
+                <Button
+                  size='sm'
+                  variant='outline'
+                  className='h-7 rounded-md px-2.5 text-[11px]'
+                  onClick={onRenew}
+                >
+                  <RefreshCcw className='mr-1 size-3' />
+                  {t('Renew')}
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
-      </CardContent>
-    </Card>
+      )}
+    </div>
   )
 }
 
-function Field({
+function DetailItem({
   icon: Icon,
   label,
   value,
   hint,
-  onCopy,
 }: {
   icon: ElementType
   label: string
   value: string
   hint?: string
-  onCopy?: () => void
 }) {
   return (
-    <div className='rounded-xl border bg-[#f8fbfa] px-3.5 py-3'>
-      <div className='text-muted-foreground flex items-center gap-1.5 text-[11px] font-medium tracking-wide uppercase'>
+    <div className='min-w-0'>
+      <dt className='text-muted-foreground flex items-center gap-1 text-[11px]'>
         <Icon className='size-3' />
         {label}
-        {onCopy && (
-          <button
-            type='button'
-            onClick={onCopy}
-            className='hover:bg-muted ml-auto rounded p-1 transition-colors'
-            aria-label='Copy'
-          >
-            <Copy className='size-3' />
-          </button>
-        )}
-      </div>
-      <div className='mt-1.5 truncate font-mono text-[13px] font-medium text-[#1a4a3f]'>
-        {value}
-      </div>
+      </dt>
+      <dd className='text-foreground mt-0.5 truncate font-medium'>{value}</dd>
       {hint && (
-        <div className='text-muted-foreground mt-0.5 text-[11px]'>{hint}</div>
+        <dd className='text-muted-foreground truncate text-[10px]'>{hint}</dd>
       )}
     </div>
   )
@@ -639,15 +899,11 @@ function OperationLog({ instanceId }: { instanceId: number }) {
   const events = eventsQuery.data?.items ?? []
 
   if (eventsQuery.isLoading) {
-    return (
-      <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
-    )
+    return <p className='text-muted-foreground text-sm'>{t('Loading...')}</p>
   }
 
   if (events.length === 0) {
-    return (
-      <p className='text-muted-foreground text-sm'>{t('No operations yet')}</p>
-    )
+    return <p className='text-muted-foreground text-sm'>{t('No operations yet')}</p>
   }
 
   return (
@@ -658,7 +914,7 @@ function OperationLog({ instanceId }: { instanceId: number }) {
           className='flex items-start justify-between gap-3 py-2.5 text-sm'
         >
           <div className='min-w-0'>
-            <div className='font-medium text-[#1a4a3f]'>
+            <div className='text-foreground font-medium'>
               {t(`server.event.${event.action}`, {
                 defaultValue: event.action,
               })}
@@ -667,7 +923,8 @@ function OperationLog({ instanceId }: { instanceId: number }) {
               <div className='text-muted-foreground mt-0.5 truncate text-xs'>
                 {event.detail}
               </div>
-            ) : null}          </div>
+            ) : null}
+          </div>
           <span className='text-muted-foreground shrink-0 text-xs'>
             {formatDateTime(event.created_at)}
           </span>
@@ -683,9 +940,13 @@ function OperationLog({ instanceId }: { instanceId: number }) {
  * 参照云厂商 ECS 的实例详情页：左侧是「基本信息 / 监控 / 网络与安全 /
  * 存储与备份 / 操作记录」。监控与操作记录都按需拉取 —— 打开抽屉就先拉
  * 24 小时曲线不划算，用户可能只想看一眼 IP。
+ *
+ * `initialTab` 让列表里的「监控 / 操作记录」直接落到对应页，
+ * 不用先打开再让用户自己切一次。
  */
 function InstanceDetails({
   server,
+  initialTab = 'basic',
   onClose,
   onChangePassword,
   onTogglePower,
@@ -695,6 +956,7 @@ function InstanceDetails({
   onCopy,
 }: {
   server: ServerInstance
+  initialTab?: DetailTab
   onClose: () => void
   onChangePassword: (server: ServerInstance) => void
   onTogglePower: (server: ServerInstance, running: boolean) => void
@@ -704,9 +966,7 @@ function InstanceDetails({
   onCopy: (value: string, messageKey: string) => void
 }) {
   const { t } = useTranslation()
-  const [tab, setTab] = useState<
-    'basic' | 'monitor' | 'network' | 'storage' | 'events'
-  >('basic')
+  const [tab, setTab] = useState<DetailTab>(initialTab)
 
   const status = resolveStatus(server)
   const running = status === 'running'
@@ -729,22 +989,22 @@ function InstanceDetails({
         type='button'
         aria-label={t('Close')}
         onClick={onClose}
-        className='absolute inset-0 bg-black/30 backdrop-blur-[2px]'
+        className='absolute inset-0 bg-black/40 backdrop-blur-[2px]'
       />
-      <div className='relative flex h-full w-full max-w-3xl flex-col bg-[#f5f9f7] shadow-2xl'>
+      <div className='bg-background relative flex h-full w-full max-w-3xl flex-col shadow-2xl'>
         {/* 头部 */}
         <div className='border-border/70 bg-card border-b px-6 py-4'>
           <div className='flex flex-wrap items-start justify-between gap-3'>
             <div className='min-w-0'>
               <div className='flex flex-wrap items-center gap-2'>
-                <h2 className='truncate text-lg font-bold text-[#1a4a3f]'>
+                <h2 className='text-foreground truncate text-lg font-bold'>
                   {server.name}
                 </h2>
-                <Badge className={cn('shrink-0', statusBadgeClass(server))}>
+                <Badge className={cn('shrink-0', statusTone(statusKeyOf(server)))}>
                   {t(statusKeyOf(server))}
                 </Badge>
                 {server.provision_mode === 'simulated' && (
-                  <Badge className='shrink-0 bg-amber-500/15 text-amber-600'>
+                  <Badge className='shrink-0 bg-amber-500/15 text-amber-700 dark:text-amber-400'>
                     {t('Simulated instance')}
                   </Badge>
                 )}
@@ -814,7 +1074,7 @@ function InstanceDetails({
                 className={cn(
                   'rounded-lg px-3 py-1.5 text-xs font-medium transition-colors',
                   tab === item.id
-                    ? 'bg-[#e8f4f0] text-[#1a4a3f]'
+                    ? 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
@@ -841,9 +1101,7 @@ function InstanceDetails({
                   <InfoRow
                     label={t('Auto release time')}
                     value={
-                      released
-                        ? t('Released')
-                        : formatDateTime(server.expire_at)
+                      released ? t('Released') : formatDateTime(server.expire_at)
                     }
                   />
                   <InfoRow
@@ -868,11 +1126,7 @@ function InstanceDetails({
                   {server.spec.data_disk && (
                     <InfoRow
                       label={t('Data disk')}
-                      value={`${server.spec.data_disk} GB${
-                        formatDataDiskExpand(server.spec, t)
-                          ? ` (${formatDataDiskExpand(server.spec, t)})`
-                          : ''
-                      }`}
+                      value={`${server.spec.data_disk} GB`}
                     />
                   )}
                   <InfoRow
@@ -1030,7 +1284,7 @@ function InstanceDetails({
                     <span className='text-muted-foreground'>
                       {t('SSH port 22')}
                     </span>
-                    <span className='font-medium text-[#1a4a3f]'>
+                    <span className='text-foreground font-medium'>
                       {t('Allowed from your account IP only')}
                     </span>
                   </div>
@@ -1038,7 +1292,7 @@ function InstanceDetails({
                     <span className='text-muted-foreground'>
                       {t('Outbound traffic')}
                     </span>
-                    <span className='font-medium text-[#1a4a3f]'>
+                    <span className='text-foreground font-medium'>
                       {t('Unrestricted')}
                     </span>
                   </div>
@@ -1046,7 +1300,7 @@ function InstanceDetails({
                     <span className='text-muted-foreground'>
                       {t('DDoS protection')}
                     </span>
-                    <span className='font-medium text-[#1a4a3f]'>
+                    <span className='text-foreground font-medium'>
                       {t('Enabled')}
                     </span>
                   </div>
@@ -1062,6 +1316,12 @@ function InstanceDetails({
                   label={t('System disk')}
                   value={`${server.spec.disk} GB NVMe`}
                 />
+                {server.spec.data_disk && (
+                  <InfoRow
+                    label={t('Data disk')}
+                    value={`${server.spec.data_disk} GB NVMe`}
+                  />
+                )}
                 <InfoRow label={t('Disk usage')} value={`${metrics.disk}%`} />
                 <InfoRow
                   label={t('Automatic snapshots')}
@@ -1111,7 +1371,7 @@ function InstanceDetails({
 function Panel({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className='border-border/70 bg-card rounded-xl border p-5'>
-      <h3 className='mb-4 text-sm font-semibold text-[#1a4a3f]'>{title}</h3>
+      <h3 className='text-foreground mb-4 text-sm font-semibold'>{title}</h3>
       {children}
     </section>
   )
@@ -1131,7 +1391,7 @@ function InfoRow({
       <div className='text-muted-foreground text-[11px]'>{label}</div>
       <div
         className={cn(
-          'mt-0.5 truncate text-sm font-medium text-[#1a4a3f]',
+          'text-foreground mt-0.5 truncate text-sm font-medium',
           mono && 'font-mono text-[13px]'
         )}
       >

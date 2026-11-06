@@ -138,7 +138,7 @@ export function RenewDialog(props: RenewDialogProps) {
               >
                 <div>{t(item.nameKey)}</div>
                 {item.discount < 1 && (
-                  <div className='mt-0.5 text-[11px] text-[#3a8f7a]'>
+                  <div className='mt-0.5 text-[11px] text-emerald-600 dark:text-emerald-400'>
                     {t('Save {{percent}}%', {
                       percent: Math.round((1 - item.discount) * 100),
                     })}
@@ -152,7 +152,7 @@ export function RenewDialog(props: RenewDialogProps) {
             <div className='text-muted-foreground text-xs'>
               {t('Renewal amount')}
             </div>
-            <div className='mt-0.5 text-xl font-bold text-[#1a4a3f]'>
+            <div className='mt-0.5 text-xl font-bold text-foreground'>
               {formatAmount(total)}
             </div>
             <div className='text-muted-foreground mt-1 text-[11px]'>

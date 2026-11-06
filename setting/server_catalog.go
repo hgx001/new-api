@@ -18,7 +18,8 @@ import (
 // 由服务端重新算一次 —— 否则改一个请求体就能用 1 分钱买走一台 GPU 机器。
 //
 // 改价流程：先改这里（后端），再同步前端常量；两边都有测试锁定关键价位
-// （100M = 10M × 3、GPU 三档时价 5.6 / 7.8 / 19.9），改单边会直接测挂。
+// （100M = 10M × 3、GPU 三档时价 5.6 / 7.8 / 19.9 且显卡占机型价大头），
+// 改单边会直接测挂。
 
 const ServerHoursPerMonth = 730
 
@@ -66,9 +67,31 @@ type ServerSpec struct {
 	//
 	// 语义：HourlyPrice 只在按量口径生效，MonthlyPrice 只在包月口径生效，
 	// 互不污染。Multiplier 仍保留给未显式定价的档位以及历史数据展示。
-	HourlyPrice  *float64   `json:"hourly_price,omitempty"`
-	MonthlyPrice *float64   `json:"monthly_price,omitempty"`
-	GPU          *ServerGPU `json:"gpu,omitempty"`
+	HourlyPrice  *float64 `json:"hourly_price,omitempty"`
+	MonthlyPrice *float64 `json:"monthly_price,omitempty"`
+
+	// GpuHourlyPrice / GpuMonthlyPrice 是机型价里**显卡那部分**（¥/小时、¥/月），
+	// 与两个口径一一对应，同样互不读取对方的字段。
+	//
+	// 为什么要单独拆出来：GPU 机器值钱就值在那张卡上，但价格只给一个总数时，
+	// 用户看到的是「24 vCPU / 96 GB 的主机收了 ¥17.40/小时」—— 主机的加价
+	// 比显卡还显眼，贵得没有道理，也没法判断「换一张卡要加多少钱」。
+	// 拆开之后摘要里显卡单独一行、占大头，主机只收成本价。
+	//
+	// 拆的是**展示口径**，不改变总价：HourlyPrice 仍是该档的总机型价，
+	// GpuHourlyPrice 是它的一个子项，配置行拿的是差值
+	// （机型价 − 套餐基准 − 显卡），三行相加恒等于机型价。
+	GpuHourlyPrice  *float64 `json:"gpu_hourly_price,omitempty"`
+	GpuMonthlyPrice *float64 `json:"gpu_monthly_price,omitempty"`
+
+	// DefaultMbps 是选中该规格时前端自动套用的带宽档。
+	//
+	// 大卡机器默认给人配 5 Mbps 是没意义的 —— 拉一个 30 GB 的模型权重
+	// 要跑一整天。所以 PRO 6000 这类旗舰档直接默认 100 Mbps，
+	// 用户想省钱再自己往下调。0 表示不指定，沿用页面默认值。
+	DefaultMbps int `json:"default_mbps,omitempty"`
+
+	GPU *ServerGPU `json:"gpu,omitempty"`
 }
 
 type ServerPlan struct {
@@ -141,42 +164,75 @@ var ServerPlans = []ServerPlan{
 		},
 	},
 	{
-		Id:                "gpu",
-		BasePricePerMonth: 1280,
+		Id: "gpu",
+		// GPU 机型把「主机」和「显卡」分开计价：
+		//
+		//   套餐  = 平台基础（机房、网络、系统镜像），按量 ¥2.50/小时
+		//   配置  = 这台机器的主机部分（vCPU / 内存 / 磁盘），只收成本价
+		//   显卡  = 卡本身，机型价里最大的那一块
+		//
+		// 包月基准单独给 ¥300 —— 按量与包月本来就是两套独立的价格体系，
+		// 而且 4090 包月整机只卖 ¥1,280，基准若还是 ¥1,280 就没有余量
+		// 留给显卡那一行了（会算出负数加价）。
+		BasePricePerMonth: 300,
 		BasePricePerHour:  2.5,
 		Specs: []ServerSpec{
 			// GPU 三档的按量时价由用户直接指定（¥/小时），不再由系数推导。
-			// 包月价仍是「基准月价 ¥1,280 × Multiplier」，PRO 6000 例外用 MonthlyPrice。
-			// 两套口径各写各的，改价时不会互相带偏。
+			// 包月价同样显式指定，两个口径各写各的，改价时不会互相带偏。
+			//
+			// 三档的拆账（按量 / 包月），显卡必须占大头：
+			//   4090      2.50 + 0.00 +  3.10 =  5.60   |  300 +   0 +  980 = 1280
+			//   5090      2.50 + 0.00 +  5.30 =  7.80   |  300 +   0 + 1492 = 1792
+			//   PRO 6000  2.50 + 0.50 + 16.90 = 19.90   |  300 + 180 + 6100 = 6580
+			//
+			// 4090 与 5090 是同一台主机（16 vCPU / 64 GB / 同盘），所以配置行
+			// 都是 0，两档的差价**全部**落在显卡上 —— 用户换卡时看得很清楚：
+			// 从 4090 升到 5090 每小时多 ¥2.20，多的就是那张卡的钱。
 			{
-				Id:          "gpu-16c64g",
-				CPU:         16,
-				Memory:      64,
-				Disk:        500,
-				Multiplier:  1,
-				HourlyPrice: floatPtr(5.6),
-				GPU:         &ServerGPU{Model: "RTX 4090", VRAM: 24, Count: 1},
+				Id:              "gpu-16c64g",
+				CPU:             16,
+				Memory:          64,
+				Disk:            30,
+				DataDisk:        200,
+				Multiplier:      1,
+				HourlyPrice:     floatPtr(5.6),
+				MonthlyPrice:    floatPtr(1280),
+				GpuHourlyPrice:  floatPtr(3.1),
+				GpuMonthlyPrice: floatPtr(980),
+				GPU:             &ServerGPU{Model: "RTX 4090", VRAM: 24, Count: 1},
 			},
 			{
-				Id:          "gpu-16c64g-rtx5090",
-				CPU:         16,
-				Memory:      64,
-				Disk:        500,
-				Multiplier:  1.4,
-				HourlyPrice: floatPtr(7.8),
-				GPU:         &ServerGPU{Model: "RTX 5090", VRAM: 32, Count: 1},
+				Id:              "gpu-16c64g-rtx5090",
+				CPU:             16,
+				Memory:          64,
+				Disk:            30,
+				DataDisk:        200,
+				Multiplier:      1.4,
+				HourlyPrice:     floatPtr(7.8),
+				MonthlyPrice:    floatPtr(1792),
+				GpuHourlyPrice:  floatPtr(5.3),
+				GpuMonthlyPrice: floatPtr(1492),
+				GPU:             &ServerGPU{Model: "RTX 5090", VRAM: 32, Count: 1},
 			},
 			{
 				// RTX PRO 6000 单卡档：按量 ¥19.90/小时，包月 ¥6,580/月。
-				// 主机配置：24 vCPU / 96 GB / 1000 GB，单卡 RTX PRO 6000 96 GB。
-				Id:           "gpu-24c96g-rtxpro6000",
-				CPU:          24,
-				Memory:       96,
-				Disk:         1000,
-				Multiplier:   6,
-				HourlyPrice:  floatPtr(19.9),
-				MonthlyPrice: floatPtr(6580),
-				GPU:          &ServerGPU{Model: "RTX PRO 6000", VRAM: 96, Count: 1},
+				// 主机配置：24 vCPU / 96 GB / 系统盘 30 GB + 数据盘 200 GB，
+				// 单卡 RTX PRO 6000 96 GB。
+				//
+				// 这档默认给 100 Mbps：96 GB 显存的卡是拿来跑大模型的，
+				// 权重动辄几十 GB，默认带宽给低了用户第一步就卡住。
+				Id:              "gpu-24c96g-rtxpro6000",
+				CPU:             24,
+				Memory:          96,
+				Disk:            30,
+				DataDisk:        200,
+				Multiplier:      6,
+				HourlyPrice:     floatPtr(19.9),
+				MonthlyPrice:    floatPtr(6580),
+				GpuHourlyPrice:  floatPtr(16.9),
+				GpuMonthlyPrice: floatPtr(6100),
+				DefaultMbps:     100,
+				GPU:             &ServerGPU{Model: "RTX PRO 6000", VRAM: 96, Count: 1},
 			},
 		},
 	},
@@ -225,14 +281,19 @@ type ServerQuote struct {
 	MonthlyEquivalent float64 `json:"monthly_equivalent"`
 	PlanPrice         float64 `json:"plan_price"`
 	SpecPrice         float64 `json:"spec_price"`
-	BandwidthPrice    float64 `json:"bandwidth_price"`
-	RegionFactor      float64 `json:"region_factor"`
-	PeriodSeconds     int64   `json:"period_seconds"`
-	Region            string  `json:"region"`
-	Plan              string  `json:"plan"`
-	SpecId            string  `json:"spec_id"`
-	Mbps              int     `json:"mbps"`
-	DurationId        string  `json:"duration_id"`
+	// GpuPrice 是机型价里显卡那部分（当前口径）。
+	//
+	// 三行相加恒等于机型价：PlanPrice + SpecPrice + GpuPrice = 机型价。
+	// 没买卡的机型这一项恒为 0。
+	GpuPrice       float64 `json:"gpu_price"`
+	BandwidthPrice float64 `json:"bandwidth_price"`
+	RegionFactor   float64 `json:"region_factor"`
+	PeriodSeconds  int64   `json:"period_seconds"`
+	Region         string  `json:"region"`
+	Plan           string  `json:"plan"`
+	SpecId         string  `json:"spec_id"`
+	Mbps           int     `json:"mbps"`
+	DurationId     string  `json:"duration_id"`
 }
 
 func GetServerPlanById(id string) (ServerPlan, bool) {
@@ -304,16 +365,38 @@ func serverPlanBasePrice(plan ServerPlan, billing string) float64 {
 	return roundServerMoney(plan.BasePricePerMonth)
 }
 
+// serverSpecGpuPrice 取该规格在当前计费口径下显卡那部分的加价。
+//
+// 只读当前口径的字段：按量读 GpuHourlyPrice、包月读 GpuMonthlyPrice，
+// 与 HourlyPrice / MonthlyPrice 的隔离规则一致（两套定价不能互推）。
+// 没配显卡的规格、或没填显卡价的老档位，一律返回 0 —— 整块机型价都算作
+// 「套餐 + 配置」，与改造前的展示完全一致，不会因为加了这层拆分而变价。
+func serverSpecGpuPrice(spec ServerSpec, billing string) float64 {
+	if spec.GPU == nil {
+		return 0
+	}
+	if billing == ServerBillingHourly && spec.GpuHourlyPrice != nil {
+		return roundServerMoney(*spec.GpuHourlyPrice)
+	}
+	if billing == ServerBillingPrepaid && spec.GpuMonthlyPrice != nil {
+		return roundServerMoney(*spec.GpuMonthlyPrice)
+	}
+	return 0
+}
+
 // ComputeServerQuote 计算一台服务器的报价。
 //
 // 公式（与前端 computePrice 同源，改一处必须改另一处）：
 //
-//	包月：裸机型月价 + 规格加价 + 带宽月加价 = 月价小计
+//	包月：裸机型月价 + 配置加价 + 显卡加价 + 带宽月加价 = 月价小计
 //	      月价小计 × 地区系数 = 月单价
 //	      月单价 × 月数 × 时长折扣 = 实付总价
-//	按量：裸机型时价 + 规格加价 + 带宽时价（月价 ÷ 730）= 时价小计
+//	按量：裸机型时价 + 配置加价 + 显卡加价 + 带宽时价（月价 ÷ 730）= 时价小计
 //	      时价小计 × 地区系数 = 小时单价
 //	      小时单价 × 小时数 × 时长折扣 = 实付总价
+//
+// 「配置加价」与「显卡加价」是机型价的两个子项，两者相加再加裸机型价
+// 恒等于该档的机型价。拆账只影响展示，不改变任何一分总价。
 //
 // 未知机型/规格/带宽/时长/地区一律返回错误，不回落默认值：
 // 悄悄换档会让用户付了钱却拿到另一台机器。
@@ -364,7 +447,11 @@ func ComputeServerQuote(config ServerConfig) (*ServerQuote, error) {
 	if duration.Pricing == ServerBillingPrepaid && spec.MonthlyPrice != nil {
 		machinePrice = roundServerMoney(*spec.MonthlyPrice)
 	}
-	quote.SpecPrice = roundServerMoney(machinePrice - quote.PlanPrice)
+	// 显卡部分同样「只读当前口径」：按量读 GpuHourlyPrice，包月读
+	// GpuMonthlyPrice，没买卡的机型为 0。配置行拿的是差值 ——
+	// 套餐 + 配置 + 显卡 三行相加恒等于机型价，前端摘要就按这个加法展示。
+	quote.GpuPrice = serverSpecGpuPrice(spec, duration.Pricing)
+	quote.SpecPrice = roundServerMoney(machinePrice - quote.PlanPrice - quote.GpuPrice)
 
 	if duration.Pricing == ServerBillingHourly {
 		quote.Unit = "hour"

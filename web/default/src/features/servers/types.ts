@@ -96,6 +96,27 @@ export interface ServerSpec {
   /** 包月口径的机型月价（¥/月），可选 */
   monthlyPrice?: number
   /**
+   * 显卡那部分的加价（¥/小时、¥/月），与两个口径一一对应。
+   *
+   * 为什么要拆出来：GPU 机器值钱就值在那张卡上，但价格只给一个总数时，
+   * 用户看到的是「24 vCPU / 96 GB 的主机收了 ¥17.40/小时」—— 主机的加价
+   * 比显卡还显眼，贵得没有道理，也没法判断换一张卡要加多少钱。
+   * 拆开后摘要里显卡单独一行、占大头，主机只收成本价。
+   *
+   * 拆的是展示口径，不改变总价：hourlyPrice 仍是该档总机型价，
+   * gpuHourlyPrice 是它的子项，配置行拿差值，三行相加恒等于机型价。
+   */
+  gpuHourlyPrice?: number
+  /** 包月口径的显卡加价（¥/月），可选 */
+  gpuMonthlyPrice?: number
+  /**
+   * 选中该规格时自动套用的带宽档（Mbps）。
+   *
+   * 大卡机器默认给 5 Mbps 没意义：拉一个 30 GB 的模型权重要跑一整天。
+   * 所以 Pro 6000 这类旗舰档默认 100 Mbps，用户想省钱再自己往下调。
+   */
+  defaultMbps?: number
+  /**
    * 显卡配置（只有 GPU 型套餐才有）。
    *
    * 为什么必须有：显卡型号 + 显存是 GPU 算力选型的**第一决策依据**
@@ -227,8 +248,15 @@ export interface PriceBreakdown {
    * 「左边标的价格」和「右边的总价」对上。
    */
   planPrice: number
-  /** 规格加价（当前口径）：机型 × 规格系数 − 裸机型基准价；基准规格为 0 */
+  /** 规格加价（当前口径）：机型 × 规格系数 − 裸机型基准价 − 显卡价；基准规格为 0 */
   specPrice: number
+  /**
+   * 显卡加价（当前口径）：机型价里显卡那部分，没买卡的机型为 0。
+   *
+   * 套餐 + 配置 + 显卡 恒等于机型价 —— 摘要就是按这个加法展示的，
+   * 读者能自己把账加出来。
+   */
+  gpuPrice: number
   /** 带宽加价（当前口径）：包月档是月加价，按量档是折算后的小时加价 */
   bandwidthPrice: number
   /** 地区系数（上海 1.08，广州 1） */
@@ -250,6 +278,7 @@ export interface ServerQuoteResult {
   monthly_equivalent: number
   plan_price: number
   spec_price: number
+  gpu_price: number
   bandwidth_price: number
   region_factor: number
   period_seconds: number
@@ -286,6 +315,8 @@ export interface ServerInstanceSpec {
   multiplier: number
   /** 包月机型价（¥/月）；后端 snake_case，与实例快照其余字段一致 */
   monthly_price?: number
+  /** 显卡那部分的月价（¥/月） */
+  gpu_monthly_price?: number
   gpu?: ServerGpu
 }
 

@@ -5390,7 +5390,13 @@
     "Source marked available again": "Source marked available again",
     "Manually marked. It will not be cleared automatically by a successful task.": "Manually marked. It will not be cleared automatically by a successful task.",
     "The backup model has no available channel.": "The backup model has no available channel.",
-    "Pricing is unchanged: customers are still billed for the model they requested.": "Pricing is unchanged: customers are still billed for the model they requested."
+    "Pricing is unchanged: customers are still billed for the model they requested.": "Pricing is unchanged: customers are still billed for the model they requested.",
+    "No graphics card": "No graphics card",
+    "Paid {{amount}}": "Paid {{amount}}",
+    "Local disks": "Local disks",
+    "SSH login": "SSH login",
+    "Hide details": "Hide details",
+    "Instances are released automatically once the rental period ends. Everything on them is deleted and cannot be recovered, so renew before it expires.": "Instances are released automatically once the rental period ends. Everything on them is deleted and cannot be recovered, so renew before it expires."
   },
   "Integration Tutorial": "Integration Tutorial",
   "Claude Code Installation": "Claude Code Installation",

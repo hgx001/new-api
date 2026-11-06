@@ -17,12 +17,14 @@ func TestComputeServerQuoteGPUFlagship(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// 摘要三行相加必须正好等于单价，用户才能自己把账加出来。
+	// 摘要四行相加必须正好等于单价，用户才能自己把账加出来。
 	//
-	// PRO 6000 的包月机型价是 ¥6,580（用户指定），不是「基准月价 × 系数」
-	// 推出的 ¥7,680，所以加价一项是 ¥6,580 − ¥1,280 = ¥5,300。
-	assert.Equal(t, 1280.0, quote.PlanPrice)
-	assert.Equal(t, 5300.0, quote.SpecPrice)
+	// PRO 6000 的包月机型价是 ¥6,580（用户指定），拆成
+	// 套餐 ¥300 + 配置 ¥180 + 显卡 ¥6,100。
+	// 用户明确要求「显卡应该是最贵的、占大头」—— 显卡在这一档占 92.7%。
+	assert.Equal(t, 300.0, quote.PlanPrice)
+	assert.Equal(t, 180.0, quote.SpecPrice)
+	assert.Equal(t, 6100.0, quote.GpuPrice)
 	assert.Equal(t, 30.0, quote.BandwidthPrice)
 	assert.Equal(t, 6610.0, quote.UnitPrice)
 	assert.Equal(t, 6610.0, quote.Total)
@@ -74,10 +76,12 @@ func TestComputeServerQuoteGPUHourlyPrices(t *testing.T) {
 		specId string
 		gpu    string
 		price  float64
+		// 显卡那部分：必须是机型价里最大的一项，否则「GPU 占大头」就名不副实
+		gpuPrice float64
 	}{
-		{"gpu-16c64g", "RTX 4090", 5.6},
-		{"gpu-16c64g-rtx5090", "RTX 5090", 7.8},
-		{"gpu-24c96g-rtxpro6000", "RTX PRO 6000", 19.9},
+		{"gpu-16c64g", "RTX 4090", 5.6, 3.1},
+		{"gpu-16c64g-rtx5090", "RTX 5090", 7.8, 5.3},
+		{"gpu-24c96g-rtxpro6000", "RTX PRO 6000", 19.9, 16.9},
 	}
 	for _, tc := range cases {
 		t.Run(tc.gpu, func(t *testing.T) {
@@ -91,9 +95,16 @@ func TestComputeServerQuoteGPUHourlyPrices(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.price, quote.UnitPrice)
 			assert.Equal(t, tc.price, quote.Total)
-			// 摘要分项必须自洽：套餐 ¥2.50 + 配置加价 = 该档时价。
+			// 摘要分项必须自洽：套餐 + 配置 + 显卡 = 该档时价。
 			assert.Equal(t, 2.5, quote.PlanPrice)
-			assert.Equal(t, roundServerMoney(tc.price-2.5), quote.SpecPrice)
+			assert.Equal(t, tc.gpuPrice, quote.GpuPrice)
+			assert.Equal(t,
+				roundServerMoney(tc.price-2.5-tc.gpuPrice), quote.SpecPrice)
+			// 显卡必须是三项里最大的：主机只收成本价，钱主要花在卡上。
+			assert.Greater(t, quote.GpuPrice, quote.SpecPrice,
+				"显卡加价必须高于配置加价")
+			assert.Greater(t, quote.GpuPrice, quote.PlanPrice,
+				"显卡加价必须高于套餐基准价")
 		})
 	}
 }
@@ -201,14 +212,16 @@ func TestComputeServerQuoteRTXPRO6000KeepsNineteenNinetyPerHour(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 6580.0, monthly.UnitPrice)
 	assert.Equal(t, 6580.0, monthly.Total)
-	// 摘要分项自洽：套餐 ¥1,280 + 配置加价 = 月单价
-	assert.Equal(t, 1280.0, monthly.PlanPrice)
-	assert.Equal(t, 5300.0, monthly.SpecPrice)
+	// 摘要分项自洽：套餐 ¥300 + 配置 ¥180 + 显卡 ¥6,100 = 月单价 ¥6,580
+	assert.Equal(t, 300.0, monthly.PlanPrice)
+	assert.Equal(t, 180.0, monthly.SpecPrice)
+	assert.Equal(t, 6100.0, monthly.GpuPrice)
 }
 
 func TestServerRTXPRO6000SpecMatchesPublishedConfig(t *testing.T) {
 	// 配置按实物照抄，采购与展示都以这份为准：
-	// 24 vCPU / 96 GB 内存 / 1000 GB 磁盘、单卡 RTX PRO 6000 96 GB。
+	// 24 vCPU / 96 GB 内存 / 系统盘 30 GB + 数据盘 200 GB、
+	// 单卡 RTX PRO 6000 96 GB。
 	var spec *ServerSpec
 	for i := range ServerPlans {
 		if ServerPlans[i].Id != "gpu" {
@@ -223,7 +236,10 @@ func TestServerRTXPRO6000SpecMatchesPublishedConfig(t *testing.T) {
 	require.NotNil(t, spec)
 	assert.Equal(t, 24, spec.CPU)
 	assert.Equal(t, 96, spec.Memory)
-	assert.Equal(t, 1000, spec.Disk)
+	// 磁盘拆成系统盘 + 数据盘：合并成一个 1000 GB 的数字既对不上交付内容，
+	// 也让「配置 +¥17.40/小时」看起来像在卖硬盘。数据盘 200 GB 够用。
+	assert.Equal(t, 30, spec.Disk)
+	assert.Equal(t, 200, spec.DataDisk)
 	require.NotNil(t, spec.GPU)
 	assert.Equal(t, "RTX PRO 6000", spec.GPU.Model)
 	assert.Equal(t, 96, spec.GPU.VRAM)
@@ -235,6 +251,53 @@ func TestServerRTXPRO6000SpecMatchesPublishedConfig(t *testing.T) {
 	require.NotNil(t, spec.HourlyPrice)
 	assert.Equal(t, 19.9, *spec.HourlyPrice)
 	assert.Equal(t, 6.0, spec.Multiplier)
+	// 大卡机器默认 100 Mbps：拉几十 GB 的权重，5M / 20M 根本不现实。
+	assert.Equal(t, 100, spec.DefaultMbps)
+}
+
+// 摘要的每一行都必须是真钱：套餐 + 配置 + 显卡 恒等于机型价，
+// 且不能出现负数加价（负数说明基准价定高了，把显卡的空间吃掉了）。
+func TestServerCatalogPriceBreakdownIsConsistent(t *testing.T) {
+	billings := []struct {
+		pricing string
+		mode    string
+	}{{ServerBillingHourly, "1h"}, {ServerBillingPrepaid, "1mo"}}
+
+	for _, plan := range ServerPlans {
+		for _, spec := range plan.Specs {
+			for _, billing := range billings {
+				name := plan.Id + "/" + spec.Id + "/" + billing.mode
+				t.Run(name, func(t *testing.T) {
+					quote, err := ComputeServerQuote(ServerConfig{
+						Region:     "guangzhou",
+						Plan:       plan.Id,
+						SpecId:     spec.Id,
+						Mbps:       5,
+						DurationId: billing.mode,
+					})
+					require.NoError(t, err)
+
+					// 带宽在广州 5M 档是 0，所以单价就是机型价本身。
+					machinePrice := roundServerMoney(
+						quote.PlanPrice + quote.SpecPrice + quote.GpuPrice)
+					assert.Equal(t, quote.UnitPrice, machinePrice,
+						"套餐 + 配置 + 显卡必须等于机型价")
+					assert.GreaterOrEqual(t, quote.SpecPrice, 0.0,
+						"配置加价不能为负：负值说明基准价吃掉了显卡的空间")
+
+					if spec.GPU != nil {
+						// GPU 机器的钱主要花在卡上，这是用户明确的产品口径。
+						assert.Greater(t, quote.GpuPrice, 0.0, "GPU 档必须单独计价")
+						assert.Greater(t, quote.GpuPrice,
+							quote.PlanPrice+quote.SpecPrice,
+							"显卡应该是最贵的一项、占大头")
+					} else {
+						assert.Equal(t, 0.0, quote.GpuPrice, "无卡机型不该有显卡价")
+					}
+				})
+			}
+		}
+	}
 }
 
 // GPU 机型只保留三档在售：4090 / 5090 / RTX PRO 6000。

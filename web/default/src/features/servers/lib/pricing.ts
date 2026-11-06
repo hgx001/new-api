@@ -98,10 +98,35 @@ export function specMachinePrice(
 }
 
 /**
+ * 某个规格里**显卡那部分**的加价（按当前口径）。
+ *
+ * 与 `specMachinePrice` 同样的隔离规则：按量只读 `gpuHourlyPrice`、
+ * 包月只读 `gpuMonthlyPrice`，两套定价不互推。
+ * 没配显卡的规格、或没填显卡价的老档位一律返回 0 —— 整块机型价都算作
+ * 「套餐 + 配置」，与拆分前的展示一致，不会因为多了这一层而变价。
+ *
+ * 与后端 `serverSpecGpuPrice` 同口径。
+ */
+export function specGpuPrice(
+  spec: ServerSpec,
+  billing: BillingMode
+): number {
+  if (!spec.gpu) return 0
+  if (billing === 'hourly' && spec.gpuHourlyPrice !== undefined) {
+    return roundMoney(spec.gpuHourlyPrice)
+  }
+  if (billing === 'prepaid' && spec.gpuMonthlyPrice !== undefined) {
+    return roundMoney(spec.gpuMonthlyPrice)
+  }
+  return 0
+}
+
+/**
  * 某个规格相对基准规格的加价（按当前口径）。
  *
- * 基准规格为 0。左侧规格按钮用「规格机型价」展示，右侧摘要的「配置」行
- * 用这个加价展示 —— 两者必须出自同一个函数，否则左右两边会对不上。
+ * 基准规格为 0。注意要减掉显卡价 —— 显卡在摘要里单独一行，
+ * 不然「配置」行会把卡钱也算进去，看起来像主机很贵（这正是要修的观感问题）。
+ * 三行相加：套餐 + 配置 + 显卡 = 机型价，恒等。
  */
 export function specSurcharge(
   plan: ServerPlan,
@@ -109,7 +134,23 @@ export function specSurcharge(
   billing: BillingMode
 ): number {
   return roundMoney(
-    specMachinePrice(plan, spec, billing) - planBasePrice(plan, billing)
+    specMachinePrice(plan, spec, billing) -
+      planBasePrice(plan, billing) -
+      specGpuPrice(spec, billing)
+  )
+}
+
+/**
+ * 型号的「起步价」：该型号下最便宜的规格价（按当前口径）。
+ *
+ * 套餐卡上写的是「From ¥X」—— 必须是用户真能买到的那个价，
+ * 而不是裸机型基准价。GPU 机型的基准价（¥2.50/小时）比它最便宜的
+ * 整机（¥5.60/小时）低一半，拿基准价当起步价会让人以为显卡机器很便宜。
+ */
+export function planFromPrice(plan: ServerPlan, billing: BillingMode): number {
+  return plan.specs.reduce(
+    (min, spec) => Math.min(min, specMachinePrice(plan, spec, billing)),
+    Number.POSITIVE_INFINITY
   )
 }
 
@@ -177,10 +218,11 @@ export function computePrice(config: ServerConfig): PriceBreakdown {
 
   if (duration.pricing === 'hourly') {
     // 拆成可加总的分项：读者在摘要里把各行加起来就能得到单价。
-    //   裸机型时价 + 规格加价 + 带宽时价 = 时价小计；× 地区系数 = 小时单价
+    //   裸机型时价 + 配置加价 + 显卡加价 + 带宽时价 = 时价小计；× 地区系数 = 小时单价
     const planPrice = planBasePrice(plan, 'hourly')
     const planUnit = specMachinePrice(plan, spec, 'hourly')
     const specPrice = specSurcharge(plan, spec, 'hourly')
+    const gpuPrice = specGpuPrice(spec, 'hourly')
     // 带宽在按量口径下同样按小时计价：用月加价折算成小时值
     const bandwidthPrice = roundMoney(bandwidth.pricePerMonth / HOURS_PER_MONTH)
     const unitPrice = roundMoney(
@@ -204,6 +246,7 @@ export function computePrice(config: ServerConfig): PriceBreakdown {
       ),
       planPrice,
       specPrice,
+      gpuPrice,
       bandwidthPrice,
       regionFactor: region.priceFactor,
     }
@@ -212,6 +255,7 @@ export function computePrice(config: ServerConfig): PriceBreakdown {
   const planPrice = planBasePrice(plan, 'prepaid')
   const planUnit = specMachinePrice(plan, spec, 'prepaid')
   const specPrice = specSurcharge(plan, spec, 'prepaid')
+  const gpuPrice = specGpuPrice(spec, 'prepaid')
   const bandwidthPrice = roundMoney(bandwidth.pricePerMonth)
   const monthly = roundMoney((planUnit + bandwidthPrice) * region.priceFactor)
 
@@ -230,6 +274,7 @@ export function computePrice(config: ServerConfig): PriceBreakdown {
     monthlyEquivalent: roundMoney(total / duration.amount),
     planPrice,
     specPrice,
+    gpuPrice,
     bandwidthPrice,
     regionFactor: region.priceFactor,
   }
@@ -240,17 +285,18 @@ export function discountPercent(discount: number): number {
   return Math.round((1 - discount) * 100)
 }
 
-/** 服务器默认配置：取型号的第一个规格 */
+/** 服务器默认配置：取型号的第一个规格（带宽跟随该规格的默认值） */
 export function defaultConfigFor(
   planId: string,
   overrides: Partial<ServerConfig> = {}
 ): ServerConfig {
   const plan = getPlan(planId)
+  const spec = plan.specs[0]
   return {
     region: 'guangzhou',
     plan: plan.id,
-    specId: plan.specs[0].id,
-    mbps: 20,
+    specId: spec.id,
+    mbps: spec.defaultMbps ?? 20,
     durationId: DEFAULT_DURATION_ID,
     ...overrides,
   }

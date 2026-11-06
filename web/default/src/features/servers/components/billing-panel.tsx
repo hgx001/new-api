@@ -118,9 +118,19 @@ export function BillingPanel({
           ? formatUnitSurcharge(price.specPrice)
           : t('Base spec'),
     },
-    // 显卡单列一行：下单前必须看得见卡型与显存（能不能装下模型全看它）
+    // 显卡单列一行：下单前必须看得见卡型与显存（能不能装下模型全看它），
+    // 同时把「钱主要花在卡上」这件事标出来 —— 显卡加价应明显高于配置加价。
     ...(spec.gpu
-      ? [{ label: t('Graphics card'), value: formatGpu(spec.gpu) }]
+      ? [
+          {
+            label: t('Graphics card'),
+            value: formatGpu(spec.gpu),
+            price:
+              price.gpuPrice > 0
+                ? formatUnitSurcharge(price.gpuPrice)
+                : t('Included'),
+          },
+        ]
       : []),
     {
       label: t('Bandwidth'),

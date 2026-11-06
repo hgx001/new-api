@@ -69,7 +69,7 @@ export function CredentialField({
   return (
     <div
       className={cn(
-        'rounded-xl border bg-[#f8fbfa] transition-colors',
+        'rounded-xl border bg-muted/40 transition-colors',
         dense ? 'px-3.5 py-3' : 'px-4 py-3.5'
       )}
     >
@@ -109,7 +109,7 @@ export function CredentialField({
       </div>
       <div
         className={cn(
-          'mt-1.5 truncate font-mono text-[13px] font-medium text-[#1a4a3f]',
+          'mt-1.5 truncate font-mono text-[13px] font-medium text-foreground',
           dense && 'text-sm'
         )}
       >

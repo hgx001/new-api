@@ -5390,7 +5390,13 @@
     "Source marked available again": "Источник снова отмечен доступным",
     "Manually marked. It will not be cleared automatically by a successful task.": "Отмечено вручную. Успешная задача не снимет его автоматически.",
     "The backup model has no available channel.": "У резервной модели нет доступных каналов.",
-    "Pricing is unchanged: customers are still billed for the model they requested.": "Тарифы не изменились: клиенты по-прежнему оплачивают модель, которую запросили."
+    "Pricing is unchanged: customers are still billed for the model they requested.": "Тарифы не изменились: клиенты по-прежнему оплачивают модель, которую запросили.",
+    "No graphics card": "Без видеокарты",
+    "Paid {{amount}}": "Оплачено {{amount}}",
+    "Local disks": "Локальные диски",
+    "SSH login": "Вход по SSH",
+    "Hide details": "Скрыть подробности",
+    "Instances are released automatically once the rental period ends. Everything on them is deleted and cannot be recovered, so renew before it expires.": "По окончании аренды инстанс освобождается автоматически, все данные удаляются без возможности восстановления. Продлите его до истечения срока."
   },
   "Integration Tutorial": "Руководство по интеграции",
   "Claude Code Installation": "Установка Claude Code",

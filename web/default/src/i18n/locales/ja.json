@@ -5390,7 +5390,13 @@
     "Source marked available again": "ソースを利用可能に戻しました",
     "Manually marked. It will not be cleared automatically by a successful task.": "手動でマークしました。成功したタスクでは自動的に解除されません。",
     "The backup model has no available channel.": "バックアップモデルに利用できるチャネルがありません。",
-    "Pricing is unchanged: customers are still billed for the model they requested.": "料金は変わりません：お客様はリクエストしたモデルのまま課金されます。"
+    "Pricing is unchanged: customers are still billed for the model they requested.": "料金は変わりません：お客様はリクエストしたモデルのまま課金されます。",
+    "No graphics card": "グラフィックカードなし",
+    "Paid {{amount}}": "支払済 {{amount}}",
+    "Local disks": "ローカルディスク",
+    "SSH login": "SSH ログイン",
+    "Hide details": "詳細を閉じる",
+    "Instances are released automatically once the rental period ends. Everything on them is deleted and cannot be recovered, so renew before it expires.": "レンタル期間が終了するとインスタンスは自動的に解放され、データはすべて削除されて復元できません。期限前に更新してください。"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",

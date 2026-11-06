@@ -129,49 +129,70 @@ export const PLANS: ServerPlan[] = [
     taglineKey: 'Dedicated GPU for inference and rendering',
     descriptionKey:
       'GPU accelerated instances with dedicated graphics cards for model inference, rendering and video processing.',
-    basePricePerMonth: 1280,
+    basePricePerMonth: 300,
     // ≈ ¥1825/月（包月 ¥1280/月 的 1.43 倍）
     // 单卡 4090 的量级参照 AutoDL 同档卡型（¥1.8~2.6/小时）
     basePricePerHour: 2.5,
     badgeKey: 'New',
     // 按价格从低到高排：单卡 4090 → 单卡 5090 → 单卡 RTX PRO 6000。
     //
-    // GPU 三档的按量时价由用户直接指定（¥/小时），写进 hourlyPrice，
-    // 不再靠 multiplier 反推 —— 5.6/7.8/19.9 除以基准时价 ¥2.50
-    // 会得到 2.24/3.12/7.96 这种没人看得懂的系数，改一个价就要反算一遍。
-    // 包月价仍走 multiplier（PRO 6000 例外用 monthlyPrice = ¥6,580）。
-    // 两个口径各写各的，与后端 setting/server_catalog.go 一一对应。
+    // 三档都把「主机」和「显卡」分开定价（用户要求：显卡必须是最贵、
+    // 占大头）。拆账公式见每条规格上的注释，三行相加恒等于机型价。
+    //   4090      2.50 + 0.00 +  3.10 =  5.60   |  300 +   0 +  980 = 1280
+    //   5090      2.50 + 0.00 +  5.30 =  7.80   |  300 +   0 + 1492 = 1792
+    //   PRO 6000  2.50 + 0.50 + 16.90 = 19.90   |  300 +  180 + 6100 = 6580
+    //
+    // 包月基准单独给 ¥300（不是 ¥1,280）：4090 包月整机只卖 ¥1,280，
+    // 基准若还是 ¥1,280 就没有余量留给显卡那一行了（会算出负数加价）。
+    // 与后端 setting/server_catalog.go 一一对应。
     specs: [
       {
         id: 'gpu-16c64g',
         cpu: 16,
         memory: 64,
-        disk: 500,
+        disk: 30,
+        dataDisk: 200,
         multiplier: 1,
         hourlyPrice: 5.6,
+        monthlyPrice: 1280,
+        gpuHourlyPrice: 3.1,
+        gpuMonthlyPrice: 980,
         gpu: { model: 'RTX 4090', vram: 24, count: 1 },
       },
       {
         id: 'gpu-16c64g-rtx5090',
         cpu: 16,
         memory: 64,
-        disk: 500,
+        disk: 30,
+        dataDisk: 200,
         multiplier: 1.4,
         hourlyPrice: 7.8,
+        monthlyPrice: 1792,
+        gpuHourlyPrice: 5.3,
+        gpuMonthlyPrice: 1492,
         gpu: { model: 'RTX 5090', vram: 32, count: 1 },
       },
       {
         /**
          * RTX PRO 6000 单卡档：按量 ¥19.90/小时，包月 ¥6,580/月。
-         * 主机配置：24 vCPU / 96 GB / 1000 GB，单卡 RTX PRO 6000 96 GB。
+         * 主机配置：24 vCPU / 96 GB / 系统盘 30 GB + 数据盘 200 GB，
+         * 单卡 RTX PRO 6000 96 GB。
+         *
+         * 选中这档时带宽自动套到 100 Mbps（defaultMbps）——
+         * 96 GB 显存是拿来跑大模型的，权重动辄几十 GB，
+         * 默认带宽给低了用户第一步就卡住。
          */
         id: 'gpu-24c96g-rtxpro6000',
         cpu: 24,
         memory: 96,
-        disk: 1000,
+        disk: 30,
+        dataDisk: 200,
         multiplier: 6,
         hourlyPrice: 19.9,
         monthlyPrice: 6580,
+        gpuHourlyPrice: 16.9,
+        gpuMonthlyPrice: 6100,
+        defaultMbps: 100,
         gpu: { model: 'RTX PRO 6000', vram: 96, count: 1 },
       },
     ],
@@ -215,8 +236,14 @@ const RETIRED_SPECS: Record<string, ServerSpec[]> = {
       cpu: 24,
       memory: 96,
       disk: 1000,
-      // 原双卡 4090 档的价格系数，保持不变，老订单的价格才对得上账
+      // 原双卡 4090 档的价格系数，保持不变，老订单的价格才对得上账。
+      //
+      // 机型基准月价改到 ¥300 后，光靠 multiplier 1.7 会算成 ¥510/月
+      // （老价是 ¥1,280 × 1.7 = ¥2,176）。老实例的价格是既成事实，
+      // 不能因为新档位改基准就跟着变，所以两个口径都写死成原价。
       multiplier: 1.7,
+      hourlyPrice: 4.25,
+      monthlyPrice: 2176,
       gpu: { model: 'RTX 4090', vram: 24, count: 2 },
     },
   ],
@@ -417,16 +444,33 @@ export function formatGpu(gpu?: ServerGpu): string {
 /**
  * 规格的 CPU / 内存 / 磁盘摘要（不含显卡，显卡单独一行）。
  *
+ * 磁盘报的是**可用容量**：有数据盘时报数据盘（系统盘 30 GB 只装系统，
+ * 用户真正拿来放数据/权重的是数据盘），没有分盘时就是单一磁盘。
+ * 分盘的明细由 `formatDiskBreakdown` 负责，用在控制台的「本地磁盘」列。
+ *
  * `t` 由调用方传入 —— 磁盘文案要跟随界面语言，不能在这里写死中文。
  */
 export function formatSpec(
   spec: ServerSpec,
+  _t?: (key: string) => string
+): string {
+  const capacity = spec.dataDisk ?? spec.disk
+  return `${spec.cpu} vCPU · ${spec.memory} GB · ${capacity} GB`
+}
+
+/**
+ * 分盘明细，例如「系统盘 30 GB · 数据盘 200 GB」。
+ *
+ * 控制台的「本地磁盘」列用它 —— 买的时候只看总容量，交付之后
+ * 用户要分清楚「哪个盘能随便写、哪个盘写满了系统会崩」。
+ */
+export function formatDiskBreakdown(
+  spec: ServerSpec,
   t?: (key: string) => string
 ): string {
-  const disk = spec.dataDisk
-    ? `${spec.disk} GB ${t?.('System disk') ?? 'System disk'} + ${spec.dataDisk} GB ${t?.('Data disk') ?? 'Data disk'}`
-    : `${spec.disk} GB`
-  return `${spec.cpu} vCPU · ${spec.memory} GB · ${disk}`
+  const system = `${spec.disk} GB ${t?.('System disk') ?? 'System disk'}`
+  if (!spec.dataDisk) return system
+  return `${system} · ${spec.dataDisk} GB ${t?.('Data disk') ?? 'Data disk'}`
 }
 
 /**

@@ -164,9 +164,18 @@ export function CheckoutDialog({
           ? formatUnitSurcharge(price.specPrice)
           : t('Base spec'),
     },
-    // 显卡单列一行：确认订单时也要看得见卡型与显存
+    // 显卡单列一行：确认订单时也要看得见卡型与显存，以及它占了多少钱
     ...(spec.gpu
-      ? [{ label: t('Graphics card'), value: formatGpu(spec.gpu) }]
+      ? [
+          {
+            label: t('Graphics card'),
+            value: formatGpu(spec.gpu),
+            price:
+              price.gpuPrice > 0
+                ? formatUnitSurcharge(price.gpuPrice)
+                : t('Included'),
+          },
+        ]
       : []),
     {
       label: t('Bandwidth'),
