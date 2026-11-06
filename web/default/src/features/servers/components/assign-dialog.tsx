@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { Check, Copy, KeyRound, Loader2, RefreshCw, Wand2 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -71,6 +71,8 @@ export function AssignDialog({ order, onClose, onDone }: AssignDialogProps) {
   const assign = useAssignServerOrder()
 
   const [ip, setIp] = useState('')
+  const [ipMissing, setIpMissing] = useState(false)
+  const ipRef = useRef<HTMLInputElement>(null)
   const [port, setPort] = useState('22')
   const [username, setUsername] = useState('root')
   const [password, setPassword] = useState('')
@@ -99,6 +101,9 @@ export function AssignDialog({ order, onClose, onDone }: AssignDialogProps) {
 
   const handleAssign = async () => {
     if (!ip.trim()) {
+      // 光标直接落到空字段上：只弹一句提示，管理员还得自己找是哪一栏。
+      setIpMissing(true)
+      ipRef.current?.focus()
       toast.error(t('Please fill in the public IP'))
       return
     }
@@ -219,10 +224,15 @@ export function AssignDialog({ order, onClose, onDone }: AssignDialogProps) {
                 <Label htmlFor='assign-ip'>{t('Public IP')}</Label>
                 <Input
                   id='assign-ip'
+                  ref={ipRef}
                   value={ip}
-                  onChange={(event) => setIp(event.target.value)}
-                  placeholder='203.0.113.10'
-                  className='font-mono'
+                  onChange={(event) => {
+                    setIp(event.target.value)
+                    if (event.target.value.trim()) setIpMissing(false)
+                  }}
+                  placeholder={t('e.g. 203.0.113.10')}
+                  aria-invalid={ipMissing}
+                  className='font-mono aria-invalid:border-red-500'
                   autoComplete='off'
                 />
               </div>

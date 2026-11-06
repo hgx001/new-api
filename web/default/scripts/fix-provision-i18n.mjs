@@ -1,11 +1,18 @@
-// 一次性脚本：为「服务器分配」补六语言文案。
-// 逐行插入到 translation 对象末尾，不做 JSON 全量重写（会打散 \uXXXX 转义）。
+// 一次性修复脚本：把「服务器分配」那批文案从错位状态改回来。
+//
+// 事故原因见 add-provision-i18n.mjs：ENTRIES 的列是 [key, zh, fr, ja, ru, vi]，
+// 但取值用了 entry[langIndex + 1] 而 LANGS 从 en 开始，于是整体右移一位 ——
+// en 拿到中文、zh 拿到法文、fr 拿到日文、ja 拿到俄文、ru 拿到越南语、vi 落回中文。
+//
+// 修复策略：按正确列位算出每个语言的期望值，**只替换确实串了语言的条目**。
+// 这样不会覆盖本来就存在的正确翻译（例如 fr 里 "User" 原本就是 Utilisateurs，
+// 那次脚本因为键已存在而跳过，没有被污染）。
 import fs from 'node:fs'
 import path from 'node:path'
 
 const dir = path.join(process.cwd(), 'src/i18n/locales')
 
-/** key = 英文原文（i18next 的 key 就是英文） */
+/** [key, zh, fr, ja, ru, vi]；key 本身即英文原文。 */
 const ENTRIES = [
   ['Server assignment', '服务器分配', 'Attribution de serveur', 'サーバー割り当て', 'Выдача серверов', 'Phân bổ máy chủ'],
   ['Paid orders wait here until you hand over credentials. The rental clock starts at assignment.', '已付款的订单会在这里排队，等你填写登录凭据。租期从分配那一刻才开始算。', 'Les commandes payées attendent ici que vous remettiez les identifiants. Le décompte démarre à l’attribution.', '支払い済みの注文は、認証情報を入力するまでここに並びます。レンタル期間は割り当て時から始まります。', 'Оплаченные заказы ждут здесь, пока вы передадите данные для входа. Аренда начинается с момента выдачи.', 'Đơn đã thanh toán sẽ chờ tại đây cho đến khi bạn bàn giao thông tin đăng nhập. Thời hạn thuê bắt đầu từ lúc phân bổ.'],
@@ -43,6 +50,7 @@ const ENTRIES = [
   ['Hide private key', '收起私钥', 'Masquer la clé privée', '秘密鍵を隠す', 'Скрыть приватный ключ', 'Ẩn khóa riêng'],
   ['Note for the user (optional)', '给用户的备注（可选）', 'Note pour l’utilisateur (facultatif)', 'ユーザーへのメモ（任意）', 'Заметка для пользователя (необязательно)', 'Ghi chú cho người dùng (tùy chọn)'],
   ['e.g. Ubuntu 22.04, reinstall via ticket', '例如：Ubuntu 22.04，重装请提交工单', 'ex. Ubuntu 22.04, réinstallation via ticket', '例：Ubuntu 22.04、再インストールはチケットで', 'напр. Ubuntu 22.04, переустановка через тикет', 'ví dụ: Ubuntu 22.04, cài lại qua phiếu hỗ trợ'],
+  ['e.g. 203.0.113.10', '例如 203.0.113.10', 'ex. 203.0.113.10', '例：203.0.113.10', 'напр. 203.0.113.10', 'ví dụ: 203.0.113.10'],
   ['Please fill in the public IP', '请填写公网 IP', 'Veuillez saisir l’IP publique', 'グローバル IP を入力してください', 'Укажите публичный IP', 'Vui lòng nhập IP công khai'],
   ['Fill in a password or a private key', '密码与私钥至少填写一项', 'Renseignez un mot de passe ou une clé privée', 'パスワードか秘密鍵のいずれかを入力してください', 'Укажите пароль или приватный ключ', 'Nhập mật khẩu hoặc khóa riêng'],
   ['SSH port must be between 1 and 65535', 'SSH 端口需在 1-65535 之间', 'Le port SSH doit être entre 1 et 65535', 'SSH ポートは 1〜65535 の範囲で指定してください', 'Порт SSH должен быть от 1 до 65535', 'Cổng SSH phải trong khoảng 1-65535'],
@@ -57,9 +65,65 @@ const ENTRIES = [
   ['Refresh', '刷新', 'Rafraîchir', '更新', 'Обновить', 'Làm mới'],
 ]
 
+/** 列位：0 是英文原文（即 key），1..5 依次对应下面五种语言。 */
 const LANGS = ['en', 'zh', 'fr', 'ja', 'ru', 'vi']
 
-/** 找到 translation 对象的闭合大括号所在行（跳过字符串字面量里的花括号）。 */
+const CJK = /[\u4e00-\u9fff]/
+const KANA = /[\u3040-\u30ff]/
+const CYRILLIC = /[\u0400-\u04ff]/
+const VIETNAMESE = /[đĐơƠưƯ\u1ea0-\u1ef9]/
+
+/**
+ * 判断某语言下的取值是否「串了别的语言」。
+ *
+ * 只替换串味的条目：那次脚本会跳过已存在的键，这些键在各语言里本来就是
+ * 对的，无条件覆盖会把 Utilisateurs 改成 Utilisateur 之类，制造无谓改动。
+ */
+function looksForeign(lang, value) {
+  switch (lang) {
+    case 'en':
+      return CJK.test(value) || KANA.test(value) || CYRILLIC.test(value)
+    case 'zh':
+      // 中文条目一定含汉字；退化成纯拉丁字母说明被写成了法文。
+      return !CJK.test(value)
+    case 'fr':
+      return CJK.test(value) || KANA.test(value) || CYRILLIC.test(value) || VIETNAMESE.test(value)
+    case 'ja':
+      // 日文本来就用汉字，只把俄文/越南文判为串味。
+      return CYRILLIC.test(value) || VIETNAMESE.test(value)
+    case 'ru':
+      return CJK.test(value) || KANA.test(value) || VIETNAMESE.test(value)
+    case 'vi':
+      return CJK.test(value) || KANA.test(value) || CYRILLIC.test(value)
+    default:
+      return false
+  }
+}
+
+/** 按行替换某个 key 的值，保持文件其余部分（缩进、转义、顺序）原样。 */
+function replaceValueLine(lines, key, nextValue) {
+  const prefix = `${JSON.stringify(key)}:`
+  const hits = []
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].trimStart().startsWith(prefix)) hits.push(i)
+  }
+  if (hits.length !== 1) {
+    throw new Error(`key 行匹配数为 ${hits.length}（应为 1）：${key}`)
+  }
+  const index = hits[0]
+  const line = lines[index]
+  const indent = line.slice(0, line.length - line.trimStart().length)
+  const tail = line.trimEnd().endsWith(',') ? ',' : ''
+  lines[index] = `${indent}${prefix} ${JSON.stringify(nextValue)}${tail}`
+}
+
+/**
+ * translation 对象自身的闭合行。
+ *
+ * 不能用「文件里最后一个 }」去推：这个文件在 translation 之后还有若干
+ * 根级键，闭合行是 `},` 而不是 `}`。按花括号深度扫一遍最稳（跳过字符串
+ * 字面量里的括号）。
+ */
 function findTranslationClose(lines) {
   const startIndex = lines.findIndex((line) =>
     line.trimStart().startsWith('"translation": {')
@@ -68,10 +132,9 @@ function findTranslationClose(lines) {
   let depth = 0
   let started = false
   for (let i = startIndex; i < lines.length; i += 1) {
-    const line = lines[i]
     let inString = false
     let escaped = false
-    for (const char of line) {
+    for (const char of lines[i]) {
       if (escaped) {
         escaped = false
         continue
@@ -90,15 +153,50 @@ function findTranslationClose(lines) {
         started = true
       } else if (char === '}') {
         depth -= 1
-        if (started && depth === 0) {
-          return i
-        }
+        if (started && depth === 0) return i
       }
     }
   }
   throw new Error('找不到 translation 闭合行')
 }
 
+/** 把新键追加为 translation 对象的最后一个属性（它因此不能带尾逗号）。 */
+function appendKey(lines, key, value) {
+  const close = findTranslationClose(lines)
+  let last = close - 1
+  while (last >= 0 && lines[last].trim() === '') last -= 1
+  if (last < 0) throw new Error('translation 内没有任何属性')
+  if (!lines[last].trimEnd().endsWith(',')) lines[last] = `${lines[last].trimEnd()},`
+
+  lines.splice(close, 0, `    ${JSON.stringify(key)}: ${JSON.stringify(value)}`)
+}
+
+/**
+ * 清掉上一版脚本误插到根层的同名键。
+ *
+ * 只认「位置在 translation 闭合行之后」的那一条 —— translation 内部如果
+ * 已经有同名键，那不是误插，不能删。
+ */
+function removeStrayRootKey(lines, key) {
+  const prefix = `${JSON.stringify(key)}:`
+  const close = findTranslationClose(lines)
+  const stray = []
+  for (let i = close + 1; i < lines.length; i += 1) {
+    if (lines[i].trimStart().startsWith(prefix)) stray.push(i)
+  }
+  if (stray.length === 0) return false
+  for (const index of stray.reverse()) {
+    lines.splice(index, 1)
+    let prev = index - 1
+    while (prev >= 0 && lines[prev].trim() === '') prev -= 1
+    if (prev >= 0 && lines[prev].trimEnd().endsWith(',')) {
+      lines[prev] = lines[prev].trimEnd().replace(/,$/, '')
+    }
+  }
+  return true
+}
+
+let totalFixed = 0
 for (let langIndex = 0; langIndex < LANGS.length; langIndex += 1) {
   const lang = LANGS[langIndex]
   const file = path.join(dir, `${lang}.json`)
@@ -106,39 +204,37 @@ for (let langIndex = 0; langIndex < LANGS.length; langIndex += 1) {
   const parsed = JSON.parse(raw)
   const existing = parsed.translation ?? {}
   const lines = raw.split('\n')
-  const closeIndex = findTranslationClose(lines)
 
-  const additions = []
+  let added = 0
+  let fixed = 0
+  let cleaned = 0
   for (const entry of ENTRIES) {
     const key = entry[0]
-    if (Object.prototype.hasOwnProperty.call(existing, key)) continue
-    const value = entry[langIndex + 1] ?? entry[1]
-    additions.push(`    ${JSON.stringify(key)}: ${JSON.stringify(value)},`)
+    const expected = langIndex === 0 ? key : entry[langIndex]
+    if (removeStrayRootKey(lines, key)) cleaned += 1
+    const current = existing[key]
+
+    if (current === undefined) {
+      // 补上缺的键（含这次新加的 IP 示例文案）
+      appendKey(lines, key, expected)
+      added += 1
+      continue
+    }
+    if (current === expected) continue
+    if (!looksForeign(lang, current)) continue
+    replaceValueLine(lines, key, expected)
+    fixed += 1
   }
-  if (additions.length === 0) {
-    console.log(`[${lang}] 无需新增`)
+
+  if (added === 0 && fixed === 0 && cleaned === 0) {
+    console.log(`[${lang}] 无需修改`)
     continue
   }
-
-  // 闭合行前一行补逗号（原本是最后一个属性，没有逗号）
-  let insertAt = closeIndex
-  for (let i = closeIndex - 1; i >= 0; i -= 1) {
-    if (lines[i].trim() !== '') {
-      if (!lines[i].trimEnd().endsWith(',')) lines[i] = `${lines[i].trimEnd()},`
-      break
-    }
-  }
-
-  // 最后一条新增不要逗号（它会成为新的最后一个属性）
-  const last = additions.pop()
-  additions.forEach((line) => {
-    lines.splice(insertAt, 0, line)
-    insertAt += 1
-  })
-  lines.splice(insertAt, 0, last.replace(/,\s*$/, ''))
-
   const output = lines.join('\n')
   JSON.parse(output)
   fs.writeFileSync(file, output, 'utf8')
-  console.log(`[${lang}] 新增 ${additions.length + 1} 条`)
+  totalFixed += fixed
+  console.log(`[${lang}] 修复 ${fixed} 条，补录 ${added} 条，清理误插 ${cleaned} 条`)
 }
+
+console.log(`\n合计修复 ${totalFixed} 条错位文案`)
