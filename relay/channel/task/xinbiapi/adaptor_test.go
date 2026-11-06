@@ -30,7 +30,7 @@ func newAdaptor() *TaskAdaptor {
 	return &TaskAdaptor{baseURL: "https://www.xinbiapi.com", apiKey: "test-key"}
 }
 
-func TestResolveDuration(t *testing.T) {
+func TestResolveDurationPerCallModels(t *testing.T) {
 	cases := []struct {
 		name    string
 		req     relaycommon.TaskSubmitReq
@@ -46,11 +46,36 @@ func TestResolveDuration(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := resolveDuration(tc.req)
+			got, err := resolveDuration(tc.req, ModelNamePayPerCall)
 			if tc.wantErr {
 				require.Error(t, err)
 				return
 			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// 特惠分流用的内部模型名是**按秒**商品：2–30 秒透传，缺省 5 秒，
+// 越界按 Wan3 同口径夹取（源链路就是夹取，分流不能改变同一份请求的结果）。
+func TestResolveDurationPerSecondRouteModel(t *testing.T) {
+	cases := []struct {
+		name string
+		req  relaycommon.TaskSubmitReq
+		want int
+	}{
+		{name: "5 秒", req: relaycommon.TaskSubmitReq{Duration: 5}, want: 5},
+		{name: "10 秒", req: relaycommon.TaskSubmitReq{Seconds: "10"}, want: 10},
+		{name: "30 秒", req: relaycommon.TaskSubmitReq{Duration: 30}, want: 30},
+		{name: "不传默认 5 秒", req: relaycommon.TaskSubmitReq{}, want: 5},
+		{name: "1 秒夹到 2", req: relaycommon.TaskSubmitReq{Duration: 1}, want: 2},
+		{name: "31 秒夹到 30", req: relaycommon.TaskSubmitReq{Duration: 31}, want: 30},
+		{name: "seconds 非数字回落默认值", req: relaycommon.TaskSubmitReq{Seconds: "abc"}, want: 5},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveDuration(tc.req, ModelNameTehuiRoute)
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, got)
 		})
@@ -311,6 +336,30 @@ func TestEstimateBillingIsPerCall(t *testing.T) {
 	assert.Nil(t, a.EstimateBilling(c, &relaycommon.RelayInfo{}))
 }
 
+// 按秒计价的分流目标必须给出 seconds —— 少了它，10 秒的请求只按 1 秒收钱。
+func TestEstimateBillingPerSecondRouteModel(t *testing.T) {
+	cases := []struct {
+		name string
+		req  relaycommon.TaskSubmitReq
+		want float64
+	}{
+		{name: "10 秒", req: relaycommon.TaskSubmitReq{Duration: 10}, want: 10},
+		{name: "缺省 5 秒", req: relaycommon.TaskSubmitReq{}, want: 5},
+		{name: "seconds 字符串", req: relaycommon.TaskSubmitReq{Seconds: "6"}, want: 6},
+	}
+	a := newAdaptor()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestContext(t, tc.req)
+			got := a.EstimateBilling(c, &relaycommon.RelayInfo{OriginModelName: ModelNameTehuiRoute})
+			require.NotNil(t, got)
+			assert.Equal(t, tc.want, got["seconds"])
+			_, hasSize := got["size"]
+			assert.False(t, hasSize, "特惠的 720P 是复合价，不能再乘分辨率倍率")
+		})
+	}
+}
+
 func TestParseTaskResultStatus(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -376,10 +425,18 @@ func TestParseTaskResultSuccessWithoutFileFails(t *testing.T) {
 func TestNeedsSuperResolutionCoversAllPublicModels(t *testing.T) {
 	assert.True(t, needsSuperResolution(ModelNamePayPerCall))
 	assert.True(t, needsSuperResolution(constant.Seedance25HuoDongModel))
+	assert.True(t, needsSuperResolution(ModelNameTehuiRoute), "特惠分流目标同样承诺 720P 交付")
 	assert.False(t, needsSuperResolution("wan3.0-720p-特惠"))
 	assert.False(t, needsSuperResolution("wan3.0-video"))
 	assert.False(t, needsSuperResolution(""))
 	assert.False(t, needsSuperResolution("  "))
+}
+
+// 特惠分流目标必须是**按秒**档；一旦被按次能力组吃掉，
+// 计费会退化成一口价，10 秒与 30 秒同价。
+func TestTehuiRouteModelIsNotPerCall(t *testing.T) {
+	assert.False(t, constant.IsTaskPerCallModel(ModelNameTehuiRoute))
+	assert.True(t, constant.IsTaskPerCallModel(constant.Seedance25HuoDongModel), "活动版必须仍按次")
 }
 
 func TestBuildRequestURLEndpoints(t *testing.T) {

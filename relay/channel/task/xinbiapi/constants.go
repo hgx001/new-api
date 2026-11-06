@@ -28,6 +28,21 @@ const upstreamModel = "wan3.0-video"
 // 改动本文件或 adaptor 时请保持这个口径。
 const ModelNamePayPerCall = "wan3.0-720p-按次"
 
+// ModelNameTehuiRoute 是 wan3.0-720p-特惠 分流到本渠道时使用的**内部目标模型名**。
+//
+// 为什么需要独立名字：特惠是对外按秒售卖的公开模型，它的请求要按能力分流 ——
+// 纯文本/参考图的走本渠道（480P 生成 + 交付 720P，成本更低），
+// 带首尾帧/参考视频/参考音频/seed 的继续走 Wan3 官网链路（本渠道吃不住）。
+// 一个模型名只能选中一条渠道，所以心笔这一侧需要一个只在本渠道存在的名字。
+//
+// ⚠️ 这个名字**不进模型广场**（model/pricing.go 的 isAllowedPricingModel 不放行），
+// 也不对客展示：中间的 middleware 会把 RouteOriginModel 写成特惠，
+// 所有出口（任务列表 / OpenAI Video 响应 / 日志 model_name）仍显示特惠。
+//
+// ⚠️ 不要把它加进 constant 的按次能力组：它是按秒商品（2–30 秒透传），
+// 与 ModelNamePayPerCall 的固定 30 秒按次口径是两回事。
+const ModelNameTehuiRoute = "wan3.0-720p-特惠-内链"
+
 // ModelList 本渠道对外的模型列表。
 //
 // ⚠️ seedance2.5-活动（2026-11-03 起）是本渠道的**常驻**对外模型：
@@ -38,6 +53,7 @@ const ModelNamePayPerCall = "wan3.0-720p-按次"
 var ModelList = []string{
 	ModelNamePayPerCall,
 	constant.Seedance25HuoDongModel,
+	ModelNameTehuiRoute,
 }
 
 // generationResolution 是向上游请求的生成档位。
@@ -57,6 +73,22 @@ const deliveredResolution = "720P"
 // 客户端显式传别的时长一律 400（不能静默改成 30 秒：那是「用户以为买的是 5 秒」）。
 // 完全不传时按 30 秒处理，并在上游请求里**显式下发 30**，保证实际生成与计费口径一致。
 const fixedDuration = 30
+
+// 按秒分流目标（ModelNameTehuiRoute）的时长口径 —— 与 Wan3 特惠链路一致：
+// 2–30 秒透传，缺省 5 秒，越界夹取（源链路就是夹取，分流不能改变同一份请求的结果）。
+const (
+	perSecondMinDuration     = 2
+	perSecondMaxDuration     = 30
+	perSecondDefaultDuration = 5
+)
+
+// isPerSecondRouteModel 判断某个对外/内部模型名是否走「按秒透传」口径。
+//
+// 只认分流目标一个名字：按次档（含活动版）必须保持固定 30 秒，
+// 用前缀或能力组判断会把两种计价口径混在一起。
+func isPerSecondRouteModel(modelName string) bool {
+	return strings.TrimSpace(modelName) == ModelNameTehuiRoute
+}
 
 // ratios 上游 parameterSchema 声明的画面比例集合。
 // 注意自适应要传 adaptive，不是 auto。

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -73,11 +74,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if strings.TrimSpace(req.Prompt) == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("field prompt is required"), "invalid_request", http.StatusBadRequest)
 	}
-	if _, err := resolveDuration(req); err != nil {
+	if _, err := resolveDuration(req, executedModelName(info)); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 	}
 	if _, err := resolveRatio(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
+	}
+	// 素材类型：本渠道只收参考图。带参考视频/参考音频/首尾帧时**明确报错**，
+	// 不能靠 collectReferenceImages 的「只挑图片」把它们静默丢掉 ——
+	// 任务照建、照扣费，客户要的素材根本没进去。
+	if err := rejectNonImageMedia(req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
 	// 档位锁定：对外只卖 720P。
 	// 客户端显式要 480P/1080P 必须报错，不能静默改档 —— 那是「收 720P 的钱给 1080P 的承诺」。
@@ -111,10 +118,30 @@ func rejectUnsupportedFields(req relaycommon.TaskSubmitReq) error {
 
 // EstimateBilling 返回计费倍率。
 //
-// 本模型是**固定按次**（¥4.5/次，与时长、分辨率都无关），因此返回 nil：
+// 按次档（ModelNamePayPerCall / seedance2.5-活动）固定一口价，返回 nil：
 // 不能带入 seconds / size，否则会在按次价上再乘一次时长，等于按秒多扣。
+//
+// 按秒档（ModelNameTehuiRoute = 特惠分流目标）必须返回 seconds：
+// 少了它，10 秒的请求只按 1 秒收钱。**不返回 size** ——
+// 特惠的 720P 是「480P 生成 + 交付处理」的复合价，已经含在 ModelPrice 里，
+// 再乘分辨率倍率会把价格翻倍。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	return nil
+	if !isPerSecondRouteModel(executedModelName(info)) {
+		return nil
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		// 请求上下文缺失时按缺省秒数计费，绝不能返回 nil ——
+		// 按秒档返回 nil 会被当成 1 秒，10 秒的请求少收 9 秒。
+		return map[string]float64{"seconds": float64(perSecondDefaultDuration)}
+	}
+	duration, err := resolveDuration(req, ModelNameTehuiRoute)
+	if err != nil {
+		// 时长已经在 Validate 阶段拦过；这里拿不到就交给上层按缺省秒数处理，
+		// 绝不能返回一个「0 秒」把账单清零。
+		duration = perSecondDefaultDuration
+	}
+	return map[string]float64{"seconds": float64(duration)}
 }
 
 func (a *TaskAdaptor) AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64 {
@@ -165,7 +192,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
-	duration, err := resolveDuration(req)
+	duration, err := resolveDuration(req, executedModelName(info))
 	if err != nil {
 		return nil, &taskcommon.UserError{Err: err, Code: "invalid_duration"}
 	}
@@ -486,11 +513,21 @@ var _ interface {
 
 // ────────────────────────────── 工具 ──────────────────────────────
 
-// resolveDuration 统一 duration / seconds 两种写法，并强制固定时长。
+// resolveDuration 统一 duration / seconds 两种写法。
 //
-// 本模型只卖 30 秒：不传就按 30 秒；传了别的值直接报错。
-// 不做「就近吸附」—— 用户要 5 秒却按 30 秒计费，是比报错更糟的体验。
-func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
+// 两个口径，按**实际执行的模型名**区分：
+//
+//   - 按次档（ModelNamePayPerCall / seedance2.5-活动）：固定 30 秒。
+//     不传就按 30 秒；传了别的值直接报错。不做「就近吸附」——
+//     用户要 5 秒却按 30 秒计费，是比报错更糟的体验。
+//
+//   - 按秒档（ModelNameTehuiRoute）：2–30 秒透传，缺省 5 秒，越界夹取。
+//     与源链路 Wan3 的 resolveDuration 同口径（duration 优先、再 seconds、
+//     再默认 5；<2 夹到 2、>30 夹到 30）—— 同一份请求分流前后结果必须一致。
+func resolveDuration(req relaycommon.TaskSubmitReq, modelName string) (int, error) {
+	if isPerSecondRouteModel(modelName) {
+		return resolvePerSecondDuration(req), nil
+	}
 	duration := req.Duration
 	if duration == 0 {
 		// seconds 是字符串，可能是 "5" 也可能是 "5.0"，统一按整数秒处理。
@@ -513,6 +550,58 @@ func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
 		return 0, fmt.Errorf("this model has a fixed duration of %d seconds, got %d", fixedDuration, duration)
 	}
 	return fixedDuration, nil
+}
+
+// resolvePerSecondDuration 复刻 Wan3 的时长归一：duration 优先、再 seconds、
+// 再默认 5，最后夹到 [2,30]。
+//
+// 为什么不报错：源链路就是夹取（wan3.resolveDuration），分流后报错会让
+// 同一份请求「走官网能跑、走心笔 400」—— 客户看到的是随机的行为差异。
+func resolvePerSecondDuration(req relaycommon.TaskSubmitReq) int {
+	duration := req.Duration
+	if duration <= 0 {
+		duration, _ = strconv.Atoi(strings.TrimSpace(req.Seconds))
+	}
+	if duration <= 0 {
+		return perSecondDefaultDuration
+	}
+	if duration < perSecondMinDuration {
+		return perSecondMinDuration
+	}
+	if duration > perSecondMaxDuration {
+		return perSecondMaxDuration
+	}
+	return duration
+}
+
+// executedModelName 取本次实际执行的模型名（= 路由改写后的目标模型）。
+//
+// 不能用 BillingModelName：分流到本渠道后，计费口径仍是客户请求的特惠，
+// 而时长口径要看**执行**的是不是按秒档。
+func executedModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	return strings.TrimSpace(info.OriginModelName)
+}
+
+// rejectNonImageMedia 拦住本渠道吃不住的素材。
+//
+// 兼容口只接受参考图（reference_image / image）与 https 图片直链；
+// 首尾帧、参考视频、参考音频一律没有对应字段。静默丢掉它们的后果是
+// 「任务成功、账单照收、客户要的素材根本没进去」—— 必须在建单前报错。
+func rejectNonImageMedia(req relaycommon.TaskSubmitReq) error {
+	if strings.TrimSpace(req.Audio) != "" || len(req.Audios) > 0 {
+		return fmt.Errorf("this model only supports reference images, reference audio is not supported")
+	}
+	for _, media := range req.Media {
+		mediaType := strings.ToLower(strings.TrimSpace(media.Type))
+		if mediaType == "" || strings.Contains(mediaType, "image") {
+			continue
+		}
+		return fmt.Errorf("this model only supports reference images, %q is not supported", media.Type)
+	}
+	return nil
 }
 
 // resolveRatio 取画面比例：metadata.ratio 优先，其次 size 恰好是比例写法时。

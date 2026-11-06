@@ -49,6 +49,10 @@ func TestIsAllowedPricingModelWan3Official720P(t *testing.T) {
 	// 同一份货挂两个名字会让客户不知道该用哪个。
 	require.False(t, isAllowedPricingModel("wan3.0-720p-官网"),
 		"旧名 wan3.0-720p-官网 must NOT show in pricing square")
+	// 特惠分流用的内部目标模型名：只供中间件改写使用，绝不能出现在广场 ——
+	// 同一份货多挂一个名字会让客户不知道该买哪个。
+	require.False(t, isAllowedPricingModel("wan3.0-720p-特惠-内链"),
+		"内部目标模型 must NOT show in pricing square")
 }
 
 // GPT 文本模型只放行 gpt-6 系列；5.6 全家族下线后必须从广场隐藏。
