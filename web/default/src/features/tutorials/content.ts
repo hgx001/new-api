@@ -130,7 +130,12 @@ export function getTutorials(platformUrl: string): TutorialSection[] {
           items: [
             [
               '登录平台后，进入左侧菜单的',
-              { type: 'link', href: '/keys', text: '密钥/令牌', external: false },
+              {
+                type: 'link',
+                href: '/keys',
+                text: '密钥/令牌',
+                external: false,
+              },
               '页面。',
             ],
             ['点击右上角“新建密钥”按钮。'],
@@ -273,7 +278,11 @@ console.log(response.choices[0].message.content);`,
         },
         {
           type: 'paragraph',
-          children: ['在 ', { type: 'code', value: '~/.claude/settings.json' }, ' 中添加如下配置：'],
+          children: [
+            '在 ',
+            { type: 'code', value: '~/.claude/settings.json' },
+            ' 中添加如下配置：',
+          ],
         },
         {
           type: 'codeBlock',
@@ -425,7 +434,9 @@ console.log(response.choices[0].message.content);`,
           type: 'heading',
           level: 3,
           id: 'generic-config',
-          children: [{ type: 'strong', value: '通用配置（OpenAI 兼容客户端）' }],
+          children: [
+            { type: 'strong', value: '通用配置（OpenAI 兼容客户端）' },
+          ],
         },
         {
           type: 'paragraph',

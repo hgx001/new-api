@@ -96,7 +96,7 @@ export function Features() {
       <div className='mx-auto max-w-6xl'>
         {/* Core Pillars */}
         <AnimateInView className='mb-16 text-center'>
-          <p className='mb-3 text-xs font-medium tracking-widest uppercase text-[#8aa89e]'>
+          <p className='mb-3 text-xs font-medium tracking-widest text-[#8aa89e] uppercase'>
             {t('Enterprise Core Pillars')}
           </p>
           <h2 className='text-2xl leading-tight font-bold tracking-tight text-[#1a4a3f] md:text-3xl'>
@@ -127,8 +127,8 @@ export function Features() {
         </div>
 
         {/* Core Advantages */}
-        <AnimateInView className='mb-16 mt-24 text-center'>
-          <p className='mb-3 text-xs font-medium tracking-widest uppercase text-[#8aa89e]'>
+        <AnimateInView className='mt-24 mb-16 text-center'>
+          <p className='mb-3 text-xs font-medium tracking-widest text-[#8aa89e] uppercase'>
             {t('Core Advantages')}
           </p>
           <h2 className='text-2xl leading-tight font-bold tracking-tight text-[#1a4a3f] md:text-3xl'>
@@ -158,7 +158,11 @@ export function Features() {
           ))}
 
           {/* 24/7 Service + WeChat QR */}
-          <AnimateInView delay={400} animation='fade-up' className='md:col-span-2 lg:col-span-1'>
+          <AnimateInView
+            delay={400}
+            animation='fade-up'
+            className='md:col-span-2 lg:col-span-1'
+          >
             <div className='h-full rounded-3xl bg-white p-7 shadow-[0_20px_60px_rgba(120,180,160,0.15)] transition-transform duration-300 hover:-translate-y-1 md:p-8'>
               <div className='mb-5 flex size-12 items-center justify-center rounded-2xl bg-[#e8f4f0]'>
                 <MessageCircleQuestion
@@ -194,7 +198,9 @@ export function Features() {
                   </div>
                 )}
                 <div className='text-sm text-[#5a7a72]'>
-                  <p className='font-medium text-[#1a4a3f]'>{t('Scan to contact')}</p>
+                  <p className='font-medium text-[#1a4a3f]'>
+                    {t('Scan to contact')}
+                  </p>
                   <p className='mt-1 text-xs'>{t('WeChat support team')}</p>
                 </div>
               </div>

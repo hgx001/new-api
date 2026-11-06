@@ -19,8 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { buildSearchParams } from './filter'
 import type { CommonLogFilters } from '../types'
+import { buildSearchParams } from './filter'
 
 const start = new Date('2026-11-01T00:00:00+08:00')
 const end = new Date('2026-11-01T08:32:00+08:00')
@@ -39,8 +39,14 @@ describe('usage logs filter params', () => {
   // URL 变成 `model=+seedance2.5-特惠`，后端等值匹配命中 0 条，
   // 页面显示「未查询到日志」—— 而输入框里那个前导空格根本看不出来。
   test('trims pasted whitespace from model name', () => {
-    assert.equal(build({ model: ' seedance2.5-特惠' }).model, 'seedance2.5-特惠')
-    assert.equal(build({ model: 'seedance2.5-特惠 ' }).model, 'seedance2.5-特惠')
+    assert.equal(
+      build({ model: ' seedance2.5-特惠' }).model,
+      'seedance2.5-特惠'
+    )
+    assert.equal(
+      build({ model: 'seedance2.5-特惠 ' }).model,
+      'seedance2.5-特惠'
+    )
     assert.equal(
       build({ model: '  seedance2.5-特惠  ' }).model,
       'seedance2.5-特惠'

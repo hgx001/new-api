@@ -45,7 +45,9 @@ function collectAnchorIds(): Set<string> {
 function getModelSectionText(anchorId: string): string {
   for (const section of sections) {
     const nodes = section.content ?? []
-    const start = nodes.findIndex((node) => node.type === 'heading' && node.id === anchorId)
+    const start = nodes.findIndex(
+      (node) => node.type === 'heading' && node.id === anchorId
+    )
     if (start === -1) continue
     const rest = nodes.slice(start + 1)
     const end = rest.findIndex((node) => node.type === 'heading')
@@ -137,7 +139,12 @@ describe('tutorials model guide content', () => {
     }
 
     // 已下线的旧价格必须不再出现，避免同时展示两套价。
-    for (const stale of ['¥0.32 / ¥0.40', '¥0.53 / ¥0.85', '¥0.85/s', '¥0.28 / ¥0.28 / ¥0.30']) {
+    for (const stale of [
+      '¥0.32 / ¥0.40',
+      '¥0.53 / ¥0.85',
+      '¥0.85/s',
+      '¥0.28 / ¥0.28 / ¥0.30',
+    ]) {
       assert.equal(
         sectionsJson.includes(stale),
         false,
@@ -151,7 +158,11 @@ describe('tutorials model guide content', () => {
     // wan3.0-video-prime 的对外别名重新上架（改路由到有赞 prime + 按秒计价），
     // 故从本守卫移除、重新计入下面的「广场在售模型」清单。
     for (const gone of ['wan-3.0｜', 'wan-3.0-特惠', 'model-wan-3-0']) {
-      assert.equal(sectionsJson.includes(gone), false, `still documented: ${gone}`)
+      assert.equal(
+        sectionsJson.includes(gone),
+        false,
+        `still documented: ${gone}`
+      )
     }
 
     // autodl:minimax-h3-u24 的分辨率白名单（constants.go Resolutions）只有
@@ -172,14 +183,23 @@ describe('tutorials model guide content', () => {
   // 价格仍必须与 prime 一致（同货不同名不能不同价），由本用例单独钉死。
   test('seedance2.5-特惠 的对外文案不暴露真实货源', () => {
     const section = getModelSectionText('model-seedance25-tehui')
-    const indexEntry = sectionsJson.match(/"seedance2\.5-特惠｜[^"]*"/)?.[0] ?? ''
+    const indexEntry =
+      sectionsJson.match(/"seedance2\.5-特惠｜[^"]*"/)?.[0] ?? ''
     assert.notEqual(indexEntry, '', '模型总览里缺少 seedance2.5-特惠 一行')
 
     for (const [label, text] of [
       ['模型总览', indexEntry],
       ['教程小节', section],
     ] as const) {
-      for (const leaked of ['wan3', 'wan-3', 'prime', '有赞', 'youzan', 'aliyun', '万相']) {
+      for (const leaked of [
+        'wan3',
+        'wan-3',
+        'prime',
+        '有赞',
+        'youzan',
+        'aliyun',
+        '万相',
+      ]) {
         assert.equal(
           text.toLowerCase().includes(leaked),
           false,
@@ -197,7 +217,9 @@ describe('tutorials model guide content', () => {
     // 生成秒数 + 参考视频总秒数 × 所选分辨率单价。文案必须写清「加秒」而不是
     // 「加一个固定倍率」，否则客户按 2 秒算钱、实际扣 5 秒，会认为被多收。
     assert.equal(
-      section.includes('参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」'),
+      section.includes(
+        '参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」'
+      ),
       true,
       'seedance2.5-特惠 缺参考视频加秒计费说明'
     )
@@ -212,7 +234,7 @@ describe('tutorials model guide content', () => {
   //
   // 口径（relay/channel/task/youzanwan3/constants.go）：
   //	· 单条参考视频 ≤15 秒
- //	· 多条合计 ≤15 秒
+  //	· 多条合计 ≤15 秒
   //	· 有参考视频时生成时长 ≤15 秒
   test('documents tehui reference-video duration limits', () => {
     const section = getModelSectionText('model-seedance25-tehui')
@@ -240,7 +262,8 @@ describe('tutorials model guide content', () => {
   // 客户会自己反推成本结构，也会拿「这是超分不是原生 720P」来质疑定价。
   test('wan3.0-720p-特惠 的对外文案不暴露内部实现', () => {
     const section = getModelSectionText('model-wan30-720p-tehui')
-    const indexEntry = sectionsJson.match(/"wan3\.0-720p-特惠｜[^"]*"/)?.[0] ?? ''
+    const indexEntry =
+      sectionsJson.match(/"wan3\.0-720p-特惠｜[^"]*"/)?.[0] ?? ''
     assert.notEqual(indexEntry, '', '模型总览里缺少 wan3.0-720p-特惠 一行')
 
     for (const [label, text] of [
@@ -273,12 +296,17 @@ describe('tutorials model guide content', () => {
     // ⚠️ 2026-10-30 由 ¥0.25/秒下调到 ¥0.20/秒，改价时这行要一起改。
     assert.equal(indexEntry.includes('720P ¥0.20/s'), true)
     assert.equal(section.includes('输出分辨率：固定 720P'), true)
-    assert.equal(section.includes('计费：按秒 ¥0.20，单一价位，不乘分辨率倍率'), true)
+    assert.equal(
+      section.includes('计费：按秒 ¥0.20，单一价位，不乘分辨率倍率'),
+      true
+    )
     assert.equal(section.includes('seconds：2–30，默认 5'), true)
   })
 
   test('documents the quota query endpoint, fields, limits, and HTTP semantics', () => {
-    const quotaSection = sections.find((section) => section.id === 'quota-query')
+    const quotaSection = sections.find(
+      (section) => section.id === 'quota-query'
+    )
     assert.ok(quotaSection, 'missing quota-query section')
     for (const expected of [
       'GET /v1/dashboard/billing/quota',
@@ -320,7 +348,10 @@ describe('tutorials model guide content', () => {
   })
 
   test('injects the platform URL into video submit and content examples', () => {
-    assert.equal(sectionsJson.includes(`${platformUrl}/v1/videos/task_xxx`), true)
+    assert.equal(
+      sectionsJson.includes(`${platformUrl}/v1/videos/task_xxx`),
+      true
+    )
     assert.equal(
       sectionsJson.includes(`${platformUrl}/v1/videos/task_xxx/content`),
       true
@@ -383,14 +414,8 @@ describe('tutorials model guide content', () => {
       sectionsJson.includes('生成秒数 + 参考视频总秒数（四舍五入）'),
       true
     )
-    assert.equal(
-      sectionsJson.includes('0.20 × 20 = ¥4.00'),
-      true
-    )
-    assert.equal(
-      sectionsJson.includes('无法解析时长的参考视频会被拒绝'),
-      true
-    )
+    assert.equal(sectionsJson.includes('0.20 × 20 = ¥4.00'), true)
+    assert.equal(sectionsJson.includes('无法解析时长的参考视频会被拒绝'), true)
   })
 
   // 配额不足在网关里是 403 insufficient_user_quota，不是 402。
@@ -405,7 +430,9 @@ describe('tutorials model guide content', () => {
   // 400（invalid_duration）后以为是自己写错了参数。
   test('documents seedance-2.0 as a 5-15 second per-second model', () => {
     assert.equal(
-      sectionsJson.includes('seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒'),
+      sectionsJson.includes(
+        'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒'
+      ),
       true,
       'the model overview must state that seedance-2.0 supports 5-15 seconds'
     )
@@ -475,7 +502,11 @@ describe('tutorials model guide content', () => {
     )
     // 上游真名不得出现在对外文档：公开名只存在于 adaptor 的 modelSpecs。
     for (const hidden of ['Wan2_7', 'wan2.7-i2v', 'wan2.7-edit']) {
-      assert.equal(sectionsJson.includes(hidden), false, `${hidden} must not be documented`)
+      assert.equal(
+        sectionsJson.includes(hidden),
+        false,
+        `${hidden} must not be documented`
+      )
     }
   })
 
@@ -526,16 +557,44 @@ describe('tutorials model guide content', () => {
     }
     const code = codeBlocks.join('\n')
     // 图生视频：首帧写法
-    assert.equal(code.includes('"type": "first_frame"'), true, 'missing first_frame media example')
+    assert.equal(
+      code.includes('"type": "first_frame"'),
+      true,
+      'missing first_frame media example'
+    )
     // 多模态参考：图 + 视频 + 音频各一条完整示例
-    assert.equal(code.includes('"type": "reference_image"'), true, 'missing reference_image media example')
-    assert.equal(code.includes('"type": "reference_video"'), true, 'missing reference_video media example')
-    assert.equal(code.includes('"type": "reference_audio"'), true, 'missing reference_audio media example')
+    assert.equal(
+      code.includes('"type": "reference_image"'),
+      true,
+      'missing reference_image media example'
+    )
+    assert.equal(
+      code.includes('"type": "reference_video"'),
+      true,
+      'missing reference_video media example'
+    )
+    assert.equal(
+      code.includes('"type": "reference_audio"'),
+      true,
+      'missing reference_audio media example'
+    )
     // 专讲「怎么传素材」的小节存在且进了文档目录
-    assert.equal(collectAnchorIds().has('video-media-examples'), true, 'missing video-media-examples heading')
+    assert.equal(
+      collectAnchorIds().has('video-media-examples'),
+      true,
+      'missing video-media-examples heading'
+    )
     // 提示词里 @视频1 / @音频1 的素材引用写法有示例
-    assert.equal(sectionsJson.includes('@视频1'), true, 'missing @视频1 prompt reference')
-    assert.equal(sectionsJson.includes('@音频1'), true, 'missing @音频1 prompt reference')
+    assert.equal(
+      sectionsJson.includes('@视频1'),
+      true,
+      'missing @视频1 prompt reference'
+    )
+    assert.equal(
+      sectionsJson.includes('@音频1'),
+      true,
+      'missing @音频1 prompt reference'
+    )
   })
 
   // 回归守卫：seedance-2.5（dola 站）已于 2026-10-10 下架（接口层 channels.models +
@@ -565,7 +624,11 @@ describe('tutorials model guide content', () => {
       'model-wan30-prime',
       'wan2.7-r2v',
     ]) {
-      assert.equal(sectionsJson.includes(gone), false, `still documented: ${gone}`)
+      assert.equal(
+        sectionsJson.includes(gone),
+        false,
+        `still documented: ${gone}`
+      )
     }
     // 同前缀的在售模型不能被误删
     assert.equal(sectionsJson.includes('wan2.7-图生'), true)
@@ -606,7 +669,9 @@ describe('tutorials model guide content', () => {
     ] as const) {
       const section = getModelSectionText(anchor)
       assert.equal(
-        section.includes('参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」'),
+        section.includes(
+          '参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」'
+        ),
         true,
         `${label} 缺参考视频加秒计费说明`
       )
@@ -662,7 +727,8 @@ describe('tutorials model guide content', () => {
       if (section.id !== 'video-model-params') continue
       const nodes = section.content ?? []
       const start = nodes.findIndex(
-        (node) => node.type === 'heading' && node.id === 'video-params-cheatsheet'
+        (node) =>
+          node.type === 'heading' && node.id === 'video-params-cheatsheet'
       )
       assert.notEqual(start, -1, '缺少参数速查表小节')
       const list = nodes.slice(start).find((node) => node.type === 'list')
@@ -701,13 +767,19 @@ describe('tutorials model guide content', () => {
       true,
       '旧名可调用，兼容清单里要写明，否则老代码报错时查不到原因'
     )
-    const overviewSection = sections.find((section) => section.id === 'models-overview')
+    const overviewSection = sections.find(
+      (section) => section.id === 'models-overview'
+    )
     assert.ok(overviewSection, '缺少 models-overview 章节')
     const overview = JSON.stringify(overviewSection)
     // 总览区里出现「wan3.0-720p-官网」必须紧跟在「兼容与隐藏模型」之后
     const legacyIndex = overview.indexOf('wan3.0-720p-官网')
     const compatIndex = overview.indexOf('兼容与隐藏模型')
-    assert.equal(legacyIndex > compatIndex, true, '旧名不能出现在模型总览的在售清单里')
+    assert.equal(
+      legacyIndex > compatIndex,
+      true,
+      '旧名不能出现在模型总览的在售清单里'
+    )
     assert.equal(
       overview.includes('model-wan30-720p-guanwang'),
       false,
@@ -753,17 +825,29 @@ describe('tutorials model guide content', () => {
       10,
       `输出价应为原价的 10 倍（原 ¥${outputOld.toFixed(4)} → 现 ¥${output.toFixed(4)}）`
     )
-    assert.equal(Math.round(input * 100) / 100, 0.22, `输入价应为 ¥0.22 / 1M，实际算出 ¥${input}`)
-    assert.equal(Math.round(output * 100) / 100, 0.91, `输出价应为 ¥0.91 / 1M，实际算出 ¥${output}`)
+    assert.equal(
+      Math.round(input * 100) / 100,
+      0.22,
+      `输入价应为 ¥0.22 / 1M，实际算出 ¥${input}`
+    )
+    assert.equal(
+      Math.round(output * 100) / 100,
+      0.91,
+      `输出价应为 ¥0.91 / 1M，实际算出 ¥${output}`
+    )
 
     // MiniMax 系列只有「可用模型总览」里的清单条目，没有独立小节，
     // 所以在总览章节内按整行匹配。
-    const overviewSection = sections.find((section) => section.id === 'models-overview')
+    const overviewSection = sections.find(
+      (section) => section.id === 'models-overview'
+    )
     assert.ok(overviewSection, '缺少 models-overview 章节')
     const overview = JSON.stringify(overviewSection)
 
     assert.equal(
-      overview.includes(`MiniMax-M3｜文本｜输入 ¥${input.toFixed(2)} / 1M，输出 ¥${output.toFixed(2)} / 1M`),
+      overview.includes(
+        `MiniMax-M3｜文本｜输入 ¥${input.toFixed(2)} / 1M，输出 ¥${output.toFixed(2)} / 1M`
+      ),
       true,
       `MiniMax-M3 文档价应与倍率一致（输入 ¥${input.toFixed(2)} / 输出 ¥${output.toFixed(2)}）`
     )
@@ -779,7 +863,9 @@ describe('tutorials model guide content', () => {
   // M2.7 与 M3 / M3.1 **不再同价**（2026-10-31 只上调了 M3 / M3.1 的输出价），
   // 兼容清单里的「与 MiniMax-M3 同价」必须同步改掉，否则又是一条错误指引。
   test('MiniMax-M2.7 不再声称与 M3 同价', () => {
-    const overviewSection = sections.find((section) => section.id === 'models-overview')
+    const overviewSection = sections.find(
+      (section) => section.id === 'models-overview'
+    )
     assert.ok(overviewSection, '缺少 models-overview 章节')
     const text = JSON.stringify(overviewSection)
     assert.equal(text.includes('MiniMax-M2.7'), true, '兼容清单里要保留 M2.7')

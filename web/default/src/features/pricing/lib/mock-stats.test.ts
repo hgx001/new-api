@@ -176,7 +176,10 @@ describe('Wan3 Model Square API parameters', () => {
   })
 
   test('gives wan3.0-video-prime the 720P/1080P tiers and 2-30 seconds', () => {
-    for (const modelName of ['wan3.0-video-prime', 'wan3.0-video-prime-1080p']) {
+    for (const modelName of [
+      'wan3.0-video-prime',
+      'wan3.0-video-prime-1080p',
+    ]) {
       const params = parametersByName(modelName)
       assert.deepEqual(params.resolution.enumValues, ['720P', '1080P'])
       assert.equal(params.resolution.defaultValue, '720P')

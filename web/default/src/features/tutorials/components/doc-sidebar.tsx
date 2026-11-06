@@ -84,7 +84,7 @@ export function DocSidebar({ sections }: { sections: TutorialSection[] }) {
   return (
     <aside className='hidden w-64 shrink-0 lg:block'>
       <nav className='sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2'>
-        <div className='mb-3 px-2 text-xs font-semibold uppercase tracking-wider text-[#8aa89e]'>
+        <div className='mb-3 px-2 text-xs font-semibold tracking-wider text-[#8aa89e] uppercase'>
           教程目录
         </div>
         <ul>

@@ -19,7 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 
-import { getDocIndex, getPageTitle, getPagination, getTutorials } from './content'
+import {
+  getDocIndex,
+  getPageTitle,
+  getPagination,
+  getTutorials,
+} from './content'
 
 describe('tutorials content', () => {
   const platformUrl = 'https://api.example.com'

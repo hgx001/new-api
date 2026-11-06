@@ -29,7 +29,7 @@ export function DocContent({
   sections: TutorialSection[]
 }) {
   return (
-    <article className='min-w-0 max-w-3xl flex-1 px-4 pb-20 pt-6 md:px-8 lg:pt-8'>
+    <article className='max-w-3xl min-w-0 flex-1 px-4 pt-6 pb-20 md:px-8 lg:pt-8'>
       <div className='mb-6 flex items-center gap-2 text-sm text-[#8aa89e]'>
         <Link to='/' className='hover:text-[#3a8f7a]'>
           首页

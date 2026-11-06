@@ -23,8 +23,8 @@ import {
   QUOTA_TYPE_VALUES,
   ENDPOINT_TYPES,
 } from '../constants'
-import { getModelDisplayName } from './model-helpers'
 import type { PricingModel } from '../types'
+import { getModelDisplayName } from './model-helpers'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities

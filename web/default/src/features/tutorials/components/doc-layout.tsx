@@ -37,7 +37,7 @@ function MobileSidebar({ sections }: { sections: TutorialSection[] }) {
       </SheetTrigger>
       <SheetContent side='left' className='w-72 bg-white p-0'>
         <nav className='h-full overflow-y-auto p-5'>
-          <div className='mb-3 text-xs font-semibold uppercase tracking-wider text-[#8aa89e]'>
+          <div className='mb-3 text-xs font-semibold tracking-wider text-[#8aa89e] uppercase'>
             教程目录
           </div>
           <ul className='space-y-1'>
@@ -82,7 +82,7 @@ function DocIndex({
         </div>
       </div>
       <div className='rounded-lg border border-[#e3eeea] bg-[#f8fbfa] p-4'>
-        <div className='mb-2 text-xs font-semibold uppercase tracking-wider text-[#8aa89e]'>
+        <div className='mb-2 text-xs font-semibold tracking-wider text-[#8aa89e] uppercase'>
           页面索引
         </div>
         <ul className='grid grid-cols-1 gap-1 sm:grid-cols-2'>

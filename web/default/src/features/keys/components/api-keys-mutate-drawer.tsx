@@ -545,7 +545,6 @@ export function ApiKeysMutateDrawer({
                         </FormItem>
                       )}
                     />
-
                   </div>
                 </CollapsibleContent>
               </SideDrawerSection>

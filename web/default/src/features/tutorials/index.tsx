@@ -18,14 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { PublicLayout } from '@/components/layout'
 
+import { DocContent } from './components/doc-content'
+import { DocLayout } from './components/doc-layout'
 import {
   getDocIndex,
   getPageTitle,
   getPagination,
   getTutorials,
 } from './content'
-import { DocContent } from './components/doc-content'
-import { DocLayout } from './components/doc-layout'
 import { usePlatformUrl } from './hooks/use-platform-url'
 
 export function Tutorials() {

@@ -114,7 +114,10 @@ export function RenderContent({ nodes }: { nodes: ContentNode[] }) {
       {nodes.map((node, idx) => {
         if (node.type === 'paragraph') {
           return (
-            <p key={nodeKey(node, idx)} className='my-3 leading-7 text-[#334644]'>
+            <p
+              key={nodeKey(node, idx)}
+              className='my-3 leading-7 text-[#334644]'
+            >
               {node.children.map(renderTextNode)}
             </p>
           )
@@ -195,9 +198,7 @@ export function RenderContent({ nodes }: { nodes: ContentNode[] }) {
             >
               <div className='flex aspect-video items-center justify-center bg-[#f0f7f4] text-sm text-[#8aa89e]'>
                 <div className='text-center'>
-                  <p className='font-medium text-[#5a7a72]'>
-                    图片占位符
-                  </p>
+                  <p className='font-medium text-[#5a7a72]'>图片占位符</p>
                   <p className='mt-1'>{node.alt}</p>
                   <p className='mt-1 text-xs opacity-70'>{node.src}</p>
                 </div>

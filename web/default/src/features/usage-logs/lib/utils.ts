@@ -263,7 +263,9 @@ export function buildApiParams(config: {
           if (isAdmin) params.channel = Number(value) || 0
           break
         case 'username':
-          if (isAdmin && trimmedText(value)) params.username = trimmedText(value)
+          if (isAdmin && trimmedText(value)) {
+            params.username = trimmedText(value)
+          }
           break
       }
     })

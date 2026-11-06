@@ -32,7 +32,6 @@ export function DocPagination({
   prev: PaginationItem
   next: PaginationItem
 }) {
-
   return (
     <div className='mt-16 grid grid-cols-1 gap-4 border-t border-[#e3eeea] pt-8 md:grid-cols-2'>
       <div className='flex justify-start'>

@@ -29,28 +29,40 @@ export function Stats({ metrics }: StatsProps) {
 
   const items = [
     { label: t('API Availability'), value: metrics?.availability ?? '99.99%' },
-    { label: t('Throughput'), value: `${metrics?.throughput ?? '1.2M+'} ${metrics?.throughput_unit ?? 'RPM'}` },
+    {
+      label: t('Throughput'),
+      value: `${metrics?.throughput ?? '1.2M+'} ${metrics?.throughput_unit ?? 'RPM'}`,
+    },
     { label: t('Average Latency'), value: metrics?.latency ?? '24ms' },
-    { label: t('End-to-End Encryption'), value: metrics?.encryption ?? 'AES-256 Enterprise Standard' },
+    {
+      label: t('End-to-End Encryption'),
+      value: metrics?.encryption ?? 'AES-256 Enterprise Standard',
+    },
   ]
 
   return (
     <div className='rounded-3xl bg-white p-6 shadow-[0_20px_60px_rgba(120,180,160,0.15)]'>
       <div className='flex items-center gap-2'>
         <span className='size-2 rounded-full bg-[#7dd3c0]' />
-        <span className='font-mono text-xs text-[#5a7a72]'>system_status: {metrics?.system_status ?? 'active'}</span>
+        <span className='font-mono text-xs text-[#5a7a72]'>
+          system_status: {metrics?.system_status ?? 'active'}
+        </span>
       </div>
       <div className='mt-4 grid grid-cols-2 gap-4'>
         {items.map((item) => (
           <div key={item.label} className='rounded-2xl bg-[#f5f9f7] p-4'>
             <div className='text-xs text-[#8aa89e]'>{item.label}</div>
-            <div className='mt-1 text-xl font-bold text-[#3a8f7a]'>{item.value}</div>
+            <div className='mt-1 text-xl font-bold text-[#3a8f7a]'>
+              {item.value}
+            </div>
           </div>
         ))}
       </div>
       <div className='mt-4 flex items-center gap-2 rounded-xl bg-[#f0f7f5] p-3'>
         <span className='size-4 rounded bg-[#a8d8c8]' />
-        <span className='text-xs text-[#5a7a72]'>{metrics?.certification ?? 'ISO 27001'}</span>
+        <span className='text-xs text-[#5a7a72]'>
+          {metrics?.certification ?? 'ISO 27001'}
+        </span>
       </div>
     </div>
   )

@@ -31,6 +31,7 @@ const base: VideoRoutePolicy = {
   seconds_rule_enabled: true,
   ratio_rule_enabled: true,
   frames_rule_enabled: true,
+  source_switches: [],
   source_model: 'seedance2.5-特惠',
   target_model: 'seedance-2-5',
   trigger_seconds: 30,

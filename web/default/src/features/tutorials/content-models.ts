@@ -119,7 +119,9 @@ const QUOTA_QUERY_ITEMS = [
   'HTTP 状态：200 成功（余额低也返回 200）；401 API Key 无效/缺失；403 用户封禁或调用权限不足；429 触发限流；500 查询失败。错误体为 OpenAI 风格 error 对象。',
 ]
 
-const QUOTA_QUERY_EXAMPLE = (url: string) => `curl ${url}/v1/dashboard/billing/quota \\
+const QUOTA_QUERY_EXAMPLE = (
+  url: string
+) => `curl ${url}/v1/dashboard/billing/quota \\
   -H "Authorization: Bearer $NEW_API_KEY"`
 
 const ERROR_ITEMS = [
@@ -163,7 +165,11 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
             ' 返回为准，请勿在代码中写死模型名。',
           ],
         },
-        { type: 'list', ordered: false, items: MODEL_OVERVIEW_ITEMS.map((t) => [t]) },
+        {
+          type: 'list',
+          ordered: false,
+          items: MODEL_OVERVIEW_ITEMS.map((t) => [t]),
+        },
         {
           type: 'heading',
           level: 3,
@@ -174,7 +180,11 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'paragraph',
           children: ['以下模型可正常调用，但不在模型广场展示：'],
         },
-        { type: 'list', ordered: false, items: COMPAT_MODEL_ITEMS.map((t) => [t]) },
+        {
+          type: 'list',
+          ordered: false,
+          items: COMPAT_MODEL_ITEMS.map((t) => [t]),
+        },
       ],
     },
     {
@@ -225,14 +235,20 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
             '，模型 gpt-image-2.5-官方，¥0.15 / 张，与尺寸无关。',
           ],
         },
-        { type: 'list', ordered: false, items: [
-          ['model：gpt-image-2.5-官方'],
-          ['prompt：必填，图片描述'],
-          ['size：如 1024x1024，不支持时自动回落模型默认尺寸，不报错'],
-          ['n：出图张数，默认 1，n=2 扣两次 ¥0.15'],
-          ['response_format：url（默认）或 b64_json'],
-          ['其余 OpenAI 图片字段（quality / style / background / output_format 等）会被透传给上游，本平台不校验、不保证生效'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            ['model：gpt-image-2.5-官方'],
+            ['prompt：必填，图片描述'],
+            ['size：如 1024x1024，不支持时自动回落模型默认尺寸，不报错'],
+            ['n：出图张数，默认 1，n=2 扣两次 ¥0.15'],
+            ['response_format：url（默认）或 b64_json'],
+            [
+              '其余 OpenAI 图片字段（quality / style / background / output_format 等）会被透传给上游，本平台不校验、不保证生效',
+            ],
+          ],
+        },
         {
           type: 'codeBlock',
           lang: 'bash',
@@ -248,7 +264,9 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         },
         {
           type: 'hint',
-          children: ['图片生成耗时约 20–60 秒，请把客户端超时设置到 120 秒以上。'],
+          children: [
+            '图片生成耗时约 20–60 秒，请把客户端超时设置到 120 秒以上。',
+          ],
         },
         {
           type: 'paragraph',
@@ -280,7 +298,11 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           id: 'video-flow',
           children: [{ type: 'strong', value: '三步流程' }],
         },
-        { type: 'list', ordered: true, items: VIDEO_FLOW_ITEMS.map((t) => [t]) },
+        {
+          type: 'list',
+          ordered: true,
+          items: VIDEO_FLOW_ITEMS.map((t) => [t]),
+        },
         {
           type: 'paragraph',
           children: [{ type: 'strong', value: '① 提交任务' }],
@@ -318,7 +340,11 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           value: `curl ${videoUrl}/task_xxx \\
   -H "Authorization: Bearer $NEW_API_KEY"`,
         },
-        { type: 'list', ordered: false, items: VIDEO_STATUS_ITEMS.map((t) => [t]) },
+        {
+          type: 'list',
+          ordered: false,
+          items: VIDEO_STATUS_ITEMS.map((t) => [t]),
+        },
         {
           type: 'codeBlock',
           lang: 'json',
@@ -357,7 +383,11 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           id: 'video-common-fields',
           children: [{ type: 'strong', value: '通用请求字段' }],
         },
-        { type: 'list', ordered: false, items: VIDEO_COMMON_FIELDS.map((t) => [t]) },
+        {
+          type: 'list',
+          ordered: false,
+          items: VIDEO_COMMON_FIELDS.map((t) => [t]),
+        },
         {
           type: 'hint',
           children: [
@@ -368,7 +398,9 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'video-media-examples',
-          children: [{ type: 'strong', value: '传递参考素材（图片 / 视频 / 音频）' }],
+          children: [
+            { type: 'strong', value: '传递参考素材（图片 / 视频 / 音频）' },
+          ],
         },
         {
           type: 'paragraph',
@@ -408,7 +440,9 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         },
         {
           type: 'paragraph',
-          children: [{ type: 'strong', value: '图片内联 base64（首选，免图床）' }],
+          children: [
+            { type: 'strong', value: '图片内联 base64（首选，免图床）' },
+          ],
         },
         {
           type: 'paragraph',
@@ -444,7 +478,9 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         },
         {
           type: 'paragraph',
-          children: [{ type: 'strong', value: '多模态参考（图 + 视频 + 音频）' }],
+          children: [
+            { type: 'strong', value: '多模态参考（图 + 视频 + 音频）' },
+          ],
         },
         {
           type: 'codeBlock',
@@ -501,20 +537,40 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'list',
           ordered: false,
           items: [
-            ['wan3.0-video｜2–30 秒｜480P / 720P / 1080P（三档同价）｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜¥0.23/秒 + 参考视频秒数'],
-            ['wan3.0-video-prime｜2–30 秒｜720P / 1080P｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜720P ¥0.25/秒、1080P ¥0.30/秒 + 参考视频秒数'],
-            ['seedance2.5-特惠｜2–30 秒（带参考视频时 ≤15 秒）｜720P / 1080P｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜720P ¥0.20/秒、1080P ¥0.30/秒 + 参考视频秒数'],
-            ['wan3.0-video-官网｜2–30 秒｜480P / 720P / 1080P｜图 ≤10、视频 ≤5、音频 ≤5、首尾帧各 1｜¥0.20 / ¥0.45 / ¥0.80 每秒 + 参考视频秒数'],
-            ['wan3.0-720p-特惠｜2–30 秒｜固定 720P｜同 wan3.0-video-官网｜¥0.20/秒 + 参考视频秒数'],
-            ['autodl:minimax-h3-u24｜1–15 秒｜480p / 768p × 竖 / 横 / 方形｜图 1–9（必填）、音频 ≤3｜¥0.10 / ¥0.12 每秒'],
+            [
+              'wan3.0-video｜2–30 秒｜480P / 720P / 1080P（三档同价）｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜¥0.23/秒 + 参考视频秒数',
+            ],
+            [
+              'wan3.0-video-prime｜2–30 秒｜720P / 1080P｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜720P ¥0.25/秒、1080P ¥0.30/秒 + 参考视频秒数',
+            ],
+            [
+              'seedance2.5-特惠｜2–30 秒（带参考视频时 ≤15 秒）｜720P / 1080P｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜720P ¥0.20/秒、1080P ¥0.30/秒 + 参考视频秒数',
+            ],
+            [
+              'wan3.0-video-官网｜2–30 秒｜480P / 720P / 1080P｜图 ≤10、视频 ≤5、音频 ≤5、首尾帧各 1｜¥0.20 / ¥0.45 / ¥0.80 每秒 + 参考视频秒数',
+            ],
+            [
+              'wan3.0-720p-特惠｜2–30 秒｜固定 720P｜同 wan3.0-video-官网｜¥0.20/秒 + 参考视频秒数',
+            ],
+            [
+              'autodl:minimax-h3-u24｜1–15 秒｜480p / 768p × 竖 / 横 / 方形｜图 1–9（必填）、音频 ≤3｜¥0.10 / ¥0.12 每秒',
+            ],
             ['seedance-2.0｜5–15 秒逐秒｜无档位｜图 ≤10｜¥1.00/次'],
             ['seedance-2-0-fast｜5–15 秒逐秒｜不支持分辨率｜图 ≤10｜¥0.10/秒'],
-            ['seedance-2-5｜5 / 10 / 15 / 30 秒四档｜不支持分辨率｜图 ≤10｜¥3.50/次'],
+            [
+              'seedance-2-5｜5 / 10 / 15 / 30 秒四档｜不支持分辨率｜图 ≤10｜¥3.50/次',
+            ],
             ['gemini-web-video｜固定时长｜不支持分辨率｜图 ≤10｜¥1.00/次'],
             ['wan2.7-图生｜5–15 秒逐秒｜720P / 1080P｜图 ≤2｜¥0.30/次'],
-            ['wan2.7-编辑｜跟随主视频｜720P / 1080P｜主视频恰 1 个、图 ≤10｜¥0.30/次'],
-            ['jimeng-video-reverse｜不适用（输入是视频）｜不适用｜视频恰 1 个、≤100MB｜¥1.00/次'],
-            ['Nano Banana Pro｜不适用（出图）｜按 ratio 出图｜图 ≤10｜¥0.30/张 × 张数'],
+            [
+              'wan2.7-编辑｜跟随主视频｜720P / 1080P｜主视频恰 1 个、图 ≤10｜¥0.30/次',
+            ],
+            [
+              'jimeng-video-reverse｜不适用（输入是视频）｜不适用｜视频恰 1 个、≤100MB｜¥1.00/次',
+            ],
+            [
+              'Nano Banana Pro｜不适用（出图）｜按 ratio 出图｜图 ≤10｜¥0.30/张 × 张数',
+            ],
           ],
         },
         {
@@ -529,15 +585,23 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           id: 'model-wan30-video',
           children: [{ type: 'strong', value: 'wan3.0-video（有赞标准版）' }],
         },
-        { type: 'list', ordered: false, items: [
-          ['resolution：480P（默认）/ 720P / 1080P'],
-          ['seconds：2–30，默认 5'],
-          ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
-          ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
-          ['计费：按秒 ¥0.23（480P / 720P / 1080P 三档同价）'],
-          ['参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× ¥0.23 计费，例如 3 秒参考视频生成 2 秒 = 0.23 × 5 = ¥1.15；无法解析时长的参考视频会被拒绝（不建单不扣费）'],
-          ['⚠️ 参考视频时长约束：单条 ≤15 秒、合计 ≤15 秒，且有参考视频时生成时长也须 ≤15 秒。超限直接拒绝（不建单不扣费），错误提示会写明当前秒数与上限'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            ['resolution：480P（默认）/ 720P / 1080P'],
+            ['seconds：2–30，默认 5'],
+            ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
+            ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
+            ['计费：按秒 ¥0.23（480P / 720P / 1080P 三档同价）'],
+            [
+              '参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× ¥0.23 计费，例如 3 秒参考视频生成 2 秒 = 0.23 × 5 = ¥1.15；无法解析时长的参考视频会被拒绝（不建单不扣费）',
+            ],
+            [
+              '⚠️ 参考视频时长约束：单条 ≤15 秒、合计 ≤15 秒，且有参考视频时生成时长也须 ≤15 秒。超限直接拒绝（不建单不扣费），错误提示会写明当前秒数与上限',
+            ],
+          ],
+        },
         {
           type: 'hint',
           children: [
@@ -548,17 +612,32 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-wan30-video-prime',
-          children: [{ type: 'strong', value: 'wan3.0-video-prime（有赞 Prime 增强画质）' }],
+          children: [
+            {
+              type: 'strong',
+              value: 'wan3.0-video-prime（有赞 Prime 增强画质）',
+            },
+          ],
         },
-        { type: 'list', ordered: false, items: [
-          ['resolution：720P（默认）/ 1080P（无 480P 档；传 480P 会按 720P 执行，不会静默升到 1080P）'],
-          ['seconds：2–30，默认 5'],
-          ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
-          ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
-          ['计费：按秒 ¥0.25（720P）/ ¥0.30（1080P）'],
-          ['参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× 所选分辨率单价计费，例如 3 秒参考视频生成 2 秒 720P = 0.25 × 5 = ¥1.25；无法解析时长的参考视频会被拒绝（不建单不扣费）'],
-          ['⚠️ 参考视频时长约束：单条 ≤15 秒、合计 ≤15 秒，且有参考视频时生成时长也须 ≤15 秒。超限直接拒绝（不建单不扣费）'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              'resolution：720P（默认）/ 1080P（无 480P 档；传 480P 会按 720P 执行，不会静默升到 1080P）',
+            ],
+            ['seconds：2–30，默认 5'],
+            ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
+            ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
+            ['计费：按秒 ¥0.25（720P）/ ¥0.30（1080P）'],
+            [
+              '参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× 所选分辨率单价计费，例如 3 秒参考视频生成 2 秒 720P = 0.25 × 5 = ¥1.25；无法解析时长的参考视频会被拒绝（不建单不扣费）',
+            ],
+            [
+              '⚠️ 参考视频时长约束：单条 ≤15 秒、合计 ≤15 秒，且有参考视频时生成时长也须 ≤15 秒。超限直接拒绝（不建单不扣费）',
+            ],
+          ],
+        },
         {
           type: 'hint',
           children: [
@@ -569,17 +648,29 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-seedance25-tehui',
-          children: [{ type: 'strong', value: 'seedance2.5-特惠（高清版，按秒计费）' }],
+          children: [
+            { type: 'strong', value: 'seedance2.5-特惠（高清版，按秒计费）' },
+          ],
         },
-        { type: 'list', ordered: false, items: [
-          ['resolution：720P（默认）/ 1080P（无 480P 档；传 480P 会按 720P 执行，不会静默升到 1080P）'],
-          ['seconds：2–30，默认 5。⚠️ 但带参考视频时生成时长上限 15 秒'],
-          ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
-          ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
-          ['计费：按秒 ¥0.20（720P）/ ¥0.30（1080P）'],
-          ['参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× 所选分辨率单价计费，例如 3 秒参考视频生成 2 秒 720P = 0.20 × 5 = ¥1.00；无法解析时长（非 MP4/MOV 或取不到文件）的参考视频会被拒绝（不建单不扣费）'],
-          ['⚠️ 参考视频时长约束：单条 ≤15 秒、多条合计 ≤15 秒；且有参考视频时生成时长也须 ≤15 秒。超限直接拒绝（不建单不扣费），错误提示会写明当前秒数与上限'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              'resolution：720P（默认）/ 1080P（无 480P 档；传 480P 会按 720P 执行，不会静默升到 1080P）',
+            ],
+            ['seconds：2–30，默认 5。⚠️ 但带参考视频时生成时长上限 15 秒'],
+            ['ratio：adaptive（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9'],
+            ['参考素材：图 ≤10 张、视频 ≤5 个、音频 ≤5 条，三类合计 ≤20 项'],
+            ['计费：按秒 ¥0.20（720P）/ ¥0.30（1080P）'],
+            [
+              '参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× 所选分辨率单价计费，例如 3 秒参考视频生成 2 秒 720P = 0.20 × 5 = ¥1.00；无法解析时长（非 MP4/MOV 或取不到文件）的参考视频会被拒绝（不建单不扣费）',
+            ],
+            [
+              '⚠️ 参考视频时长约束：单条 ≤15 秒、多条合计 ≤15 秒；且有参考视频时生成时长也须 ≤15 秒。超限直接拒绝（不建单不扣费），错误提示会写明当前秒数与上限',
+            ],
+          ],
+        },
         {
           type: 'hint',
           children: [
@@ -590,18 +681,34 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-wan30-guanwang',
-          children: [{ type: 'strong', value: 'wan3.0-video-官网（官方渠道标准版）' }],
+          children: [
+            { type: 'strong', value: 'wan3.0-video-官网（官方渠道标准版）' },
+          ],
         },
-        { type: 'list', ordered: false, items: [
-          ['resolution：480P（默认）/ 720P / 1080P'],
-          ['seconds：2–30，默认 5'],
-          ['ratio：metadata.ratio 传 adaptive / 16:9 / 4:3 / 1:1 / 3:4 / 9:16，也可用 size（960x540 / 1280x720 / 1920x1080）'],
-          ['参考素材：图 ≤10 张、视频 ≤5 个（单个 1–15 秒、合计 ≤15 秒）、音频 ≤5 条（合计 ≤15 秒）、首尾帧各 1 张'],
-          ['metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）'],
-          ['计费：按秒 ¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）'],
-          ['参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× 所选分辨率单价计费，例如 10 秒参考视频生成 10 秒 480P = 0.20 × 20 = ¥4.00；无法解析时长的参考视频会被拒绝（不建单不扣费）'],
-          ['⚠️ 时长约束（有参考视频时）：「输入视频总时长 + 输出视频时长 ≤ 30 秒」，本地强制，超限直接 400（不建单不扣费）。无参考视频时生成时长为 2–30 秒'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            ['resolution：480P（默认）/ 720P / 1080P'],
+            ['seconds：2–30，默认 5'],
+            [
+              'ratio：metadata.ratio 传 adaptive / 16:9 / 4:3 / 1:1 / 3:4 / 9:16，也可用 size（960x540 / 1280x720 / 1920x1080）',
+            ],
+            [
+              '参考素材：图 ≤10 张、视频 ≤5 个（单个 1–15 秒、合计 ≤15 秒）、音频 ≤5 条（合计 ≤15 秒）、首尾帧各 1 张',
+            ],
+            [
+              'metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）',
+            ],
+            ['计费：按秒 ¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）'],
+            [
+              '参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× 所选分辨率单价计费，例如 10 秒参考视频生成 10 秒 480P = 0.20 × 20 = ¥4.00；无法解析时长的参考视频会被拒绝（不建单不扣费）',
+            ],
+            [
+              '⚠️ 时长约束（有参考视频时）：「输入视频总时长 + 输出视频时长 ≤ 30 秒」，本地强制，超限直接 400（不建单不扣费）。无参考视频时生成时长为 2–30 秒',
+            ],
+          ],
+        },
         {
           type: 'hint',
           children: [
@@ -612,18 +719,34 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-wan30-720p-tehui',
-          children: [{ type: 'strong', value: 'wan3.0-720p-特惠（720P 成片档）' }],
+          children: [
+            { type: 'strong', value: 'wan3.0-720p-特惠（720P 成片档）' },
+          ],
         },
-        { type: 'list', ordered: false, items: [
-          ['输出分辨率：固定 720P（只有一个档位，不接受 480P / 1080P 参数）'],
-          ['seconds：2–30，默认 5'],
-          ['ratio：metadata.ratio 传 adaptive / 16:9 / 4:3 / 1:1 / 3:4 / 9:16，也可用 size（960x540 / 1280x720 / 1920x1080）'],
-          ['参考素材：图 ≤10 张、视频 ≤5 个（单个 1–15 秒、合计 ≤15 秒）、音频 ≤5 条（合计 ≤15 秒）、首尾帧各 1 张'],
-          ['metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）'],
-          ['计费：按秒 ¥0.20，单一价位，不乘分辨率倍率'],
-          ['参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× ¥0.20 计费，例如 10 秒参考视频生成 10 秒 = 0.20 × 20 = ¥4.00；无法解析时长的参考视频会被拒绝（不建单不扣费）'],
-          ['⚠️ 时长约束（有参考视频时）：「输入视频总时长 + 输出视频时长 ≤ 30 秒」，本地强制，超限直接 400（不建单不扣费）。无参考视频时生成时长为 2–30 秒'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            ['输出分辨率：固定 720P（只有一个档位，不接受 480P / 1080P 参数）'],
+            ['seconds：2–30，默认 5'],
+            [
+              'ratio：metadata.ratio 传 adaptive / 16:9 / 4:3 / 1:1 / 3:4 / 9:16，也可用 size（960x540 / 1280x720 / 1920x1080）',
+            ],
+            [
+              '参考素材：图 ≤10 张、视频 ≤5 个（单个 1–15 秒、合计 ≤15 秒）、音频 ≤5 条（合计 ≤15 秒）、首尾帧各 1 张',
+            ],
+            [
+              'metadata.audio：是否生成音轨，默认 true；关掉传 false（别名 generate_audio）',
+            ],
+            ['计费：按秒 ¥0.20，单一价位，不乘分辨率倍率'],
+            [
+              '参考视频计费：带 reference_video 时按「生成秒数 + 参考视频总秒数（四舍五入）」× ¥0.20 计费，例如 10 秒参考视频生成 10 秒 = 0.20 × 20 = ¥4.00；无法解析时长的参考视频会被拒绝（不建单不扣费）',
+            ],
+            [
+              '⚠️ 时长约束（有参考视频时）：「输入视频总时长 + 输出视频时长 ≤ 30 秒」，本地强制，超限直接 400（不建单不扣费）。无参考视频时生成时长为 2–30 秒',
+            ],
+          ],
+        },
         {
           type: 'hint',
           children: [
@@ -634,42 +757,71 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'heading',
           level: 3,
           id: 'model-autodl-h3-u24',
-          children: [{ type: 'strong', value: 'autodl:minimax-h3-u24（多图多音频生视频）' }],
+          children: [
+            {
+              type: 'strong',
+              value: 'autodl:minimax-h3-u24（多图多音频生视频）',
+            },
+          ],
         },
-        { type: 'list', ordered: false, items: [
-          ['prompt：必填，≤10000 字符'],
-          ['images：必填，1–9 张'],
-          ['audios：可选，≤3 条'],
-          ['seconds：1–15，默认 5'],
-          ['resolution：480p竖 / 768p竖 / 480p横 / 768p横 / 480p(1:1) / 768p(1:1)，默认 768p竖；传其它值直接 400'],
-          ['seed：可选，0 ~ 999999999999999'],
-          ['计费：按秒 480p ¥0.10、768p ¥0.12（仅这两档，768p 即上游 720P 档）'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            ['prompt：必填，≤10000 字符'],
+            ['images：必填，1–9 张'],
+            ['audios：可选，≤3 条'],
+            ['seconds：1–15，默认 5'],
+            [
+              'resolution：480p竖 / 768p竖 / 480p横 / 768p横 / 480p(1:1) / 768p(1:1)，默认 768p竖；传其它值直接 400',
+            ],
+            ['seed：可选，0 ~ 999999999999999'],
+            [
+              '计费：按秒 480p ¥0.10、768p ¥0.12（仅这两档，768p 即上游 720P 档）',
+            ],
+          ],
+        },
         {
           type: 'heading',
           level: 3,
           id: 'model-seedance-2',
           children: [{ type: 'strong', value: 'seedance-2.0' }],
         },
-        { type: 'list', ordered: false, items: [
-          ['seconds / duration：5–15 秒逐秒，默认 15；区间外（含 4、16、30）直接 400 invalid_duration'],
-          ['ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9，也可用 size 传比例字符串'],
-          ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
-          ['计费：按次 ¥1.00，与时长无关'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              'seconds / duration：5–15 秒逐秒，默认 15；区间外（含 4、16、30）直接 400 invalid_duration',
+            ],
+            [
+              'ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9，也可用 size 传比例字符串',
+            ],
+            ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
+            ['计费：按次 ¥1.00，与时长无关'],
+          ],
+        },
         {
           type: 'heading',
           level: 3,
           id: 'model-seedance-2-0-fast',
           children: [{ type: 'strong', value: 'seedance-2-0-fast' }],
         },
-        { type: 'list', ordered: false, items: [
-          ['seconds / duration：5–15 秒逐秒，默认 5；区间外（含 4、16、30）直接 400'],
-          ['ratio：auto（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；不传则保持官网当前档位'],
-          ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
-          ['resolution：不支持，传入直接 400（官网无分辨率控件）'],
-          ['计费：按秒 ¥0.10 × 秒数，无分辨率倍率'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              'seconds / duration：5–15 秒逐秒，默认 5；区间外（含 4、16、30）直接 400',
+            ],
+            [
+              'ratio：auto（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；不传则保持官网当前档位',
+            ],
+            ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
+            ['resolution：不支持，传入直接 400（官网无分辨率控件）'],
+            ['计费：按秒 ¥0.10 × 秒数，无分辨率倍率'],
+          ],
+        },
         {
           type: 'codeBlock',
           lang: 'bash',
@@ -688,26 +840,38 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           id: 'model-seedance-2-5',
           children: [{ type: 'strong', value: 'seedance-2-5' }],
         },
-        { type: 'list', ordered: false, items: [
-          ['seconds / duration：5 / 10 / 15 / 30 四档，默认 5；非档位值直接 400'],
-          ['ratio：auto（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；不传则保持官网当前档位'],
-          ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
-          ['resolution：不支持，传入直接 400'],
-          ['计费：按次 ¥3.50，与时长无关'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              'seconds / duration：5 / 10 / 15 / 30 四档，默认 5；非档位值直接 400',
+            ],
+            [
+              'ratio：auto（默认）/ 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9；不传则保持官网当前档位',
+            ],
+            ['input_reference / images：可选，≤10 张，必须是 http/https URL'],
+            ['resolution：不支持，传入直接 400'],
+            ['计费：按次 ¥3.50，与时长无关'],
+          ],
+        },
         {
           type: 'heading',
           level: 3,
           id: 'model-gemini-web-video',
           children: [{ type: 'strong', value: 'gemini-web-video' }],
         },
-        { type: 'list', ordered: false, items: [
-          ['prompt：必填'],
-          ['ratio：同 dola 六档，默认 16:9'],
-          ['input_reference / images：可选，≤10 张 http/https URL'],
-          ['seconds / duration / resolution：不支持，传入直接 400'],
-          ['计费：按次 ¥1.00（官网固定时长，不随时长变化）'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            ['prompt：必填'],
+            ['ratio：同 dola 六档，默认 16:9'],
+            ['input_reference / images：可选，≤10 张 http/https URL'],
+            ['seconds / duration / resolution：不支持，传入直接 400'],
+            ['计费：按次 ¥1.00（官网固定时长，不随时长变化）'],
+          ],
+        },
         {
           type: 'hint',
           children: [
@@ -720,16 +884,30 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           id: 'model-nano-banana-pro',
           children: [{ type: 'strong', value: 'Nano Banana Pro' }],
         },
-        { type: 'list', ordered: false, items: [
-          ['prompt：必填，图片描述'],
-          ['n / count：出图张数，1–10，默认 1；超出区间直接 400（invalid_count）'],
-          ['ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9，也可用 size 传比例字符串'],
-          ['input_reference / images：可选，≤10 张 http/https URL；字段名与「提示词引用校验」规则同上文通用字段'],
-          ['产物：metadata.url，metadata.media_type = image'],
-          ['⚠️ 本模型走 /v1/videos 异步任务（不是 /v1/images/generations），需轮询后从 metadata.url 取图；对 /v1/images/generations 发请求会返回 404'],
-          ['计费：按张 ¥0.30 × 张数（n=2 扣两次）'],
-          ['实测：约 1 分钟出图（3 次真机样本 52–55 秒），输出 PNG、宽度 1024，客户端超时请设 ≥180 秒'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            ['prompt：必填，图片描述'],
+            [
+              'n / count：出图张数，1–10，默认 1；超出区间直接 400（invalid_count）',
+            ],
+            [
+              'ratio：16:9（默认）/ 9:16 / 1:1 / 4:3 / 3:4 / 21:9，也可用 size 传比例字符串',
+            ],
+            [
+              'input_reference / images：可选，≤10 张 http/https URL；字段名与「提示词引用校验」规则同上文通用字段',
+            ],
+            ['产物：metadata.url，metadata.media_type = image'],
+            [
+              '⚠️ 本模型走 /v1/videos 异步任务（不是 /v1/images/generations），需轮询后从 metadata.url 取图；对 /v1/images/generations 发请求会返回 404',
+            ],
+            ['计费：按张 ¥0.30 × 张数（n=2 扣两次）'],
+            [
+              '实测：约 1 分钟出图（3 次真机样本 52–55 秒），输出 PNG、宽度 1024，客户端超时请设 ≥180 秒',
+            ],
+          ],
+        },
         {
           type: 'codeBlock',
           lang: 'bash',
@@ -756,15 +934,25 @@ curl -L ${videoUrl}/task_xxx/content \\
           type: 'heading',
           level: 3,
           id: 'model-jimeng-video-reverse',
-          children: [{ type: 'strong', value: 'jimeng-video-reverse（视频反解）' }],
+          children: [
+            { type: 'strong', value: 'jimeng-video-reverse（视频反解）' },
+          ],
         },
-        { type: 'list', ordered: false, items: [
-          ['input_reference（或 video / videos）：必填，恰好 1 个公网 http/https 视频 URL（服务端代下载，mp4/mov/webm，≤100MB）'],
-          ['prompt：可选，作为附加指令'],
-          ['ratio / seconds / images：不支持，传入直接 400'],
-          ['产物：metadata.prompt（文本），metadata.media_type = text；无媒体产物'],
-          ['计费：按次 ¥1.00；30 秒视频实测约 90 秒出结果，上限 5 分钟'],
-        ] },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              'input_reference（或 video / videos）：必填，恰好 1 个公网 http/https 视频 URL（服务端代下载，mp4/mov/webm，≤100MB）',
+            ],
+            ['prompt：可选，作为附加指令'],
+            ['ratio / seconds / images：不支持，传入直接 400'],
+            [
+              '产物：metadata.prompt（文本），metadata.media_type = text；无媒体产物',
+            ],
+            ['计费：按次 ¥1.00；30 秒视频实测约 90 秒出结果，上限 5 分钟'],
+          ],
+        },
       ],
     },
     {
@@ -772,7 +960,11 @@ curl -L ${videoUrl}/task_xxx/content \\
       title: '参考素材要求',
       level: 2,
       content: [
-        { type: 'list', ordered: false, items: MEDIA_RULE_ITEMS.map((t) => [t]) },
+        {
+          type: 'list',
+          ordered: false,
+          items: MEDIA_RULE_ITEMS.map((t) => [t]),
+        },
       ],
     },
     {
@@ -791,7 +983,11 @@ curl -L ${videoUrl}/task_xxx/content \\
           lang: 'bash',
           value: QUOTA_QUERY_EXAMPLE(url),
         },
-        { type: 'list', ordered: false, items: QUOTA_QUERY_ITEMS.map((t) => [t]) },
+        {
+          type: 'list',
+          ordered: false,
+          items: QUOTA_QUERY_ITEMS.map((t) => [t]),
+        },
         {
           type: 'paragraph',
           children: [
@@ -827,7 +1023,10 @@ curl -L ${videoUrl}/task_xxx/content \\
           type: 'paragraph',
           children: [
             '对话与图片接口返回 OpenAI 风格错误体 ',
-            { type: 'code', value: '{"error": {"message": "...", "type": "..."}}' },
+            {
+              type: 'code',
+              value: '{"error": {"message": "...", "type": "..."}}',
+            },
             '；视频接口返回 ',
             { type: 'code', value: '{"code": "...", "message": "..."}' },
             '。',
@@ -859,7 +1058,10 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: '文本对话接口', href: '#text-api' },
     { title: '图片生成接口', href: '#image-api' },
     { title: '视频生成接口', href: '#video-api' },
-    { title: '传递参考素材（图片 / 视频 / 音频）', href: '#video-media-examples' },
+    {
+      title: '传递参考素材（图片 / 视频 / 音频）',
+      href: '#video-media-examples',
+    },
     { title: '各视频模型参数', href: '#video-model-params' },
     { title: '参数速查表', href: '#video-params-cheatsheet' },
     { title: '余额查询接口', href: '#quota-query' },

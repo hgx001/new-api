@@ -46,7 +46,7 @@ export function DocOutline({ sections }: { sections: TutorialSection[] }) {
   return (
     <aside className='hidden w-56 shrink-0 xl:block'>
       <nav className='sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto border-l border-[#e3eeea] pl-4'>
-        <div className='mb-3 text-xs font-semibold uppercase tracking-wider text-[#8aa89e]'>
+        <div className='mb-3 text-xs font-semibold tracking-wider text-[#8aa89e] uppercase'>
           本页目录
         </div>
         <ul className='space-y-1.5'>

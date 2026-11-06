@@ -192,4 +192,3 @@ export function ModelLimitsCell({ apiKey }: { apiKey: ApiKey }) {
     </Tooltip>
   )
 }
-
