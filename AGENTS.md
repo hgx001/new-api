@@ -79,6 +79,8 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
   - Seedream 5.0 Flash（doubao）：8 档比例 + count=2 全过（1536x1536~2848x1600）；**参考图当前不可用**——豆包官网无 `input[type=file]` 上传入口（页面结构变更），Worker 硬闸门拒单、未提交不扣费，换号无效。
   - Nano Banana Pro（gemini）：比例**只有 3:4 / 16:9 生效**，9:16 与 1:1 均实出 1024x559（16:9 缺省）——Worker `buildFillImageParamsScript` 在找不到宽高比控件时按设计跳过（`image-params-skipped:aspect-ratio-unavailable`），不报错；唯一 gemini 账号 `MicahMaconv@gmail.com` 掉登录后整链排队/取消，须重登。
   - new-api 侧参数校验（免费负向）3/3 通过：非法比例、`seconds` 字段、data URI 参考图均返回 400。
+- **SeetaCloud 渠道（ch28，type 70，2026-11-07 改版，台账 `scripts/prod-ledger-seeta-v2omni-20261107.sql`）**：上游 = 自建 ArcReel H3 网关（`u1133789-a936-c07acd4f.westd.seetacloud.com:8443`，AutoDL ComfyUI 协议，裸 token）。对外模型已换为 **`minimax_h3_v2`**（文生/图生/首尾帧三合一，0-2 张关键帧；旧名 `minimax_h3-文生/图生` 退役为隐藏别名）+ **`minimax_h3_omni`**（多模态参考 9 图+3 视频+3 音频，1080p 档倍率 2.0 暂定价）。计费按秒 ¥0.03 起（ModelPrice 0.00410958904109589），真机 4/4 出片（48-70s）+ 负向 3/3。契约细节见 `docs/agent-guides/channel-contracts.md` SeetaCloud 节。
+- **部署链路**：本地提交 → `git push fork main`（远端只有 `fork`，没有 `origin`）→ 服务器 `bash /home/ubuntu/deploy-new-api.sh <short-sha>`（带 SHA 断言：docker build → 换容器 → 健康检查）。**服务器连不上 github**：push 后服务器 fetch 不到会 ABORT，须本地 `git bundle create x.bundle refs/heads/main ^<服务器HEAD>` 经 ssh 管道传入、服务器 `git fetch x.bundle main:refs/remotes/bundle/main` 后再部署。⚠️ ssh 管道写文件与后台化组合会把文件截断成 0 字节——传完必须 `wc -c` 验字节数。
 
 ## 按需必读索引
 
