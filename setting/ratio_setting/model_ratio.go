@@ -403,6 +403,13 @@ var defaultModelPrice = map[string]float64{
 	// REMOTE_IMAGE_PRICE_CENTS_BY_MODEL 只给这两个模型 20 分）。
 	"Seedream 5.0 Flash":                0.2 / USD2RMB,   // 漫屋 ArcReel 豆包官网图片（上游 doubao-seedream-5-0-flash），按张 ¥0.2/张
 	"Seedream 4.5":                      0.2 / USD2RMB,   // 漫屋 ArcReel dola 官网图片（上游 dola-seedream-4-5），按张 ¥0.2/张
+	// gpt-image-2.5-官方（2026-11-07 上架）：官方渠道图片模型，走
+	// POST /v1/images/generations，按张 ¥0.15/张，与尺寸无关。
+	// 上游同 gpt-image-2（独立命名以区分二手渠道），计费走 ModelPrice
+	// （quota_type=1 按次固定价），张数走 OtherRatios{"n":N} 倍率。
+	// ⚠️ 不能不配价 —— 不配价时 ModelPriceHelperPerCall 的「查不到价」
+	// 分支会静默免单（¥0），比报错更难发现。
+	"gpt-image-2.5-官方":                 0.15 / USD2RMB,   // 官方渠道 GPT Image 2.5，按张 ¥0.15/张
 	"jimeng-video-reverse":              1.0 / USD2RMB,   // 漫屋 ArcReel 即梦视频反解，按次 ¥1.0/次（占位价，待商务核定）
 	"MiniMax-H3":                        0.5 / USD2RMB,   // MiniMax 官方 v2 视频，**按秒**（基础档 768P ¥0.5/秒；2K 走 size 倍率 1.625）
 	"MiniMax-H3-Max":                    0.365 / USD2RMB, // MiniMax 官方 v2 高速档，**按秒**（基础档 480P ¥0.365/秒；768P 倍率 1.6）

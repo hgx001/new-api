@@ -50,6 +50,36 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 - 用户文案使用i18next/react-i18next，English源串作flat JSON key；维护en基准、zh回退及既有fr/ru/ja/vi翻译，不硬编码UI文本。
 - 后端i18n保留en/zh。显示-only修改与真实扣费分开，前端不能成为价格唯一来源。
 
+## 自家生产实例 api.heibaidao.cn 调试速查（2026-11-07 用户确认：自家上游，不是第三方）
+
+| 项 | 值 |
+|---|---|
+| 生产入口 | `https://api.heibaidao.cn`（本仓库代码的生产实例） |
+| 服务器 | `ssh -p 877 ubuntu@119.29.253.97`；应用容器 `new-api`（镜像 `new-api-custom:latest`） |
+| 数据库 | 容器 `postgres`（库 `new-api`，用户 root）：`sudo docker exec -i postgres psql -U root -d new-api` |
+| 维护目录 | `C:/work/维护newapi` |
+| 账号池上游 | GPT-Pool = 容器 `sub2api`（`172.18.0.1:8080`，库容器 `sub2api-postgres`，psql 用户/库均 `sub2api`） |
+
+- 路由 = `channels` × `abilities`（group×model×channel_id 笛卡尔积）。**直接改 channels.models 不会同步 abilities**，须手动 INSERT abilities 行；`MEMORY_CACHE_ENABLED=true` 下 SyncChannelCache 每 60s 重建路由，改完等 60s 生效、无需重启。key 一律库内 INSERT...SELECT 复制，不走终端明文。
+- **m3only 沙箱组**（视频优先级饿死图片时的服务器侧兜底路由，2026-11-07 配置）：用户 id=53 `m3only_user` / token id=166 `m3only受限令牌`（key 前缀 `FOd34WzRQY`），model_limits=`MiniMax-M3.1,Seedream 4.5,Nano Banana Pro,Seedream 5.0 Flash,gpt-image-2.5-官方`，unlimited_quota=t、cross_group_retry=f。专属通道 ch26 MiniMax-M3.1(type 35)、ch29 GPT-Pool-image(type 1，克隆 ch13)、ch30 漫屋ArcReel-image(type 66，克隆 ch20)；改动前备份表 `bak_20261107_img_channels`/`bak_20261107_img_abilities`。
+- **四图片模型调用协议**（真机台账 `scripts/prod-ledger-img4-20261107.sql`，commit `7bae1e06d`；两轨不可混用）：
+
+| 模型 | 协议 | 实测 | 客户侧成本 |
+|---|---|---|---|
+| gpt-image-2.5-官方 | 同步 `POST /v1/images/generations`，**只回 b64_json、无 url** | 40.6s | ¥0.15 |
+| Nano Banana Pro | 任务协议 `POST /v1/videos` → 轮询 `GET /v1/videos/{id}` → `GET /v1/videos/{id}/content` 取 PNG | ~110s | ¥0.30 |
+| Seedream 4.5 | 同上（轮询约 160s，timeout 至少 300s） | ~160s | ¥0.20 |
+| Seedream 5.0 Flash | 同上 | ~50s | ¥0.20 |
+
+  - 任务三模型走 `/v1/images/generations` 是 404。manwu 通道（type 66）硬约束：参考图只收公网 http(s) URL（data URI → 400 `invalid_input_reference`，不建单不扣费）；比例白名单随模型形态（kindImage 六档缺省 16:9 / kindSeedreamImage 八档含「自动」缺省不下发）；图片形态拒收 seconds/duration/resolution/negative_prompt；张数上限 10/4。
+  - 消费侧兜底链在 `ArcReelLocalDesktop/scripts/cloud_image_fallback.py`（双协议自动分派，单模型失败一次即切换），配置 `ARCREEL_CLOUD_IMAGE_*`（arcreel 机 `/opt/arcreel/gateway.env`）。
+- **未决坑（2026-11-07）**：gpt-image-2.5-官方 唯一出图账号 = sub2api group 4 的 `codex-plus-snehitoge828`（account 4）；其 OAuth 被上游吊销（`Token revoked (401)`）后 schedulable=f，调用只剩 503「No available compatible accounts」（sub2api 日志 `account_select_failed ... pool=1`）。恢复须在 sub2api 管理端重新授权该账号或补账号进 group 4——**禁止自动触发 OAuth 恢复**，先报用户拍板。
+- **参数矩阵实测（2026-11-07，台账 `scripts/prod-ledger-img4-paramatrix-20261107.sql`，¥6.40）**：三模型已在 default 组完整暴露（ch20 + abilities + ModelPrice + `/v1/models` 可见）。结论：
+  - Seedream 4.5（dola）：8 档比例 + count=2 + 参考图全过；**部分档交付低清预览**（9:16 216x384/134KB、3:4 288x384、4:3 384x288、ref 384x384），同档其它次为 5-6MB 全清，疑取图节点抓到站点预览图，待查。
+  - Seedream 5.0 Flash（doubao）：8 档比例 + count=2 全过（1536x1536~2848x1600）；**参考图当前不可用**——豆包官网无 `input[type=file]` 上传入口（页面结构变更），Worker 硬闸门拒单、未提交不扣费，换号无效。
+  - Nano Banana Pro（gemini）：比例**只有 3:4 / 16:9 生效**，9:16 与 1:1 均实出 1024x559（16:9 缺省）——Worker `buildFillImageParamsScript` 在找不到宽高比控件时按设计跳过（`image-params-skipped:aspect-ratio-unavailable`），不报错；唯一 gemini 账号 `MicahMaconv@gmail.com` 掉登录后整链排队/取消，须重登。
+  - new-api 侧参数校验（免费负向）3/3 通过：非法比例、`seconds` 字段、data URI 参考图均返回 400。
+
 ## 按需必读索引
 
 | 任务 | 先读 |

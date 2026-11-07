@@ -58,18 +58,21 @@ func TestBuildRequestBodyUserErrorForMissingPrompt(t *testing.T) {
 	assert.Equal(t, "invalid_request", userErr.Code)
 }
 
-// TestBuildRequestBodyUserErrorForUnsupportedImages 文生传参考图必须是 400 类用户错误。
+// TestBuildRequestBodyUserErrorForUnsupportedImages 合并后 V2 接受参考图，
+// 但关键帧槽位只有 2 个：旧「文生」别名传 3 张必须是 400 类用户错误
+// （上游对第 3 张默默忽略，不能让它带病出片）。
 func TestBuildRequestBodyUserErrorForUnsupportedImages(t *testing.T) {
 	adaptor := seetaAdaptor(t, "minimax_h3-文生")
 
 	_, err := adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
 		Model:  "minimax_h3-文生",
 		Prompt: "p",
-		Images: []string{seetaTestDataURI},
+		Images: []string{seetaTestDataURI, seetaTestDataURI, seetaTestDataURI},
 	}), seetaRelayInfo("minimax_h3-文生"))
 
 	userErr := seetaUserErr(t, err)
 	assert.Equal(t, "invalid_request", userErr.Code)
+	assert.Contains(t, userErr.Message, "at most 2")
 }
 
 // TestBuildRequestBodyUserErrorForMissingReferenceImage 图生缺参考图必须是 400 类用户错误。

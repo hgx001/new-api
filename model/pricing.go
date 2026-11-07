@@ -502,10 +502,11 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "autodl:") {
 		return true
 	}
-	// SeetaCloud（2026-11-06 接入）：自建 ComfyUI 实例的 H3 蒸馏工作流。
-	// 模型名带中文后缀，直接面向客户可见；上游工作流名（minimax_h3_lightx2v*）
-	// 只在适配器内部做映射，不对外暴露。
-	if name == "minimax_h3-文生" || name == "minimax_h3-图生" {
+	// SeetaCloud（2026-11-06 接入；2026-11-07 改版）：自建 ComfyUI 实例的
+	// ArcReel-H3 网关。文生/图生已合并为 minimax_h3_v2（不带图=文生、带图=
+	// 首尾帧），新增 minimax_h3_omni（多模态参考 9 图 + 3 视频 + 3 音频 + 1080p）。
+	// 旧中文名不再上广场，但适配器里保留别名让在途请求跑通。
+	if name == "minimax_h3_v2" || name == "minimax_h3_omni" {
 		return true
 	}
 	// Youkou Seedance（volcengine-ark-video 协议，最小成本逐个接入）

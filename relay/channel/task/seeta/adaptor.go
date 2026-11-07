@@ -82,6 +82,7 @@ type TaskAdaptor struct {
 	ChannelType int
 	apiKey      string
 	baseURL     string
+	modelName   string
 	wf          workflowConfig
 }
 
@@ -92,6 +93,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 		a.baseURL = baseURLDefault
 	}
 	a.apiKey = info.ApiKey
+	a.modelName = info.OriginModelName
 	if cfg, ok := workflowByModel[info.OriginModelName]; ok {
 		a.wf = cfg
 	}
@@ -147,7 +149,14 @@ func (a *TaskAdaptor) resolveResolution(req relaycommon.TaskSubmitReq) (string, 
 }
 
 // originModelName 返回对外模型名，供错误信息使用。
+//
+// ⚠️ 2026-11-07 起优先取 Init 存下的请求模型名：旧实现反向遍历
+// workflowByModel，而旧名（minimax_h3-文生 等）与正名共用同一 WorkflowID，
+// map 遍历顺序随机会让错误信息在别名与正名之间漂移。
 func (a *TaskAdaptor) originModelName() string {
+	if a.modelName != "" {
+		return a.modelName
+	}
 	for name, cfg := range workflowByModel {
 		if cfg.WorkflowID == a.wf.WorkflowID {
 			return name
@@ -238,16 +247,30 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			"invalid_request")
 	}
 
-	// H3 工作流只有「提示词 + 关键帧图」两类输入，没有音频/视频参考槽位。
+	// 参考视频 / 参考音频：只有 Omni 链有槽位（MaxVideos/MaxAudios > 0）。
 	// 静默丢弃会让客户以为做了配音或参考了片段视频 —— 明确报错。
-	if req.HasAudio() {
+	videos := collectReferenceVideos(req)
+	audios := collectReferenceAudios(req)
+	if a.wf.MaxVideos == 0 && len(videos) > 0 {
 		return nil, taskcommon.NewUserError(
-			errors.Errorf("model %s does not support audio input; H3 workflow has no audio slot", info.OriginModelName),
+			errors.Errorf("model %s does not support video reference input; H3 V2 workflow has no video slot, use minimax_h3_omni", info.OriginModelName),
 			"invalid_request")
 	}
-	if hasVideoMaterial(req) {
+	if a.wf.MaxAudios == 0 && req.HasAudio() {
 		return nil, taskcommon.NewUserError(
-			errors.Errorf("model %s does not support video reference input; H3 workflow has no video slot", info.OriginModelName),
+			errors.Errorf("model %s does not support audio input; H3 V2 workflow has no audio slot, use minimax_h3_omni", info.OriginModelName),
+			"invalid_request")
+	}
+	if len(videos) > a.wf.MaxVideos {
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s supports at most %d reference videos; got %d",
+				info.OriginModelName, a.wf.MaxVideos, len(videos)),
+			"invalid_request")
+	}
+	if len(audios) > a.wf.MaxAudios {
+		return nil, taskcommon.NewUserError(
+			errors.Errorf("model %s supports at most %d reference audios; got %d",
+				info.OriginModelName, a.wf.MaxAudios, len(audios)),
 			"invalid_request")
 	}
 
@@ -260,45 +283,94 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		body["seed"] = *req.Seed
 	}
 
-	// 参考图：上游**只收 data URI**，传 URL 会 400「只接受 data URI」。
-	// 所以客户给的是 http(s) 链接时，网关要先把图下载下来转成 data URI。
+	// 参考素材：上游**只收 data URI**，传 URL 会 400「只接受 data URI」。
+	// 所以客户给的是 http(s) 链接时，网关要先把素材下载下来转成 data URI。
 	images := collectReferenceImages(req)
-	if len(images) > maxReferenceImageCount {
-		return nil, taskcommon.NewUserError(
-			errors.Errorf("model %s supports at most %d reference images", info.OriginModelName, maxReferenceImageCount),
-			"invalid_request")
+	switch a.wf.ReferenceMode {
+	case referenceModeKeyframes:
+		// 关键帧模式（V2 / 旧别名）：第 1 张 = 首帧，第 2 张 = 尾帧。
+		if len(images) > maxReferenceImageCount {
+			return nil, taskcommon.NewUserError(
+				errors.Errorf("model %s supports at most %d reference images", info.OriginModelName, maxReferenceImageCount),
+				"invalid_request")
+		}
+		// 上游的关键帧槽位上限是 2 张（首帧 + 尾帧）—— 这是 V2 蒸馏权重的硬上限，
+		// 不是配置项。传第 3 张上游会默默忽略（实测 2026-11-06：3 张照收照出片，
+		// 但第 3 张完全没生效），所以这里必须自己拦下来告诉客户。
+		if len(images) > maxUpstreamKeyframes {
+			return nil, taskcommon.NewUserError(
+				errors.Errorf("model %s supports at most %d reference images (first frame + last frame); got %d",
+					info.OriginModelName, maxUpstreamKeyframes, len(images)),
+				"invalid_request")
+		}
+		if a.wf.RequiresImages && len(images) == 0 {
+			return nil, taskcommon.NewUserError(
+				errors.Errorf("model %s requires at least one reference image (images field)", info.OriginModelName),
+				"invalid_request")
+		}
+		for i, image := range images {
+			dataURI, err := toDataURIMedia(c, image, "image", maxReferenceImageBytes)
+			if err != nil {
+				return nil, taskcommon.NewUserError(
+					errors.Wrapf(err, "reference image %d", i+1), "invalid_reference_image")
+			}
+			// 上游对图生视频/首尾帧工作流识别 first_frame 或 ref_image_0，
+			// 多图时按 ref_image_N 递增下发（ref_image_0 即首帧，ref_image_1 即尾帧）。
+			if i == 0 {
+				body["first_frame"] = dataURI
+			}
+			body[fmt.Sprintf("ref_image_%d", i)] = dataURI
+		}
+	default: // referenceModeSetRef（Omni 链）
+		// 设定参考模式：images 全部走 ref_blocks 通路（ref_image_0..8）；
+		// 首帧/尾帧通过 metadata.first_frame / metadata.last_frame 单独传，
+		// 可与设定参考同请求共存（Omni 契约）。
+		if len(images) > a.wf.MaxImages {
+			return nil, taskcommon.NewUserError(
+				errors.Errorf("model %s supports at most %d reference images; got %d",
+					info.OriginModelName, a.wf.MaxImages, len(images)),
+				"invalid_request")
+		}
+		for i, image := range images {
+			dataURI, err := toDataURIMedia(c, image, "image", maxReferenceImageBytes)
+			if err != nil {
+				return nil, taskcommon.NewUserError(
+					errors.Wrapf(err, "reference image %d", i+1), "invalid_reference_image")
+			}
+			body[fmt.Sprintf("ref_image_%d", i)] = dataURI
+		}
+		for key, slot := range map[string]string{
+			"first_frame": "first_frame",
+			"last_frame":  "last_frame",
+		} {
+			raw := metadataString(req, key)
+			if raw == "" {
+				continue
+			}
+			dataURI, err := toDataURIMedia(c, raw, "image", maxReferenceImageBytes)
+			if err != nil {
+				return nil, taskcommon.NewUserError(
+					errors.Wrapf(err, "metadata %s", key), "invalid_reference_image")
+			}
+			body[slot] = dataURI
+		}
 	}
-	// 上游的关键帧槽位上限是 2 张（首帧 + 尾帧）—— 这是 V2 蒸馏权重的硬上限，
-	// 不是配置项。传第 3 张上游会默默忽略（实测 2026-11-06：3 张照收照出片，
-	// 但第 3 张完全没生效），所以这里必须自己拦下来告诉客户。
-	if len(images) > maxUpstreamKeyframes {
-		return nil, taskcommon.NewUserError(
-			errors.Errorf("model %s supports at most %d reference images (first frame + last frame); got %d",
-				info.OriginModelName, maxUpstreamKeyframes, len(images)),
-			"invalid_request")
-	}
-	if !a.wf.RequiresImages && len(images) > 0 {
-		return nil, taskcommon.NewUserError(
-			errors.Errorf("model %s does not support reference images", info.OriginModelName),
-			"invalid_request")
-	}
-	if a.wf.RequiresImages && len(images) == 0 {
-		return nil, taskcommon.NewUserError(
-			errors.Errorf("model %s requires at least one reference image (images field)", info.OriginModelName),
-			"invalid_request")
-	}
-	for i, image := range images {
-		dataURI, err := toDataURI(c, image)
+
+	for i, video := range videos {
+		dataURI, err := toDataURIMedia(c, video, "video", maxReferenceVideoBytes)
 		if err != nil {
 			return nil, taskcommon.NewUserError(
-				errors.Wrapf(err, "reference image %d", i+1), "invalid_reference_image")
+				errors.Wrapf(err, "reference video %d", i+1), "invalid_reference_video")
 		}
-		// 上游对图生视频/首尾帧工作流识别 first_frame 或 ref_image_0，
-		// 多图时按 ref_image_N 递增下发（ref_image_0 即首帧）。
-		if i == 0 {
-			body["first_frame"] = dataURI
+		body[fmt.Sprintf("ref_video_%d", i)] = dataURI
+	}
+	for i, audio := range audios {
+		dataURI, err := toDataURIMedia(c, audio, "audio", maxReferenceAudioBytes)
+		if err != nil {
+			return nil, taskcommon.NewUserError(
+				errors.Wrapf(err, "reference audio %d", i+1), "invalid_reference_audio")
 		}
-		body[fmt.Sprintf("ref_image_%d", i)] = dataURI
+		body[fmt.Sprintf("ref_audio_%d", i)] = dataURI
 	}
 
 	encoded, err := common.Marshal(body)
@@ -308,19 +380,48 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	return bytes.NewReader(encoded), nil
 }
 
-// hasVideoMaterial 判断请求里是否带了视频素材（media 里的 video 类型）。
-//
-// H3 工作流没有视频参考槽位：视频素材只会被 collectReferenceImages 忽略掉
-// （那里只收 type 含 "image" 的 media），于是客户的视频引用静默消失。
-// 这里单独识别出来，明确报错。
-func hasVideoMaterial(req relaycommon.TaskSubmitReq) bool {
+// collectReferenceVideos 收集参考视频素材（media 里 type 含 "video" 的条目）。
+func collectReferenceVideos(req relaycommon.TaskSubmitReq) []string {
+	videos := make([]string, 0)
 	for _, media := range req.Media {
-		if strings.Contains(strings.ToLower(media.Type), "video") &&
-			strings.TrimSpace(media.URL) != "" {
-			return true
+		if strings.Contains(strings.ToLower(media.Type), "video") {
+			if video := strings.TrimSpace(media.URL); video != "" {
+				videos = append(videos, video)
+			}
 		}
 	}
-	return false
+	return videos
+}
+
+// collectReferenceAudios 收集参考音频素材，兼容 audio / audios /
+// media（type 含 "audio"）三种入口。
+func collectReferenceAudios(req relaycommon.TaskSubmitReq) []string {
+	audios := make([]string, 0)
+	if audio := strings.TrimSpace(req.Audio); audio != "" {
+		audios = append(audios, audio)
+	}
+	for _, audio := range req.Audios {
+		if audio = strings.TrimSpace(audio); audio != "" {
+			audios = append(audios, audio)
+		}
+	}
+	for _, media := range req.Media {
+		if strings.Contains(strings.ToLower(media.Type), "audio") {
+			if audio := strings.TrimSpace(media.URL); audio != "" {
+				audios = append(audios, audio)
+			}
+		}
+	}
+	return audios
+}
+
+// metadataString 从 metadata 里取字符串字段（Omni 链的首尾帧走这里）。
+func metadataString(req relaycommon.TaskSubmitReq, key string) string {
+	if req.Metadata == nil {
+		return ""
+	}
+	value, _ := req.Metadata[key].(string)
+	return strings.TrimSpace(value)
 }
 
 // collectReferenceImages 从请求里收集参考图，兼容 images / image /
@@ -349,51 +450,53 @@ func collectReferenceImages(req relaycommon.TaskSubmitReq) []string {
 	return images
 }
 
-// toDataURI 把参考图转成 data URI。
+// toDataURIMedia 把参考素材（image / video / audio）转成 data URI。
 //
 // 上游只接受 data URI，所以 http(s) 链接必须先下载再内联。
 // 已经内联的 data URI 直接放行（仍要过体积与格式校验）。
-func toDataURI(c *gin.Context, raw string) (string, error) {
+// kind 同时决定允许的 MIME 前缀与错误文案里的素材名。
+func toDataURIMedia(c *gin.Context, raw, kind string, maxBytes int) (string, error) {
 	if strings.HasPrefix(strings.ToLower(raw), "data:") {
-		if err := validateDataURI(raw); err != nil {
+		if err := validateDataURIMedia(raw, kind, maxBytes); err != nil {
 			return "", err
 		}
 		return raw, nil
 	}
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
-		return "", errors.Errorf("reference image must be an http(s) URL or a data URI, got %q", truncateForError(raw))
+		return "", errors.Errorf("reference %s must be an http(s) URL or a data URI, got %q", kind, truncateForError(raw))
 	}
-	data, mimeType, err := downloadImage(c, raw)
+	data, mimeType, err := downloadMedia(c, raw, kind, maxBytes)
 	if err != nil {
 		return "", err
 	}
 	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
-// validateDataURI 校验内联 data URI：格式与体积都要过。
-func validateDataURI(raw string) error {
+// validateDataURIMedia 校验内联 data URI：格式、MIME 前缀与体积都要过。
+func validateDataURIMedia(raw, kind string, maxBytes int) error {
 	comma := strings.Index(raw, ",")
 	if comma < 0 {
 		return errors.New("malformed data URI")
 	}
 	header := strings.ToLower(raw[:comma])
-	if !strings.HasPrefix(header, "data:image/") {
-		return errors.New("data URI is not an image")
+	if !strings.HasPrefix(header, "data:"+kind+"/") {
+		return errors.Errorf("data URI is not %s", kind)
 	}
 	payload := raw[comma+1:]
-	if len(payload) > maxReferenceImageBytes*4/3+4 {
-		return errors.Errorf("image exceeds the %d byte limit", maxReferenceImageBytes)
+	if len(payload) > maxBytes*4/3+4 {
+		return errors.Errorf("%s exceeds the %d byte limit", kind, maxBytes)
 	}
 	return nil
 }
 
-// downloadReferenceTimeout 单图下载超时。
+// downloadReferenceTimeout 单素材下载超时。
 //
 // 建单请求是同步的，不能因为客户给了一个慢图床就无限期占着连接。
-const downloadReferenceTimeout = 30 * time.Second
+const downloadReferenceTimeout = 60 * time.Second
 
-// downloadImage 下载一张参考图，返回字节与 MIME。
-func downloadImage(c *gin.Context, rawURL string) ([]byte, string, error) {
+// downloadMedia 下载一份参考素材，返回字节与 MIME。
+// mimePrefix 形如 "image"/"video"/"audio"，用于校验响应内容类型。
+func downloadMedia(c *gin.Context, rawURL, kind string, maxBytes int) ([]byte, string, error) {
 	fetchSetting := system_setting.GetFetchSetting()
 	if err := common.ValidateURLWithFetchSetting(rawURL, fetchSetting.EnableSSRFProtection,
 		fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode,
@@ -430,12 +533,12 @@ func downloadImage(c *gin.Context, rawURL string) ([]byte, string, error) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, "", errors.Errorf("HTTP %d", response.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxReferenceImageBytes+1))
+	data, err := io.ReadAll(io.LimitReader(response.Body, int64(maxBytes)+1))
 	if err != nil {
 		return nil, "", err
 	}
-	if len(data) > maxReferenceImageBytes {
-		return nil, "", errors.Errorf("image exceeds the %d byte limit", maxReferenceImageBytes)
+	if len(data) > maxBytes {
+		return nil, "", errors.Errorf("reference %s exceeds the %d byte limit", kind, maxBytes)
 	}
 
 	mimeType := response.Header.Get("Content-Type")
@@ -445,10 +548,10 @@ func downloadImage(c *gin.Context, rawURL string) ([]byte, string, error) {
 	mimeType = strings.TrimSpace(mimeType)
 	// 对象存储常返回 application/octet-stream，这时靠魔数兜底。
 	if mimeType == "" || mimeType == "application/octet-stream" || mimeType == "binary/octet-stream" {
-		mimeType = detectImageMime(data)
+		mimeType = detectMediaMime(kind, data)
 	}
-	if !strings.HasPrefix(strings.ToLower(mimeType), "image/") {
-		return nil, "", errors.Errorf("reference image content type %q is not an image", mimeType)
+	if !strings.HasPrefix(strings.ToLower(mimeType), kind+"/") {
+		return nil, "", errors.Errorf("reference %s content type %q is not %s", kind, mimeType, kind)
 	}
 	return data, mimeType, nil
 }
@@ -468,6 +571,43 @@ func detectImageMime(data []byte) string {
 		return "image/webp"
 	}
 	return "image/png"
+}
+
+// detectMediaMime 用文件头判断素材类型；识别不出时按 kind 给保守默认值。
+//
+// 为什么保守默认值不能乱给：Omni 网关按 data URI 的 MIME 子类型决定落盘
+// 扩展名（.mp4/.m4a/...），一个 text/plain 的视频会让上游直接拒载。
+func detectMediaMime(kind string, data []byte) string {
+	switch kind {
+	case "image":
+		return detectImageMime(data)
+	case "video":
+		switch {
+		// MP4：offset 4 起是 "ftyp"。
+		case len(data) >= 12 && string(data[4:8]) == "ftyp":
+			return "video/mp4"
+		// WebM/Matroska：EBML 魔数。
+		case len(data) >= 4 && data[0] == 0x1A && data[1] == 0x45 && data[2] == 0xDF && data[3] == 0xA3:
+			return "video/webm"
+		}
+		return "video/mp4"
+	case "audio":
+		switch {
+		// MP3：ID3 头或 MPEG 帧同步字。
+		case len(data) >= 3 && string(data[0:3]) == "ID3":
+			return "audio/mpeg"
+		case len(data) >= 2 && data[0] == 0xFF && (data[1]&0xE0) == 0xE0:
+			return "audio/mpeg"
+		// WAV：RIFF 容器。
+		case len(data) >= 12 && string(data[0:4]) == "RIFF" && string(data[8:12]) == "WAVE":
+			return "audio/wav"
+		// M4A：ftyp 容器（M4A 前缀）。
+		case len(data) >= 12 && string(data[4:8]) == "ftyp":
+			return "audio/mp4"
+		}
+		return "audio/mpeg"
+	}
+	return "application/octet-stream"
 }
 
 // truncateForError 截断长串，避免把整段 base64 打进错误信息。

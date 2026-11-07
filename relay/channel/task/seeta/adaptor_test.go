@@ -91,17 +91,54 @@ func TestBuildRequestBodyImageToVideoSendsFirstFrame(t *testing.T) {
 	require.Equal(t, seetaTestDataURI, payload["ref_image_0"])
 }
 
-// TestBuildRequestBodyRejectsImagesOnTextToVideo 文生工作流不收参考图。
-func TestBuildRequestBodyRejectsImagesOnTextToVideo(t *testing.T) {
-	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+// TestBuildRequestBodyV2AcceptsImagesWithoutKeyframeLimit 2026-11-07 合并后
+// V2 不带图即文生、带图即图生/首尾帧：1 张 = 首帧，2 张 = 首尾帧。
+func TestBuildRequestBodyV2MergedSemantics(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_v2")
 
-	_, err := adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
-		Model:  "minimax_h3-文生",
+	// 不带图：纯文生，没有任何参考图字段。
+	payload := seetaPayload(t, adaptor, relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3_v2",
+		Prompt: "a calm lake at sunrise",
+	})
+	require.NotContains(t, payload, "first_frame")
+	require.NotContains(t, payload, "ref_image_0")
+
+	// 1 张图：first_frame + ref_image_0。
+	payload = seetaPayload(t, adaptor, relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3_v2",
 		Prompt: "p",
 		Images: []string{seetaTestDataURI},
-	}), seetaRelayInfo("minimax_h3-文生"))
+	})
+	require.Equal(t, seetaTestDataURI, payload["first_frame"])
+	require.Equal(t, seetaTestDataURI, payload["ref_image_0"])
+
+	// 2 张图：第 2 张是尾帧（ref_image_1），不再发第二个 first_frame。
+	payload = seetaPayload(t, adaptor, relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3_v2",
+		Prompt: "p",
+		Images: []string{seetaTestDataURI, "data:image/png;base64,QUJD"},
+	})
+	require.Equal(t, seetaTestDataURI, payload["first_frame"])
+	require.Equal(t, "data:image/png;base64,QUJD", payload["ref_image_1"])
+
+	// 3 张图：超过 V2 关键帧槽位（首帧+尾帧），本地拦下。
+	_, err := adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3_v2",
+		Prompt: "p",
+		Images: []string{seetaTestDataURI, seetaTestDataURI, seetaTestDataURI},
+	}), seetaRelayInfo("minimax_h3_v2"))
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "does not support reference images")
+	require.Contains(t, err.Error(), "at most 2")
+
+	// V2 没有视频/音频槽位：传了要明确报错（不静默丢弃）。
+	_, err = adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3_v2",
+		Prompt: "p",
+		Audios: []string{"data:audio/mpeg;base64,QUJD"},
+	}), seetaRelayInfo("minimax_h3_v2"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "audio")
 }
 
 // TestBuildRequestBodyRejectsUnsupportedResolution 非法分辨率要明确报错，
@@ -190,6 +227,114 @@ func TestBuildRequestBodyRejectsNonDataURIRemoteImage(t *testing.T) {
 	require.Contains(t, err.Error(), "must be an http(s) URL or a data URI")
 }
 
+// TestBuildRequestBodyOmniSetRef Omni 链的参考图是**设定参考**：
+// 全部走 ref_image_N，不发 first_frame；首尾帧只从 metadata 收。
+func TestBuildRequestBodyOmniSetRef(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
+
+	payload := seetaPayload(t, adaptor, relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3_omni",
+		Prompt: "<Picture 1> turns her head",
+		Images: []string{seetaTestDataURI, "data:image/png;base64,QUJD"},
+	})
+	require.Equal(t, seetaTestDataURI, payload["ref_image_0"])
+	require.Equal(t, "data:image/png;base64,QUJD", payload["ref_image_1"])
+	// 设定参考语义下不带 first_frame —— 槽位语义不随引擎漂移。
+	require.NotContains(t, payload, "first_frame")
+
+	// metadata 里的首尾帧与设定参考共存。
+	payload = seetaPayload(t, adaptor, relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3_omni",
+		Prompt: "p",
+		Metadata: map[string]interface{}{
+			"first_frame": seetaTestDataURI,
+			"last_frame":  "data:image/png;base64,QUJD",
+		},
+	})
+	require.Equal(t, seetaTestDataURI, payload["first_frame"])
+	require.Equal(t, "data:image/png;base64,QUJD", payload["last_frame"])
+	require.NotContains(t, payload, "ref_image_0")
+
+	// 视频参考 → ref_video_N，音频参考 → ref_audio_N。
+	payload = seetaPayload(t, adaptor, relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3_omni",
+		Prompt: "p",
+		Audios: []string{"data:audio/mpeg;base64,QUJD"},
+		Media: []relaycommon.TaskMedia{
+			{Type: "reference_video", URL: "data:video/mp4;base64,AAAA"},
+		},
+	})
+	require.Equal(t, "data:video/mp4;base64,AAAA", payload["ref_video_0"])
+	require.Equal(t, "data:audio/mpeg;base64,QUJD", payload["ref_audio_0"])
+}
+
+// TestBuildRequestBodyOmniCaps Omni 链的多参考上限：9 图 / 3 视频 / 3 音频。
+func TestBuildRequestBodyOmniCaps(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
+
+	images := make([]string, maxReferenceImageCount+1)
+	for i := range images {
+		images[i] = seetaTestDataURI
+	}
+	_, err := adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
+		Model: "minimax_h3_omni", Prompt: "p", Images: images,
+	}), seetaRelayInfo("minimax_h3_omni"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "at most 9 reference images")
+
+	_, err = adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
+		Model: "minimax_h3_omni", Prompt: "p",
+		Media: []relaycommon.TaskMedia{
+			{Type: "video", URL: "data:video/mp4;base64,AAAA"},
+			{Type: "video", URL: "data:video/mp4;base64,AAAA"},
+			{Type: "video", URL: "data:video/mp4;base64,AAAA"},
+			{Type: "video", URL: "data:video/mp4;base64,AAAA"},
+		},
+	}), seetaRelayInfo("minimax_h3_omni"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "at most 3 reference videos")
+
+	_, err = adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
+		Model: "minimax_h3_omni", Prompt: "p",
+		Audios: []string{"data:audio/mpeg;base64,QUJD", "data:audio/mpeg;base64,QUJD",
+			"data:audio/mpeg;base64,QUJD", "data:audio/mpeg;base64,QUJD"},
+	}), seetaRelayInfo("minimax_h3_omni"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "at most 3 reference audios")
+}
+
+// TestBuildRequestBodyOmniAccepts1080p 1080p 档只有 Omni 链支持；
+// V2 传 1080p 必须报错（潜空间放大路径只在 Omni 有）。
+func TestBuildRequestBodyOmniAccepts1080p(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
+	payload := seetaPayload(t, adaptor, relaycommon.TaskSubmitReq{
+		Model:      "minimax_h3_omni",
+		Prompt:     "p",
+		Resolution: "1080p横",
+	})
+	require.Equal(t, "1080p横", payload["resolution"])
+
+	adaptor = seetaAdaptor(t, "minimax_h3_v2")
+	_, err := adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
+		Model: "minimax_h3_v2", Prompt: "p", Resolution: "1080p横",
+	}), seetaRelayInfo("minimax_h3_v2"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "does not support resolution")
+}
+
+// TestEstimateBillingOmni1080pRatio 1080p 计费倍率 2.0（对客暂定 ¥0.06/秒）。
+func TestEstimateBillingOmni1080pRatio(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: "minimax_h3_omni", Prompt: "p", Duration: 10, Resolution: "1080p竖",
+	})
+	billing := adaptor.EstimateBilling(c, seetaRelayInfo("minimax_h3_omni"))
+	require.Equal(t, 10.0, billing["seconds"])
+	require.InDelta(t, 2.0, billing["size"], 0.001)
+}
+
 // TestEstimateBillingResolutionRatios 计费倍率：480P 基准 1.0，768p 1.667。
 func TestEstimateBillingResolutionRatios(t *testing.T) {
 	adaptor := seetaAdaptor(t, "minimax_h3-文生")
@@ -272,18 +417,18 @@ func TestParseTaskResultUnknownStatusKeepsPolling(t *testing.T) {
 
 // TestBuildRequestURLUsesWorkflowPath 提交 URL 必须带上游工作流名。
 func TestBuildRequestURLUsesWorkflowPath(t *testing.T) {
-	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+	adaptor := seetaAdaptor(t, "minimax_h3_v2")
 	adaptor.baseURL = "https://example.test:8443"
 
-	url, err := adaptor.BuildRequestURL(seetaRelayInfo("minimax_h3-文生"))
+	url, err := adaptor.BuildRequestURL(seetaRelayInfo("minimax_h3_v2"))
 	require.NoError(t, err)
-	require.Equal(t, "https://example.test:8443/api/v1/comfyui/comfyui_workflow/minimax_h3_lightx2v_no_pic", url)
+	require.Equal(t, "https://example.test:8443/api/v1/comfyui/comfyui_workflow/minimax_h3_v2", url)
 
-	adaptor = seetaAdaptor(t, "minimax_h3-图生")
+	adaptor = seetaAdaptor(t, "minimax_h3_omni")
 	adaptor.baseURL = "https://example.test:8443"
-	url, err = adaptor.BuildRequestURL(seetaRelayInfo("minimax_h3-图生"))
+	url, err = adaptor.BuildRequestURL(seetaRelayInfo("minimax_h3_omni"))
 	require.NoError(t, err)
-	require.Equal(t, "https://example.test:8443/api/v1/comfyui/comfyui_workflow/minimax_h3_lightx2v", url)
+	require.Equal(t, "https://example.test:8443/api/v1/comfyui/comfyui_workflow/minimax_h3_omni", url)
 }
 
 // TestBuildRequestHeaderUsesRawToken 上游是裸 token 鉴权，不带 Bearer。
@@ -297,22 +442,58 @@ func TestBuildRequestHeaderUsesRawToken(t *testing.T) {
 	require.Equal(t, "raw-token", req.Header.Get("Authorization"))
 }
 
-// TestGetModelList 暴露的模型名不含上游工作流名。
+// TestGetModelList 暴露的模型名不含上游工作流名，旧中文名已退役。
 func TestGetModelList(t *testing.T) {
-	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+	adaptor := seetaAdaptor(t, "minimax_h3_v2")
 	list := adaptor.GetModelList()
-	require.Contains(t, list, "minimax_h3-文生")
-	require.Contains(t, list, "minimax_h3-图生")
+	require.Contains(t, list, "minimax_h3_v2")
+	require.Contains(t, list, "minimax_h3_omni")
 	for _, name := range list {
 		require.NotContains(t, name, "lightx2v")
+		require.NotEqual(t, "minimax_h3-文生", name, "旧名不应再出现在模型列表")
+		require.NotEqual(t, "minimax_h3-图生", name, "旧名不应再出现在模型列表")
 	}
+}
+
+// TestLegacyAliasesRouteToV2 旧名是隐藏别名：不在 ModelList，
+// 但仍能路由到合并后的 V2 工作流；图生别名保留必填图契约。
+func TestLegacyAliasesRouteToV2(t *testing.T) {
+	require.NotContains(t, ModelList, "minimax_h3-文生")
+	require.NotContains(t, ModelList, "minimax_h3-图生")
+
+	// 旧「文生」别名 → V2 工作流；合并后带图也不再拒（V2 全语义）。
+	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+	url, err := adaptor.BuildRequestURL(seetaRelayInfo("minimax_h3-文生"))
+	require.NoError(t, err)
+	require.Contains(t, url, "/comfyui_workflow/minimax_h3_v2")
+	payload := seetaPayload(t, adaptor, relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3-文生",
+		Prompt: "p",
+		Images: []string{seetaTestDataURI},
+	})
+	require.Equal(t, seetaTestDataURI, payload["first_frame"])
+
+	// 旧「图生」别名 → V2 工作流，缺图仍要报错。
+	adaptor = seetaAdaptor(t, "minimax_h3-图生")
+	url, err = adaptor.BuildRequestURL(seetaRelayInfo("minimax_h3-图生"))
+	require.NoError(t, err)
+	require.Contains(t, url, "/comfyui_workflow/minimax_h3_v2")
+	_, err = adaptor.BuildRequestBody(seetaTaskContext(relaycommon.TaskSubmitReq{
+		Model:  "minimax_h3-图生",
+		Prompt: "p",
+	}), seetaRelayInfo("minimax_h3-图生"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires at least one reference image")
 }
 
 // TestValidateDataURI 非法 data URI 要在本地拦掉。
 func TestValidateDataURI(t *testing.T) {
-	require.NoError(t, validateDataURI(seetaTestDataURI))
-	require.Error(t, validateDataURI("data:text/plain;base64,aGk="))
-	require.Error(t, validateDataURI("not-a-data-uri"))
+	require.NoError(t, validateDataURIMedia(seetaTestDataURI, "image", maxReferenceImageBytes))
+	require.Error(t, validateDataURIMedia("data:text/plain;base64,aGk=", "image", maxReferenceImageBytes))
+	require.Error(t, validateDataURIMedia("not-a-data-uri", "image", maxReferenceImageBytes))
+	// 音频/视频类 data URI 按各自 kind 校验。
+	require.NoError(t, validateDataURIMedia("data:audio/mpeg;base64,QUJD", "audio", maxReferenceAudioBytes))
+	require.Error(t, validateDataURIMedia("data:audio/mpeg;base64,QUJD", "video", maxReferenceVideoBytes))
 }
 
 // TestDetectImageMime 靠魔数识别图片类型。
