@@ -419,7 +419,7 @@ describe('tutorials model guide content', () => {
   })
 
   // 配额不足在网关里是 403 insufficient_user_quota，不是 402。
-  // seedance-2.0 与 gemini-web-video 均按次计费，文档不能再出现按秒写法。
+  // seedance-2.0 与 jimeng-video-reverse 均按次计费，文档不能再出现按秒写法。
   test('documents remote video models as per-request billing', () => {
     assert.equal(sectionsJson.includes('¥2.50/s'), false)
     assert.equal(sectionsJson.includes('¥1.00 / 次'), true)
@@ -458,7 +458,6 @@ describe('tutorials model guide content', () => {
       'MiniMax-M3.1',
       'Nano Banana Pro',
       'autodl:minimax-h3-u24',
-      'gemini-web-video',
       'gpt-6-luna',
       'gpt-6-sol',
       'gpt-6.1-sol',
@@ -467,8 +466,6 @@ describe('tutorials model guide content', () => {
       'seedance-2-5',
       'seedance-2.0',
       'seedance2.5-特惠',
-      'wan2.7-图生',
-      'wan2.7-编辑',
       'wan3.0-video',
       'wan3.0-video-prime',
       'wan3.0-video-官网',
@@ -483,23 +480,39 @@ describe('tutorials model guide content', () => {
     }
   })
 
-  // 回归守卫：wan2.7 免灵感值双模型 2026-10-16 上架（图生 / 编辑，¥0.30/次）。
-  // 文档必须写出慢队列交付预期（「通常 3 小时左右出一条」），否则客户会按分钟级
-  // 预期接入、白白等待；也必须在索引与 FAQ 实测耗时两处都写，单写一处不一致。
-  test('documents the wan2.7 relax models with their 3-hour delivery expectation', () => {
-    for (const expected of ['wan2.7-图生', 'wan2.7-编辑', '¥0.30 / 次']) {
-      assert.equal(sectionsJson.includes(expected), true, `missing ${expected}`)
+  // 回归守卫：2026-11-07 下架 gemini-web-video / wan2.7-图生 / wan2.7-编辑
+  // （接口层 channels.models + abilities + 广场卡片 + ModelPrice 同时摘除，
+  //  渠道 20「漫屋ArcReel」保留其余 7 个模型）。文档必须同步移除，否则客户
+  // 照文档调用只会拿到 503「分组 default 下模型 X 无可用渠道（distributor）」。
+  test('does not document the de-listed gemini-web-video / wan2.7 relax models', () => {
+    for (const gone of [
+      'gemini-web-video',
+      'model-gemini-web-video',
+      'wan2.7-图生',
+      'wan2.7-编辑',
+      '免灵感值慢队列',
+      '¥0.30 / 次',
+    ]) {
+      assert.equal(
+        sectionsJson.includes(gone),
+        false,
+        `still documented: ${gone}`
+      )
     }
-    assert.equal(
-      sectionsJson.includes('免灵感值慢队列，通常 3 小时左右出一条'),
-      true,
-      'wan2.7 relax models must document the ~3h queue expectation in the overview'
-    )
-    assert.equal(
-      sectionsJson.includes('wan2.7-图生 / wan2.7-编辑 需 3 小时左右'),
-      true,
-      'wan2.7 relax models must appear in the FAQ measured-latency line'
-    )
+    // 同渠道仍在售的模型不能被连带删掉
+    for (const kept of [
+      'seedance-2.0',
+      'seedance-2-5',
+      'seedance-2-0-fast',
+      'Nano Banana Pro',
+      'jimeng-video-reverse',
+    ]) {
+      assert.equal(
+        sectionsJson.includes(kept),
+        true,
+        `still-sold model must stay documented: ${kept}`
+      )
+    }
     // 上游真名不得出现在对外文档：公开名只存在于 adaptor 的 modelSpecs。
     for (const hidden of ['Wan2_7', 'wan2.7-i2v', 'wan2.7-edit']) {
       assert.equal(
@@ -630,9 +643,10 @@ describe('tutorials model guide content', () => {
         `still documented: ${gone}`
       )
     }
-    // 同前缀的在售模型不能被误删
-    assert.equal(sectionsJson.includes('wan2.7-图生'), true)
-    assert.equal(sectionsJson.includes('wan2.7-编辑'), true)
+    // ⚠️ 2026-11-07：wan2.7-图生 / wan2.7-编辑 已随 gemini-web-video 一起下架，
+    //    同前缀断言从「必须在售」改为「不得再出现」；wan2.7 系列已无在售模型。
+    assert.equal(sectionsJson.includes('wan2.7-图生'), false)
+    assert.equal(sectionsJson.includes('wan2.7-编辑'), false)
   })
 
   // 回归守卫：2026-10-12 豆包公开名去掉 db- 前缀，旧名退役后文档不得再出现，
@@ -747,9 +761,6 @@ describe('tutorials model guide content', () => {
       'seedance-2.0',
       'seedance-2-0-fast',
       'seedance-2-5',
-      'gemini-web-video',
-      'wan2.7-图生',
-      'wan2.7-编辑',
       'jimeng-video-reverse',
       'Nano Banana Pro',
     ]) {

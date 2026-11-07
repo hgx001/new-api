@@ -39,9 +39,6 @@ const MODEL_OVERVIEW_ITEMS = [
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
   'seedance-2-5｜视频（按次）｜¥3.50 / 次，5/10/15/30 秒同价',
-  'gemini-web-video｜视频（按次）｜¥1.00 / 次',
-  'wan2.7-图生｜视频（按次）｜¥0.30 / 次，5–15 秒逐秒，720P/1080P，≤2 张参考图。⚠️ 免灵感值慢队列，通常 3 小时左右出一条',
-  'wan2.7-编辑｜视频（按次）｜¥0.30 / 次，需 1 个主视频（≤10 秒），≤10 张参考图。⚠️ 免灵感值慢队列，通常 3 小时左右出一条',
   'Nano Banana Pro｜图片（按张）｜¥0.30 / 张，异步任务，走 /v1/videos 提交与轮询',
   'jimeng-video-reverse｜提示词（按次）｜¥1.00 / 次',
 ]
@@ -66,7 +63,7 @@ const VIDEO_COMMON_FIELDS = [
   'resolution：分辨率档位，大小写均可（720p / 720P）',
   'ratio / aspect_ratio：画幅比例（官网渠道请放在 metadata.ratio，或用 size）',
   'images / input_reference / image：参考图，字符串或数组，需公网 HTTPS 直链。⚠️ 这几个字段在有赞 wan3.0-video / wan3.0-video-prime 上一律被标记为 reference_image（往里塞 .mp4 会被当图片送上游），只有 wan3.0-video-官网 会按 URL 后缀推断类型',
-  '参考图字段名（漫屋链路模型：Nano Banana Pro、seedance-2.0、seedance-2-5、seedance-2-0-fast、gemini-web-video、wan2.7-图生 / wan2.7-编辑）：input_reference / inputReference / images / image / image_url / imageUrl / image_urls / imageUrls / reference_image / referenceImage / reference_images / referenceImages / input_images / inputImages 都能识别。⚠️ 只取**第一个有值的字段**，不会合并 —— 同时传 images 和 image_urls 时只认 images，另一个被丢弃',
+  '参考图字段名（漫屋链路模型：Nano Banana Pro、seedance-2.0、seedance-2-5、seedance-2-0-fast）：input_reference / inputReference / images / image / image_url / imageUrl / image_urls / imageUrls / reference_image / referenceImage / reference_images / referenceImages / input_images / inputImages 都能识别。⚠️ 只取**第一个有值的字段**，不会合并 —— 同时传 images 和 image_urls 时只认 images，另一个被丢弃',
   '⚠️ 提示词引用校验（漫屋链路模型）：提示词里写了「图1 / 图片1 / Image 1」这类标记时，标记数量不能超过实际传入张数，否则提交前直接 400（reason=reference_image_coverage_mismatch），不建单不扣费。多传图不报错，少传图必报错',
   'media：结构化素材数组，元素形如 {"type":"reference_image","url":"..."}，type 可取 reference_image / reference_video / reference_audio / first_frame（首帧）/ last_frame（尾帧）。⚠️ 有赞 wan3.0-video / wan3.0-video-prime / 官网 传参考视频、参考音频只有这一条路',
   'media 的数量上限（wan3 系）：参考图 ≤10、参考视频 ≤5、参考音频 ≤5，合计 ≤20；first_frame 与 last_frame 各最多 1 张，且**不能与参考图/参考视频/参考音频混用**（混用直接 400，不消耗费用）。⚠️ 有赞 wan3.0-video / wan3.0-video-prime / seedance2.5-特惠 的上游已取消首尾帧，传入直接 400，请改用 reference_image；wan3.0-video-官网 与 wan3.0-720p-特惠 仍支持首尾帧',
@@ -84,7 +81,7 @@ const VIDEO_STATUS_ITEMS = [
 ]
 
 const MEDIA_RULE_ITEMS = [
-  '图片有三种传法：① 内联 base64（data URL）；② 公网 http(s) 直链；③ 上游若还支持文件上传则走 multipart。⚠️ base64 只有 wan3 系（wan3.0-video / wan3.0-video-prime / wan3.0-video-官网 / wan3.0-720p-特惠 / seedance2.5-特惠）支持；漫屋链路模型（seedance-2.0 / seedance-2-5 / seedance-2-0-fast / gemini-web-video / Nano Banana Pro / wan2.7-图生 / wan2.7-编辑 / jimeng-video-reverse）只收公网 http(s) URL，传 base64 直接 400（不建单、不扣费）',
+  '图片有三种传法：① 内联 base64（data URL）；② 公网 http(s) 直链；③ 上游若还支持文件上传则走 multipart。⚠️ base64 只有 wan3 系（wan3.0-video / wan3.0-video-prime / wan3.0-video-官网 / wan3.0-720p-特惠 / seedance2.5-特惠）支持；漫屋链路模型（seedance-2.0 / seedance-2-5 / seedance-2-0-fast / Nano Banana Pro / jimeng-video-reverse）只收公网 http(s) URL，传 base64 直接 400（不建单、不扣费）',
   '内联 base64（推荐首选）：格式 data:{MIME_type};base64,{base64_data}，例如 data:image/png;base64,iVBORw0KGgo...。不需要任何公网图床，也不受图床可达性与速度影响，是最稳的写法',
   'base64 图片限制：单张解码后 ≤20MB，宽高 [240, 8000] 像素，宽高比 1:8 ~ 8:1；格式 PNG / JPG / BMP / WEBP；base64 约为原图的 4/3，请求体上限默认 128MB',
   '公网 URL：必须是公网可访问的 http(s) 直链，不接受内网地址、localhost、本地路径；带鉴权、防盗链或会跳转到登录页的地址一律无效',
@@ -104,8 +101,8 @@ const BILLING_ITEMS = [
   '图片：按张计费，gpt-image-2.5-官方 ¥0.15 / 张（n=2 扣两次）；Nano Banana Pro ¥0.30 / 张，走 /v1/videos 异步任务，成图读 metadata.url',
   '视频（按秒）：单价 × 秒数 × 分辨率档位倍率；seedance-2-0-fast 无分辨率档位，固定 ¥0.10 / 秒',
   '视频（按秒）+ 参考视频：秒数 = 生成秒数 + 参考视频总秒数（四舍五入后相加），再乘单价。例：wan3.0-video 生成 2 秒 + 3 秒参考视频 = 0.23 × 5 = ¥1.15。不带参考视频就只按生成秒数收',
-  '视频（按次）：素材不额外计费，秒数只影响上游是否接单；wan2.7-编辑 的主视频是必填输入，同样不按秒加价',
-  '视频（按次）：seedance-2.0 ¥1.00 / 次，seedance-2-5 ¥3.50 / 次，gemini-web-video ¥1.00 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
+  '视频（按次）：素材不额外计费，秒数只影响上游是否接单',
+  '视频（按次）：seedance-2.0 ¥1.00 / 次，seedance-2-5 ¥3.50 / 次，jimeng-video-reverse 固定 ¥1.00 / 次',
   '任务失败：自动全额退还，无需申请',
   '内容审核：提示词或素材触发上游审核导致失败时，失败原因为「内容审核不通过」，费用自动退还',
 ]
@@ -136,7 +133,7 @@ const ERROR_ITEMS = [
 ]
 
 const FAQ_ITEMS = [
-  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时（近 30 天生产均值）——Nano Banana Pro 约 1 分钟，wan3.0-video-prime 约 2.5 分钟，seedance2.5-特惠 约 3 分钟，wan3.0-720p-特惠 约 3 分钟，wan3.0-video 约 4 分钟，wan3.0-video-官网 约 8 分钟，gemini-web-video 约 2.5 分钟，jimeng-video-reverse 30 秒视频约 90 秒，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大），wan2.7-图生 / wan2.7-编辑 需 3 小时左右（免灵感值慢队列，急单请选其它模型）',
+  '轮询与超时：建议 5–10 秒轮询一次，客户端超时建议 ≥ 300 秒；实测耗时（近 30 天生产均值）——Nano Banana Pro 约 1 分钟，wan3.0-video-prime 约 2.5 分钟，seedance2.5-特惠 约 3 分钟，wan3.0-720p-特惠 约 3 分钟，wan3.0-video 约 4 分钟，wan3.0-video-官网 约 8 分钟，jimeng-video-reverse 30 秒视频约 90 秒，autodl:minimax-h3-u24 约 5–20 分钟，seedance-2.0 约 4–40 分钟（波动大）',
   '成片转存：metadata.url 与 /content 都可能有时效，成功后请立即下载转存到自己的存储',
   '素材拉不到时先看报错：wan3 系若报「first frame #1 ... is not usable」或「download failed」，是图片 URL 网关打不开（提交阶段就会拒单、不扣费），请换国内可直连图床或改用 base64 内联；漫屋链路模型若在生成阶段报拉取失败，说明素材 URL 在提交后 90 秒内失效，需要换更稳定的图床',
   '不要重复提交：提交报超时或网络错误时先查询任务状态，重复提交会产生两次费用',
@@ -473,7 +470,7 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'hint',
           children: [
-            'base64 图片限制：单张解码后 ≤20MB，宽高 [240, 8000] 像素，格式 PNG / JPG / BMP / WEBP。base64 约为原图的 4/3，请求体上限默认 128MB。⚠️ base64 只有 wan3 系支持，漫屋链路模型（seedance / Nano Banana Pro / wan2.7 / gemini-web-video 等）只收公网 http(s) URL，传 base64 直接 400。',
+            'base64 图片限制：单张解码后 ≤20MB，宽高 [240, 8000] 像素，格式 PNG / JPG / BMP / WEBP。base64 约为原图的 4/3，请求体上限默认 128MB。⚠️ base64 只有 wan3 系支持，漫屋链路模型（seedance / Nano Banana Pro 等）只收公网 http(s) URL，传 base64 直接 400。',
           ],
         },
         {
@@ -559,11 +556,6 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
             ['seedance-2-0-fast｜5–15 秒逐秒｜不支持分辨率｜图 ≤10｜¥0.10/秒'],
             [
               'seedance-2-5｜5 / 10 / 15 / 30 秒四档｜不支持分辨率｜图 ≤10｜¥3.50/次',
-            ],
-            ['gemini-web-video｜固定时长｜不支持分辨率｜图 ≤10｜¥1.00/次'],
-            ['wan2.7-图生｜5–15 秒逐秒｜720P / 1080P｜图 ≤2｜¥0.30/次'],
-            [
-              'wan2.7-编辑｜跟随主视频｜720P / 1080P｜主视频恰 1 个、图 ≤10｜¥0.30/次',
             ],
             [
               'jimeng-video-reverse｜不适用（输入是视频）｜不适用｜视频恰 1 个、≤100MB｜¥1.00/次',
@@ -858,29 +850,6 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
         {
           type: 'heading',
           level: 3,
-          id: 'model-gemini-web-video',
-          children: [{ type: 'strong', value: 'gemini-web-video' }],
-        },
-        {
-          type: 'list',
-          ordered: false,
-          items: [
-            ['prompt：必填'],
-            ['ratio：同 dola 六档，默认 16:9'],
-            ['input_reference / images：可选，≤10 张 http/https URL'],
-            ['seconds / duration / resolution：不支持，传入直接 400'],
-            ['计费：按次 ¥1.00（官网固定时长，不随时长变化）'],
-          ],
-        },
-        {
-          type: 'hint',
-          children: [
-            '可用性提示：本模型走 Google 官网的浏览器自动化，官网会间歇性拒单（2026-10-04 三次真机验证 1 成 2 败）。两种失败形态——轮询 10 分钟仍未出片（失败原因「生成轮询超过 10 分钟，官网始终未给出结果」），或建单后数秒被拒（失败原因「Gemini官网任务失败: something went wrong」）——都是任务失败并全额退款，不是网关报错。遇到 failed 请提示「上游繁忙，请稍后重试」并允许重投，不要当参数错误去改请求体。',
-          ],
-        },
-        {
-          type: 'heading',
-          level: 3,
           id: 'model-nano-banana-pro',
           children: [{ type: 'strong', value: 'Nano Banana Pro' }],
         },
@@ -1074,7 +1043,6 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: 'seedance-2.0', href: '#model-seedance-2' },
     { title: 'seedance-2-0-fast', href: '#model-seedance-2-0-fast' },
     { title: 'seedance-2-5', href: '#model-seedance-2-5' },
-    { title: 'gemini-web-video', href: '#model-gemini-web-video' },
     { title: 'Nano Banana Pro', href: '#model-nano-banana-pro' },
     { title: 'jimeng-video-reverse', href: '#model-jimeng-video-reverse' },
     { title: '参考素材要求', href: '#video-media-rules' },
