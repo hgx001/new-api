@@ -419,16 +419,21 @@ export function buildAutoDLAudioVideoSample(
   ].join('\n')
 }
 
-// SeetaCloud 视频样例。
+// SeetaCloud（H3）视频样例。
 //
 // 与其它 openai-video 模型的差异：
 // 1. resolution 是「档位+方向」格式（480p横 / 768p横），不是 autoDL 的 768p竖；
-// 2. 文生模型（minimax_h3-文生）**不接受参考图**，带参考图会被网关本地拒（400）；
+// 2. 2026-11-07 起对外模型改为 minimax_h3_v2（文生/图生/首尾帧三合一）与
+//    minimax_h3_omni（多模态设定参考 + 1080p）。两个模型都**可以不带参考图**，
+//    所以示例统一给最简的纯文生调用；参考图/视频/音频的写法见 /tutorials；
 // 3. 时长上限 15 秒，示例写 5 秒（缺省值，安全）。
+const SEETA_MODEL_NAMES = new Set(['minimax_h3_v2', 'minimax_h3_omni'])
+
 export function buildSeetaVideoSample(lang: Lang, ctx: SampleContext): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`
   const modelName = ctx.modelName
-  const isTextToVideo = modelName === 'minimax_h3-文生'
+  // 两个新模型都能纯文生，示例不带上传文件，客户照抄即可跑通。
+  const includeReferenceImage = !SEETA_MODEL_NAMES.has(modelName)
   const resolution = '480p横'
 
   if (lang === 'typescript' || lang === 'javascript') {
@@ -444,7 +449,7 @@ export function buildSeetaVideoSample(lang: Lang, ctx: SampleContext): string {
       `  -F "seconds=5" \\`,
       `  -F "resolution=${resolution}"`,
     ]
-    if (!isTextToVideo) {
+    if (includeReferenceImage) {
       fields[fields.length - 1] += ' \\'
       fields.push('  -F "input_reference=@reference.png"')
     }
@@ -458,7 +463,7 @@ export function buildSeetaVideoSample(lang: Lang, ctx: SampleContext): string {
       '    ("seconds", "5"),',
       `    ("resolution", "${resolution}"),`,
     ]
-    if (!isTextToVideo) {
+    if (includeReferenceImage) {
       data.push('    ("input_reference", open("reference.png", "rb")),')
     }
     return [
@@ -482,7 +487,7 @@ export function buildSeetaVideoSample(lang: Lang, ctx: SampleContext): string {
     `form.append('seconds', '5')`,
     `form.append('resolution', '${resolution}')`,
   ]
-  if (!isTextToVideo) {
+  if (includeReferenceImage) {
     formLines.push(`form.append('input_reference', referenceFile)`)
   }
   formLines.push(
@@ -518,7 +523,8 @@ export function buildSeetaVideoFetchSample(
 ): string {
   const url = `${ctx.baseUrl}${ctx.endpointPath}`
   const modelName = ctx.modelName
-  const isTextToVideo = modelName === 'minimax_h3-文生'
+  // 与 curl / python 样例保持同一口径：两个新模型都给最简纯文生调用。
+  const includeReferenceImage = !SEETA_MODEL_NAMES.has(modelName)
   const resolution = '480p横'
 
   const formLines = [
@@ -527,7 +533,7 @@ export function buildSeetaVideoFetchSample(
     `form.append('seconds', '5')`,
     `form.append('resolution', '${resolution}')`,
   ]
-  if (!isTextToVideo) {
+  if (includeReferenceImage) {
     formLines.push(`form.append('input_reference', referenceFile)`)
   }
 
@@ -553,7 +559,8 @@ export function buildVideoSample(lang: Lang, ctx: SampleContext): string {
   const isAutoDL = ctx.modelName.startsWith('autodl:')
   // SeetaCloud（自建 ComfyUI 实例）走自己的样例：分辨率枚举是「档位+方向」
   // 格式（480p横 / 768p横），与 autoDL 的 768p竖 不是同一套。
-  if (ctx.modelName === 'minimax_h3-文生' || ctx.modelName === 'minimax_h3-图生') {
+  // 旧名 minimax_h3-文生 / minimax_h3-图生 已于 2026-11-07 退役为隐藏别名。
+  if (SEETA_MODEL_NAMES.has(ctx.modelName)) {
     return buildSeetaVideoSample(lang, ctx)
   }
   // 参考图行为沿用历史：标准版 wan3.0-video / wan3.0-video-prime 的示例不带参考图。

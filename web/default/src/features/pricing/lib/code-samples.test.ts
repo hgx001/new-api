@@ -191,3 +191,32 @@ describe('前端固定档定义', () => {
     assert.equal(isFixedTierModel('gpt-6-luna'), false)
   })
 })
+
+// 2026-11-07：SeetaCloud 对外模型换成 minimax_h3_v2 / minimax_h3_omni，
+// 旧名退役为隐藏别名。若样例分发没跟着改，客户从模型广场复制到的会是通用
+// 视频样例（带 input_reference 文件上传、resolution=768p竖），照抄直接 400。
+describe('SeetaCloud H3 模型的示例', () => {
+  for (const modelName of ['minimax_h3_v2', 'minimax_h3_omni']) {
+    test(`${modelName} 的示例用档位+方向的 resolution 且不带参考图`, () => {
+      for (const lang of VIDEO_LANGS) {
+        const sample = videoSample(modelName, lang)
+        assert.ok(
+          sample.includes(modelName),
+          `${lang} 示例缺模型名：\n${sample}`
+        )
+        assert.ok(
+          sample.includes('480p横'),
+          `${lang} 示例缺 480p横 档位：\n${sample}`
+        )
+        assert.ok(
+          !sample.includes('768p竖'),
+          `${lang} 示例混用了 autoDL 的档位：\n${sample}`
+        )
+        assert.ok(
+          !sample.includes('input_reference'),
+          `${lang} 示例不应带参考图文件（两模型都能纯文生）：\n${sample}`
+        )
+      }
+    })
+  }
+})
