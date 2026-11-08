@@ -101,9 +101,9 @@ export function getWan3SampleResolution(modelName: string): string | null {
  *
  * Only adaptors whose EstimateBilling returns a `seconds` ratio bill per
  * second: wan3/youzanwan3 (wan3.0-video / wan3.0-video-prime / wan3.0-smart /
- * wan2.7-r2v), autodl (autodl:* workflows), erchun (wan3.0-480p) and the
+ * wan2.7-r2v), autodl (autodl:* workflows), erchun (wan3.0-480p), the
  * doubao Seedance 2.0 Fast (manwu `seedance-2-0-fast`, per-second since
- * 2026-10-12).
+ * 2026-10-12) and SeetaCloud FastH3 (`minimax_h3_v2` / `minimax_h3_omni`).
  * Models whose EstimateBilling returns nil are billed a fixed price per call
  * (e.g. doubao `seedance-2-5`, dola seedance-2.0/2.5), so they must NOT show
  * the per-second suffix.
@@ -148,6 +148,19 @@ export function isPerSecondModel(model: PricingModel): boolean {
   // ⚠️ 必须单列 —— 它不以 "wan3.0-video" 开头（是 "wan3.0-720p-"），
   // 不加会被显示成按次，价格单位就错了。
   if (name === 'wan3.0-720p-特惠') {
+    return true
+  }
+  // SeetaCloud FastH3 两档（2026-11-07 改版）：seeta 适配器的 EstimateBilling
+  // 返回 {"seconds": N, "size": 分辨率倍率}，结算 = 每秒单价 × 秒数 × 倍率。
+  // 不登记的话广场会把 ¥0.03/秒 的牌价挂在「/次」下 —— 客户按次理解就是错价。
+  // 旧名 minimax_h3-文生 / minimax_h3-图生 已退役，不会再出现在广场，
+  // 但它们仍可路由；万一被重新上架也必须显示 /秒，所以一并登记。
+  if (
+    name === 'minimax_h3_v2' ||
+    name === 'minimax_h3_omni' ||
+    name === 'minimax_h3-文生' ||
+    name === 'minimax_h3-图生'
+  ) {
     return true
   }
   return (

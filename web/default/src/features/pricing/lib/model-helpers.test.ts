@@ -145,6 +145,18 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(isPerSecondModel(autoDLModel('wan3.0-480p')), true)
   })
 
+  // SeetaCloud FastH3（2026-11-07 改版）：EstimateBilling 返回
+  // {"seconds": N, "size": 分辨率倍率}，结算按秒。两个对外模型名既不以
+  // wan3.0-video 开头、也不带 autodl: 前缀，漏登记就会把 ¥0.03/秒 挂在
+  // 「/次」下面 —— 与 seedance-2-0-fast、wan3.0-480p 同一类静默错价。
+  test('marks both SeetaCloud FastH3 models as per second', () => {
+    assert.equal(isPerSecondModel(autoDLModel('minimax_h3_v2')), true)
+    assert.equal(isPerSecondModel(autoDLModel('minimax_h3_omni')), true)
+    // 退役旧名仍可路由，单位口径必须与新版一致。
+    assert.equal(isPerSecondModel(autoDLModel('minimax_h3-文生')), true)
+    assert.equal(isPerSecondModel(autoDLModel('minimax_h3-图生')), true)
+  })
+
   // 穷举守卫：广场当前在售的每一个视频/图片模型，其计价单位必须逐条写明。
   // 新增按秒 adaptor 时，这个表会强迫作者显式登记，避免「后端按秒、前端按次」
   // 这种静默错价再次发生（已经出过两次：seedance-2-0-fast、wan3.0-480p）。
@@ -159,6 +171,10 @@ describe('AutoDL H3 resolution tier note', () => {
       'wan3.0-video-官网', // 官网标准版
       'wan3.0-720p-特惠', // 官网 720P 成片档（2026-10-29 起，2026-10-30 改名）
       'autodl:minimax-h3-u24', // AutoDL H3
+      'minimax_h3_v2', // SeetaCloud FastH3 V2（文生/首帧/首尾帧，按秒 ¥0.03 起）
+      'minimax_h3_omni', // SeetaCloud FastH3-Omni（9图+3视频+3音频，按秒 ¥0.03 起）
+      'minimax_h3-文生', // SeetaCloud H3 退役旧名（仍可路由）
+      'minimax_h3-图生', // SeetaCloud H3 退役旧名（仍可路由）
     ]
     const perRequest = [
       'gpt-6-luna', // 文本
