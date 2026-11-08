@@ -182,14 +182,14 @@ func TestPromptRouteRespectsPausedWindow(t *testing.T) {
 	}
 }
 
-// 客户明确要了分辨率 → 不路由（豆包链路没有分辨率控件）。
+// 客户要了豆包不支持的档位（720P）→ 不路由。
 // 这条与规则一共用同一套前置检查，不能因为触发条件不同就放松。
 func TestPromptRouteSkipsExplicitResolution(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds":    10,
-		"resolution": "1080p",
+		"resolution": "720p",
 	})
 	seen, _ := runRoute(t, body)
 

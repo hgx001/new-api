@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -206,14 +207,33 @@ func TestDoubaoRouteRejectsUnsupportedMedia(t *testing.T) {
 	}
 }
 
-// 明确要了分辨率的请求不能改派到豆包（豆包链路没有分辨率控件）。
+// 要了豆包不支持的档位（720P）的请求不能改派到豆包（豆包只有 480P/1080P）。
 func TestDoubaoRouteRejectsExplicitResolution(t *testing.T) {
 	enableDoubaoFallbackRoute(t)
 
-	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat","resolution":"1080P"}`)
+	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat","resolution":"720P"}`)
 
 	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("要 1080P 的请求被改派了（model=%v），应该留在源链路", got)
+		t.Fatalf("要 720P 的请求被改派了（model=%v），应该留在源链路", got)
+	}
+}
+
+// 480P / 1080P 是豆包的合法档位：活动版长时长请求照常改派。
+func TestDoubaoRouteAcceptsSupportedResolution(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
+
+	for _, resolution := range []string{"480P", "1080P"} {
+		t.Run(resolution, func(t *testing.T) {
+			seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat","resolution":"`+resolution+`"}`)
+
+			body := decodeBody(t, seen)
+			if got := body["model"]; got != testTargetModel {
+				t.Fatalf("%s 请求未改派（model=%v）", resolution, got)
+			}
+			if got := body["resolution"]; got != strings.ToLower(resolution) {
+				t.Fatalf("resolution = %v, want %s", got, strings.ToLower(resolution))
+			}
+		})
 	}
 }
 

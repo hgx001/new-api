@@ -701,12 +701,13 @@ func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel
 		return false
 	}
 
-	// 分辨率：目标链路**支持** 480P/720P（2026-11-08 实测交付 1280×720），
+	// 分辨率：目标链路**只支持 480P / 1080P**（豆包官网档位，老板 2026-11-09 确认）。
 	// 这两档照常改派并把档位透传下去（见 rewriteBodyForDoubaoWithDuration）。
 	//
-	// 但 1080P 做不到 —— 路由过去只能给一份分辨率不对的片（或者被漫屋 400 掉）。
-	// 宁可走源链路按用户要的分辨率跑，也不降级交付。
-	if wants1080P(body) {
+	// 720P 不在目标链路的档位里 —— 路由过去只能给一份分辨率不对的片。
+	// 宁可走源链路按用户要的分辨率跑，也不降级/偷换交付。
+	// （未指定分辨率时不挡：让豆包按自己的默认档出片。）
+	if tier := doubaoResolutionTier(body); tier != "" && !doubaoSupportsResolution(tier) {
 		return false
 	}
 
@@ -1274,11 +1275,11 @@ func hasUnsupportedMedia(body map[string]interface{}) bool {
 //     转换后**必须断言图数一致**，不一致就放弃路由。
 //  2. 比例：源链路的自适应档叫 adaptive，目标链路叫 auto。
 //  3. 分辨率：源链路支持 resolution（顶层或 metadata.resolution，取值 480P/720P/1080P），
-//     目标链路（豆包官网）**支持 480P/720P**（2026-11-08 实测交付 1280×720；1080P
-//     已在 doubaoTargetUsable 挡掉）——
+//     目标链路（豆包官网）**只支持 480P/1080P**（2026-11-09 确认；720P 已在
+//     doubaoTargetUsable 挡掉）——
 //     - 顶层 resolution 可以直接透传；
 //     - 顶层 size 不能透传：漫屋把 size 当**比例**读
-//     （firstNonEmpty(Size, Ratio, AspectRatio)），"720P" 不在
+//     （firstNonEmpty(Size, Ratio, AspectRatio)），"1080P" 不在
 //     allowedDoubaoRatios 里 → 400。所以 size 里表达的分辨率要**抬到顶层 resolution**；
 //     - metadata.resolution / metadata.size 同理：漫屋不读 metadata，必须抬到顶层。
 func rewriteBodyForDoubaoWithDuration(body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, seconds int) (map[string]interface{}, bool) {
@@ -1535,6 +1536,26 @@ func explicitResolutionTier(value interface{}) string {
 	default:
 		return "1080P"
 	}
+}
+
+// doubaoSupportedResolutionTiers 是豆包链路支持的分辨率档位。
+//
+// 2026-11-09 老板确认：豆包官网只有 **480P / 1080P** 两档（没有 720P）。
+// 请求带 720P 时留在源链路，改派过去就是偷换档位。
+//
+// ⚠️ 改这里必须同步改 manwu 的 normalizeDoubaoResolution，
+// 否则会出现「中间件认为合法、上游 400」。
+var doubaoSupportedResolutionTiers = map[string]bool{
+	"480P":  true,
+	"1080P": true,
+}
+
+// doubaoSupportsResolution 判断档位是否在豆包链路的能力范围内。
+//
+// 入参是 explicitResolutionTier 的归一结果（480P/720P/1080P）；
+// 空串表示「没指定」，由调用方自行决定放行。
+func doubaoSupportsResolution(tier string) bool {
+	return doubaoSupportedResolutionTiers[tier]
 }
 
 // doubaoResolutionTier 从请求体里找出用户要的分辨率档位，返回 480P / 720P / 1080P。

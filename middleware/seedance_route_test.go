@@ -338,19 +338,19 @@ func TestSeedanceRouteSkipsUnsupportedMedia(t *testing.T) {
 }
 
 func TestSeedanceRouteSkipsExplicitResolution(t *testing.T) {
-	// 豆包链路只交付 720P：1080P 请求路由过去就是降级交付，一律不路由。
-	// （480P/720P 现在正常改派并透传档位，见 TestSeedanceRouteForwardsSupportedResolution。）
+	// 豆包链路只有 480P/1080P 两档：720P 请求路由过去就是偷换档位，一律不路由。
+	// （480P/1080P 正常改派并透传档位，见 TestSeedanceRouteForwardsSupportedResolution。）
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
 		body string
 	}{
-		{"top level resolution", `{"model":"seedance2.5-特惠","seconds":"30","resolution":"1080P"}`},
-		{"top level size", `{"model":"seedance2.5-特惠","seconds":"30","size":"1080P"}`},
-		{"metadata resolution", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"resolution":"1080P"}}`},
-		{"metadata size", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"size":"1080P"}}`},
-		{"pixel size", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"resolution":"1920x1080"}}`},
+		{"top level resolution", `{"model":"seedance2.5-特惠","seconds":"30","resolution":"720P"}`},
+		{"top level size", `{"model":"seedance2.5-特惠","seconds":"30","size":"720P"}`},
+		{"metadata resolution", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"resolution":"720P"}}`},
+		{"metadata size", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"size":"720P"}}`},
+		{"pixel size", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"resolution":"1280x720"}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1231,9 +1231,9 @@ func TestSeedanceRouteKeepsSourceAtOrBelowThreshold(t *testing.T) {
 	}
 }
 
-// 带 480P/720P 分辨率的请求必须照常改派，并把档位抬到顶层 resolution 透传。
+// 带 480P/1080P 分辨率的请求必须照常改派，并把档位抬到顶层 resolution 透传。
 //
-// 2026-11-08 老板口径：豆包链路**能接分辨率**，不该因为带了分辨率就留在源链路。
+// 2026-11-09 口径：豆包官网只有 480P / 1080P 两档，带这两档不该留在源链路。
 func TestSeedanceRouteForwardsSupportedResolution(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
@@ -1243,19 +1243,19 @@ func TestSeedanceRouteForwardsSupportedResolution(t *testing.T) {
 		wantRes string
 	}{
 		{
-			"metadata.resolution 720P",
-			`{"model":"seedance2.5-特惠","seconds":25,"metadata":{"resolution":"720P"},"prompt":"a cat"}`,
-			"720p",
+			"metadata.resolution 1080P",
+			`{"model":"seedance2.5-特惠","seconds":25,"metadata":{"resolution":"1080P"},"prompt":"a cat"}`,
+			"1080p",
 		},
 		{
-			"顶层 resolution 720P",
-			`{"model":"seedance2.5-特惠","seconds":25,"resolution":"720P","prompt":"a cat"}`,
-			"720p",
+			"顶层 resolution 1080P",
+			`{"model":"seedance2.5-特惠","seconds":25,"resolution":"1080P","prompt":"a cat"}`,
+			"1080p",
 		},
 		{
-			"顶层 size 当分辨率 720P",
-			`{"model":"seedance2.5-特惠","seconds":25,"size":"720P","prompt":"a cat"}`,
-			"720p",
+			"顶层 size 当分辨率 1080P",
+			`{"model":"seedance2.5-特惠","seconds":25,"size":"1080P","prompt":"a cat"}`,
+			"1080p",
 		},
 		{
 			"metadata.resolution 480P",
@@ -1263,9 +1263,9 @@ func TestSeedanceRouteForwardsSupportedResolution(t *testing.T) {
 			"480p",
 		},
 		{
-			"像素尺寸 1280x720",
-			`{"model":"seedance2.5-特惠","seconds":25,"metadata":{"resolution":"1280x720"},"prompt":"a cat"}`,
-			"720p",
+			"像素尺寸 1920x1080",
+			`{"model":"seedance2.5-特惠","seconds":25,"metadata":{"resolution":"1920x1080"},"prompt":"a cat"}`,
+			"1080p",
 		},
 	}
 	for _, tc := range cases {

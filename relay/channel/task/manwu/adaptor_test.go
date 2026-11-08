@@ -414,14 +414,14 @@ func TestBuildRequestBodyMapsSeedance25FixedPayload(t *testing.T) {
 	assert.Equal(t, "720p", videoPayload["resolution"])
 }
 
-// 豆包链路支持 480P/720P：分辨率必须被接受并归一后透传到 videoParams。
+// 豆包链路只支持 480P/1080P：分辨率必须被接受并归一后透传到 videoParams。
 func TestBuildRequestBodyForwardsDoubaoSupportedResolution(t *testing.T) {
 	cases := []struct {
 		raw  string
 		want string
 	}{
-		{"720P", "720p"},
-		{"720p", "720p"},
+		{"1080P", "1080p"},
+		{"1080p", "1080p"},
 		{"480P", "480p"},
 	}
 	for _, tc := range cases {
@@ -1369,7 +1369,7 @@ func TestDoubaoAcceptsAutoRatioAndRejectsIllegal(t *testing.T) {
 		{"bad ratio", `{"model":"seedance-2-5","prompt":"x","ratio":"4:2"}`, "invalid_ratio"},
 		{"bad seconds", `{"model":"seedance-2-5","prompt":"x","seconds":8}`, "invalid_duration"},
 		{"bad duration", `{"model":"seedance-2-5","prompt":"x","duration":20}`, "invalid_duration"},
-		{"resolution", `{"model":"seedance-2-5","prompt":"x","resolution":"1080p"}`, "invalid_request"},
+		{"unsupported resolution", `{"model":"seedance-2-5","prompt":"x","resolution":"720p"}`, "invalid_request"},
 		{"unknown model", `{"model":"doubao-seedance-2-0-260128","prompt":"x"}`, "invalid_model"},
 	}
 	for _, tc := range cases {
