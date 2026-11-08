@@ -100,7 +100,36 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	return relaycommon.ValidateMultipartDirectWithPrompt(c, info, true)
+	if taskErr := relaycommon.ValidateMultipartDirectWithPrompt(c, info, true); taskErr != nil {
+		return taskErr
+	}
+
+	// 参考视频按时长同价计费（生成秒数 + 参考视频总秒数），与 wan3 同口径。
+	// 探测必须放在 validate 阶段：EstimateBilling 没有错误返回值，解析失败时
+	// 无法拒单，而计费拿不到时长就会按纯生成时长收费（少收）。
+	// V2 / 旧别名没有视频槽位（MaxVideos=0）：不探测、不计费，交给
+	// BuildRequestBody 给出明确 400，避免为一个注定被拒的请求白下载一次素材。
+	if a.wf.MaxVideos == 0 {
+		return nil
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil
+	}
+	videos := collectReferenceVideos(req)
+	if len(videos) == 0 {
+		return nil
+	}
+	total, err := probeReferenceVideosSeconds(c, videos)
+	if err != nil {
+		// 素材问题属于客户入参错误：400 LocalError，不建单不扣费，也不触发
+		// 渠道重试/AutoBan。
+		return service.TaskErrorWrapperLocal(err, "invalid_reference_video", http.StatusBadRequest)
+	}
+	if total > 0 {
+		c.Set(refVideoSecondsContextKey, total)
+	}
+	return nil
 }
 
 // resolveDuration 解析时长并钳制到 1 秒 ~ 当前工作流允许的最大时长。
@@ -166,6 +195,10 @@ func (a *TaskAdaptor) originModelName() string {
 }
 
 // EstimateBilling 按秒和分辨率计费：框架用 ModelPrice × seconds × size 计算配额。
+//
+// Omni 带参考视频时 seconds = 生成时长 + 参考视频总秒数（与生成同分辨率单价），
+// 例如 768p 生成 5 秒 + 11 秒参考视频 → ¥0.02 × 2.0 × 16 = ¥0.64。
+// 参考视频秒数由 ValidateRequestAndSetAction 在预扣费前探测并写入 context。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
@@ -179,8 +212,14 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if ratio <= 0 {
 		ratio = 1.0
 	}
+	seconds := a.resolveDuration(req)
+	if value, ok := c.Get(refVideoSecondsContextKey); ok {
+		if refSeconds, ok := value.(int); ok && refSeconds > 0 {
+			seconds += refSeconds
+		}
+	}
 	return map[string]float64{
-		"seconds": float64(a.resolveDuration(req)),
+		"seconds": float64(seconds),
 		"size":    ratio,
 	}
 }

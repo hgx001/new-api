@@ -125,6 +125,16 @@
     `relay/channel/task/seeta/constants.go`（`v2ResolutionRatios` / `omniResolutionRatios`）。
     **改价必须两边同时改** —— 只改基准会按旧倍率少收（768p ¥0.0333、1080p ¥0.04），
     只改倍率会按旧基准多收（¥0.06 / ¥0.09）。
+  - **Omni 参考视频并入计费秒数**（2026-11-08，与 wan3 同口径）：
+    `seconds = 生成时长 + 参考视频总秒数`（逐条解析 `mvhd` 实测时长、四舍五入到整秒后相加），
+    再乘档位倍率，即参考视频与生成同价；参考图片/音频不额外计费，V2 不收参考视频。
+    例：768p 生成 5 秒 + 11 秒参考视频 = ¥0.02 × 2.0 × 16 = **¥0.64**。
+    探测在 `ValidateRequestAndSetAction`（预扣费之前）完成，值经 `gin.Context` 传给
+    `EstimateBilling`；解析不出时长即 400 `invalid_reference_video`（LocalError，
+    不建单不扣费、不 AutoBan）—— 计费依赖实测值，按 0 秒放行会少收。
+    因此参考视频必须是能读出 `mvhd` 的 **MP4/MOV**；webm 等无 `mvhd` 容器会被拒。
+    `http(s)` 素材会被下载两次（探测一次、`BuildRequestBody` 转 data URI 一次），
+    这是为了保证计费与下发用的是同一份解析口径，勿擅自合并以免算错钱。
   - Omni 出片较快（768p 约 1–2 分钟），对客可按「3 分钟内交付」表述。
 - 脱敏：`seetacloud` 走字面量；`seeta` 短词走 `\bseeta\b` 词边界模式 ——
   字面量匹配没有词边界，裸 `seeta` 会误伤正常英文词。

@@ -977,4 +977,42 @@ describe('tutorials model guide content', () => {
       )
     }
   })
+
+  // 回归守卫：2026-11-08 起 minimax_h3_omni 的参考视频按秒并入计费
+  // （relay/channel/task/seeta/refvideo.go 探测 mvhd + adaptor.go EstimateBilling
+  // 把 seconds 相加，与 wan3 同口径）。此前教程写的是「参考素材不额外计费」，
+  // 客户按纯生成秒数估算余额，带参考视频时账单会多出一截 —— 这是对客可见的
+  // 定价口径错误，必须与真实结算逐字对齐。
+  test('documents minimax_h3_omni reference-video surcharge billing', () => {
+    const omni = getModelSectionText('model-minimax-h3-omni')
+    for (const expected of [
+      '计费秒数 = 生成秒数 + 参考视频总秒数',
+      '¥0.04 × 16 = ¥0.64',
+      '参考图片与参考音频不额外计费',
+      '解析失败在提交阶段 400（不建单不扣费）',
+    ]) {
+      assert.equal(
+        omni.includes(expected),
+        true,
+        `omni docs missing: ${expected}`
+      )
+    }
+    // 旧口径不能留在 omni 小节；v2 小节可以保留（它根本没有视频槽位）。
+    assert.equal(
+      omni.includes('参考素材不额外计费'),
+      false,
+      'omni charges reference video by second; do not claim all media is free'
+    )
+    // 模型总览与计费总则也要写明「加秒」，否则客户第一眼看到的仍是旧口径。
+    const indexEntry = sectionsJson.match(/"minimax_h3_omni｜[^"]*"/)?.[0] ?? ''
+    assert.notEqual(indexEntry, '', '模型总览里缺少 minimax_h3_omni 一行')
+    assert.equal(indexEntry.includes('参考视频秒数并入计费'), true)
+    assert.equal(
+      sectionsJson.includes(
+        'omni 以 ¥0.02 为基准（480P 1.0 / 768P 2.0 / 1080P 3.0，1080P 仅 omni）；参考素材不额外计费'
+      ),
+      false,
+      'billing overview must no longer claim H3 reference media is always free'
+    )
+  })
 })
