@@ -15,9 +15,15 @@ const (
 	RMB     = USD / USD2RMB
 	// AutoDL video base price: ¥0.10 per second, stored as USD for billing.
 	autoDLVideoBasePrice = 0.1 / USD2RMB
-	// SeetaCloud video base price: ¥0.03 per second (480P 档), stored as USD for billing.
-	// 768p（720P 档）走分辨率倍率 1.667 → ¥0.05/秒，见 seeta 适配器的 ResolutionRatios。
+	// SeetaCloud FastH3 V2 video base price: ¥0.03 per second (480P 档).
+	// 768p（720P 档）走分辨率倍率 1.667 → ¥0.05/秒，见 seeta 适配器
+	// 的 v2ResolutionRatios。
 	seetaVideoBasePrice = 0.03 / USD2RMB
+	// SeetaCloud FastH3-Omni video base price: ¥0.02 per second (480P 档).
+	// ⚠️ Omni 的基准价与 V2 **不同**：768p 倍率 2.0 → ¥0.04/秒、
+	// 1080p 倍率 3.0 → ¥0.06/秒（2026-11-08 调价：480P/768P 下调、1080P 不变）。
+	// 倍率与基准价必须成对改，否则单价 = 旧基准 × 新倍率。
+	seetaOmniBasePrice = 0.02 / USD2RMB
 )
 
 // modelRatio
@@ -106,13 +112,13 @@ var defaultModelRatio = map[string]float64{
 	// gpt-6.1-sol：上游（sub2api）实测可用、与 gpt-6-sol 同为 sol 档 → 同价。
 	// ⚠️ 必须显式登记：getHardcodedCompletionModelRatio 只兜底「补全倍率 8」，
 	// 输入侧倍率不会按前缀回落（GetModelRatio 精确查表），不登记就是「无价格可用」。
-	"gpt-6.1-sol":                             1.28424,
+	"gpt-6.1-sol": 1.28424,
 	// MiniMax-M3 / M3.1 输入价：¥0.2205 / 1M tokens（本轮未调）。
 	// 换算：model_ratio = 1e6 × ¥0.2205 ÷ (500000 × 7.3) = 0.015103
 	// ⚠️ 与 M3.1 同价的原因同上：M3.1 实际转发到上游 M3，共用同一份上游成本。
 	// ⚠️ 官方 MiniMax-M3 输入价 ¥4.20/1M，本平台仍低于官方 19 倍。
-	"MiniMax-M3":                              0.015103,
-	"MiniMax-M3.1":                            0.015103, // 同 MiniMax-M3：实际转发到上游 M3，同价
+	"MiniMax-M3":   0.015103,
+	"MiniMax-M3.1": 0.015103, // 同 MiniMax-M3：实际转发到上游 M3，同价
 	// gpt-5.6 旧名保留为兼容别名（渠道 model_mapping 转发到 gpt-6），
 	// 不在模型广场展示，价格与同名 gpt-6 保持一致。
 	"gpt-5.6-luna":                              0.064212,
@@ -287,39 +293,39 @@ var defaultModelRatio = map[string]float64{
 }
 
 var defaultModelPrice = map[string]float64{
-	"suno_music":                        0.1,
-	"suno_lyrics":                       0.01,
-	"dall-e-3":                          0.04,
-	"imagen-3.0-generate-002":           0.03,
-	"black-forest-labs/flux-1.1-pro":    0.04,
-	"gpt-4-gizmo-*":                     0.1,
-	"mj_video":                          0.8,
-	"mj_imagine":                        0.1,
-	"mj_edits":                          0.1,
-	"mj_variation":                      0.1,
-	"mj_reroll":                         0.1,
-	"mj_blend":                          0.1,
-	"mj_modal":                          0.1,
-	"mj_zoom":                           0.1,
-	"mj_shorten":                        0.1,
-	"mj_high_variation":                 0.1,
-	"mj_low_variation":                  0.1,
-	"mj_pan":                            0.1,
-	"mj_inpaint":                        0,
-	"mj_custom_zoom":                    0,
-	"mj_describe":                       0.05,
-	"mj_upscale":                        0.05,
-	"swap_face":                         0.05,
-	"mj_upload":                         0.05,
-	"sora-2":                            0.3,
-	"sora-2-pro":                        0.5,
-	"gpt-4o-mini-tts":                   0.3,
-	"wan3.0-video":                      0.0369863,       // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）。720P ¥0.54/秒、1080P ¥1.08/秒走分辨率倍率（2 / 4）
-	"wan3.0-video-prime":                0.05547945,      // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
-	"wan3.0-smart":                      0.28 / USD2RMB,  // 有赞智能调度版 480P 对外 ¥0.28/秒（720P ¥0.32/秒、1080P ¥0.40/秒走分辨率倍率）
-	"wan3.0-480p":                       0.28 / USD2RMB,  // 二春(erchun) wan3.0 仅开放 480P，对外 ¥0.28/秒；上游 480P 为 0.158 credits/秒，按秒计费不上分辨率倍率
-	"wan3.0-video-prime-1080p":          8 / USD2RMB,     // 有赞满血 30 秒档，按次计费 ¥8/次（上游 20 点数/秒 × 固定 30 秒 ≈ ¥6/次），不乘时长/分辨率倍率
-	"wan3.0-video-官网":                   0.2 / USD2RMB,     // 官方渠道独立模型名，上游同 wan3.0-video，480P 对外 ¥0.20/秒（720P ¥0.45/秒、1080P ¥0.80/秒）
+	"suno_music":                     0.1,
+	"suno_lyrics":                    0.01,
+	"dall-e-3":                       0.04,
+	"imagen-3.0-generate-002":        0.03,
+	"black-forest-labs/flux-1.1-pro": 0.04,
+	"gpt-4-gizmo-*":                  0.1,
+	"mj_video":                       0.8,
+	"mj_imagine":                     0.1,
+	"mj_edits":                       0.1,
+	"mj_variation":                   0.1,
+	"mj_reroll":                      0.1,
+	"mj_blend":                       0.1,
+	"mj_modal":                       0.1,
+	"mj_zoom":                        0.1,
+	"mj_shorten":                     0.1,
+	"mj_high_variation":              0.1,
+	"mj_low_variation":               0.1,
+	"mj_pan":                         0.1,
+	"mj_inpaint":                     0,
+	"mj_custom_zoom":                 0,
+	"mj_describe":                    0.05,
+	"mj_upscale":                     0.05,
+	"swap_face":                      0.05,
+	"mj_upload":                      0.05,
+	"sora-2":                         0.3,
+	"sora-2-pro":                     0.5,
+	"gpt-4o-mini-tts":                0.3,
+	"wan3.0-video":                   0.0369863,      // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）。720P ¥0.54/秒、1080P ¥1.08/秒走分辨率倍率（2 / 4）
+	"wan3.0-video-prime":             0.05547945,     // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
+	"wan3.0-smart":                   0.28 / USD2RMB, // 有赞智能调度版 480P 对外 ¥0.28/秒（720P ¥0.32/秒、1080P ¥0.40/秒走分辨率倍率）
+	"wan3.0-480p":                    0.28 / USD2RMB, // 二春(erchun) wan3.0 仅开放 480P，对外 ¥0.28/秒；上游 480P 为 0.158 credits/秒，按秒计费不上分辨率倍率
+	"wan3.0-video-prime-1080p":       8 / USD2RMB,    // 有赞满血 30 秒档，按次计费 ¥8/次（上游 20 点数/秒 × 固定 30 秒 ≈ ¥6/次），不乘时长/分辨率倍率
+	"wan3.0-video-官网":                0.2 / USD2RMB,  // 官方渠道独立模型名，上游同 wan3.0-video，480P 对外 ¥0.20/秒（720P ¥0.45/秒、1080P ¥0.80/秒）
 	// wan3.0-720p-特惠（2026-10-29 上架，2026-10-30 改名）：官网渠道的「720P 成片」档。
 	// 上游只生成 480P，成片再提升到 720P 后交付，
 	// 所以这里是**复合价**：生成 480P + 成片提升成本
@@ -335,13 +341,13 @@ var defaultModelPrice = map[string]float64{
 	//
 	// ⚠️ 这是一个**固定价**，不分分辨率倍率（只有一个输出档位 720P）。
 	//	resolutionSizeRatioFor 对该模型名恒返回 1.0。
-	"wan3.0-720p-特惠":                    0.2 / USD2RMB,     // 对外 ¥0.20/秒（复合价：480P 生成 + 成片提升 ¥0.0067，让价档）
+	"wan3.0-720p-特惠": 0.2 / USD2RMB, // 对外 ¥0.20/秒（复合价：480P 生成 + 成片提升 ¥0.0067，让价档）
 	// 2026-10-30 改名前的公开名，过渡期**只保可调用**（不进模型广场，见
 	// model/pricing.go 的 isAllowedPricingModel）。这里必须同样配价：
 	// 否则旧名会走 ModelPriceHelperPerCall 的「查不到价」分支，
 	// 任务按次计费算成 ¥0（**静默免单**，比报错更难发现）。
 	// 旧名与新名**同价**（¥0.20/秒），避免改名前后同货不同价。
-	"wan3.0-720p-官网":                    0.2 / USD2RMB,     // = wan3.0-720p-特惠 的旧名别名，同价同口径
+	"wan3.0-720p-官网": 0.2 / USD2RMB, // = wan3.0-720p-特惠 的旧名别名，同价同口径
 	// wan3.0-720p-按次（2026-11-01 上架）：心笔 Model Router 渠道的「原生 720P」按次档。
 	// 本模型**固定按次 ¥4.5/次、固定 30 秒**，与分辨率无关
 	// （adaptor 的 EstimateBilling 返回 nil，不乘 seconds/size）。
@@ -352,22 +358,22 @@ var defaultModelPrice = map[string]float64{
 	// 30 秒档几乎贴着成本：上游一旦涨价，这档立刻倒挂，调价前先算这条。
 	// ⚠️ 对外文案一律「原生 720P」，交付链路的实现细节不得外露
 	//    （口径定义见 relay/channel/task/xinbiapi/constants.go）。
-	"wan3.0-720p-按次":                    4.5 / USD2RMB,     // 对外 ¥4.5/次（固定按次，不乘时长/分辨率倍率）
-	"wan2.7-r2v":                        0.1 / USD2RMB,   // 有赞 r2v 对外统一 ¥0.10/秒（720P/1080P 同价，上游约 2 点数/秒）
-	"sd-2.5":                            0.821918,        // 按次对外 ¥6/次（上游 ¥2/次 3 倍定价）；内部按 USD 等值存储（6/7.3）
-	"wan-3.0":                           3.0 / USD2RMB,   // MegaAI 渠道 Wan3.0 满参版，按次对外价：480p ¥3.0/次、720p ¥3.5/次、1080p ¥4.0/次（480p 基准，其他档走分辨率倍率 3.5/3.0、4.0/3.0）。上游成本 ¥1.6/1.8/2.0 每次（时长不参与计价）；内部按 USD 等值存储。2026-10-22 由 ¥2.4/3.0/4.0 上调
-	"wan-3.0-特惠":                       1.5 / USD2RMB,   // 漫屋 ArcReel → Picsart 特惠档 Wan 3.0（2026-10-24 上架，原名 wan-3.0-无限，2026-10-25 改名）：固定 30 秒，**按次计费，480P ¥1.50 / 720P ¥2.00**。这里配的是**最低档 480P 的 ¥1.50** —— 模型广场徽标直接显示这个数，配 720P 的 ¥2.00 会让徽标显示 ¥2 而客户最低能买到 ¥1.50，看着像涨价。720P 由 manwu adaptor 的 picsart720PSizeRatio（2.0/1.5）乘上去，两处必须一起改。与上面的 MegaAI `wan-3.0` 是两个不同商品（不同渠道/不同上游），不要合并或互相别名化
+	"wan3.0-720p-按次": 4.5 / USD2RMB, // 对外 ¥4.5/次（固定按次，不乘时长/分辨率倍率）
+	"wan2.7-r2v":     0.1 / USD2RMB, // 有赞 r2v 对外统一 ¥0.10/秒（720P/1080P 同价，上游约 2 点数/秒）
+	"sd-2.5":         0.821918,      // 按次对外 ¥6/次（上游 ¥2/次 3 倍定价）；内部按 USD 等值存储（6/7.3）
+	"wan-3.0":        3.0 / USD2RMB, // MegaAI 渠道 Wan3.0 满参版，按次对外价：480p ¥3.0/次、720p ¥3.5/次、1080p ¥4.0/次（480p 基准，其他档走分辨率倍率 3.5/3.0、4.0/3.0）。上游成本 ¥1.6/1.8/2.0 每次（时长不参与计价）；内部按 USD 等值存储。2026-10-22 由 ¥2.4/3.0/4.0 上调
+	"wan-3.0-特惠":     1.5 / USD2RMB, // 漫屋 ArcReel → Picsart 特惠档 Wan 3.0（2026-10-24 上架，原名 wan-3.0-无限，2026-10-25 改名）：固定 30 秒，**按次计费，480P ¥1.50 / 720P ¥2.00**。这里配的是**最低档 480P 的 ¥1.50** —— 模型广场徽标直接显示这个数，配 720P 的 ¥2.00 会让徽标显示 ¥2 而客户最低能买到 ¥1.50，看着像涨价。720P 由 manwu adaptor 的 picsart720PSizeRatio（2.0/1.5）乘上去，两处必须一起改。与上面的 MegaAI `wan-3.0` 是两个不同商品（不同渠道/不同上游），不要合并或互相别名化
 	// 改名前的公开名，过渡期**只保可调用**（不进模型广场，见 model/pricing.go 的
 	// isAllowedPricingModel）。这里必须同样配价：否则 DB 的 ModelPrice 改名后，
 	// 旧名会走 ModelPriceHelperPerCall 的「查不到价」分支，任务按次计费算成 ¥0
 	// （静默免单，比报错更难发现）。清理时机与 adaptor.go 的 ModelWan3TeHuiLegacy 同步。
-	"wan-3.0-无限":                       1.5 / USD2RMB,   // = wan-3.0-特惠 的旧名别名，同价同口径（480P 基价，720P 同样走倍率）
+	"wan-3.0-无限": 1.5 / USD2RMB, // = wan-3.0-特惠 的旧名别名，同价同口径（480P 基价，720P 同样走倍率）
 	// 2026-10-29 起挂在有赞 Wan3 上（上游 wan3.0-video-prime 执行），**按秒**计费，
 	// 独立定价：720P ¥0.20/秒（这里配的就是基准档 720P）、1080P ¥0.30/秒。
 	// 1080P 的 1.5 倍率由 youzanwan3 的 tehuiResolutionSizeRatio 乘上去，
 	// 与 prime 的 1.2 不同 —— 两处不要互相抄。
 	// 这一行只是「DB 的 ModelPrice 里没有这个键」时的兜底；生产以 options 为准。
-	"seedance2.5-特惠":                  0.20 / USD2RMB,
+	"seedance2.5-特惠": 0.20 / USD2RMB,
 	// seedance2.5-活动（2026-11-02 上架）：seedance2.5 促销族的**按次档**。
 	// 与母本 seedance2.5-特惠 **同货源同链路**（有赞 wan3.0-video-prime），
 	// 只是计费口径从「按秒 ¥0.20/秒」改成「按次 ¥4.5/次、固定 30 秒、固定 720P」。
@@ -386,13 +392,13 @@ var defaultModelPrice = map[string]float64{
 	// ⚠️ 锁死 720P 的原因：prime 的 1080P 成本是 720P 的 1.33 倍（¥0.20 vs ¥0.15），
 	// 按次只有一档价，放开 1080P 就会在 1080P 上倒挂（成本 ¥6.00 > 售价 ¥4.50）。
 	// 能力定义见 constant/seedance25_family.go。
-	"seedance2.5-活动":                  4.5 / USD2RMB,     // 对外 ¥4.5/次（固定按次，不乘时长/分辨率倍率）
-	"seedance-2.0":                      1.0 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
-	"seedance-2.5":                      0.8 / USD2RMB,   // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
-	"seedance-2-5":                      3.5 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥3.5/次（5/10/15/30 秒同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调；2026-11-01 由 ¥3.0 上调至 ¥5.0；2026-11-04 由 ¥5.0 下调至 ¥3.5
-	"seedance-2-0-fast":                 0.1 / USD2RMB,   // 漫屋 ArcReel 豆包官网 Seedance 2.0 Fast（公开短名，上游真名 doubao-seedance-2-0-fast-260128），**按秒** ¥0.1/秒（5-15 秒逐秒可选，由 EstimateBilling 返回 seconds 倍率相乘）；2026-10-12 由 db-seedance-2-0 改名并由 ¥1.0/次 改为按秒
-	"gemini-web-video":                  1.0 / USD2RMB,   // 漫屋 ArcReel Gemini 官网 Veo，按次计费 ¥1.0/次（站点侧不乘时长）
-	"Nano Banana Pro":                   0.3 / USD2RMB,   // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
+	"seedance2.5-活动":    4.5 / USD2RMB, // 对外 ¥4.5/次（固定按次，不乘时长/分辨率倍率）
+	"seedance-2.0":      1.0 / USD2RMB, // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
+	"seedance-2.5":      0.8 / USD2RMB, // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
+	"seedance-2-5":      3.5 / USD2RMB, // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥3.5/次（5/10/15/30 秒同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调；2026-11-01 由 ¥3.0 上调至 ¥5.0；2026-11-04 由 ¥5.0 下调至 ¥3.5
+	"seedance-2-0-fast": 0.1 / USD2RMB, // 漫屋 ArcReel 豆包官网 Seedance 2.0 Fast（公开短名，上游真名 doubao-seedance-2-0-fast-260128），**按秒** ¥0.1/秒（5-15 秒逐秒可选，由 EstimateBilling 返回 seconds 倍率相乘）；2026-10-12 由 db-seedance-2-0 改名并由 ¥1.0/次 改为按秒
+	"gemini-web-video":  1.0 / USD2RMB, // 漫屋 ArcReel Gemini 官网 Veo，按次计费 ¥1.0/次（站点侧不乘时长）
+	"Nano Banana Pro":   0.3 / USD2RMB, // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
 	// 豆包系图片两个模型（2026-11-07 上架，用户口径「定价两毛一张」）：
 	//   - Seedream 5.0 Flash：豆包官网「图像生成」入口的默认模型
 	//   - Seedream 4.5：dola 官网 /chat/create-image 的默认模型
@@ -401,20 +407,20 @@ var defaultModelPrice = map[string]float64{
 	// ⚠️ 不要把 Nano Banana Pro 一并改成 0.2 —— 「两毛一张」针对的是这两个
 	// **新增**模型，不是把整个图片品类降价（ArcReel 侧同理：
 	// REMOTE_IMAGE_PRICE_CENTS_BY_MODEL 只给这两个模型 20 分）。
-	"Seedream 5.0 Flash":                0.2 / USD2RMB,   // 漫屋 ArcReel 豆包官网图片（上游 doubao-seedream-5-0-flash），按张 ¥0.2/张
-	"Seedream 4.5":                      0.2 / USD2RMB,   // 漫屋 ArcReel dola 官网图片（上游 dola-seedream-4-5），按张 ¥0.2/张
+	"Seedream 5.0 Flash": 0.2 / USD2RMB, // 漫屋 ArcReel 豆包官网图片（上游 doubao-seedream-5-0-flash），按张 ¥0.2/张
+	"Seedream 4.5":       0.2 / USD2RMB, // 漫屋 ArcReel dola 官网图片（上游 dola-seedream-4-5），按张 ¥0.2/张
 	// gpt-image-2.5-官方（2026-11-07 上架）：官方渠道图片模型，走
 	// POST /v1/images/generations，按张 ¥0.15/张，与尺寸无关。
 	// 上游同 gpt-image-2（独立命名以区分二手渠道），计费走 ModelPrice
 	// （quota_type=1 按次固定价），张数走 OtherRatios{"n":N} 倍率。
 	// ⚠️ 不能不配价 —— 不配价时 ModelPriceHelperPerCall 的「查不到价」
 	// 分支会静默免单（¥0），比报错更难发现。
-	"gpt-image-2.5-官方":                 0.15 / USD2RMB,   // 官方渠道 GPT Image 2.5，按张 ¥0.15/张
-	"jimeng-video-reverse":              1.0 / USD2RMB,   // 漫屋 ArcReel 即梦视频反解，按次 ¥1.0/次（占位价，待商务核定）
-	"MiniMax-H3":                        0.5 / USD2RMB,   // MiniMax 官方 v2 视频，**按秒**（基础档 768P ¥0.5/秒；2K 走 size 倍率 1.625）
-	"MiniMax-H3-Max":                    0.365 / USD2RMB, // MiniMax 官方 v2 高速档，**按秒**（基础档 480P ¥0.365/秒；768P 倍率 1.6）
-	"MiniMax-H3-Context-IR":             1.0 / USD2RMB,   // MiniMax 官方 H3 上下文解析（只产提示词），按次 ¥1.0/次（占位价，待商务核定）
-	"wan3.0-1080p-慢速":                   2.0 / USD2RMB,   // 三元巡狩 wanwan 1080P（拼车），按次 ¥2.0/次（上游成本 ¥1/次）；拼车批次制，次日出片（EstimateBilling 返回 nil）
+	"gpt-image-2.5-官方":      0.15 / USD2RMB,  // 官方渠道 GPT Image 2.5，按张 ¥0.15/张
+	"jimeng-video-reverse":  1.0 / USD2RMB,   // 漫屋 ArcReel 即梦视频反解，按次 ¥1.0/次（占位价，待商务核定）
+	"MiniMax-H3":            0.5 / USD2RMB,   // MiniMax 官方 v2 视频，**按秒**（基础档 768P ¥0.5/秒；2K 走 size 倍率 1.625）
+	"MiniMax-H3-Max":        0.365 / USD2RMB, // MiniMax 官方 v2 高速档，**按秒**（基础档 480P ¥0.365/秒；768P 倍率 1.6）
+	"MiniMax-H3-Context-IR": 1.0 / USD2RMB,   // MiniMax 官方 H3 上下文解析（只产提示词），按次 ¥1.0/次（占位价，待商务核定）
+	"wan3.0-1080p-慢速":       2.0 / USD2RMB,   // 三元巡狩 wanwan 1080P（拼车），按次 ¥2.0/次（上游成本 ¥1/次）；拼车批次制，次日出片（EstimateBilling 返回 nil）
 	// wan3.0-班车（2026-11-04 上架，原名「wan3.0-排队」）：视频生成车站排队通道的
 	// 万相 wan3 全模态，攒批发车。480P/720P/1080P **上游同价**（每条固定扣 1 次），
 	// 对外也按次单一价位 ¥1.5/次，不叠时长/分辨率倍率（EstimateBilling 返回 nil）。
@@ -422,7 +428,7 @@ var defaultModelPrice = map[string]float64{
 	// ⚠️ 上游成本 ¥1/次（充值 1 元 = 1 次），对外 ¥1.5/次 —— 毛利 ¥0.5/次。
 	//    这是**唯一比成本价低的档**，定价依据是「排队要等数小时」，
 	//    用低价换客户对慢速档位的接受度。
-	"wan3.0-班车":                       1.5 / USD2RMB,
+	"wan3.0-班车":                         1.5 / USD2RMB,
 	"autodl:minimax-h3-text-to-video":   autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5":     autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5-15s": autoDLVideoBasePrice,
@@ -433,14 +439,19 @@ var defaultModelPrice = map[string]float64{
 	"autodl:minimax-h3-image-audio-15s": autoDLVideoBasePrice,
 	"autodl:minimax-h3-lipsync":         autoDLVideoBasePrice,
 	// SeetaCloud（2026-11-06 接入）：自建 ComfyUI 实例的 H3 蒸馏工作流。
-	// 480P ¥0.03/秒（基准），768p（720P 档）¥0.05/秒（分辨率倍率 1.667）。
-	// 两个模型同一套规格，按秒计费，duration 1-15s。
-	"minimax_h3-文生": seetaVideoBasePrice,
-	"minimax_h3-图生": seetaVideoBasePrice,
-	"veo-3.0-generate-001":              0.4,
-	"veo-3.0-fast-generate-001":         0.15,
-	"veo-3.1-generate-preview":          0.4,
-	"veo-3.1-fast-generate-preview":     0.15,
+	// 2026-11-07 改版：文生/图生合并为 minimax_h3_v2，另加 minimax_h3_omni。
+	//   minimax_h3_v2   480P ¥0.03/秒、768p ¥0.05/秒（倍率 1.667，无 1080p）
+	//   minimax_h3_omni 480P ¥0.02/秒、768p ¥0.04/秒、1080p ¥0.06/秒（倍率 2.0 / 3.0）
+	// 按秒计费，duration 1-15s。基准价与倍率必须成对改（倍率见 seeta/constants.go）。
+	"minimax_h3_v2":   seetaVideoBasePrice,
+	"minimax_h3_omni": seetaOmniBasePrice,
+	// 旧名（退役别名，仍可路由）沿用 V2 口径。
+	"minimax_h3-文生":                 seetaVideoBasePrice,
+	"minimax_h3-图生":                 seetaVideoBasePrice,
+	"veo-3.0-generate-001":          0.4,
+	"veo-3.0-fast-generate-001":     0.15,
+	"veo-3.1-generate-preview":      0.4,
+	"veo-3.1-fast-generate-preview": 0.15,
 }
 
 var defaultAudioRatio = map[string]float64{

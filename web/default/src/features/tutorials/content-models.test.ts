@@ -116,9 +116,11 @@ describe('tutorials model guide content', () => {
   //     且**文案里不许出现 prime / wan3**（见「对外文案不暴露真实货源」用例）
   //   - wan3/constants.go resolutionSizeRatio{480P:1.0,720P:2.0,1080P:4.0}
   //     基准 ¥0.27/秒 → 0.27 / 0.54 / 1.08
-  //   - seeta/constants.go seetaResolutionRatios{480p:1.0,768p:1.667,1080p:2.0}
-  //     基准 ¥0.03/秒 → 0.03 / 0.05 / 0.06；1080p 只有 minimax_h3_omni 支持，
-  //     v2 的 Resolutions 里没有 1080p（传了直接 400）
+  //   - seeta/constants.go v2ResolutionRatios{480p:1.0,768p:1.667}
+  //     基准 ¥0.03/秒 → 0.03 / 0.05（v2 没有 1080p 档，传了直接 400）
+  //   - seeta/constants.go omniResolutionRatios{480p:1.0,768p:2.0,1080p:3.0}
+  //     基准 ¥0.02/秒 → 0.02 / 0.04 / 0.06（2026-11-08 调价：480P/768P 下调、
+  //     1080P 保持 ¥0.06 不变，所以倍率从 1.667/2.0 抬到 2.0/3.0）
   // 调价时必须同步改这里，否则测试会红。
   test('prices match the resolution tiers the adaptors actually charge', () => {
     const expected = [
@@ -133,8 +135,8 @@ describe('tutorials model guide content', () => {
       '按秒 ¥0.20，单一价位，不乘分辨率倍率', // wan3.0-720p-特惠 详情
       '480P ¥0.03/s、768P ¥0.05/s', // minimax_h3_v2 索引
       '按秒 480p ¥0.03、768p ¥0.05', // minimax_h3_v2 详情
-      '1080P ¥0.06/s', // minimax_h3_omni 索引
-      '按秒 480p ¥0.03、768p ¥0.05、1080p ¥0.06', // minimax_h3_omni 详情
+      '480P ¥0.02/s、768P ¥0.04/s、1080P ¥0.06/s', // minimax_h3_omni 索引
+      '按秒 480p ¥0.02、768p ¥0.04、1080p ¥0.06', // minimax_h3_omni 详情
     ]
     for (const price of expected) {
       assert.equal(
@@ -150,6 +152,10 @@ describe('tutorials model guide content', () => {
       '¥0.53 / ¥0.85',
       '¥0.85/s',
       '¥0.28 / ¥0.28 / ¥0.30',
+      // 2026-11-08 调价前 Omni 的价目（480P ¥0.03 / 768P ¥0.05）。留着会让
+      // 客户按旧价预算，而结算已按新价扣 —— 属于对客可见的错价。
+      '480P ¥0.03/s、768P ¥0.05/s、1080P ¥0.06/s',
+      '按秒 480p ¥0.03、768p ¥0.05、1080p ¥0.06',
     ]) {
       assert.equal(
         sectionsJson.includes(stale),
@@ -185,6 +191,13 @@ describe('tutorials model guide content', () => {
       omniSection.includes('1080p ¥0.06'),
       true,
       'minimax_h3_omni must document the 1080p tier price'
+    )
+    // 2026-11-08：Omni 的卖点之一是出片快，768P 的交付窗口要写在详情里
+    // （索引行同时带一句），否则「快」只存在于销售口中。
+    assert.equal(
+      omniSection.includes('3 分钟内'),
+      true,
+      'minimax_h3_omni must document the 768p delivery window'
     )
   })
 

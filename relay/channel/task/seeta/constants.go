@@ -71,26 +71,46 @@ type workflowConfig struct {
 	ResolutionRatios map[string]float64
 }
 
-// seetaResolutionRatios 是分辨率计费倍率：
+// v2ResolutionRatios 是 FastH3 V2 链的分辨率计费倍率（相对 480P 基准价 ¥0.03/秒）：
 //
 //	480P  → ¥0.03/秒（基准，ratio 1.0）
 //	768p  → ¥0.05/秒（720P 档，ratio 1.667）
-//	1080p → ¥0.06/秒（ratio 2.0，2026-11-07 暂定价：上游是 768p 采样 +
-//	        潜空间放大，算力只比 768p 多约 5%，对客先按整倍 2.0 收；
-//	        调价只改这一个 map，估算/结算共用）
+//
+// V2 没有 1080p 通路（无潜空间放大），所以这里不设 1080p 键。
 //
 // 注意上游的 768p 实际交付分辨率是 832×480 起步的 720P 档，
 // 对客按「720p 档」称，与价格表里的 720P 档位对齐。
-var seetaResolutionRatios = map[string]float64{
+var v2ResolutionRatios = map[string]float64{
 	"480p横":     1.0,
 	"480p竖":     1.0,
 	"480p(1:1)": 1.0,
 	"768p横":     1.667,
 	"768p竖":     1.667,
 	"768p(1:1)": 1.667,
-	"1080p横":    2.0,
-	"1080p竖":    2.0,
-	"1080p(1:1)": 2.0,
+}
+
+// omniResolutionRatios 是 FastH3-Omni 链的分辨率计费倍率（相对 480P 基准价 ¥0.02/秒）：
+//
+//	480P  → ¥0.02/秒（基准，ratio 1.0）
+//	768p  → ¥0.04/秒（720P 档，ratio 2.0）
+//	1080p → ¥0.06/秒（ratio 3.0，上游是 768p 采样 + 潜空间放大）
+//
+// ⚠️ Omni 的基准价**与 V2 不同**（¥0.02 vs ¥0.03），倍率也各自一套 ——
+// 2026-11-08 客户把 Omni 的 480P/768P 下调、1080P 保持原价，等价于把
+// 768p 倍率从 1.667 抬到 2.0、1080p 从 2.0 抬到 3.0。两边必须同时改：
+// 只改基准价会按旧倍率算出 ¥0.0333 / ¥0.04（少收），只改倍率会按旧基准
+// 算出 ¥0.06 / ¥0.09（多收）。基准价在 ratio_setting.defaultModelPrice
+// 与生产 ModelPrice 里，倍率只在这里。
+var omniResolutionRatios = map[string]float64{
+	"480p横":      1.0,
+	"480p竖":      1.0,
+	"480p(1:1)":  1.0,
+	"768p横":      2.0,
+	"768p竖":      2.0,
+	"768p(1:1)":  2.0,
+	"1080p横":     3.0,
+	"1080p竖":     3.0,
+	"1080p(1:1)": 3.0,
 }
 
 var (
@@ -122,7 +142,7 @@ var workflowByModel = map[string]workflowConfig{
 		MaxVideos:        0,
 		MaxAudios:        0,
 		SupportsSeed:     true,
-		ResolutionRatios: seetaResolutionRatios,
+		ResolutionRatios: v2ResolutionRatios,
 	},
 	// FastH3-Omni：文生/图生/首尾帧 + 设定参考（9 图 + 3 视频 + 3 音频）+ 1080p。
 	"minimax_h3_omni": {
@@ -136,7 +156,7 @@ var workflowByModel = map[string]workflowConfig{
 		MaxVideos:        3,
 		MaxAudios:        3,
 		SupportsSeed:     true,
-		ResolutionRatios: seetaResolutionRatios,
+		ResolutionRatios: omniResolutionRatios,
 	},
 	// —— 旧对外名（不再出现在 ModelList，仅作路由别名）——
 	"minimax_h3-文生": {
@@ -148,7 +168,7 @@ var workflowByModel = map[string]workflowConfig{
 		ReferenceMode:    referenceModeKeyframes,
 		MaxImages:        2,
 		SupportsSeed:     true,
-		ResolutionRatios: seetaResolutionRatios,
+		ResolutionRatios: v2ResolutionRatios,
 	},
 	"minimax_h3-图生": {
 		WorkflowID:       workflowV2,
@@ -160,7 +180,7 @@ var workflowByModel = map[string]workflowConfig{
 		ReferenceMode:    referenceModeKeyframes,
 		MaxImages:        2,
 		SupportsSeed:     true,
-		ResolutionRatios: seetaResolutionRatios,
+		ResolutionRatios: v2ResolutionRatios,
 	},
 }
 
@@ -168,9 +188,13 @@ const (
 	// baseURLDefault SeetaCloud 实例默认地址；渠道 base_url 为空时兜底。
 	baseURLDefault = "https://u1133789-a936-c07acd4f.westd.seetacloud.com:8443"
 
-	// 对外计价：480P ¥0.03/秒，768p（720P 档）¥0.05/秒，1080p 暂定 ¥0.06/秒。
-	// 基础价由 ratio_setting.defaultModelPrice 提供，分辨率倍率由上面的工作流配置提供。
-	pricePerSecondCNY = 0.03
+	// 对外计价（2026-11-08 起）：
+	//   minimax_h3_v2   480P ¥0.03/秒、768p（720P 档）¥0.05/秒
+	//   minimax_h3_omni 480P ¥0.02/秒、768p ¥0.04/秒、1080p ¥0.06/秒
+	// 两条链的**基准价不同**，所以「基准价」不是一个常量，而是每个模型一条：
+	// ratio_setting.defaultModelPrice（代码默认）或生产 ModelPrice（优先）。
+	// 这个常量只代表 V2 的 480P 基准价，给测试和旧文档核对用，不要拿它算 Omni。
+	v2PricePerSecondCNY = 0.03
 
 	minDuration     = 1
 	maxDuration     = 15

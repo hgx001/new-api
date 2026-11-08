@@ -117,8 +117,15 @@
     prompt 里用 `<Picture i>` / `<Video k>` / `<Audio j>` 位置引用（按类型独立计数，1 基）；
   - 旧名 `minimax_h3-文生` / `minimax_h3-图生` 退役：不再出现在 ModelList 与模型广场，
     适配器保留**隐藏别名**继续路由（文生别名=V2 全语义；图生别名保留必填图契约）。
-- 计费：**按秒**，480P ¥0.03/秒（基准），768p（720P 档）¥0.05/秒（倍率 1.667），
-  1080p ¥0.06/秒（倍率 2.0，2026-11-07 暂定价，调价改 seetaResolutionRatios 一处）。
+- 计费：**按秒**，两条链**基准价不同**，倍率也各自一套（2026-11-08 调价）：
+  - `minimax_h3_v2`：480P **¥0.03**/秒（倍率 1.0）、768p（720P 档）**¥0.05**/秒（倍率 1.667）；
+  - `minimax_h3_omni`：480P **¥0.02**/秒（1.0）、768p **¥0.04**/秒（2.0）、1080p **¥0.06**/秒（3.0）。
+  - 基准价在 `setting/ratio_setting/model_ratio.go`（`seetaVideoBasePrice` /
+    `seetaOmniBasePrice`）与生产 `ModelPrice`（优先）；倍率在
+    `relay/channel/task/seeta/constants.go`（`v2ResolutionRatios` / `omniResolutionRatios`）。
+    **改价必须两边同时改** —— 只改基准会按旧倍率少收（768p ¥0.0333、1080p ¥0.04），
+    只改倍率会按旧基准多收（¥0.06 / ¥0.09）。
+  - Omni 出片较快（768p 约 1–2 分钟），对客可按「3 分钟内交付」表述。
 - 脱敏：`seetacloud` 走字面量；`seeta` 短词走 `\bseeta\b` 词边界模式 ——
   字面量匹配没有词边界，裸 `seeta` 会误伤正常英文词。
 

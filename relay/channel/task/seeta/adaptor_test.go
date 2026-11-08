@@ -322,7 +322,7 @@ func TestBuildRequestBodyOmniAccepts1080p(t *testing.T) {
 	require.Contains(t, err.Error(), "does not support resolution")
 }
 
-// TestEstimateBillingOmni1080pRatio 1080p 计费倍率 2.0（对客暂定 ¥0.06/秒）。
+// TestEstimateBillingOmni1080pRatio 1080p 计费倍率 3.0（对客 ¥0.06/秒 = ¥0.02 × 3.0）。
 func TestEstimateBillingOmni1080pRatio(t *testing.T) {
 	adaptor := seetaAdaptor(t, "minimax_h3_omni")
 
@@ -332,7 +332,71 @@ func TestEstimateBillingOmni1080pRatio(t *testing.T) {
 	})
 	billing := adaptor.EstimateBilling(c, seetaRelayInfo("minimax_h3_omni"))
 	require.Equal(t, 10.0, billing["seconds"])
-	require.InDelta(t, 2.0, billing["size"], 0.001)
+	require.InDelta(t, 3.0, billing["size"], 0.001)
+}
+
+// TestEstimateBillingOmniTiers Omni 三档相对基准价（480P ¥0.02）的倍率：
+// 480P 1.0（¥0.02）、768p 2.0（¥0.04）、1080p 3.0（¥0.06）。
+//
+// 2026-11-08 调价：Omni 的 480P/768P 下调、1080P 保持原价，倍率随之从
+// 1.0 / 1.667 / 2.0 改成 1.0 / 2.0 / 3.0。基准价换成 ¥0.02 后，
+// 若只改基准价不改倍率，768p 会算出 ¥0.0333、1080p 算出 ¥0.04（少收）；
+// 反过来只改倍率不改基准价，768p 会算成 ¥0.06、1080p ¥0.09（多收）。
+func TestEstimateBillingOmniTiers(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
+
+	cells := []struct {
+		resolution string
+		ratio      float64
+		cnyPerSec  float64
+	}{
+		{"480p横", 1.0, 0.02},
+		{"480p竖", 1.0, 0.02},
+		{"480p(1:1)", 1.0, 0.02},
+		{"768p横", 2.0, 0.04},
+		{"768p竖", 2.0, 0.04},
+		{"768p(1:1)", 2.0, 0.04},
+		{"1080p横", 3.0, 0.06},
+		{"1080p竖", 3.0, 0.06},
+		{"1080p(1:1)", 3.0, 0.06},
+	}
+	for _, cell := range cells {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Set("task_request", relaycommon.TaskSubmitReq{
+			Model: "minimax_h3_omni", Prompt: "p", Duration: 5, Resolution: cell.resolution,
+		})
+		billing := adaptor.EstimateBilling(c, seetaRelayInfo("minimax_h3_omni"))
+		require.InDelta(t, cell.ratio, billing["size"], 0.001, "档位 %s 的倍率", cell.resolution)
+
+		// 对客单价 = Omni 480P 基准价 ¥0.02 × 倍率；再乘秒数即整单价格。
+		base := 0.02
+		require.InDelta(t, cell.cnyPerSec, base*cell.ratio, 0.0001,
+			"档位 %s 的每秒单价应为 ¥%.2f", cell.resolution, cell.cnyPerSec)
+	}
+}
+
+// TestEstimateBillingV2Tiers V2 三档口径不受 Omni 调价影响：480P ¥0.03、768p ¥0.05。
+func TestEstimateBillingV2Tiers(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_v2")
+
+	cells := []struct {
+		resolution string
+		ratio      float64
+		cnyPerSec  float64
+	}{
+		{"480p横", 1.0, 0.03},
+		{"768p横", 1.667, 0.05},
+	}
+	for _, cell := range cells {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Set("task_request", relaycommon.TaskSubmitReq{
+			Model: "minimax_h3_v2", Prompt: "p", Duration: 5, Resolution: cell.resolution,
+		})
+		billing := adaptor.EstimateBilling(c, seetaRelayInfo("minimax_h3_v2"))
+		require.InDelta(t, cell.ratio, billing["size"], 0.001, "档位 %s 的倍率", cell.resolution)
+		require.InDelta(t, cell.cnyPerSec, 0.03*cell.ratio, 0.0001,
+			"档位 %s 的每秒单价应为 ¥%.2f", cell.resolution, cell.cnyPerSec)
+	}
 }
 
 // TestEstimateBillingResolutionRatios 计费倍率：480P 基准 1.0，768p 1.667。
@@ -553,9 +617,9 @@ func TestWorkflowResolutionsCoverRatios(t *testing.T) {
 	}
 }
 
-// TestPricePerSecondMatchesBasePrice 基础价常量要与价格表一致，避免两边各写一份。
+// TestPricePerSecondMatchesBasePrice V2 的 480P 基准价常量要与价格表一致，避免两边各写一份。
 func TestPricePerSecondMatchesBasePrice(t *testing.T) {
-	require.InDelta(t, 0.03, pricePerSecondCNY, 0.0001)
+	require.InDelta(t, 0.03, v2PricePerSecondCNY, 0.0001)
 }
 
 // TestDurationBounds 时长区间与上游一致（1-15 秒）。
