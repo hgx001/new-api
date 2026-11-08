@@ -150,6 +150,16 @@ var upstreamVendorPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bLK[0-9]+\b`),
 	// SeetaCloud 的短品牌词：必须带词边界，否则 "seeta" 会误伤正常英文词
 	regexp.MustCompile(`(?i)\bseeta\b`),
+	// ArcReel-H3 上游内部工作流 ID（2026-11-08 真机验证）：上游 400 文案会点名
+	// 「纯文生视频请用 minimax_h3_lightx2v_no_pic」「需要多参考档
+	// minimax_h3_lightx2v_v5_15s」。这些是上游 ComfyUI 工作流 ID，不是客户买的
+	// 任何对外模型，出现在对客响应/日志里等于把上游实现细节一起交出去。
+	//
+	// ⚠️ 必须放在**全局**供应商词表：upstreamModelLiterals 只对
+	// upstreamAliasModels 生效，而 minimax_h3_omni 不是别名模型，放那里等于没加。
+	// 同时不能遮 minimax_h3_omni / minimax_h3_v2 —— 那是客户自己买的模型名，
+	// 报错里留着才看得懂。
+	regexp.MustCompile(`(?i)\bminimax_h3_lightx2v[a-z0-9_]*`),
 }
 
 // upstreamModelPatterns 是字面量覆盖不到的上游模型名写法。

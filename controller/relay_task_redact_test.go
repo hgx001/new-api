@@ -74,3 +74,27 @@ func TestRespondTaskErrorKeepsNonAliasMessage(t *testing.T) {
 	assert.Contains(t, taskErr.Message, "wan-3.0", "非别名模型：模型名保留")
 	assert.Contains(t, taskErr.Message, "does not support", "错误原因本身要保留")
 }
+
+// 2026-11-08 真机验证：omni 多参考档缺设定参考图时，上游 400 的正文里
+// 带着内部工作流 ID「纯文生视频请用 minimax_h3_lightx2v_no_pic」。
+// 这不是客户买的模型、也不该出现在任何对客响应里；统一出口必须遮掉。
+func TestRespondTaskErrorHidesSeetaInternalWorkflowID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Set("original_model", "minimax_h3_omni")
+
+	taskErr := &dto.TaskError{
+		Code: "fail_to_fetch_task",
+		Message: `{"error":{"message":"多参考档需要至少一张参考图（images 或 ref_image_0）；` +
+			`纯文生视频请用 minimax_h3_lightx2v_no_pic","type":"invalid_request_error"}}`,
+		StatusCode: 400,
+	}
+	respondTaskError(ctx, taskErr)
+
+	assert.NotContains(t, taskErr.Message, "lightx2v")
+	assert.NotContains(t, w.Body.String(), "lightx2v", "响应体里也不能残留上游工作流 ID")
+	assert.Contains(t, w.Body.String(), "上游")
+	assert.Contains(t, w.Body.String(), "至少一张参考图", "失败原因本身要保留")
+}

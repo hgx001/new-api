@@ -62,9 +62,14 @@ func seetaValidateContext(t *testing.T, model, body string) (*gin.Context, *rela
 	return c, info
 }
 
+// seetaRefVideoBody 构造一条**合法的** Omni 多参考请求。
+//
+// 2026-11-08 真机验证：上游多参考档强制至少一张设定参考图，只带参考视频
+// 会在提交阶段 400。所以计费探测的 fixture 必须自带一张 reference_image，
+// 否则测的是一个上游根本不会受理的请求。
 func seetaRefVideoBody(t *testing.T, model string, duration int, videos ...string) string {
 	t.Helper()
-	items := make([]string, 0, len(videos))
+	items := []string{fmt.Sprintf(`{"type":"reference_image","url":%q}`, seetaTestDataURI)}
 	for _, video := range videos {
 		items = append(items, fmt.Sprintf(`{"type":"reference_video","url":%q}`, video))
 	}

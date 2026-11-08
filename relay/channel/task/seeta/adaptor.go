@@ -116,6 +116,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return nil
 	}
+	// 上游多参考档的素材组合校验必须先于探测：一个注定被拒的请求不该先去
+	// 下载参考视频、也不该走到预扣费。详见 validateOmniReferenceInputs。
+	if taskErr := validateOmniReferenceInputs(req, info.OriginModelName); taskErr != nil {
+		return taskErr
+	}
 	videos := collectReferenceVideos(req)
 	if len(videos) == 0 {
 		return nil

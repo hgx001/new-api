@@ -136,6 +136,28 @@
     `http(s)` 素材会被下载两次（探测一次、`BuildRequestBody` 转 data URI 一次），
     这是为了保证计费与下发用的是同一份解析口径，勿擅自合并以免算错钱。
   - Omni 出片较快（768p 约 1–2 分钟），对客可按「3 分钟内交付」表述。
+- **Omni 三种创作模式与素材硬约束**（2026-11-08 真机验证 + 本地收口）：
+  上游 H3 网关 `derive_video_kind()` 按 payload 派生语义，网关下发的字段名决定走哪档：
+
+  | 客户写法 | 网关下发 | 上游档 | 约束 |
+  |---|---|---|---|
+  | 只传 prompt | 无素材字段 | `text` | 0 张图，纯文生视频 |
+  | `metadata.first_frame`（+`last_frame`） | `first_frame` / `last_frame` | `first_last` | 图生 / 首尾帧；不接参考视频/音频 |
+  | `images`、media 里的视频音频 | `ref_image_N` / `ref_video_N` / `ref_audio_N` | `multi_reference` | **必须至少一张设定参考图** |
+
+  - `images` 是**设定参考**（ref_blocks），不是首帧；做图生/首尾帧必须走 `metadata.first_frame`。
+  - 带参考视频/音频却没有设定参考图 → 上游 400「多参考档需要至少一张参考图」，且报错里点名
+    内部工作流 ID。真机：只带 11 秒参考视频 → 400（未建单未扣费）；补 1 张 `ref_image_0`
+    → 200 出片（`task_VZmt1axVYojijSxZWNCzHLn4CXZaeTOj`，16 计费秒 ¥0.64）。
+  - 只有 `metadata.last_frame` 没有 `first_frame` → 上游 400「首尾帧锚定要求首帧先给」。
+  - 上述两类已由 `relay/channel/task/seeta/reference_inputs.go` 在
+    `ValidateRequestAndSetAction` 本地 400（`invalid_reference_media` / `invalid_first_frame`），
+    位于预扣费与参考视频探测之前：不建单、不扣费、不 AutoBan、不白下载素材。
+  - 上游内部工作流 ID `minimax_h3_lightx2v*` 在 `model/upstream_redact.go` 的
+    **全局**供应商词表遮蔽；不能放进 `upstreamModelLiterals`（那份只对别名模型生效，
+    omni 不是别名模型），也不能遮 `minimax_h3_omni` / `_v2`（客户自己买的模型名）。
+  - ⚠️ 未决：纯文生与首尾帧目前只有上游代码契约与 V2 历史实测支撑，
+    **本站 omni 未做端到端真机出片验证**（用户 2026-11-08 选择先不跑）。
 - 脱敏：`seetacloud` 走字面量；`seeta` 短词走 `\bseeta\b` 词边界模式 ——
   字面量匹配没有词边界，裸 `seeta` 会误伤正常英文词。
 

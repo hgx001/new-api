@@ -35,7 +35,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'seedance2.5-特惠｜视频（按秒）｜720P ¥0.20/s、1080P ¥0.30/s，时长 2–30 秒（带参考视频时 ≤15 秒），参考视频按时长并入',
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s，参考视频按时长同价并入（生成秒数+参考视频秒数）',
   'wan3.0-720p-特惠｜视频（按秒）｜720P ¥0.20/s，时长 2–30 秒，参考视频按时长并入',
-  'minimax_h3_omni｜视频（按秒）｜480P ¥0.02/s、768P ¥0.04/s、1080P ¥0.06/s，设定参考最多 9 图 + 3 视频 + 3 音频；⚠️ 参考视频秒数并入计费（生成秒数 + 参考视频秒数），图/音频不额外计费，768P 约 1–2 分钟出片',
+  'minimax_h3_omni｜视频（按秒）｜480P ¥0.02/s、768P ¥0.04/s、1080P ¥0.06/s，设定参考最多 9 图 + 3 视频 + 3 音频；⚠️ 参考视频秒数并入计费（生成秒数 + 参考视频秒数），图/音频不额外计费，768P 约 1–2 分钟出片；支持纯文生 / 图生 / 首尾帧 / 多参考，带参考视频或音频须同时至少一张设定参考图',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
   'seedance-2-5｜视频（按次）｜¥3.50 / 次，5/10/15/30 秒同价',
@@ -48,7 +48,7 @@ const COMPAT_MODEL_ITEMS = [
   'gpt-5.6-sol：等价 gpt-6-sol，同价',
   'MiniMax-M2.7：输入价与 MiniMax-M3 相同，输出价较低（¥0.09 / 1M）；2026-10-31 起 MiniMax-M3 / M3.1 输出价已上调 10 倍，两者不再同价',
   'wan3.0-720p-官网：wan3.0-720p-特惠 的旧名（2026-10-30 改名），同价同链路，仅为老代码兼容而保留',
-  'minimax_h3_v2 / minimax_h3-文生 / minimax_h3-图生：2026-11-08 起全部退役下架，模型广场与 /v1/models 都不再展示，仅保留隐藏路由供在途任务查询；新接入请改用 minimax_h3_omni（已完整覆盖文生 / 图生 / 首尾帧能力）',
+  'minimax_h3_v2 / minimax_h3-文生 / minimax_h3-图生：2026-11-08 起全部退役下架，模型广场与 /v1/models 都不再展示，仅保留隐藏路由供在途任务查询；新接入请改用 minimax_h3_omni（已完整覆盖文生 / 图生 / 首尾帧能力，三种模式的正确调用方式见该模型小节）',
 ]
 
 const VIDEO_FLOW_ITEMS = [
@@ -89,6 +89,7 @@ const MEDIA_RULE_ITEMS = [
   '公网 URL：必须是公网可访问的 http(s) 直链，不接受内网地址、localhost、本地路径；带鉴权、防盗链或会跳转到登录页的地址一律无效',
   '图片：PNG / JPG / BMP / WEBP，单张 ≤20MB，单边 240–8000 像素。⚠️ 上游不接受带透明通道的 PNG（渲染会出问题）：有赞 wan3 系会在上传前自动压白底，wan3.0-video-官网 / wan3.0-720p-特惠 不会转换格式，请自行先转成 RGB 再提交',
   '参考视频（wan3 系）：单个 1–15 秒、合计 ≤15 秒，官网与有赞渠道都在本地强制校验，超限直接 400（不建单、不扣费）；带参考视频时「生成时长」另有上限，见各模型条目。⚠️ minimax_h3_omni 不设单条 / 合计秒数上限，但参考视频按实际秒数并入计费，见该模型小节',
+  '⚠️ minimax_h3_omni 素材组合硬约束：带参考视频或参考音频却没有设定参考图 → 提交阶段 400；只给 metadata.last_frame 不给 metadata.first_frame → 400。两者都在预扣费之前本地拦截，不建单不扣费。纯文生（零素材）与只用首尾帧的请求不受此限，但也不要混带参考视频 / 音频',
   '参考视频时长由网关下载文件头（MP4/MOV 的 mvhd）解析：解析不出时长的素材（URL 打不开、不是真正的 MP4/MOV、鉴权失效）会被直接拒绝（不建单、不扣费），因为按 0 秒计费会漏收。wan3 系与 minimax_h3_omni 都按此口径 —— webm 等无 mvhd 的容器无法计费，会一并被拒',
   '参考音频：单个 1–15 秒、合计 ≤15 秒、单条 ≤15MB（音频时长不在本地校验，由上游拒绝）',
   '⚠️ 2026-11-01 起，wan3 系提交前由网关代下载并转存图片：传入的公网图片 URL 会先被网关拉下来、转存到网关自带的暂存图床，再把自家地址交给上游。上游因此不再需要访问你的图床，只要网关能打开你的地址即可',
@@ -773,13 +774,19 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
             ],
             ['seed：可选，整数'],
             [
-              'images / input_reference / image / media（type 含 image）：可选，设定参考最多 9 张（对应 <Picture i>）',
+              '⚠️ 三种创作模式按素材自动分派：① 纯文生视频＝只传 model / prompt / duration / resolution，零素材；② 图生视频 / 首尾帧＝只传 metadata.first_frame（+可选 metadata.last_frame），不带参考视频或音频；③ 多参考＝带设定参考图 / 参考视频 / 参考音频。images 是「设定参考」不是首帧，做图生或首尾帧请用 metadata.first_frame',
+            ],
+            [
+              'images / input_reference / image / media（type 含 image）：设定参考最多 9 张（对应 <Picture i>）；纯文生与首尾帧档不传，带参考视频 / 音频时必填至少 1 张',
             ],
             [
               'media 中 type 含 video 的条目：参考视频最多 3 个（对应 <Video k>），按实际时长并入计费秒数，须为可解析时长的 MP4/MOV；type 含 audio 的条目或顶层 audios / audio：参考音频最多 3 条（对应 <Audio j>），不额外计费',
             ],
             [
-              'metadata.first_frame / metadata.last_frame：可选首尾帧各 1 张，可与设定参考在同一个请求里共存（images 是设定参考，首尾帧单独走 metadata，两套可叠加）',
+              'metadata.first_frame / metadata.last_frame：可选首尾帧各 1 张，可与设定参考在同一个请求里共存（images 是设定参考，首尾帧单独走 metadata，两套可叠加）；⚠️ 只给 last_frame 不给 first_frame 会在提交阶段 400（不建单不扣费）',
+            ],
+            [
+              '⚠️ 多参考档硬约束：请求里带参考视频或参考音频时，必须同时至少传一张设定参考图（images 或 media type=reference_image），否则提交阶段 400（不建单不扣费）。这两种拦截都在预扣费之前完成，不会白等上游往返',
             ],
             [
               '参考素材写法：data URI 或公网 http(s) 直链都收，网关代下载后转成 data URI 下发；单份上限 图 10MB / 视频 50MB / 音频 30MB，MIME 前缀须与类型一致',

@@ -998,4 +998,41 @@ describe('tutorials model guide content', () => {
       'billing overview must no longer claim H3 reference media is always free'
     )
   })
+
+  // 回归守卫：2026-11-08 真机验证暴露上游 H3 网关按输入派生三种语义
+  // （text / first_last / multi_reference）。教程必须写清三种模式的正确写法：
+  // 否则客户会把 images 当首帧、或只带参考视频不传设定参考图，白等一次 400。
+  test('documents minimax_h3_omni input modes and multi-reference constraints', () => {
+    const omni = getModelSectionText('model-minimax-h3-omni')
+    for (const expected of [
+      '三种创作模式按素材自动分派',
+      '纯文生视频＝只传 model / prompt / duration / resolution，零素材',
+      'images 是「设定参考」不是首帧',
+      '多参考档硬约束',
+      '至少传一张设定参考图',
+      '只给 last_frame 不给 first_frame 会在提交阶段 400',
+    ]) {
+      assert.equal(
+        omni.includes(expected),
+        true,
+        `omni docs missing: ${expected}`
+      )
+    }
+    assert.equal(
+      omni.includes('可选，设定参考最多 9 张'),
+      false,
+      '多参考档下设定参考图不是可选项，不能沿用旧文案'
+    )
+    const indexEntry = sectionsJson.match(/"minimax_h3_omni｜[^"]*"/)?.[0] ?? ''
+    assert.equal(
+      indexEntry.includes('支持纯文生 / 图生 / 首尾帧 / 多参考'),
+      true,
+      '总览行要写明 V2 退役后由 omni 承接文生/图生/首尾帧'
+    )
+    assert.equal(
+      indexEntry.includes('带参考视频或音频须同时至少一张设定参考图'),
+      true,
+      '总览行要写明多参考档缺图的硬约束'
+    )
+  })
 })

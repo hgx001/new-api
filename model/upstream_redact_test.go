@@ -139,6 +139,21 @@ func TestRedactUpstreamText_非别名模型也摘渠道痕迹但保留模型名(
 	assert.Equal(t, "", RedactUpstreamText("", "seedance2.5-特惠"))
 }
 
+// SeetaCloud / ArcReel-H3 上游在 400 里会点名内部工作流 ID
+// （minimax_h3_lightx2v_no_pic / _v5_15s）。那是客户不该看到的上游实现细节，
+// 且 omni 不是别名模型 —— 只走 RedactUpstreamVendor，所以这类 ID 必须在
+// **全局**供应商词表里被遮掉，不能放进 upstreamModelLiterals。
+func TestRedactUpstreamText_隐藏H3上游内部工作流ID(t *testing.T) {
+	raw := `{"error":{"message":"多参考档需要至少一张参考图（images 或 ref_image_0）；` +
+		`纯文生视频请用 minimax_h3_lightx2v_no_pic，首尾帧档请用 minimax_h3_lightx2v_v5_15s"}}`
+	got := RedactUpstreamText(raw, "minimax_h3_omni")
+
+	assert.NotContains(t, got, "lightx2v", "上游内部工作流 ID 不能给下游")
+	assert.NotContains(t, got, "minimax_h3_lightx2v")
+	assert.Contains(t, got, "上游")
+	assert.Contains(t, got, "至少一张参考图", "错误原因本身要保留，只清上游身份")
+}
+
 // 地址后面的标点不能被一起吞掉 —— 否则文案破相。
 //
 // 整段替换会把 "错误 (https://x.com/a.mp4)" 变成 "错误 ([地址已隐藏]"：
