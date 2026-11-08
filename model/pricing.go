@@ -502,11 +502,11 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "autodl:") {
 		return true
 	}
-	// SeetaCloud（2026-11-06 接入；2026-11-07 改版）：自建 ComfyUI 实例的
-	// ArcReel-H3 网关。文生/图生已合并为 minimax_h3_v2（不带图=文生、带图=
-	// 首尾帧），新增 minimax_h3_omni（多模态参考 9 图 + 3 视频 + 3 音频 + 1080p）。
-	// 旧中文名不再上广场，但适配器里保留别名让在途请求跑通。
-	if name == "minimax_h3_v2" || name == "minimax_h3_omni" {
+	// SeetaCloud（2026-11-06 接入；2026-11-08 V2 退役）：自建 ComfyUI 实例的
+	// ArcReel-H3 网关，对外只留 minimax_h3_omni（多模态参考 9 图 + 3 视频 +
+	// 3 音频 + 1080p）。V2 与两个旧中文名都不再上广场；适配器里的映射仍保留，
+	// 让在途请求跑完。
+	if name == "minimax_h3_omni" {
 		return true
 	}
 	// Youkou Seedance（volcengine-ark-video 协议，最小成本逐个接入）

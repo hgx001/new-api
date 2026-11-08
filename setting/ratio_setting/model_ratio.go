@@ -439,13 +439,14 @@ var defaultModelPrice = map[string]float64{
 	"autodl:minimax-h3-image-audio-15s": autoDLVideoBasePrice,
 	"autodl:minimax-h3-lipsync":         autoDLVideoBasePrice,
 	// SeetaCloud（2026-11-06 接入）：自建 ComfyUI 实例的 H3 蒸馏工作流。
-	// 2026-11-07 改版：文生/图生合并为 minimax_h3_v2，另加 minimax_h3_omni。
-	//   minimax_h3_v2   480P ¥0.03/秒、768p ¥0.05/秒（倍率 1.667，无 1080p）
+	// 2026-11-08：V2 退役下架，代码默认价里也不再留 minimax_h3_v2。
 	//   minimax_h3_omni 480P ¥0.02/秒、768p ¥0.04/秒、1080p ¥0.06/秒（倍率 2.0 / 3.0）
 	// 按秒计费，duration 1-15s。基准价与倍率必须成对改（倍率见 seeta/constants.go）。
-	"minimax_h3_v2":   seetaVideoBasePrice,
+	// ⚠️ omni 带参考视频时 seconds 还要并入参考视频总秒数（adaptor 探测后相加），
+	// 所以这里的基准价是「每秒」单价，不是整单价；参考图/音频不额外计费。
 	"minimax_h3_omni": seetaOmniBasePrice,
-	// 旧名（退役别名，仍可路由）沿用 V2 口径。
+	// 旧名（退役别名，仍可路由）沿用 V2 口径：在途任务与历史账单仍需可解析，
+	// 它们不在 ModelList 里，也不会上广场。
 	"minimax_h3-文生":                 seetaVideoBasePrice,
 	"minimax_h3-图生":                 seetaVideoBasePrice,
 	"veo-3.0-generate-001":          0.4,

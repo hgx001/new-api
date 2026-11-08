@@ -5,13 +5,13 @@ const ChannelName = "SeetaCloud"
 
 // ModelList 对外暴露的模型（SeetaCloud 自建 ComfyUI 实例，ArcReel-H3 网关）。
 //
-// 2026-11-07 改版：上游网关把文生/图生合并为 FastH3 V2 单工作流
-// （build_fasth3_v2_workflow(first_frame, last_frame)，不连即纯文生），
-// 并新增 FastH3-Omni 多模态参考链（9 图 + 3 视频 + 3 音频、1080p 档）。
-// 旧名 minimax_h3-文生 / minimax_h3-图生 退役：不再出现在 ModelList，
-// 但 workflowByModel 里保留别名映射（legacyAlias*），老请求仍能路由。
+// 2026-11-08：FastH3 V2 退役下架，Omni 完全覆盖其文生/图生/首尾帧能力，
+// 并额外支持 9 图 + 3 视频 + 3 音频参考与 1080p。因此对外只留 omni。
+//
+// ⚠️ workflowByModel 里 **保留** v2 与两个旧中文名的映射：在途任务仍要能
+// 路由/查询，紧急回滚时也只需恢复这里的列表（网关侧另有
+// ARCREEL_ENABLE_V2_MODEL 开关），不必重建工作流配置。
 var ModelList = []string{
-	"minimax_h3_v2",
 	"minimax_h3_omni",
 }
 
@@ -194,6 +194,10 @@ const (
 	// 两条链的**基准价不同**，所以「基准价」不是一个常量，而是每个模型一条：
 	// ratio_setting.defaultModelPrice（代码默认）或生产 ModelPrice（优先）。
 	// 这个常量只代表 V2 的 480P 基准价，给测试和旧文档核对用，不要拿它算 Omni。
+	//
+	// ⚠️ Omni 带参考视频时计费秒数 = 生成秒数 + 参考视频总秒数（逐条实测时长
+	// 四舍五入后相加），再乘档位倍率；参考图片/音频不额外计费，V2 不收参考视频。
+	// 实现见 refvideo.go / adaptor.go（ValidateRequestAndSetAction + EstimateBilling）。
 	v2PricePerSecondCNY = 0.03
 
 	minDuration     = 1

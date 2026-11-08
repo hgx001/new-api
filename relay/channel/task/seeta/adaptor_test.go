@@ -575,17 +575,22 @@ func TestBuildRequestHeaderUsesRawToken(t *testing.T) {
 	require.Equal(t, "raw-token", req.Header.Get("Authorization"))
 }
 
-// TestGetModelList 暴露的模型名不含上游工作流名，旧中文名已退役。
+// TestGetModelList 2026-11-08：V2 退役，对外只留 Omni；旧中文名与 V2 都不再暴露。
 func TestGetModelList(t *testing.T) {
-	adaptor := seetaAdaptor(t, "minimax_h3_v2")
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
 	list := adaptor.GetModelList()
-	require.Contains(t, list, "minimax_h3_v2")
-	require.Contains(t, list, "minimax_h3_omni")
+	require.Equal(t, []string{"minimax_h3_omni"}, list)
+	require.NotContains(t, list, "minimax_h3_v2")
+	require.NotContains(t, list, "minimax_h3-文生")
+	require.NotContains(t, list, "minimax_h3-图生")
 	for _, name := range list {
 		require.NotContains(t, name, "lightx2v")
-		require.NotEqual(t, "minimax_h3-文生", name, "旧名不应再出现在模型列表")
-		require.NotEqual(t, "minimax_h3-图生", name, "旧名不应再出现在模型列表")
 	}
+	// 下架只影响对外列表：workflowByModel 仍保留 V2 与旧别名，
+	// 在途任务/历史查询与紧急回滚都不受影响。
+	require.Contains(t, workflowByModel, "minimax_h3_v2")
+	require.Contains(t, workflowByModel, "minimax_h3-文生")
+	require.Contains(t, workflowByModel, "minimax_h3-图生")
 }
 
 // TestLegacyAliasesRouteToV2 旧名是隐藏别名：不在 ModelList，
