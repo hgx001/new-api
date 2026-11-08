@@ -150,7 +150,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //60 (Wan3 使用渠道 base_url，不在此兜底)
 	"https://autodl.art",                        //61
 	"https://dashscope.aliyuncs.com",            //62 (DashScope 百炼)
-	"https://youzan666.vip/v1",                  //63 (有赞 Wan3)
+	"https://ai.youzan666.vip/v1",               //63 (有赞 Wan3)
 	"https://newapi.megabyai.cc",                //64 (MegaAI)
 	"",                                          //65
 	"https://arcreel.heibaidao.cn",              //66 (漫屋 ArcReel)

@@ -291,7 +291,7 @@ func TestWan3TehuiXinbiRoute_SkipsWhenTargetUnavailable(t *testing.T) {
 // 规则二先把 9:16 改派到特惠，分流层必须接着把它分到心笔，
 // 且计费原点仍是客户请求的 seedance2.5-特惠。
 func TestWan3TehuiXinbiRoute_AfterRatioRuleKeepsPromoOrigin(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 	stubChannelAvailable(t, true)
 
 	rec := &routeRecorder{}

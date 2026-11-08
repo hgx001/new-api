@@ -43,7 +43,7 @@ func enableDoubaoFallbackRoute(t *testing.T) {
 		"enabled":         true,
 		"source_models":   []string{constant.Seedance25TeHuiModel, constant.Seedance25HuoDongModel},
 		"target_model":    doubaoTargetModel,
-		"trigger_seconds": 30,
+		"trigger_seconds": 20,
 		"source_overrides": map[string]interface{}{
 			constant.Seedance25HuoDongModel: map[string]interface{}{
 				"target_model": doubaoTargetModel,

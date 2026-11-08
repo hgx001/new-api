@@ -148,10 +148,10 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     id: 63,
     name: CHANNEL_TYPES[63],
     icon: 'Qwen',
-    defaultBaseUrl: 'https://youzan666.vip/v1',
+    defaultBaseUrl: 'https://ai.youzan666.vip/v1',
     supportedModels: ['wan3.0-video', 'wan3.0-video-prime'],
     hints: {
-      baseUrl: 'Default: https://youzan666.vip/v1',
+      baseUrl: 'Default: https://ai.youzan666.vip/v1',
       key: 'Youzan Wan3 API Key',
       models: 'wan3.0-video, wan3.0-video-prime',
     },

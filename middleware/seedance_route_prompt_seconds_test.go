@@ -26,7 +26,7 @@ func promptRouteTestPrompt() string {
 // 这正是「2 秒 + 超长提示词」在改造前的真实表现：改派这道兜底用不上，
 // 请求带着 6000+ 字的提示词打到有赞，由上游按 5000 上限拒单。
 func TestPromptRouteSkipsSecondsOutsideDoubaoTiers(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	prompt := promptRouteTestPrompt()
 	body := fmt.Sprintf(`{"model":%q,"seconds":2,"prompt":%q}`, testSourceModel, prompt)
@@ -52,7 +52,7 @@ func TestPromptRouteSkipsSecondsOutsideDoubaoTiers(t *testing.T) {
 // 生产实例：tasks id=1045/1046，6171 字、未传时长，落到渠道 20（豆包），
 // 因「渠道今日额度已用完」失败。所以「想测源链路的超长拒绝」就**不能省略时长**。
 func TestPromptRouteReroutesLongPromptWhenSecondsOmitted(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	prompt := promptRouteTestPrompt()
 	body := fmt.Sprintf(`{"model":%q,"prompt":%q}`, testSourceModel, prompt)

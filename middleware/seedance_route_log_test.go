@@ -44,7 +44,7 @@ func captureRouteLogs(t *testing.T) func() string {
 // 这条用例在规则一没有日志时会失败 —— 也正是它暴露了「30 秒那单在日志里
 // 完全找不到路由记录」的线上问题。
 func TestSecondsRouteEmitsLog(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 	readLogs := captureRouteLogs(t)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":30,"prompt":"a cat"}`)
@@ -66,7 +66,7 @@ func TestSecondsRouteEmitsLog(t *testing.T) {
 
 // 规则四（提示词超长）命中时必须打日志，且带上提示词长度。
 func TestPromptRouteEmitsLog(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 	readLogs := captureRouteLogs(t)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
@@ -92,7 +92,7 @@ func TestPromptRouteEmitsLog(t *testing.T) {
 // 此时不应该再打「提示词超过 5000」—— 否则看日志的人会以为规则四是
 // 「30 秒 + 超长」的 AND 条件。
 func TestSecondsRouteLogWinsOverPromptLogWhenBothMatch(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 	readLogs := captureRouteLogs(t)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+228), map[string]interface{}{
@@ -115,7 +115,7 @@ func TestSecondsRouteLogWinsOverPromptLogWhenBothMatch(t *testing.T) {
 // 规则二（比例）命中时必须留痕：它和规则一/四的目标模型不同，但同样是
 // 「按调度偏好省钱」的隐式改派，不打日志客户会以为请求按原模型跑了。
 func TestRatioRouteEmitsLog(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 	readLogs := captureRouteLogs(t)
 
 	body := `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"},"prompt":"a cat"}`
@@ -136,7 +136,7 @@ func TestRatioRouteEmitsLog(t *testing.T) {
 // 规则三（首尾帧）命中时必须留痕：这是四条规则里唯一「能力约束」型的改派
 // （不改派就必然失败），排查时最需要一眼看到。
 func TestFramesRouteEmitsLog(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 	readLogs := captureRouteLogs(t)
 
 	body := `{"model":"seedance2.5-特惠","seconds":"10","prompt":"a cat","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
@@ -156,7 +156,7 @@ func TestFramesRouteEmitsLog(t *testing.T) {
 
 // 没命中任何规则时不该有路由日志 —— 避免日志噪音掩盖真正的路由事件。
 func TestNoRouteLogWhenNoRuleMatches(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 	readLogs := captureRouteLogs(t)
 
 	runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`)
@@ -169,7 +169,7 @@ func TestNoRouteLogWhenNoRuleMatches(t *testing.T) {
 // 规则一命中但渠道预检不通过（没有可用渠道）时不该打路由日志：
 // 请求实际没改派，打了日志会误导排查。
 func TestSecondsRouteNoLogWhenChannelUnavailable(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 	stubChannelAvailable(t, false)
 	readLogs := captureRouteLogs(t)
 

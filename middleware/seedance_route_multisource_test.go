@@ -49,7 +49,7 @@ func TestMultiSourceRouteMatchesBothSources(t *testing.T) {
 	enableMultiSourceRoute(t, []string{
 		constant.Seedance25TeHuiModel,
 		constant.Seedance25HuoDongModel,
-	}, testTargetModel, 30)
+	}, testTargetModel, 20)
 
 	for _, source := range []string{constant.Seedance25TeHuiModel, constant.Seedance25HuoDongModel} {
 		seen, origin := runRoute(t, `{"model":"`+source+`","seconds":30,"prompt":"a cat"}`)
@@ -67,7 +67,7 @@ func TestMultiSourceRouteIgnoresOtherModels(t *testing.T) {
 	enableMultiSourceRoute(t, []string{
 		constant.Seedance25TeHuiModel,
 		constant.Seedance25HuoDongModel,
-	}, testTargetModel, 30)
+	}, testTargetModel, 20)
 
 	seen, origin := runRoute(t, `{"model":"seedance-2-5","seconds":30,"prompt":"a cat"}`)
 	if got := decodeBody(t, seen)["model"]; got != "seedance-2-5" {
@@ -86,7 +86,7 @@ func TestMultiSourceRouteLogUsesMatchedSource(t *testing.T) {
 	enableMultiSourceRoute(t, []string{
 		constant.Seedance25TeHuiModel,
 		constant.Seedance25HuoDongModel,
-	}, testTargetModel, 30)
+	}, testTargetModel, 20)
 	readLogs := captureRouteLogs(t)
 
 	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat"}`)
@@ -104,7 +104,7 @@ func TestMultiSourceRouteLogUsesMatchedSource(t *testing.T) {
 // 老配置（只配 source_model）必须继续工作 —— 生产 options 至今是单值格式，
 // 升级代码不能把现有路由弄失效。
 func TestSingleSourceRouteStillWorks(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	seen, origin := runRoute(t, `{"model":"`+testSourceModel+`","seconds":30,"prompt":"a cat"}`)
 	if got := decodeBody(t, seen)["model"]; got != testTargetModel {

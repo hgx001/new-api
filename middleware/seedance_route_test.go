@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -145,7 +146,7 @@ func runRouteFull(t *testing.T, body string) *routeRecorder {
 // 计费已改为按客户请求的源模型算（按秒 ¥0.20），而目标 adaptor（manwu）对按次
 // 模型返回 nil 倍率。少了这个秒数，30 秒的请求会只按 1 秒收钱 —— 少收 29 秒。
 func TestSeedanceRouteRecordsBillingSecondsForPerCallTarget(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":30,"prompt":"a cat"}`)
 	if !rec.hasBillingSec {
@@ -159,7 +160,7 @@ func TestSeedanceRouteRecordsBillingSecondsForPerCallTarget(t *testing.T) {
 // 规则二（9:16 → wan3）不记计费秒数：目标 adaptor 自己会给 seconds，
 // 记了反而可能覆盖它的判断（relay_task.go 只在缺失时补）。
 func TestSeedanceRouteRatioRuleDoesNotForceBillingSeconds(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
 	if rec.hasBillingSec {
@@ -170,7 +171,7 @@ func TestSeedanceRouteRatioRuleDoesNotForceBillingSeconds(t *testing.T) {
 // 规则一没命中（时长不是 30）时也不能留下计费秒数，
 // 否则后续若因比例规则改派，会带着一个错的秒数去算钱。
 func TestSeedanceRouteNoBillingSecondsWhenSecondsRuleMisses(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":"12","prompt":"a cat"}`)
 	if rec.hasBillingSec {
@@ -200,7 +201,7 @@ func TestSeedanceRouteDisabledKeepsBodyByteIdentical(t *testing.T) {
 }
 
 func TestSeedanceRouteRewritesModelAndSeconds(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := `{"model":"seedance2.5-特惠","seconds":"30","prompt":"a cat"}`
 	seen, originModel := runRoute(t, body)
@@ -224,7 +225,7 @@ func TestSeedanceRouteRewritesModelAndSeconds(t *testing.T) {
 }
 
 func TestSeedanceRouteMatchesAllSecondsSpellings(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
@@ -255,7 +256,7 @@ func TestSeedanceRouteMatchesAllSecondsSpellings(t *testing.T) {
 }
 
 func TestSeedanceRouteSkipsNonTriggerSeconds(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
@@ -283,7 +284,7 @@ func TestSeedanceRouteNormalizesPaddedModelName(t *testing.T) {
 	// 但改写后必须把 model 换成**干净的目标名** ——
 	// 下游 Distribute 是拿 body 里的 model 去选渠道的，
 	// 留着带空格的名字会「找不到渠道」直接 404。
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := `{"model":"  seedance2.5-特惠  ","seconds":"30"}`
 	seen, originModel := runRoute(t, body)
@@ -302,7 +303,7 @@ func TestSeedanceRouteNormalizesPaddedModelName(t *testing.T) {
 
 func TestSeedanceRouteSkipsUnsupportedMedia(t *testing.T) {
 	// 老板 2026-10-30 拍板：带参考视频/音频 → 不路由，走源模型继续跑（不是报错）。
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
@@ -337,7 +338,7 @@ func TestSeedanceRouteSkipsUnsupportedMedia(t *testing.T) {
 func TestSeedanceRouteSkipsExplicitResolution(t *testing.T) {
 	// 豆包链路没有分辨率控件：带 resolution 的请求路由过去要么被 400，
 	// 要么给一份分辨率不对的片 —— 两种都是交付问题，一律不路由。
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
@@ -364,7 +365,7 @@ func TestSeedanceRouteSkipsExplicitResolution(t *testing.T) {
 func TestSeedanceRouteAllowsRatioShapedSize(t *testing.T) {
 	// 客户端习惯性传 size:"16:9"（比例语义）时，源链路本来就会忽略它
 	// （normalizeResolution("16:9") 返回 ""）—— 不该因为这个把整单挡在路由外面。
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := `{"model":"seedance2.5-特惠","seconds":"30","size":"16:9"}`
 	seen, _ := runRoute(t, body)
@@ -387,7 +388,7 @@ func TestSeedanceRouteDropsUnsupportedTopLevelFields(t *testing.T) {
 	// 两道防线：
 	//   ① 用户明确要了分辨率 → 整单不路由（见 TestSeedanceRouteSkipsExplicitResolution）；
 	//   ② 万一路由了，改写时也必须把 resolution / size 摘掉（纵深防御）。
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	// 用一个「不被第①条拦下」的形态来验证第②条：
 	// 顶层 resolution 存在但为空串 → 视为「没指定分辨率」→ 允许路由。
@@ -414,7 +415,7 @@ func TestSeedanceRouteUsesTopLevelMediaBeforeMetadataMedia(t *testing.T) {
 	// 顶层 media > metadata.media > 顶层 images/image/input_reference。
 	// 优先级错了就会丢图 —— 源链路认顶层 media 时我们只读 metadata.media，
 	// 转换出来的图数就少了。
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := `{"model":"seedance2.5-特惠","seconds":"30","media":[{"type":"reference_image","url":"https://x/top.png"}],"metadata":{"media":[{"type":"reference_image","url":"https://x/meta.png"}]}}`
 	seen, _ := runRoute(t, body)
@@ -434,7 +435,7 @@ func TestSeedanceRouteUsesTopLevelMediaBeforeMetadataMedia(t *testing.T) {
 
 func TestSeedanceRouteSkipsTopLevelAudio(t *testing.T) {
 	// 顶层 audio / audios 是参考音频，目标链路不支持 → 不路由。
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
@@ -458,7 +459,7 @@ func TestSeedanceRouteSkipsTopLevelAudio(t *testing.T) {
 }
 
 func TestSeedanceRouteConvertsReferenceImages(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"media":[{"type":"reference_image","url":"https://x/1.png"},{"type":"reference_image","url":"https://x/2.png"}]}}`
 	seen, _ := runRoute(t, body)
@@ -483,7 +484,7 @@ func TestSeedanceRouteConvertsReferenceImages(t *testing.T) {
 }
 
 func TestSeedanceRouteMapsAdaptiveRatioToAuto(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"ratio":"adaptive"}}`
 	seen, _ := runRoute(t, body)
@@ -498,7 +499,7 @@ func TestSeedanceRouteMapsAdaptiveRatioToAuto(t *testing.T) {
 }
 
 func TestSeedanceRouteKeepsExplicitRatio(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"ratio":"16:9"}}`
 	seen, _ := runRoute(t, body)
@@ -513,7 +514,7 @@ func TestSeedanceRouteKeepsExplicitRatio(t *testing.T) {
 }
 
 func TestSeedanceRouteSkipsRemixPath(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
@@ -542,7 +543,7 @@ func TestSeedanceRouteSkipsRemixPath(t *testing.T) {
 }
 
 func TestSeedanceRouteSkipsNonJSONContentType(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
@@ -634,7 +635,7 @@ func decodeBody(t *testing.T, body string) map[string]interface{} {
 }
 
 func TestSeedanceRouteRatioRoutesNon30sToWan3(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	// 15 秒 + 9:16：时长规则不命中（15≠30），比例规则命中 → 走 wan3。
 	body := `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"},"prompt":"a cat"}`
@@ -666,7 +667,7 @@ func TestSeedanceRouteRatioRoutesNon30sToWan3(t *testing.T) {
 func TestSeedanceRouteSecondsRuleWinsOverRatio(t *testing.T) {
 	// 老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」：
 	// 30 秒 + 9:16 必须走豆包，不能走 wan3。
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"ratio":"9:16"}}`
 	seen, _ := runRoute(t, body)
@@ -678,7 +679,7 @@ func TestSeedanceRouteSecondsRuleWinsOverRatio(t *testing.T) {
 }
 
 func TestSeedanceRouteRatioFromAspectRatioAndSize(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	cases := []struct {
 		name string
@@ -702,7 +703,7 @@ func TestSeedanceRouteRatioFromAspectRatioAndSize(t *testing.T) {
 }
 
 func TestSeedanceRouteRatioSkipsOtherRatios(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	cases := []struct {
 		name string
@@ -729,7 +730,7 @@ func TestSeedanceRouteRatioSkipsOtherRatios(t *testing.T) {
 
 func TestSeedanceRouteRatioSkipsExplicit1080P(t *testing.T) {
 	// 目标模型固定交付 720P（480P 生成 + 提升），要 1080P 时路由过去等于降级交付。
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	cases := []struct {
 		name string
@@ -752,7 +753,7 @@ func TestSeedanceRouteRatioSkipsExplicit1080P(t *testing.T) {
 func TestSeedanceRouteRatioKeepsMediaUntouched(t *testing.T) {
 	// wan3 渠道的 buildWan3Media 素材优先级与源链路一致（顶层 media > metadata.media），
 	// 所以**不需要**转换格式 —— 原样保留即可，绝不能像豆包规则那样改写成 input_reference。
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"9:16"},"media":[{"type":"reference_image","url":"https://example.com/a.png"}]}`
 	seen, _ := runRoute(t, body)
@@ -778,7 +779,7 @@ func TestSeedanceRouteSkipsWhenTargetChannelUnavailable(t *testing.T) {
 	// 中间件改写 body 之后，重试只会用同一个模型名重选渠道，不会退回源模型。
 	// 所以目标模型没渠道时必须**不路由**，让请求自然落回源链路 ——
 	// 否则 Distribute 会直接 503，客户撞错误。
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 	stubChannelAvailable(t, false)
 
 	cases := []struct {
@@ -873,7 +874,7 @@ func pauseSecondsRule(t *testing.T, until int64) {
 }
 
 func TestSeedanceRouteSecondsRulePausedFallsBackToSource(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 	pauseSecondsRule(t, time.Now().Unix()+3600)
 
 	if seedanceroute_setting.IsEnabled() {
@@ -892,7 +893,7 @@ func TestSeedanceRouteSecondsRulePausedFallsBackToSource(t *testing.T) {
 }
 
 func TestSeedanceRoutePauseDoesNotAffectRatioRule(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 	pauseSecondsRule(t, time.Now().Unix()+3600)
 
 	// 暂停只针对「按时长改派到豆包」，比例规则必须照常生效 ——
@@ -906,7 +907,7 @@ func TestSeedanceRoutePauseDoesNotAffectRatioRule(t *testing.T) {
 }
 
 func TestSeedanceRouteExpiredPauseRoutesAgain(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 	// 截止时间已过 1 秒 → 应视为已恢复，不需要任何人手动打开。
 	pauseSecondsRule(t, time.Now().Unix()-1)
 
@@ -963,7 +964,7 @@ func enableAllRules(t *testing.T, secondsTarget string, seconds int, ratioTarget
 }
 
 func TestSeedanceRouteFramesGoToWan3(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 
 	// 16:9 + 首帧：比例规则不命中（9:16≠16:9），首尾帧规则必须接住。
 	body := `{"model":"seedance2.5-特惠","seconds":"10","prompt":"a cat","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
@@ -994,7 +995,7 @@ func TestSeedanceRouteFramesGoToWan3(t *testing.T) {
 }
 
 func TestSeedanceRouteFramesBeatSecondsRule(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 
 	// 30 秒 + 首帧：时长规则本来会命中（改派到漫屋），但漫屋不支持首尾帧，
 	// 必须让首尾帧规则先接住 —— 否则这一单必然失败。
@@ -1008,7 +1009,7 @@ func TestSeedanceRouteFramesBeatSecondsRule(t *testing.T) {
 }
 
 func TestSeedanceRouteFramesKeepsUserRatio(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 
 	// 顶层 16:9 + 首帧：改派后比例必须仍是 16:9，绝不能被改成触发值 9:16。
 	body := `{"model":"seedance2.5-特惠","ratio":"16:9","media":[{"type":"last_frame","url":"https://x/b.png"}]}`
@@ -1028,7 +1029,7 @@ func TestSeedanceRouteFramesKeepsUserRatio(t *testing.T) {
 }
 
 func TestSeedanceRouteFramesInMetadataMedia(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 
 	// 首尾帧也可能写在 metadata.media 里（源链路同样认这个位置）。
 	body := `{"model":"seedance2.5-特惠","metadata":{"media":[{"type":"first_frame","url":"https://x/a.png"}]}}`
@@ -1040,7 +1041,7 @@ func TestSeedanceRouteFramesInMetadataMedia(t *testing.T) {
 }
 
 func TestSeedanceRouteFramesInMetadataInputMedia(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 
 	// 第三种位置：metadata.input.media（youzanwan3 的 metadataMedia 也读这里）。
 	body := `{"model":"seedance2.5-特惠","metadata":{"input":{"media":[{"type":"last_frame","url":"https://x/b.png"}]}}}`
@@ -1052,7 +1053,7 @@ func TestSeedanceRouteFramesInMetadataInputMedia(t *testing.T) {
 }
 
 func TestSeedanceRouteReferenceImageNotTreatedAsFrames(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 
 	// 纯参考图不是首尾帧：16:9 的参考图请求不该被规则三接走，
 	// 也不该被规则二接走（9:16 不匹配）→ 逐字节不变。
@@ -1067,7 +1068,7 @@ func TestSeedanceRouteReferenceImageNotTreatedAsFrames(t *testing.T) {
 }
 
 func TestSeedanceRouteFramesDetectedInMixedMedia(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 
 	// media 数组里允许混入裸字符串（等价 reference_image）。整体反序列化成结构体
 	// 切片会因为那条字符串失败 → 漏判首尾帧。必须逐条解析才认得出首帧。
@@ -1082,7 +1083,7 @@ func TestSeedanceRouteFramesDetectedInMixedMedia(t *testing.T) {
 func TestSeedanceRouteFramesRuleOffWhenTargetEmpty(t *testing.T) {
 	// 只配时长+比例规则（旧的生产配置）→ 首尾帧请求必须逐字节不变，
 	// 行为与改造前完全一致。这是「加字段不影响存量配置」的硬要求。
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","ratio":"16:9","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
 	seen, _ := runRoute(t, body)
@@ -1092,7 +1093,7 @@ func TestSeedanceRouteFramesRuleOffWhenTargetEmpty(t *testing.T) {
 }
 
 func TestSeedanceRouteFramesSkipWhenNoChannel(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testFramesTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 	stubChannelAvailable(t, false)
 
 	// 目标渠道不可用 → 不路由（放行原请求）。中间件永远不挡客户。
@@ -1139,5 +1140,90 @@ func TestSeedanceRouteFramesOnlyConfigEnablesMiddleware(t *testing.T) {
 	out := decodeBody(t, seen)
 	if out["model"] != testFramesTargetModel {
 		t.Fatalf("model = %v, want %s", out["model"], testFramesTargetModel)
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 规则一阈值：大于 TriggerSeconds（生产配 20）即改派，不再要求恰好 30 秒
+//
+// 2026-11-08 需求：豆包按次成本固定（¥2.00/次），源链路按秒计价（¥0.20/秒），
+// 21 秒以后源链路已经比豆包更贵，没必要非等到 30 秒整档才改派。
+//
+// 关键约束：豆包只有 5/10/15/30 四档，21–29 秒必须**向上吸附到 30 秒生成**，
+// 但计费仍按客户请求的秒数 —— 多生成的时间不能转嫁给客户。
+// ─────────────────────────────────────────────────────────────
+
+func TestDoubaoTierForSnapsUpToSupportedDuration(t *testing.T) {
+	cases := []struct {
+		requested int
+		want      int
+		ok        bool
+	}{
+		{requested: 5, want: 5, ok: true},
+		{requested: 7, want: 10, ok: true},
+		{requested: 15, want: 15, ok: true},
+		{requested: 21, want: 30, ok: true},
+		{requested: 25, want: 30, ok: true},
+		{requested: 30, want: 30, ok: true},
+		{requested: 31, ok: false},
+		{requested: 0, ok: false},
+	}
+	for _, tc := range cases {
+		got, ok := doubaoTierFor(tc.requested)
+		if ok != tc.ok {
+			t.Fatalf("doubaoTierFor(%d) ok = %v, want %v", tc.requested, ok, tc.ok)
+		}
+		if ok && got != tc.want {
+			t.Fatalf("doubaoTierFor(%d) = %d, want %d", tc.requested, got, tc.want)
+		}
+	}
+}
+
+func TestSeedanceRouteRoutesSecondsAboveThresholdWithSnappedTier(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	cases := []struct {
+		requested   int
+		wantTierSec string
+	}{
+		{requested: 21, wantTierSec: "30"},
+		{requested: 25, wantTierSec: "30"},
+		{requested: 29, wantTierSec: "30"},
+		{requested: 30, wantTierSec: "30"},
+	}
+
+	for _, tc := range cases {
+		body := `{"model":"seedance2.5-特惠","seconds":"` + strconv.Itoa(tc.requested) + `","prompt":"a cat"}`
+		rec := runRouteFull(t, body)
+
+		out := decodeBody(t, rec.body)
+		if out["model"] != testTargetModel {
+			t.Fatalf("%d 秒：model = %v, want %s（超过阈值必须改派豆包）",
+				tc.requested, out["model"], testTargetModel)
+		}
+		if out["seconds"] != tc.wantTierSec {
+			t.Fatalf("%d 秒：下发 seconds = %v, want %s（豆包只认 5/10/15/30，必须向上吸附）",
+				tc.requested, out["seconds"], tc.wantTierSec)
+		}
+		// 计费按客户**请求的秒数**，不是吸附后的档位。
+		if !rec.hasBillingSec {
+			t.Fatalf("%d 秒：没有记录 ContextKeyRouteBillingSeconds", tc.requested)
+		}
+		if rec.billingSeconds != float64(tc.requested) {
+			t.Fatalf("%d 秒：计费秒数 = %v, want %d（不能按吸附后的 30 秒多收钱）",
+				tc.requested, rec.billingSeconds, tc.requested)
+		}
+	}
+}
+
+func TestSeedanceRouteKeepsSourceAtOrBelowThreshold(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	for _, requested := range []int{5, 10, 15, 20} {
+		body := `{"model":"seedance2.5-特惠","seconds":"` + strconv.Itoa(requested) + `","prompt":"a cat"}`
+		seen, _ := runRoute(t, body)
+		if seen != body {
+			t.Fatalf("%d 秒：不应改派（阈值是严格大于 20），body 被改成了 %s", requested, seen)
+		}
 	}
 }

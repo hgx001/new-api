@@ -84,6 +84,26 @@ var doubaoDurationTiers = map[int]bool{
 	30: true,
 }
 
+// doubaoTierFor 把客户请求的时长向上吸附到豆包支持的档位。
+//
+// 规则一的阈值改成「大于 TriggerSeconds」（默认 20）之后，21–29 秒没有同名档位：
+// 豆包只能按 30 秒生成。这里向上吸附而不是放弃改派，是因为这档时长在源链路
+// 已经比豆包更贵，留在源链路是纯亏；计费仍按客户**请求的秒数**记
+// （ContextKeyRouteBillingSeconds），不会因为多生成几秒而多收钱。
+//
+// 返回 false 表示超过豆包最大档（30 秒），调用方应放弃改派。
+func doubaoTierFor(seconds int) (int, bool) {
+	if seconds <= 0 {
+		return 0, false
+	}
+	for _, tier := range []int{5, 10, 15, 30} {
+		if seconds <= tier {
+			return tier, true
+		}
+	}
+	return 0, false
+}
+
 // RouteOriginModel 返回改派前的原始模型名；没发生改派时返回空串。
 func RouteOriginModel(c *gin.Context) string {
 	return c.GetString(routeOriginModelKey)
@@ -253,29 +273,35 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 
 		// ── 规则一（时长）──
 		//
+		// 阈值是**严格大于** TriggerSeconds（生产配 20 秒），不再要求恰好等于 30 秒。
+		// 原因：豆包按次成本固定（¥2.00/次），源链路按秒计价（¥0.20/秒），
+		// 21 秒以后源链路成本已经超过豆包，非等到 30 秒整才改派纯属亏钱。
+		//
 		// 目标模型按**源模型**取：两个源模型的**兜底目标都是豆包**，但它们是
 		// 两条不同的商品：
 		//   - 母本 seedance2.5-特惠（按秒 ¥0.20/秒）：常驻渠道 17 有赞，
-		//     30 秒改派豆包（按次 ¥3.50 对外，成本 ¥2.00）；
+		//     超过阈值改派豆包（按次 ¥3.50 对外，成本 ¥2.00）；
 		//   - 活动版 seedance2.5-活动（按次 ¥4.50/次）：常驻渠道 25 心笔，
-		//     30 秒也改派豆包 —— 豆包账号每天刷新额度，用不完就亏本，
-		//     把 30 秒的量导过去既能赚毛利又能消耗额度。
+		//     超过阈值也改派豆包 —— 豆包账号每天刷新额度，用不完就亏本，
+		//     把长时长的量导过去既能赚毛利又能消耗额度。
 		//
 		// 两者的计费口径不同，所以仍按源模型分别取目标，不能共用一个字段。
 		secondsTarget := policy.TargetModelFor(sourceModel)
 		if seedanceroute_setting.IsSecondsRuleEnabledFor(sourceModel) {
-			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && seconds == policy.TriggerSeconds {
-				if newBody, routed := prepareSecondsRoute(c, body, policy, secondsTarget); routed {
+			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.ExceedsTriggerSeconds(seconds) {
+				if newBody, routed := prepareSecondsRoute(c, body, policy, secondsTarget, seconds); routed {
 					if applyRewrittenBody(c, newBody, sourceModel) {
 						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
 						// 把判定命中的秒数记下来，交给 relay_task.go 补进 OtherRatios。
+						// ⚠️ 记的是客户**请求时填的秒数**，不是豆包实际生成的档位：
+						// 23 秒会按 30 秒出片，但只收 23 秒的钱。
 						common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
 						// 这条日志是排查「请求到底被哪条规则改派」的唯一凭据：
 						// 规则一和规则四的目标模型是同一条豆包链路，改派后下游现象一致，
-						// 不打日志就分不清是「30 秒」还是「提示词超长」触发的。
+						// 不打日志就分不清是「时长超阈值」还是「提示词超长」触发的。
 						logger.LogInfo(c, fmt.Sprintf(
-							"条件路由：命中时长 %d 秒，改派 %s → %s",
-							seconds, sourceModel, secondsTarget))
+							"条件路由：命中时长 %d 秒（超过阈值 %d 秒），改派 %s → %s",
+							seconds, policy.TriggerSeconds, sourceModel, secondsTarget))
 						// 规则五的第二段：豆包链路本身也不可用（额度用完 / 渠道被关）
 						// 时继续降级到备胎（班车）。
 						//
@@ -467,20 +493,6 @@ func applyRewrittenBody(c *gin.Context, body map[string]interface{}, originModel
 	return true
 }
 
-// prepareDoubaoRoute 组装「改派到豆包链路」的请求体。
-//
-// 第二个返回值 false = 放弃路由（放行原请求）。
-//
-// ⚠️ 目标模型按**源模型**取（母本 → 豆包，活动版可能是心笔），
-// 不能直接用 policy.TargetModel —— 那会把活动版也改派到豆包。
-func prepareDoubaoRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, sourceModel string) (map[string]interface{}, bool) {
-	targetModel := policy.TargetModelFor(sourceModel)
-	if !doubaoTargetUsable(c, body, targetModel) {
-		return nil, false
-	}
-	return rewriteBodyForDoubao(body, policy, targetModel)
-}
-
 // prepareSecondsRoute 组装「规则一（时长）」的改派请求体。
 //
 // 目标模型按源模型取（可能与公共 TargetModel 不同）：
@@ -491,14 +503,23 @@ func prepareDoubaoRoute(c *gin.Context, body map[string]interface{}, policy seed
 // ⚠️ 2026-11-03：活动版的**常驻链路换成了心笔**（母本仍是有赞常驻 + 豆包兜底，
 // 活动版是心笔常驻 + 豆包兜底）。两条链路的入参契约不同，所以必须分开处理 ——
 // 用同一套改写逻辑会让其中一条必然失败（历史上踩过：豆包链路不认 metadata.media → 丢图）。
-func prepareSecondsRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string) (map[string]interface{}, bool) {
+func prepareSecondsRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, requestedSeconds int) (map[string]interface{}, bool) {
 	if isXinbiPerCallTarget(targetModel) {
+		// 心笔按次固定 30 秒，内部写死，不依赖客户请求的时长。
 		return prepareXinbiPerCallRoute(c, body, targetModel)
 	}
 	if !doubaoTargetUsable(c, body, targetModel) {
 		return nil, false
 	}
-	return rewriteBodyForDoubao(body, policy, targetModel)
+	// 豆包只有 5/10/15/30 四档：阈值 20 命中后，21–29 秒没有同名档位，
+	// 只能向上吸附到 30 秒出片。
+	routeSeconds, ok := doubaoTierFor(requestedSeconds)
+	if !ok {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由：跳过 %d 秒改派（超过豆包最大档 30 秒）", requestedSeconds))
+		return nil, false
+	}
+	return rewriteBodyForDoubaoWithDuration(body, policy, targetModel, routeSeconds)
 }
 
 // xinbiPerCallTargetModel 是心笔（xinbiapi）的按次对外模型名。
@@ -1253,7 +1274,7 @@ func hasUnsupportedMedia(body map[string]interface{}) bool {
 //  3. 分辨率：源链路支持 resolution（顶层或 metadata.resolution，取值 480P/720P/1080P），
 //     **目标链路（豆包官网）没有分辨率控件** ——
 //     - 顶层 resolution 透传下去 → 漫屋 rejectFields 显式 400
-//     （"does not support resolution"）→ **客户 30 秒任务直接失败**；
+//     （"does not support resolution"）→ **客户的长时长任务直接失败**；
 //     - 顶层 size 透传下去 → 漫屋把 size 当**比例**读
 //     （firstNonEmpty(Size, Ratio, AspectRatio)），"720P" 不在
 //     allowedDoubaoRatios 里 → 同样 400。
@@ -1261,18 +1282,6 @@ func hasUnsupportedMedia(body map[string]interface{}) bool {
 //     而 metadata.resolution 表达的是「用户明确要 720P/1080P」——
 //     目标链路做不到这个事，**不能假装做到了**：带分辨率的请求一律不路由，
 //     交回源链路按用户要的分辨率跑（宁可不路由，也不给一份分辨率不对的片）。
-func rewriteBodyForDoubao(body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string) (map[string]interface{}, bool) {
-	return rewriteBodyForDoubaoWithDuration(body, policy, targetModel, policy.TriggerSeconds)
-}
-
-// rewriteBodyForDoubaoWithDuration 是上面那个函数的实体，时长与目标模型由调用方决定。
-//
-// 为什么要拆：规则一的触发条件就是「30 秒」，写死 policy.TriggerSeconds 是对的；
-// 规则四的触发条件是提示词长度，时长必须沿用客户原本要的那一档。
-// 两条规则共用改写逻辑，但**不能共用时长来源**。
-//
-// targetModel 必须由调用方传入而不是从 policy 里取：目标模型是**按源模型**定的
-// （活动版 → 心笔、母本 → 豆包），在函数里用 policy.TargetModel 会取错。
 func rewriteBodyForDoubaoWithDuration(body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, seconds int) (map[string]interface{}, bool) {
 	out := make(map[string]interface{}, len(body)+2)
 	for key, value := range body {

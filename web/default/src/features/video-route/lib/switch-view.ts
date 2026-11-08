@@ -55,7 +55,7 @@ export function buildSwitchView(policy: VideoRoutePolicy): SwitchView {
       on: true,
       tone: 'on',
       statusKey: 'Routing is on',
-      detailKey: 'Requests of {{seconds}}s are routed to {{target}}',
+      detailKey: 'Requests longer than {{seconds}}s are routed to {{target}}',
       detailParams: baseParams,
       showLongOff: false,
     }

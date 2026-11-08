@@ -23,7 +23,7 @@ const prodRoutePolicyJSON = `{
   "target_model": "seedance-2-5",
   "source_models": ["seedance2.5-特惠", "seedance2.5-活动"],
   "trigger_ratio": "9:16",
-  "trigger_seconds": 30,
+  "trigger_seconds": 20,
   "ratio_target_model": "wan3.0-720p-特惠",
   "frames_target_model": "wan3.0-720p-特惠"
 }`

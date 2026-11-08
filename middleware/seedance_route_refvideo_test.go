@@ -209,7 +209,7 @@ func TestCollectReferenceVideos_IgnoresReferenceImages(t *testing.T) {
 // ---- 集成：中间件真的不路由 ----
 
 func TestSeedanceRouteSkipsWan3WhenReferenceVideoTooLong(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	body := fmt.Sprintf(
 		`{"model":%q,"seconds":"5","metadata":{"ratio":"9:16"},"media":[{"type":"reference_video","url":%q}]}`,
@@ -223,7 +223,7 @@ func TestSeedanceRouteSkipsWan3WhenReferenceVideoTooLong(t *testing.T) {
 }
 
 func TestSeedanceRouteRoutesWan3WithShortReferenceVideo(t *testing.T) {
-	enableBothRules(t, testTargetModel, 30, testRatioTargetModel, "9:16")
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	body := fmt.Sprintf(
 		`{"model":%q,"seconds":"5","metadata":{"ratio":"9:16"},"media":[{"type":"reference_video","url":%q}]}`,

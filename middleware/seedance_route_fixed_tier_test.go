@@ -23,7 +23,7 @@ func enableFixedTierRoute(t *testing.T, sources []string) {
 		"enabled":             true,
 		"source_models":       sources,
 		"target_model":        testTargetModel,
-		"trigger_seconds":     30,
+		"trigger_seconds":     20,
 		"ratio_target_model":  testRatioTargetModel,
 		"trigger_ratio":       "9:16",
 		"frames_target_model": testFramesTargetModel,

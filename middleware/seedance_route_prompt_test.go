@@ -43,7 +43,7 @@ func buildPromptBody(t *testing.T, prompt string, extra map[string]interface{}) 
 // TestPromptRouteTriggersWhenPromptExceedsLimit 是规则四的主用例：
 // 5001 个字符必须改派到豆包，且来源模型被记下来（计费/日志都靠它）。
 func TestPromptRouteTriggersWhenPromptExceedsLimit(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 10,
@@ -63,7 +63,7 @@ func TestPromptRouteTriggersWhenPromptExceedsLimit(t *testing.T) {
 // 边界写错的后果是双向的：写成 >= 会让一条合法请求白白改派，
 // 写成 > 5001 会让真正的超长请求漏过去。
 func TestPromptRouteNotTriggerAtExactLimit(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit), map[string]interface{}{
 		"seconds": 10,
@@ -79,7 +79,7 @@ func TestPromptRouteNotTriggerAtExactLimit(t *testing.T) {
 }
 
 func TestPromptRouteNotTriggerForShortPrompt(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, "a cat walking in the rain", map[string]interface{}{
 		"seconds": 10,
@@ -97,7 +97,7 @@ func TestPromptRouteNotTriggerForShortPrompt(t *testing.T) {
 // 「刚好在限制内」的中文提示词被误判成超长。反过来，如果上游真按字节卡，
 // 这个用例会保护我们不去猜，而是保持当前口径（字符）。
 func TestPromptRouteCountsChineseCharactersAsOneRune(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	// 正好 5000 个汉字：字节数 15000，但字符数 5000 → 不该改派。
 	atLimit := buildPromptBody(t, strings.Repeat("汉", promptRouteLimit), map[string]interface{}{
@@ -122,7 +122,7 @@ func TestPromptRouteCountsChineseCharactersAsOneRune(t *testing.T) {
 // 复用规则一的改写逻辑会把 seconds 强行写成 30 —— 客户要 10 秒，
 // 最后拿到 30 秒的片并按 30 秒付钱，属于错交付。
 func TestPromptRouteKeepsRequestedDuration(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 10,
@@ -138,7 +138,7 @@ func TestPromptRouteKeepsRequestedDuration(t *testing.T) {
 // 豆包只认 5/10/15/30 四档。12 秒的请求路由过去会被上游 400，
 // 所以这种请求不路由 —— 留在源链路，至少还有可能成功。
 func TestPromptRouteSkipsUnsupportedDuration(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 12,
@@ -152,7 +152,7 @@ func TestPromptRouteSkipsUnsupportedDuration(t *testing.T) {
 
 // 没传时长时按源链路默认 5 秒算，5 秒是豆包支持的档位 → 可以改派。
 func TestPromptRouteDefaultsToFiveSecondsWhenDurationMissing(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), nil)
 	seen, _ := runRoute(t, body)
@@ -169,7 +169,7 @@ func TestPromptRouteDefaultsToFiveSecondsWhenDurationMissing(t *testing.T) {
 // 目标链路额度用完时，规则一会被自动暂停。规则四打的是同一条链路、
 // 同一份额度，必须一起停 —— 否则暂停期间超长提示词照样打过去、照样失败。
 func TestPromptRouteRespectsPausedWindow(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 	pauseSecondsRule(t, time.Now().Unix()+3600)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
@@ -185,7 +185,7 @@ func TestPromptRouteRespectsPausedWindow(t *testing.T) {
 // 客户明确要了分辨率 → 不路由（豆包链路没有分辨率控件）。
 // 这条与规则一共用同一套前置检查，不能因为触发条件不同就放松。
 func TestPromptRouteSkipsExplicitResolution(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds":    10,
@@ -200,7 +200,7 @@ func TestPromptRouteSkipsExplicitResolution(t *testing.T) {
 
 // 带参考视频/音频 → 不路由（目标链路只吃参考图）。
 func TestPromptRouteSkipsReferenceVideo(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 10,
@@ -218,7 +218,7 @@ func TestPromptRouteSkipsReferenceVideo(t *testing.T) {
 // 首尾帧优先于长提示词：首尾帧只有 wan3 能跑，豆包根本不支持。
 // 两条规则同时命中时必须走 wan3，否则带首尾帧的请求会直接失败。
 func TestPromptRouteKeepsFramesRulePriority(t *testing.T) {
-	enableAllRules(t, testTargetModel, 30, testRatioTargetModel, "9:16", testRatioTargetModel)
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testRatioTargetModel)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 10,
@@ -236,7 +236,7 @@ func TestPromptRouteKeepsFramesRulePriority(t *testing.T) {
 // 改派后计费仍按源模型（按秒 ¥0.20/秒）算，而目标 adaptor 是按次的、
 // 不返回 seconds。不补这个秒数，10 秒的请求只按 1 秒收钱 —— 少收 9 秒。
 func TestPromptRouteRecordsBillingSeconds(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 10,
@@ -254,7 +254,7 @@ func TestPromptRouteRecordsBillingSeconds(t *testing.T) {
 // 规则四与规则一互相独立：15 秒不是 30 秒，规则一不命中，
 // 但提示词超长，规则四必须接手。
 func TestPromptRouteIndependentOfSecondsTrigger(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 15,
@@ -268,7 +268,7 @@ func TestPromptRouteIndependentOfSecondsTrigger(t *testing.T) {
 
 // 非源模型的请求一个字节都不能动 —— 规则四只认 SourceModel。
 func TestPromptRouteIgnoresOtherModels(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 30)
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := fmt.Sprintf(`{"model":"seedance-2.5","seconds":10,"prompt":%q}`,
 		strings.Repeat("a", promptRouteLimit+1))

@@ -403,7 +403,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   59: 'Youkou API Key (Bearer token from https://youkou.cc)',
   61: 'AutoDL ComfyUI Token (Bearer token from https://autodl.art/large-model/tokens, 分组选 ComfyUI)',
   62: 'DashScope API Key (sk-... from https://bailian.console.aliyun.com)',
-  63: 'Youzan Wan3 API Key (Bearer token from https://youzan666.vip)',
+  63: 'Youzan Wan3 API Key (Bearer token from https://ai.youzan666.vip)',
   64: 'MegaAI API Key (Bearer token from https://newapi.megabyai.cc)',
   66: '漫屋服务令牌（ArcReel 服务间调用令牌，非 Worker Token）',
   67: '三元巡狩 API Key（Bearer token，上游 http://47.93.118.167:5000）',

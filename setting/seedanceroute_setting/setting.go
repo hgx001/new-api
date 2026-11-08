@@ -92,7 +92,11 @@ type Policy struct {
 	SourceModels []string `json:"source_models,omitempty"`
 	// TargetModel 目标模型名（对外名），规则一用。
 	TargetModel string `json:"target_model"`
-	// TriggerSeconds 触发时长（秒）。**只有等于该值才路由**，规则一用。
+	// TriggerSeconds 触发阈值（秒）。**请求时长大于该值即路由**，规则一用。
+	//
+	// 2026-11-08 起语义由「等于」改为「大于」：豆包按次成本固定（¥3.50/次），
+	// 源链路按秒计价（¥0.20/秒），超过 20 秒以后源链路已经比豆包更贵，
+	// 没必要非等到 30 秒整才改派。非 30 的档位在中间件里向上吸附到豆包档位。
 	TriggerSeconds int `json:"trigger_seconds"`
 
 	// RatioTargetModel 规则二的目标模型名。空 = 规则二不启用。
@@ -866,6 +870,15 @@ func (p Policy) IsSourceModel(model string) bool {
 		}
 	}
 	return false
+}
+
+// ExceedsTriggerSeconds 判断请求时长是否超过规则一的改派阈值。
+//
+// 语义是**严格大于**：阈值配 20 时，21–30 秒改派、20 秒及以下留在源链路。
+// 与「等于」相比的好处：豆包按次成本固定，源链路按秒计价，时长越长源链路越贵，
+// 没必要为了对齐 30 秒整档而让 21–29 秒的请求继续跑在更贵的源链路上。
+func (p Policy) ExceedsTriggerSeconds(seconds int) bool {
+	return p.TriggerSeconds > 0 && seconds > p.TriggerSeconds
 }
 
 // TargetModelFor 返回「规则一（时长）对某个源模型生效的目标模型名」。

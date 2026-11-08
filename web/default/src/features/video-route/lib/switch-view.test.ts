@@ -50,7 +50,7 @@ describe('buildSwitchView', () => {
     assert.equal(view.statusKey, 'Routing is on')
     assert.equal(
       view.detailKey,
-      'Requests of {{seconds}}s are routed to {{target}}'
+      'Requests longer than {{seconds}}s are routed to {{target}}'
     )
     assert.equal(view.detailParams.seconds, 30)
     assert.equal(view.detailParams.target, 'seedance-2-5')
