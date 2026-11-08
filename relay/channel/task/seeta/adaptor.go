@@ -724,6 +724,38 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	return client.Do(req)
 }
 
+// pickResultURL 从上游 results 里挑一条**真成片**地址。
+//
+// 不能盲取 results[0]：2026-11-08 实单（task_wTDlyemUeD2WMlDGQSNWKBQBdq3MyhNt，
+// minimax_h3_omni + 参考视频）上游返回两条 ——
+//
+//	[0] {"url":".../files/arcreel_<hash>.mp4","subfolder":""}        → 下载 404
+//	[1] {"url":".../files/video/arcreel_h3_omni_00193_.mp4","subfolder":"video"} → 200
+//
+// 旧实现取 [0]，任务因此 SUCCESS 而产物代理 502「Upstream service returned
+// status 404」，客户反复重试也拿不到片（本站已扣费）。上游把成片落在 video/
+// 子目录，空 subfolder 的是未落盘/中间文件，所以：
+//
+//  1. 有 subfolder 的优先（同一优先级取最后一条——results 越靠后越接近最终产物）；
+//  2. 全都没有 subfolder 时回退最后一条非空 url，兼容只有一条结果的常规工作流。
+func pickResultURL(results []resultItem) string {
+	var withSubfolder, lastNonEmpty string
+	for _, item := range results {
+		url := strings.TrimSpace(item.URL)
+		if url == "" {
+			continue
+		}
+		lastNonEmpty = url
+		if strings.TrimSpace(item.Subfolder) != "" {
+			withSubfolder = url
+		}
+	}
+	if withSubfolder != "" {
+		return withSubfolder
+	}
+	return lastNonEmpty
+}
+
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var res pollResponse
 	if err := common.Unmarshal(respBody, &res); err != nil {
@@ -763,9 +795,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		if len(res.Data.Results) > 0 {
 			taskResult.Status = model.TaskStatusSuccess
 			taskResult.Progress = taskcommon.ProgressComplete
-			// 把第一个结果的 url 存进 ti.Url，框架会自动写入 task.PrivateData.ResultURL，
+			// 把挑中的 url 存进 ti.Url，框架会自动写入 task.PrivateData.ResultURL，
 			// 由 controller/video_proxy.go 的 default 分支转发给客户端。
-			taskResult.Url = res.Data.Results[0].URL
+			taskResult.Url = pickResultURL(res.Data.Results)
 		} else {
 			// 已成功但成片尚未转存，继续轮询
 			taskResult.Status = model.TaskStatusInProgress

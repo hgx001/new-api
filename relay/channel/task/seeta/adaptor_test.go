@@ -485,6 +485,60 @@ func TestParseTaskResultSuccessReturnsURL(t *testing.T) {
 	require.Equal(t, "https://files/a.mp4", result.Url)
 }
 
+// TestParseTaskResultSkipsResultWithoutSubfolder 多结果时必须挑真成片，不能盲取 [0]。
+//
+// 2026-11-08 实单（task_wTDlyemUeD2WMlDGQSNWKBQBdq3MyhNt，omni + 参考视频）：
+// 上游返回两条 result —— 第 0 条 subfolder 为空（files/arcreel_<hash>.mp4 → 404），
+// 第 1 条才是落在 video/ 子目录的成片。旧实现取 [0]，于是任务 SUCCESS、产物代理
+// 却 502「Upstream service returned status 404」，客户永远拿不到片。
+func TestParseTaskResultSkipsResultWithoutSubfolder(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
+
+	result, err := adaptor.ParseTaskResult([]byte(`{"data":{"task_id":"t","status":"SUCCESS","results":[
+		{"url":"https://files/arcreel_deadbeef.mp4","filename":"arcreel_deadbeef.mp4","subfolder":""},
+		{"url":"https://files/video/arcreel_h3_omni_00193_.mp4","filename":"arcreel_h3_omni_00193_.mp4","subfolder":"video"}
+	]}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, result.Status)
+	require.Equal(t, "https://files/video/arcreel_h3_omni_00193_.mp4", result.Url)
+}
+
+// TestParseTaskResultPrefersLastSubfolderResult 同优先级里取最后一条：results 越靠后
+// 越接近最终产物（多段输出时前面的可能是中间帧）。
+func TestParseTaskResultPrefersLastSubfolderResult(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
+
+	result, err := adaptor.ParseTaskResult([]byte(`{"data":{"task_id":"t","status":"SUCCESS","results":[
+		{"url":"https://files/video/a.mp4","subfolder":"video"},
+		{"url":"https://files/video/b.mp4","subfolder":"video"}
+	]}}`))
+	require.NoError(t, err)
+	require.Equal(t, "https://files/video/b.mp4", result.Url)
+}
+
+// TestParseTaskResultFallsBackToSubfolderlessResult 单一结果且没有 subfolder 时仍要取到
+// （不能因为「没有 subfolder 就当作空」把正常产物丢掉）。
+func TestParseTaskResultFallsBackToSubfolderlessResult(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+
+	result, err := adaptor.ParseTaskResult([]byte(
+		`{"data":{"task_id":"t","status":"SUCCESS","results":[{"url":"https://files/only.mp4"}]}}`))
+	require.NoError(t, err)
+	require.Equal(t, "https://files/only.mp4", result.Url)
+}
+
+// TestParseTaskResultIgnoresEmptyURLItems 空 url 的条目不能顶替真成片。
+func TestParseTaskResultIgnoresEmptyURLItems(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3_omni")
+
+	result, err := adaptor.ParseTaskResult([]byte(`{"data":{"task_id":"t","status":"SUCCESS","results":[
+		{"url":"","filename":"empty.mp4","subfolder":"video"},
+		{"url":"https://files/video/real.mp4","subfolder":"video"}
+	]}}`))
+	require.NoError(t, err)
+	require.Equal(t, "https://files/video/real.mp4", result.Url)
+}
+
 // TestParseTaskResultUnknownStatusKeepsPolling 未知状态保守继续轮询。
 func TestParseTaskResultUnknownStatusKeepsPolling(t *testing.T) {
 	adaptor := seetaAdaptor(t, "minimax_h3-文生")
