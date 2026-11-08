@@ -742,7 +742,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	switch strings.ToUpper(res.Data.Status) {
-	case "FAILED", "FAIL", "FAILURE", "CANCELLED", "CANCELED", "ERROR":
+	// EXPIRED = 上游任务已消失（引擎重启 / 任务被中断）。它原来落在下面的
+	// default 分支被当成「进行中」，客户端会一直轮询一条早就不存在的任务
+	// （2026-11-08 实测：被中断的那条 site 侧卡在 IN_PROGRESS 不退）。
+	// 新版网关已改成对外报 FAILED，这里兜住旧版网关与其它上游实现。
+	case "FAILED", "FAIL", "FAILURE", "CANCELLED", "CANCELED", "ERROR", "EXPIRED":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Reason = res.Data.Message
 		if taskResult.Reason == "" {
@@ -908,7 +912,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	}
 
 	switch strings.ToUpper(res.Data.Status) {
-	case "FAILED", "FAIL", "FAILURE", "CANCELLED", "CANCELED", "ERROR":
+	case "FAILED", "FAIL", "FAILURE", "CANCELLED", "CANCELED", "ERROR", "EXPIRED":
 		openAIResp.Status = dto.VideoStatusFailed
 		openAIResp.Error = &dto.OpenAIVideoError{
 			Code:    res.Data.Status,

@@ -459,6 +459,21 @@ func TestParseTaskResultSuccessWithoutResultKeepsPolling(t *testing.T) {
 	require.Equal(t, model.TaskStatusInProgress, result.Status)
 }
 
+// TestParseTaskResultExpiredIsFailure 上游报 EXPIRED（任务在 ComfyUI 侧消失：引擎
+// 重启、任务被中断）必须是终态失败。
+//
+// 原实现里 EXPIRED 不在任何 case 里，落到 default 被当成「进行中」，客户端会一直
+// 轮询一条早就不存在的任务（2026-11-08 实测：被中断的 ch28 任务卡在 IN_PROGRESS）。
+func TestParseTaskResultExpiredIsFailure(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+
+	result, err := adaptor.ParseTaskResult([]byte(
+		`{"data":{"task_id":"t","status":"EXPIRED","message":"任务已从 ComfyUI 队列消失","results":[]}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, result.Status)
+	require.Equal(t, "任务已从 ComfyUI 队列消失", result.Reason)
+}
+
 // TestParseTaskResultSuccessReturnsURL 成片 URL 要落到 TaskInfo.Url。
 func TestParseTaskResultSuccessReturnsURL(t *testing.T) {
 	adaptor := seetaAdaptor(t, "minimax_h3-文生")
