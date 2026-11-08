@@ -1339,11 +1339,12 @@ func getNormalizedRequest(c *gin.Context) (*normalizedRequest, error) {
 func rejectFields(req clientRequest, kind, modelName string) error {
 	switch kind {
 	case kindDoubaoVideo:
-		// 豆包链路支持 480P/1080P（官网只有这两档，2026-11-09 确认）。
-		// 720P 做不到 —— 显式拒绝，不做静默降级（用户会为一个没生效的档位付费）。
+		// 豆包链路支持 480P/720P/1080P（2026-11-09 确认）。
+		// 其它档位（2K/4K/乱写的值）显式拒绝，不做静默降级 ——
+		// 用户会为一个没生效的档位付费。
 		resolution := strings.TrimSpace(req.Resolution)
 		if resolution != "" && normalizeDoubaoResolution(resolution) == "" {
-			return fmt.Errorf("%s supports only 480P/1080P resolution, got %q", modelName, resolution)
+			return fmt.Errorf("%s supports only 480P/720P/1080P resolution, got %q", modelName, resolution)
 		}
 	case kindDola25Video:
 		resolution := strings.TrimSpace(req.Resolution)
@@ -1520,16 +1521,18 @@ func normalizePicsartRatio(raw string) string {
 	return normalized
 }
 
-// normalizeDoubaoResolution 把分辨率归一成豆包链路的档位字面量（480p/1080p）。
+// normalizeDoubaoResolution 把分辨率归一成豆包链路的档位字面量（480p/720p/1080p）。
 //
 // 返回空串 = 未指定（不下发键，保持官网当前档位）或不在支持集合（调用方 400）。
-// 只支持 480P/1080P：豆包官网只有这两档（2026-11-09 确认），没有 720P。
+// 支持 480P/720P/1080P 三档（2026-11-09 确认）。
 func normalizeDoubaoResolution(raw string) string {
 	switch strings.ToUpper(strings.TrimSpace(raw)) {
 	case "", "AUTO":
 		return ""
 	case "480", "480P":
 		return "480p"
+	case "720", "720P":
+		return "720p"
 	case "1080", "1080P":
 		return "1080p"
 	}

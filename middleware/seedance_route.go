@@ -701,15 +701,10 @@ func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel
 		return false
 	}
 
-	// 分辨率：目标链路**只支持 480P / 1080P**（豆包官网档位，老板 2026-11-09 确认）。
-	// 这两档照常改派并把档位透传下去（见 rewriteBodyForDoubaoWithDuration）。
-	//
-	// 720P 不在目标链路的档位里 —— 路由过去只能给一份分辨率不对的片。
-	// 宁可走源链路按用户要的分辨率跑，也不降级/偷换交付。
-	// （未指定分辨率时不挡：让豆包按自己的默认档出片。）
-	if tier := doubaoResolutionTier(body); tier != "" && !doubaoSupportsResolution(tier) {
-		return false
-	}
+	// 分辨率：目标链路支持 480P/720P/1080P 三档全量（2026-11-09 确认），
+	// 只要客户给的是这三档之一就照常改派，档位在 rewriteBodyForDoubaoWithDuration
+	// 里抬到顶层透传。解析不出档位的值（如纯比例 "16:9"）本来就不是分辨率，
+	// 交给下游按未指定处理 —— 这里不做分辨率挡板。
 
 	// 目标模型没有可用渠道 → 不路由。
 	//
@@ -1275,8 +1270,7 @@ func hasUnsupportedMedia(body map[string]interface{}) bool {
 //     转换后**必须断言图数一致**，不一致就放弃路由。
 //  2. 比例：源链路的自适应档叫 adaptive，目标链路叫 auto。
 //  3. 分辨率：源链路支持 resolution（顶层或 metadata.resolution，取值 480P/720P/1080P），
-//     目标链路（豆包官网）**只支持 480P/1080P**（2026-11-09 确认；720P 已在
-//     doubaoTargetUsable 挡掉）——
+//     目标链路（豆包官网）**三档全支持**（2026-11-09 确认）——
 //     - 顶层 resolution 可以直接透传；
 //     - 顶层 size 不能透传：漫屋把 size 当**比例**读
 //     （firstNonEmpty(Size, Ratio, AspectRatio)），"1080P" 不在
@@ -1536,26 +1530,6 @@ func explicitResolutionTier(value interface{}) string {
 	default:
 		return "1080P"
 	}
-}
-
-// doubaoSupportedResolutionTiers 是豆包链路支持的分辨率档位。
-//
-// 2026-11-09 老板确认：豆包官网只有 **480P / 1080P** 两档（没有 720P）。
-// 请求带 720P 时留在源链路，改派过去就是偷换档位。
-//
-// ⚠️ 改这里必须同步改 manwu 的 normalizeDoubaoResolution，
-// 否则会出现「中间件认为合法、上游 400」。
-var doubaoSupportedResolutionTiers = map[string]bool{
-	"480P":  true,
-	"1080P": true,
-}
-
-// doubaoSupportsResolution 判断档位是否在豆包链路的能力范围内。
-//
-// 入参是 explicitResolutionTier 的归一结果（480P/720P/1080P）；
-// 空串表示「没指定」，由调用方自行决定放行。
-func doubaoSupportsResolution(tier string) bool {
-	return doubaoSupportedResolutionTiers[tier]
 }
 
 // doubaoResolutionTier 从请求体里找出用户要的分辨率档位，返回 480P / 720P / 1080P。

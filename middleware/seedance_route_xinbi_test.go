@@ -207,22 +207,11 @@ func TestDoubaoRouteRejectsUnsupportedMedia(t *testing.T) {
 	}
 }
 
-// 要了豆包不支持的档位（720P）的请求不能改派到豆包（豆包只有 480P/1080P）。
-func TestDoubaoRouteRejectsExplicitResolution(t *testing.T) {
-	enableDoubaoFallbackRoute(t)
-
-	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat","resolution":"720P"}`)
-
-	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("要 720P 的请求被改派了（model=%v），应该留在源链路", got)
-	}
-}
-
-// 480P / 1080P 是豆包的合法档位：活动版长时长请求照常改派。
+// 480P / 720P / 1080P 都是豆包的合法档位：活动版长时长请求照常改派。
 func TestDoubaoRouteAcceptsSupportedResolution(t *testing.T) {
 	enableDoubaoFallbackRoute(t)
 
-	for _, resolution := range []string{"480P", "1080P"} {
+	for _, resolution := range []string{"480P", "720P", "1080P"} {
 		t.Run(resolution, func(t *testing.T) {
 			seen, _ := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"a cat","resolution":"`+resolution+`"}`)
 

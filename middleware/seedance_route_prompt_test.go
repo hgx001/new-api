@@ -182,9 +182,8 @@ func TestPromptRouteRespectsPausedWindow(t *testing.T) {
 	}
 }
 
-// 客户要了豆包不支持的档位（720P）→ 不路由。
-// 这条与规则一共用同一套前置检查，不能因为触发条件不同就放松。
-func TestPromptRouteSkipsExplicitResolution(t *testing.T) {
+// 规则四（提示词超长）命中时，分辨率必须跟着透传（豆包三档全支持）。
+func TestPromptRouteForwardsExplicitResolution(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
@@ -193,8 +192,12 @@ func TestPromptRouteSkipsExplicitResolution(t *testing.T) {
 	})
 	seen, _ := runRoute(t, body)
 
-	if seen != body {
-		t.Fatalf("带显式分辨率不该改派:\n got %s\nwant %s", seen, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testTargetModel {
+		t.Fatalf("超长提示词未改派（model=%v）", out["model"])
+	}
+	if out["resolution"] != "720p" {
+		t.Fatalf("resolution = %v, want 720p", out["resolution"])
 	}
 }
 
