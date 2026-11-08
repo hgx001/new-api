@@ -87,7 +87,6 @@ describe('tutorials model guide content', () => {
       'wan3.0-video-prime',
       'wan3.0-video-官网',
       'wan3.0-720p-特惠',
-      'minimax_h3_v2',
       'minimax_h3_omni',
       'seedance-2.0',
       'seedance-2-0-fast',
@@ -95,7 +94,6 @@ describe('tutorials model guide content', () => {
       'MiniMax-M3.1',
       '¥0.15 / 张',
       '¥0.23/秒',
-      '¥0.03/s',
       '¥0.06/s',
       '¥1.00 / 次',
       '¥3.50 / 次',
@@ -116,8 +114,6 @@ describe('tutorials model guide content', () => {
   //     且**文案里不许出现 prime / wan3**（见「对外文案不暴露真实货源」用例）
   //   - wan3/constants.go resolutionSizeRatio{480P:1.0,720P:2.0,1080P:4.0}
   //     基准 ¥0.27/秒 → 0.27 / 0.54 / 1.08
-  //   - seeta/constants.go v2ResolutionRatios{480p:1.0,768p:1.667}
-  //     基准 ¥0.03/秒 → 0.03 / 0.05（v2 没有 1080p 档，传了直接 400）
   //   - seeta/constants.go omniResolutionRatios{480p:1.0,768p:2.0,1080p:3.0}
   //     基准 ¥0.02/秒 → 0.02 / 0.04 / 0.06（2026-11-08 调价：480P/768P 下调、
   //     1080P 保持 ¥0.06 不变，所以倍率从 1.667/2.0 抬到 2.0/3.0）
@@ -133,8 +129,6 @@ describe('tutorials model guide content', () => {
       '¥0.20 / ¥0.45 / ¥0.80（480P / 720P / 1080P）', // wan3.0-video-官网 详情
       '720P ¥0.20/s', // wan3.0-720p-特惠 索引（单一价位）
       '按秒 ¥0.20，单一价位，不乘分辨率倍率', // wan3.0-720p-特惠 详情
-      '480P ¥0.03/s、768P ¥0.05/s', // minimax_h3_v2 索引
-      '按秒 480p ¥0.03、768p ¥0.05', // minimax_h3_v2 详情
       '480P ¥0.02/s、768P ¥0.04/s、1080P ¥0.06/s', // minimax_h3_omni 索引
       '按秒 480p ¥0.02、768p ¥0.04、1080p ¥0.06', // minimax_h3_omni 详情
     ]
@@ -177,16 +171,7 @@ describe('tutorials model guide content', () => {
       )
     }
 
-    // minimax_h3_v2 的 Resolutions 只有 480p/768p 六档，传 1080p 会被
-    // invalid_resolution 拦下；1080p 档只属于 minimax_h3_omni。
-    // 给 v2 写 1080p 价格等于把客户送进必失败的档位。
-    const v2Section = getModelSectionText('model-minimax-h3-v2')
     const omniSection = getModelSectionText('model-minimax-h3-omni')
-    assert.equal(
-      v2Section.includes('¥0.06'),
-      false,
-      'minimax_h3_v2 does not accept 1080p; do not document its price there'
-    )
     assert.equal(
       omniSection.includes('1080p ¥0.06'),
       true,
@@ -390,8 +375,7 @@ describe('tutorials model guide content', () => {
       // '固定 30' 原本来自 wan-3.0-特惠 / seedance2.5-特惠 的参数表，
       // '必填，1–9 张' 原本来自已下架的 autodl:minimax-h3-u24。
       // 这几个模型先后下架后随章节一并移除（见下方 de-listed 守卫）。
-      // 现售 H3 两模型的硬上限：v2 关键帧 ≤2、omni 设定参考 ≤9 张。
-      '最多 2 张。不传=纯文生视频',
+      // 现售 H3 模型的硬上限：omni 设定参考 ≤9 张（v2 已于 2026-11-08 下架）。
       '设定参考最多 9 张',
       '首尾帧不能与普通参考图/视频/音频混用',
     ]) {
@@ -485,7 +469,6 @@ describe('tutorials model guide content', () => {
       'MiniMax-M3',
       'MiniMax-M3.1',
       'Nano Banana Pro',
-      'minimax_h3_v2',
       'minimax_h3_omni',
       'gpt-6-luna',
       'gpt-6-sol',
@@ -788,7 +771,6 @@ describe('tutorials model guide content', () => {
       'seedance2.5-特惠',
       'wan3.0-video-官网',
       'wan3.0-720p-特惠',
-      'minimax_h3_v2',
       'minimax_h3_omni',
       'seedance-2.0',
       'seedance-2-0-fast',
@@ -919,24 +901,12 @@ describe('tutorials model guide content', () => {
     )
   })
 
-  // 2026-11-07：SeetaCloud 改版，上架 minimax_h3_v2（文生/图生/首尾帧三合一）
-  // 与 minimax_h3_omni（多模态设定参考 + 1080p），同时下架 autodl:minimax-h3-u24。
-  // 教程必须给两个新模型各一个可照抄的小节，且不能再教客户调用已下架的 u24。
-  test('documents the two H3 models and drops the de-listed u24', () => {
-    const v2 = getModelSectionText('model-minimax-h3-v2')
+  // 2026-11-08：FastH3 V2 退役下架（commit 708c18a51），对外只留 minimax_h3_omni。
+  // 教程必须给 omni 一个可照抄的小节，且不能再教客户调用已下架的 v2 / u24 ——
+  // 客户照文档提交只会拿到 503「无可用渠道」。
+  test('documents omni as the only H3 model and drops the de-listed v2 / u24', () => {
     const omni = getModelSectionText('model-minimax-h3-omni')
 
-    for (const expected of [
-      '不传=纯文生视频，1 张=首帧图生，2 张=首尾帧驱动',
-      '第 3 张直接 400',
-      '1080p 仅 minimax_h3_omni 支持',
-      '480p ¥0.03、768p ¥0.05',
-      // getModelSectionText 返回 JSON.stringify 后的串，内部引号已被转义
-      '\\"model\\": \\"minimax_h3_v2\\"',
-      '/v1/videos/{id}/content',
-    ]) {
-      assert.equal(v2.includes(expected), true, `v2 docs missing: ${expected}`)
-    }
     for (const expected of [
       '设定参考最多 9 张',
       '参考视频最多 3 个',
@@ -944,7 +914,9 @@ describe('tutorials model guide content', () => {
       'metadata.first_frame / metadata.last_frame',
       '1080p ¥0.06',
       '<Picture 1>',
+      // getModelSectionText 返回 JSON.stringify 后的串，内部引号已被转义
       '\\"model\\": \\"minimax_h3_omni\\"',
+      '/v1/videos/{id}/content',
     ]) {
       assert.equal(
         omni.includes(expected),
@@ -953,27 +925,38 @@ describe('tutorials model guide content', () => {
       )
     }
 
-    // 两个新模型都要能在左侧目录里点进去
+    // 只有 omni 能在左侧目录里点进去；v2 不能有独立小节或锚点。
     const index = getDocIndex()
-    for (const href of ['#model-minimax-h3-v2', '#model-minimax-h3-omni']) {
-      assert.equal(
-        index.some((entry) => entry.href === href),
-        true,
-        `missing doc index entry ${href}`
-      )
-    }
+    assert.equal(
+      index.some((entry) => entry.href === '#model-minimax-h3-omni'),
+      true,
+      'missing doc index entry for omni'
+    )
+    assert.equal(
+      index.some((entry) => entry.href === '#model-minimax-h3-v2'),
+      false,
+      'de-listed v2 must not have its own doc section'
+    )
+    assert.equal(
+      collectAnchorIds().has('model-minimax-h3-v2'),
+      false,
+      'de-listed v2 still has a doc anchor'
+    )
 
-    // 已下架的 u24（价格 ¥0.10/¥0.12 每秒、必填 1–9 图）不能继续留在教程里
+    // 已下架的模型与价格不能再出现在教程里（v2 只允许在「兼容与隐藏模型」
+    // 清单里作为退役说明出现，不能有价格行 / 速查表条目）。
     for (const gone of [
       'autodl:minimax-h3-u24',
       'model-autodl-h3-u24',
       '¥0.10/s',
       '¥0.12/s',
+      '480P ¥0.03/s、768P ¥0.05/s',
+      '¥0.03 / ¥0.05 每秒',
     ]) {
       assert.equal(
         sectionsJson.includes(gone),
         false,
-        `de-listed u24 still documented: ${gone}`
+        `de-listed model still documented: ${gone}`
       )
     }
   })
