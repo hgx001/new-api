@@ -12,6 +12,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // 条件路由中间件的测试。
@@ -336,18 +338,19 @@ func TestSeedanceRouteSkipsUnsupportedMedia(t *testing.T) {
 }
 
 func TestSeedanceRouteSkipsExplicitResolution(t *testing.T) {
-	// 豆包链路没有分辨率控件：带 resolution 的请求路由过去要么被 400，
-	// 要么给一份分辨率不对的片 —— 两种都是交付问题，一律不路由。
+	// 豆包链路只交付 720P：1080P 请求路由过去就是降级交付，一律不路由。
+	// （480P/720P 现在正常改派并透传档位，见 TestSeedanceRouteForwardsSupportedResolution。）
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
 		body string
 	}{
-		{"top level resolution", `{"model":"seedance2.5-特惠","seconds":"30","resolution":"720P"}`},
+		{"top level resolution", `{"model":"seedance2.5-特惠","seconds":"30","resolution":"1080P"}`},
 		{"top level size", `{"model":"seedance2.5-特惠","seconds":"30","size":"1080P"}`},
-		{"metadata resolution", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"resolution":"720P"}}`},
+		{"metadata resolution", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"resolution":"1080P"}}`},
 		{"metadata size", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"size":"1080P"}}`},
+		{"pixel size", `{"model":"seedance2.5-特惠","seconds":"30","metadata":{"resolution":"1920x1080"}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1227,3 +1230,58 @@ func TestSeedanceRouteKeepsSourceAtOrBelowThreshold(t *testing.T) {
 		}
 	}
 }
+
+// 带 480P/720P 分辨率的请求必须照常改派，并把档位抬到顶层 resolution 透传。
+//
+// 2026-11-08 老板口径：豆包链路**能接分辨率**，不该因为带了分辨率就留在源链路。
+func TestSeedanceRouteForwardsSupportedResolution(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	cases := []struct {
+		name    string
+		body    string
+		wantRes string
+	}{
+		{
+			"metadata.resolution 720P",
+			`{"model":"seedance2.5-特惠","seconds":25,"metadata":{"resolution":"720P"},"prompt":"a cat"}`,
+			"720p",
+		},
+		{
+			"顶层 resolution 720P",
+			`{"model":"seedance2.5-特惠","seconds":25,"resolution":"720P","prompt":"a cat"}`,
+			"720p",
+		},
+		{
+			"顶层 size 当分辨率 720P",
+			`{"model":"seedance2.5-特惠","seconds":25,"size":"720P","prompt":"a cat"}`,
+			"720p",
+		},
+		{
+			"metadata.resolution 480P",
+			`{"model":"seedance2.5-特惠","seconds":25,"metadata":{"resolution":"480P"},"prompt":"a cat"}`,
+			"480p",
+		},
+		{
+			"像素尺寸 1280x720",
+			`{"model":"seedance2.5-特惠","seconds":25,"metadata":{"resolution":"1280x720"},"prompt":"a cat"}`,
+			"720p",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, originModel := runRoute(t, tc.body)
+			out := decodeBody(t, seen)
+
+			require.Equal(t, testTargetModel, out["model"])
+			require.Equal(t, tc.wantRes, out["resolution"])
+			// metadata / size 必须整块摘掉：漫屋不读 metadata，size 会被当比例 400。
+			_, hasMetadata := out["metadata"]
+			assert.False(t, hasMetadata, "metadata 应被摘掉")
+			_, hasSize := out["size"]
+			assert.False(t, hasSize, "size 应被摘掉（漫屋把它当比例读）")
+			assert.Equal(t, testSourceModel, originModel)
+		})
+	}
+}
+

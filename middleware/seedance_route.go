@@ -701,10 +701,12 @@ func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel
 		return false
 	}
 
-	// 用户明确要了分辨率 → 不路由。目标链路没有分辨率控件，
-	// 路由过去只能给一份分辨率不对的片（或者被漫屋 400 掉）。
-	// 宁可走源链路按用户要的分辨率跑。
-	if hasExplicitResolution(body) {
+	// 分辨率：目标链路**支持** 480P/720P（2026-11-08 实测交付 1280×720），
+	// 这两档照常改派并把档位透传下去（见 rewriteBodyForDoubaoWithDuration）。
+	//
+	// 但 1080P 做不到 —— 路由过去只能给一份分辨率不对的片（或者被漫屋 400 掉）。
+	// 宁可走源链路按用户要的分辨率跑，也不降级交付。
+	if wants1080P(body) {
 		return false
 	}
 
@@ -1272,28 +1274,31 @@ func hasUnsupportedMedia(body map[string]interface{}) bool {
 //     转换后**必须断言图数一致**，不一致就放弃路由。
 //  2. 比例：源链路的自适应档叫 adaptive，目标链路叫 auto。
 //  3. 分辨率：源链路支持 resolution（顶层或 metadata.resolution，取值 480P/720P/1080P），
-//     **目标链路（豆包官网）没有分辨率控件** ——
-//     - 顶层 resolution 透传下去 → 漫屋 rejectFields 显式 400
-//     （"does not support resolution"）→ **客户的长时长任务直接失败**；
-//     - 顶层 size 透传下去 → 漫屋把 size 当**比例**读
+//     目标链路（豆包官网）**支持 480P/720P**（2026-11-08 实测交付 1280×720；1080P
+//     已在 doubaoTargetUsable 挡掉）——
+//     - 顶层 resolution 可以直接透传；
+//     - 顶层 size 不能透传：漫屋把 size 当**比例**读
 //     （firstNonEmpty(Size, Ratio, AspectRatio)），"720P" 不在
-//     allowedDoubaoRatios 里 → 同样 400。
-//     所以顶层 resolution / size 必须**摘掉**。
-//     而 metadata.resolution 表达的是「用户明确要 720P/1080P」——
-//     目标链路做不到这个事，**不能假装做到了**：带分辨率的请求一律不路由，
-//     交回源链路按用户要的分辨率跑（宁可不路由，也不给一份分辨率不对的片）。
+//     allowedDoubaoRatios 里 → 400。所以 size 里表达的分辨率要**抬到顶层 resolution**；
+//     - metadata.resolution / metadata.size 同理：漫屋不读 metadata，必须抬到顶层。
 func rewriteBodyForDoubaoWithDuration(body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, seconds int) (map[string]interface{}, bool) {
 	out := make(map[string]interface{}, len(body)+2)
 	for key, value := range body {
 		// model 要换成目标模型；metadata 整块丢掉（源链路的素材/比例格式目标链路不认，
 		// 逐个字段挑出来重写比整块保留更不容易出错）。
-		// resolution / size 必须摘掉：目标链路没有分辨率控件，带过去会被 400。
+		// size 必须摘掉：漫屋把 size 当比例读，透传会被 400（分辨率已在下面单独抬出）。
 		if key == "model" || key == "metadata" || key == "resolution" || key == "size" {
 			continue
 		}
 		out[key] = value
 	}
 	out["model"] = targetModel
+
+	// 分辨率统一抬到顶层 resolution：源链路的四个入口（顶层 resolution/size、
+	// metadata.resolution/size）漫屋只认第一个，其余三个不抬就是静默丢参数。
+	if tier := doubaoResolutionTier(body); tier != "" {
+		out["resolution"] = strings.ToLower(tier)
+	}
 
 	images, hasUnsupported := collectReferenceImages(body)
 	if hasUnsupported {
@@ -1532,7 +1537,7 @@ func explicitResolutionTier(value interface{}) string {
 	}
 }
 
-// hasExplicitResolution 判断用户是否**明确要求了分辨率**。
+// doubaoResolutionTier 从请求体里找出用户要的分辨率档位，返回 480P / 720P / 1080P。
 //
 // 覆盖源链路（youzanwan3）读分辨率的全部入口：
 //   - 顶层 resolution
@@ -1540,43 +1545,25 @@ func explicitResolutionTier(value interface{}) string {
 //   - metadata.resolution
 //   - metadata.size
 //
-// 只认**能解析成合法分辨率**的值（480/480P/720/720P/1080/1080P），
-// 与源链路的 normalizeResolution 同口径 ——
-// 客户端习惯性传 `size: "16:9"`（比例语义）时，源链路本来就会忽略它，
-// 不该因为这个把整单挡在路由外面。
-//
-// 目标链路（豆包官网）没有分辨率控件，做不到用户要的事 → 这种请求一律不路由。
-func hasExplicitResolution(body map[string]interface{}) bool {
+// 只认**能解析成合法分辨率**的值（480/480P/720/720P/1080/1080P 或像素尺寸），
+// 客户端习惯性传 `size: "16:9"`（比例语义）时解析不出档位，返回空串 ——
+// 那种值本来就不是分辨率，不该被当成分辨率处理。
+func doubaoResolutionTier(body map[string]interface{}) string {
 	for _, key := range []string{"resolution", "size"} {
-		if isResolutionValue(body[key]) {
-			return true
+		if tier := explicitResolutionTier(body[key]); tier != "" {
+			return tier
 		}
 	}
 	metadata, ok := body["metadata"].(map[string]interface{})
 	if !ok {
-		return false
+		return ""
 	}
 	for _, key := range []string{"resolution", "size"} {
-		if isResolutionValue(metadata[key]) {
-			return true
+		if tier := explicitResolutionTier(metadata[key]); tier != "" {
+			return tier
 		}
 	}
-	return false
-}
-
-// isResolutionValue 判断一个值是不是合法的分辨率取值。
-//
-// 与源链路 youzanwan3 的 normalizeResolution 保持同一套取值。
-func isResolutionValue(value interface{}) bool {
-	text, ok := value.(string)
-	if !ok {
-		return false
-	}
-	switch strings.ToUpper(strings.TrimSpace(text)) {
-	case "480", "480P", "720", "720P", "1080", "1080P":
-		return true
-	}
-	return false
+	return ""
 }
 
 // collectReferenceImages 收集请求里的参考图 URL 列表。

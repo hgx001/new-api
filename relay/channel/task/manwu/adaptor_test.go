@@ -414,6 +414,53 @@ func TestBuildRequestBodyMapsSeedance25FixedPayload(t *testing.T) {
 	assert.Equal(t, "720p", videoPayload["resolution"])
 }
 
+// 豆包链路支持 480P/720P：分辨率必须被接受并归一后透传到 videoParams。
+func TestBuildRequestBodyForwardsDoubaoSupportedResolution(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want string
+	}{
+		{"720P", "720p"},
+		{"720p", "720p"},
+		{"480P", "480p"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			c, info, a := postVideoCtx(t, `{"model":"seedance-2-5","prompt":"hi","seconds":30,"resolution":"`+tc.raw+`"}`)
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+			reader, err := a.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(reader)
+			require.NoError(t, err)
+
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(data, &payload))
+			videoPayload, ok := payload["videoParams"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, tc.want, videoPayload["resolution"])
+		})
+	}
+}
+
+// 未传分辨率时不下发 resolution 键（保持官网当前档位），不能编造 720p。
+func TestBuildRequestBodyOmitsDoubaoResolutionWhenAbsent(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2-5","prompt":"hi","seconds":30}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	videoPayload, ok := payload["videoParams"].(map[string]any)
+	require.True(t, ok)
+	_, hasResolution := videoPayload["resolution"]
+	assert.False(t, hasResolution, "未传分辨率不应下发键")
+}
+
 // 无参考图时 inputs 必须整体省略（omitempty），时长缺省时显式下发 15（与上游兜底口径一致）。
 func TestBuildRequestBodyOmitsEmptyInputs(t *testing.T) {
 	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi"}`)
