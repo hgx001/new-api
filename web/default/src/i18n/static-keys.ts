@@ -535,6 +535,13 @@ export const STATIC_I18N_KEYS = [
   'The model that was requested',
   'The upstream channel that served the requests',
 
+  // VPN admin order status labels are resolved at runtime via vpnStatusLabelKey()
+  'Success',
+  'Pending',
+  'Failed',
+  'Expired',
+  'Unknown',
+
   // Misc
   'Cancel',
   'Status',

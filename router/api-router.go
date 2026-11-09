@@ -26,6 +26,8 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)
+		// VPN 套餐订单与收入是独立账（不进用户 quota / top_ups），管理端单独只读查看。
+		apiRouter.GET("/vpn/admin/orders", middleware.AdminAuth(), controller.AdminGetVpnOrders)
 		apiRouter.GET("/notice", controller.GetNotice)
 		apiRouter.GET("/user-agreement", controller.GetUserAgreement)
 		apiRouter.GET("/privacy-policy", controller.GetPrivacyPolicy)

@@ -30,6 +30,7 @@ import {
   Radio,
   ServerCog,
   Settings,
+  ShieldCheck,
   Ticket,
   User,
   Users,
@@ -182,6 +183,14 @@ export function useSidebarData(): SidebarData {
             title: t('Subscriptions'),
             url: '/subscriptions',
             icon: CreditCard,
+          },
+          {
+            // VPN 年费套餐是独立账：收入不进用户额度/充值记录，单独给管理员一个入口。
+            // 不映射 sidebar modules，按配置约定「新功能默认可见」。
+            title: t('VPN Orders'),
+            url: '/vpn-orders',
+            icon: ShieldCheck,
+            requiredRole: ROLE.ADMIN,
           },
           {
             title: t('System Info'),
