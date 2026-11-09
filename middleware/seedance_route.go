@@ -498,7 +498,7 @@ func prepareSecondsRoute(c *gin.Context, body map[string]interface{}, policy see
 			"条件路由：跳过 %d 秒改派（时长非法）", requestedSeconds))
 		return nil, false
 	}
-	return rewriteBodyForDoubaoWithDuration(body, policy, targetModel, routeSeconds)
+	return rewriteBodyForDoubaoWithDuration(c, body, policy, targetModel, routeSeconds)
 }
 
 // xinbiPerCallTargetModel 是心笔（xinbiapi）的按次对外模型名。
@@ -720,7 +720,7 @@ func preparePromptRoute(c *gin.Context, body map[string]interface{}, policy seed
 	if seconds <= 0 {
 		return nil, false
 	}
-	return rewriteBodyForDoubaoWithDuration(body, policy, targetModel, seconds)
+	return rewriteBodyForDoubaoWithDuration(c, body, policy, targetModel, seconds)
 }
 
 // prepareWan3Route 组装「改派到 wan3.0-720p-特惠」的请求体。
@@ -1178,9 +1178,10 @@ func parseSecondsValue(value interface{}) (int, bool) {
 
 // hasUnsupportedMedia 判断请求里有没有目标链路不支持的素材（参考视频 / 参考音频）。
 //
-// 有赞格式的素材在两处，type 取值：reference_image / reference_video / reference_audio：
+// 有赞格式的素材在三处，type 取值：reference_image / reference_video / reference_audio：
 //   - 顶层 media = [{type,url}]
 //   - metadata.media = [{type,url}]
+//   - metadata.input.media = [{type,url}]（ArcReel 的 Wan3 形状）
 //
 // 另外顶层 audio / audios 是**参考音频**，同样不被目标链路支持。
 //
@@ -1214,12 +1215,25 @@ func hasUnsupportedMedia(body map[string]interface{}) bool {
 		}
 	}
 
-	// metadata.media
+	// metadata.media / metadata.input.media
 	metadata, ok := body["metadata"].(map[string]interface{})
 	if !ok {
 		return false
 	}
-	media, ok := metadata["media"].([]interface{})
+	if hasUnsupportedMediaEntries(metadata["media"]) {
+		return true
+	}
+	if input, ok := metadata["input"].(map[string]interface{}); ok {
+		if hasUnsupportedMediaEntries(input["media"]) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasUnsupportedMediaEntries 判断 media 数组里是否含豆包链路不承载的视频/音频。
+func hasUnsupportedMediaEntries(value interface{}) bool {
+	media, ok := value.([]interface{})
 	if !ok {
 		return false
 	}
@@ -1254,7 +1268,7 @@ func hasUnsupportedMedia(body map[string]interface{}) bool {
 //     （firstNonEmpty(Size, Ratio, AspectRatio)），"1080P" 不在
 //     allowedDoubaoRatios 里 → 400。所以 size 里表达的分辨率要**抬到顶层 resolution**；
 //     - metadata.resolution / metadata.size 同理：漫屋不读 metadata，必须抬到顶层。
-func rewriteBodyForDoubaoWithDuration(body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, seconds int) (map[string]interface{}, bool) {
+func rewriteBodyForDoubaoWithDuration(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, seconds int) (map[string]interface{}, bool) {
 	out := make(map[string]interface{}, len(body)+2)
 	for key, value := range body {
 		// model 要换成目标模型；metadata 整块丢掉（源链路的素材/比例格式目标链路不认，
@@ -1275,6 +1289,10 @@ func rewriteBodyForDoubaoWithDuration(body map[string]interface{}, policy seedan
 
 	images, hasUnsupported := collectReferenceImages(body)
 	if hasUnsupported {
+		// 素材没法安全转成漫屋的 input_reference（参考视频/音频，或只能内联的
+		// data URI 参考图）：明确放弃改派，让原请求继续走能处理它的源链路。
+		// 绝不能像 2026-11-09 gen-7cdab… 那样整块丢 metadata 后继续提交。
+		logger.LogInfo(c, "条件路由放弃改派豆包：素材无法安全转换（参考视频/音频或非 http(s) 参考图）")
 		return nil, false
 	}
 	if len(images) > 0 {
@@ -1593,6 +1611,43 @@ func collectReferenceImages(body map[string]interface{}) ([]string, bool) {
 		}
 	}
 
+	// 2b) metadata.input.media（Wan3 形状）
+	//
+	// ArcReel 在「非豆包形状」下把参考图编码在 metadata.input.media 里
+	// （Wan3 体 {"input": {"media": [...]}}）。改派豆包时本函数上面的
+	// rewriteBodyForDoubaoWithDuration 会整块丢弃 metadata，只保留这里收集到的图；
+	// 不读这里就会静默丢图（2026-11-09 gen-7cdab0938eba1d6229b01a5e：26 秒带 7 张图，
+	// 远端 job refs=0，成片没有任何参考图）。
+	//
+	// 只接受 http(s)：data URI / 本地路径不能直传漫屋（其上游契约只收公网 URL）。
+	// 遇到 data URI 返回 hasUnsupported，调用方放弃改派、把请求留在能处理 data URI
+	// 的源链路上 —— 宁可少赚差价，也不能交付错片。
+	if input, ok := metadata["input"].(map[string]interface{}); ok {
+		if media, ok := input["media"].([]interface{}); ok {
+			for _, item := range media {
+				entry, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				mediaType, _ := entry["type"].(string)
+				switch strings.TrimSpace(mediaType) {
+				case "reference_image", "first_frame", "last_frame":
+					urls := appendImageURL(nil, entry["url"])
+					for _, url := range urls {
+						if !isHTTPURL(url) {
+							return nil, true
+						}
+					}
+					images = append(images, urls...)
+				case "reference_video", "reference_audio":
+					return nil, true
+				}
+			}
+			if len(images) > 0 {
+				return images, false
+			}
+		}
+	}
 	// 3) 顶层 images / image / input_reference
 	images = appendImageURL(images, body["images"])
 	images = appendImageURL(images, body["input_reference"])
@@ -1614,6 +1669,12 @@ func appendImageURL(images []string, value interface{}) []string {
 		}
 	}
 	return images
+}
+
+// isHTTPURL 判断是否为可直传的公网 http(s) 地址（data URI / 本地路径一律不算）。
+func isHTTPURL(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")
 }
 
 // extractRatio 从请求里取比例值（metadata.ratio 优先，其次顶层 ratio）。

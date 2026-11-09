@@ -458,6 +458,68 @@ func TestSeedanceRouteConvertsReferenceImages(t *testing.T) {
 	}
 }
 
+// 回归 2026-11-09 gen-7cdab0938eba1d6229b01a5e：ArcReel 非豆包形状把参考图
+// 编码在 metadata.input.media；网关改派豆包时会整块丢弃 metadata，必须先把图
+// 抬到顶层 input_reference，否则远端 job refs=0，成片完全没有参考图。
+func TestSeedanceRouteReadsWan3InputMediaReferenceImages(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	body := `{"model":"seedance2.5-特惠","seconds":"26","metadata":{"input":{"media":[{"type":"reference_image","url":"https://x/1.png"},{"type":"reference_image","url":"https://x/2.png"}]}}}`
+	seen, _ := runRoute(t, body)
+
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(seen), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	images, ok := out["input_reference"].([]interface{})
+	if !ok {
+		t.Fatalf("input_reference missing, body = %s", seen)
+	}
+	if len(images) != 2 {
+		t.Fatalf("input_reference len = %d, want 2 (metadata.input.media 的图不能丢)", len(images))
+	}
+	if images[0] != "https://x/1.png" || images[1] != "https://x/2.png" {
+		t.Fatalf("input_reference = %v, want original order", images)
+	}
+	if _, exists := out["metadata"]; exists {
+		t.Fatalf("metadata should be removed for target chain, body = %s", seen)
+	}
+	if out["seconds"] != "26" {
+		t.Fatalf("seconds = %v, want \"26\"", out["seconds"])
+	}
+}
+
+// metadata.input.media 里是 data URI 时不能改派：漫屋只收公网 http(s)。
+// 正确做法是放弃改派、保留原请求走源链路（源链路能处理 data URI），绝不静默丢图。
+func TestSeedanceRouteSkipsRerouteWhenWan3InputMediaIsNotHTTP(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	body := `{"model":"seedance2.5-特惠","seconds":"26","metadata":{"input":{"media":[{"type":"reference_image","url":"data:image/png;base64,AAAA"}]}}}`
+	seen, origin := runRoute(t, body)
+
+	if seen != body {
+		t.Fatalf("带 data URI 参考图时应放弃改派、保留原请求，got %s", seen)
+	}
+	if origin != "" {
+		t.Fatalf("originModel = %q, want empty (not routed)", origin)
+	}
+}
+
+// metadata.input.media 里的参考视频同样不能改派到豆包（豆包链路不收）。
+func TestSeedanceRouteSkipsRerouteWhenWan3InputMediaHasVideo(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	body := `{"model":"seedance2.5-特惠","seconds":"26","metadata":{"input":{"media":[{"type":"reference_video","url":"https://x/1.mp4"}]}}}`
+	seen, origin := runRoute(t, body)
+
+	if seen != body {
+		t.Fatalf("带参考视频时应放弃改派、保留原请求，got %s", seen)
+	}
+	if origin != "" {
+		t.Fatalf("originModel = %q, want empty (not routed)", origin)
+	}
+}
+
 func TestSeedanceRouteMapsAdaptiveRatioToAuto(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
