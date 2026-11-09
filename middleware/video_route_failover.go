@@ -51,7 +51,7 @@ package middleware
 //	比例  ：firstNonEmpty(size, ratio, aspect_ratio)，只认豆包 7 档
 //	        （auto / 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9），
 //	        空 = 不编造（保持官网当前状态），非法 = 400。
-//	时长  ：seconds 优先于 duration，缺省 5 秒，只认 5/10/15/30 四档。
+//	时长  ：seconds 优先于 duration，缺省 5 秒；正整数原样下发，不改写。
 //	素材  ：**只读顶层那批别名**。豆包的请求结构里**没有 media 数组**，
 //	        顶层 media / metadata.media / audio / audios / videos / video
 //	        豆包链路一律**忽略** —— 改派时也必须一并丢掉，
@@ -75,7 +75,7 @@ package middleware
 //
 // 豆包（seedance-2-5）与班车（wan3.0-班车）的契约差异：
 //
-//	时长：豆包 5/10/15/30 四档；班车 2–30 任意整数 → 豆包的四档班车都吃 ✅
+//	时长：豆包正整数原样（2.5 任意，2.0 Fast 4–30）；班车 2–30 任意整数
 //	分辨率：豆包**显式拒绝** resolution；班车支持 480P/720P/1080P
 //	比例：豆包认顶层 size/ratio/aspect_ratio；班车认 metadata.ratio
 //	参考图：豆包认 input_reference 及一堆别名；班车认 media[].type=reference_image
@@ -111,23 +111,11 @@ const (
 	failoverMaxSeconds = 30
 )
 
-// failoverAllowedDurations 是**源链路**（豆包 seedance-2-5）接受的时长白名单。
+// failoverAllowedDurations 是**改派到班车**时保留的保守白名单。
 //
-// 与 relay/channel/task/manwu 的 allowedDoubaoDurations 同口径：5/10/15/30。
-//
-// ⚠️ 为什么不能只判班车的 2–30 区间：
-//
-//	源链路走 manwu 的 checkDoubaoDuration，时长必须是 5/10/15/30 之一，
-//	传 7 秒源链路直接报错「must be one of 5/10/15/30」。
-//	如果改派侧只判「落在班车能吃的 2–30 区间」，那么客户传 seconds=7 时：
-//	  - 源链路可用 → 请求留在源链路 → 客户收到明确报错（正确）
-//	  - 源链路挂了 → 改派到班车 → 班车按 7 秒真跑 → **成功出片**
-//
-//	这就是「源链路本该拒绝、改派后却悄悄接受」的静默语义改写 —
-//	客户拿到了源链路给不出的结果，且时长语义被改写了。
-//
-// 所以改派前的时长校验必须**先按源链路口径判合法性**（在白名单里），
-// 再判备胎链路吃不吃得下（在 2–30 区间内）。
+// 2026-11-09 起源链路（豆包 2.5）已接受任意正整数秒，本表不再用于推断
+// 源链路合法性，只用来限制改派面：非档位值在源链路失败时直接报错，
+// 不悄悄换到班车（班车自身仍限 2–30 秒）。要放开需单独评审。
 var failoverAllowedDurations = map[int]bool{
 	5:  true,
 	10: true,
@@ -378,10 +366,10 @@ func prepareDoubaoBodyFailover(
 		logger.LogInfo(c, "条件路由跳过故障转移：时长不是合法整数，源链路会直接报错")
 		return nil, false
 	}
-	// 时长必须先过**源链路**的白名单（豆包 5/10/15/30），再过备胎的范围。
+	// 时长先过**保守改派白名单**（failoverAllowedDurations），再过备胎的范围。
 	//
-	// 顺序不能反：如果只判班车的 2–30 区间，就会出现
-	// 「源链路报错的时长（比如 7 秒）改派到班车却真跑出片」的静默语义改写。
+	// 该白名单不是源链路的时长契约（豆包本就支持任意正整数秒，原样下发），
+	// 只是为了限制改派面：非白名单时长不改派，让原请求留在源链路。
 	if !failoverAllowedDurations[seconds] {
 		logger.LogInfo(c, fmt.Sprintf(
 			"条件路由跳过故障转移：时长 %d 秒不在源链路允许的档位内", seconds))
@@ -533,14 +521,10 @@ func prepareFailoverRoute(c *gin.Context, body map[string]interface{}, target st
 	}
 
 	// 时长：取源链路口径（seconds 优先于 duration，缺省 5 秒），
-	// **先按源链路的白名单判合法性**，再确认备胎链路吃得住（2–30 秒）。
+	// **先过保守改派白名单**，再确认备胎链路吃得住（2–30 秒）。
 	//
-	// ⚠️ 顺序不能反，只判班车的 2–30 区间是不够的：
-	//
-	//	源链路走 manwu 的 checkDoubaoDuration，时长必须是 5/10/15/30 之一，
-	//	传 7 秒源链路直接报错「must be one of 5/10/15/30」。
-	//	若只判 2–30 区间，客户传 seconds=7 且源链路挂了时，
-	//	请求会被改派到班车按 7 秒真跑出片 —— 源链路本该拒绝的一单被静默接受了。
+	// 该白名单只限制改派面，不是源链路的时长契约：豆包本身就支持任意正整数秒，
+	// 原样下发、不改写。非白名单时长不改派，让原请求留在源链路。
 	//
 	// ⚠️ 时长非法（小数/非数字）时**也放弃改派**：源链路 manwu 对这类值是
 	// fail-loud 的（会报 invalid_duration），改派过去等于把「源链路会报错的请求」

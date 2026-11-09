@@ -1124,47 +1124,52 @@ func TestSeedanceRouteFramesOnlyConfigEnablesMiddleware(t *testing.T) {
 // 2026-11-08 需求：豆包按次成本固定（¥2.00/次），源链路按秒计价（¥0.20/秒），
 // 21 秒以后源链路已经比豆包更贵，没必要非等到 30 秒整档才改派。
 //
-// 关键约束：豆包只有 5/10/15/30 四档，21–29 秒必须**向上吸附到 30 秒生成**，
-// 但计费仍按客户请求的秒数 —— 多生成的时间不能转嫁给客户。
+// 2026-11-09 用户口径修正：豆包 2.5 支持任意正整数秒，下发值必须与客户请求
+// **完全一致**，禁止向上吸附（以前 21–29 秒会被改成 30 秒出片）。
 // ─────────────────────────────────────────────────────────────
 
-func TestDoubaoTierForSnapsUpToSupportedDuration(t *testing.T) {
+func TestDoubaoSecondsForPassesThrough(t *testing.T) {
 	cases := []struct {
 		requested int
 		want      int
 		ok        bool
 	}{
 		{requested: 5, want: 5, ok: true},
-		{requested: 7, want: 10, ok: true},
+		{requested: 7, want: 7, ok: true},
 		{requested: 15, want: 15, ok: true},
-		{requested: 21, want: 30, ok: true},
-		{requested: 25, want: 30, ok: true},
+		{requested: 21, want: 21, ok: true},
+		{requested: 23, want: 23, ok: true},
+		{requested: 25, want: 25, ok: true},
 		{requested: 30, want: 30, ok: true},
-		{requested: 31, ok: false},
+		{requested: 31, want: 31, ok: true},
+		{requested: 99, want: 99, ok: true},
 		{requested: 0, ok: false},
+		{requested: -3, ok: false},
 	}
 	for _, tc := range cases {
-		got, ok := doubaoTierFor(tc.requested)
+		got, ok := doubaoSecondsFor(tc.requested)
 		if ok != tc.ok {
-			t.Fatalf("doubaoTierFor(%d) ok = %v, want %v", tc.requested, ok, tc.ok)
+			t.Fatalf("doubaoSecondsFor(%d) ok = %v, want %v", tc.requested, ok, tc.ok)
 		}
 		if ok && got != tc.want {
-			t.Fatalf("doubaoTierFor(%d) = %d, want %d", tc.requested, got, tc.want)
+			t.Fatalf("doubaoSecondsFor(%d) = %d, want %d（必须原样透传）", tc.requested, got, tc.want)
 		}
 	}
 }
 
-func TestSeedanceRouteRoutesSecondsAboveThresholdWithSnappedTier(t *testing.T) {
+func TestSeedanceRoutePassesRequestedSecondsThrough(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		requested   int
 		wantTierSec string
 	}{
-		{requested: 21, wantTierSec: "30"},
-		{requested: 25, wantTierSec: "30"},
-		{requested: 29, wantTierSec: "30"},
+		{requested: 21, wantTierSec: "21"},
+		{requested: 23, wantTierSec: "23"},
+		{requested: 25, wantTierSec: "25"},
+		{requested: 29, wantTierSec: "29"},
 		{requested: 30, wantTierSec: "30"},
+		{requested: 45, wantTierSec: "45"},
 	}
 
 	for _, tc := range cases {
@@ -1177,15 +1182,15 @@ func TestSeedanceRouteRoutesSecondsAboveThresholdWithSnappedTier(t *testing.T) {
 				tc.requested, out["model"], testTargetModel)
 		}
 		if out["seconds"] != tc.wantTierSec {
-			t.Fatalf("%d 秒：下发 seconds = %v, want %s（豆包只认 5/10/15/30，必须向上吸附）",
+			t.Fatalf("%d 秒：下发 seconds = %v, want %s（必须原样透传，禁止吸附档位）",
 				tc.requested, out["seconds"], tc.wantTierSec)
 		}
-		// 计费按客户**请求的秒数**，不是吸附后的档位。
+		// 计费与下发值都必须是客户请求的秒数。
 		if !rec.hasBillingSec {
 			t.Fatalf("%d 秒：没有记录 ContextKeyRouteBillingSeconds", tc.requested)
 		}
 		if rec.billingSeconds != float64(tc.requested) {
-			t.Fatalf("%d 秒：计费秒数 = %v, want %d（不能按吸附后的 30 秒多收钱）",
+			t.Fatalf("%d 秒：计费秒数 = %v, want %d（不能改值）",
 				tc.requested, rec.billingSeconds, tc.requested)
 		}
 	}

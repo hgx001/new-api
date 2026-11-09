@@ -650,32 +650,29 @@ func TestFailoverSkipsWhenDurationIsFractional(t *testing.T) {
 	}
 }
 
-// ───────────────────────── 边界：时长白名单按源链路口径 ─────────────────────────
+// ───────────────────────── 边界：时长按保守改派白名单 ─────────────────────────
 
-// 时长必须先过**源链路**（豆包）的白名单 5/10/15/30，再过备胎的 2–30 区间。
+// 时长必须先过**保守改派白名单**（failoverAllowedDurations），再过备胎的 2–30 区间。
 //
-// 为什么这条重要：客户传 seconds=7 时，
-//   - 源链路可用 → 走 manwu → checkDoubaoDuration 报「must be one of 5/10/15/30」
-//   - 源链路挂了 → 若改派侧只判 2–30 区间 → 班车按 7 秒真跑出片
-//
-// 后者就是「源链路本该拒绝、改派后却悄悄接受」的静默语义改写。
-func TestFailoverSkipsWhenSecondsNotInSourceChainTiers(t *testing.T) {
+// 该白名单不是源链路的时长契约 —— 豆包本身就支持任意正整数秒、原样下发。
+// 它只限制改派面：非白名单时长不改派，让原请求留在源链路。
+func TestFailoverSkipsWhenSecondsNotInWhitelist(t *testing.T) {
 	enableFailover(t, failoverSourceModel, failoverBackupModel)
 	stubChannelAvailableByModel(t, map[string]bool{
 		failoverSourceModel: false,
 		failoverBackupModel: true,
 	})
 
-	// 7 秒落在班车能吃的区间内，但不在豆包白名单里。
+	// 7 秒落在班车能吃的区间内，但不在保守改派白名单里。
 	body := `{"model":"seedance-2-5","seconds":7,"prompt":"a cat"}`
 	seen, _ := runFailover(t, body)
 	if seen != body {
-		t.Fatalf("时长不在源链路档位内时不该改派:\n got %s\nwant %s", seen, body)
+		t.Fatalf("时长不在改派白名单内时不该改派:\n got %s\nwant %s", seen, body)
 	}
 }
 
 // 白名单里的时长必须能正常改派（防止上面的闸口把合法单子也拦了）。
-func TestFailoverRoutesWhenSecondsInSourceChainTiers(t *testing.T) {
+func TestFailoverRoutesWhenSecondsInWhitelist(t *testing.T) {
 	enableFailover(t, failoverSourceModel, failoverBackupModel)
 	stubChannelAvailableByModel(t, map[string]bool{
 		failoverSourceModel: false,
@@ -689,7 +686,7 @@ func TestFailoverRoutesWhenSecondsInSourceChainTiers(t *testing.T) {
 }
 
 // duration 字段同样受白名单约束（seconds 缺省时回退读 duration）。
-func TestFailoverSkipsWhenDurationNotInSourceChainTiers(t *testing.T) {
+func TestFailoverSkipsWhenDurationNotInWhitelist(t *testing.T) {
 	enableFailover(t, failoverSourceModel, failoverBackupModel)
 	stubChannelAvailableByModel(t, map[string]bool{
 		failoverSourceModel: false,
@@ -699,7 +696,7 @@ func TestFailoverSkipsWhenDurationNotInSourceChainTiers(t *testing.T) {
 	body := `{"model":"seedance-2-5","duration":7,"prompt":"a cat"}`
 	seen, _ := runFailover(t, body)
 	if seen != body {
-		t.Fatalf("duration 不在源链路档位内时不该改派:\n got %s\nwant %s", seen, body)
+		t.Fatalf("duration 不在改派白名单内时不该改派:\n got %s\nwant %s", seen, body)
 	}
 }
 

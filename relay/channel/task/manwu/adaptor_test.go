@@ -1247,22 +1247,29 @@ func TestDoubaoRatioNotInventedWhenUnspecified(t *testing.T) {
 	assert.Equal(t, 5, req.Duration)
 }
 
-func TestDoubao20FastRejects30s(t *testing.T) {
-	// 2.0 Fast 时长口径为 5–15 秒区间（2026-10-12 任意秒真跑，见
-	// TestDoubao20FastDurationPassesThroughArbitraryValues），30s 越界必须在
-	// 入口 400——豆包 2.0 无 30s 档（30s 属 2.5 白名单），不能等 Worker 报错。
+func TestDoubao20FastAccepts30sAndRejectsOutOfRange(t *testing.T) {
+	// 2026-11-09 用户口径：2.0 Fast 放开到 4–30 秒，30s 必须受理且原样透传；
+	// 3/31 越界仍在入口 400（不编造、不吸附）。
 	for _, field := range []string{"seconds", "duration"} {
 		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":"seedance-2-0-fast","prompt":"x","%s":30}`, field))
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), field)
+		req, err := getNormalizedRequest(c)
+		require.NoError(t, err)
+		assert.Equal(t, 30, req.Duration, "%s=30 必须原样透传", field)
+	}
+	for _, value := range []int{3, 31} {
+		c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":"seedance-2-0-fast","prompt":"x","seconds":%d}`, value))
 		taskErr := a.ValidateRequestAndSetAction(c, info)
-		require.NotNil(t, taskErr, field)
-		assert.Equal(t, "invalid_duration", taskErr.Code)
+		require.NotNil(t, taskErr, "seconds=%d 应被拒", value)
+		assert.Equal(t, "invalid_duration", taskErr.Code, "seconds=%d", value)
 	}
 }
 
 // dola（seedance-2.0）时长口径为 5–15 秒区间（2026-10-24 曾锁定 10 秒，
 // 2026-10-26 按用户要求恢复为区间透传）：区间内任意整数秒原样透传、不吸附，
 // 区间外一律 400；未指定 → 缺省 15。价格不变（按次计费，与时长无关）。
-// ⚠️ 豆包 2.0 Fast 同口径，见 TestDoubao20FastDurationPassesThroughArbitraryValues。
+// ⚠️ 豆包 2.0 Fast 已改为 4–30 秒，与 dola **不再同口径**，见
+// TestDoubao20FastDurationPassesThroughArbitraryValues。
 func TestDolaDurationPassesThroughArbitraryValues(t *testing.T) {
 	// 区间内任意整数秒原样透传（含非档位值 7）。
 	for _, value := range []int{5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} {
@@ -1299,8 +1306,8 @@ func TestDolaDurationPassesThroughArbitraryValues(t *testing.T) {
 }
 
 func TestDoubao20FastDurationPassesThroughArbitraryValues(t *testing.T) {
-	// 区间内任意整数秒原样透传（含非档位值 7/13——旧口径会吸附到 5/15）。
-	for _, value := range []int{5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15} {
+	// 4–30 区间内任意整数秒原样透传（含非档位值 7/13/23）。
+	for value := 4; value <= 30; value++ {
 		for _, field := range []string{"seconds", "duration"} {
 			c, info, a := postVideoCtx(t,
 				fmt.Sprintf(`{"model":%q,"prompt":"hi","%s":%d}`, ModelDoubao20Fast, field, value))
@@ -1314,13 +1321,39 @@ func TestDoubao20FastDurationPassesThroughArbitraryValues(t *testing.T) {
 		}
 	}
 
-	// 区间外一律 400（30s 越界另有 TestDoubao20FastRejects30s 锁口径）。
-	for _, value := range []int{4, 16} {
+	// 区间外一律 400（3 与 31 越界，入口就挡，不回落默认）。
+	for _, value := range []int{3, 31} {
 		c, info, a := postVideoCtx(t,
 			fmt.Sprintf(`{"model":%q,"prompt":"hi","seconds":%d}`, ModelDoubao20Fast, value))
 		taskErr := a.ValidateRequestAndSetAction(c, info)
 		require.NotNil(t, taskErr, "db seconds=%d 应被拒", value)
 		assert.Equal(t, "invalid_duration", taskErr.Code, "db seconds=%d", value)
+	}
+}
+
+// 2026-11-09 用户口径：豆包 2.5 支持任意正整数秒，new-api 传多少秒就下发
+// 多少秒，禁止吸附到 5/10/15/30。
+func TestDoubao25DurationPassesThroughAnyPositiveInteger(t *testing.T) {
+	for _, value := range []int{1, 4, 7, 12, 23, 31, 99} {
+		for _, field := range []string{"seconds", "duration"} {
+			c, info, a := postVideoCtx(t,
+				fmt.Sprintf(`{"model":"seedance-2-5","prompt":"hi","%s":%d}`, field, value))
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info),
+				"2.5 %s=%d 应被受理", field, value)
+
+			req, err := getNormalizedRequest(c)
+			require.NoError(t, err)
+			assert.Equal(t, value, req.Duration, "2.5 %s=%d 必须原样透传", field, value)
+		}
+	}
+
+	// 非正整数不是合法时长。
+	for _, value := range []int{0, -1} {
+		c, info, a := postVideoCtx(t,
+			fmt.Sprintf(`{"model":"seedance-2-5","prompt":"hi","seconds":%d}`, value))
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, "2.5 seconds=%d 应被拒", value)
+		assert.Equal(t, "invalid_duration", taskErr.Code, "2.5 seconds=%d", value)
 	}
 }
 
@@ -1336,7 +1369,8 @@ func TestDoubaoBillingModeIsPerSecondForFastAndPerCallFor25(t *testing.T) {
 		{"5 秒", `{"model":"seedance-2-0-fast","prompt":"x","duration":5}`, 5},
 		{"9 秒非档位值", `{"model":"seedance-2-0-fast","prompt":"x","duration":9}`, 9},
 		{"缺省 5 秒", `{"model":"seedance-2-0-fast","prompt":"x"}`, 5},
-		{"15 秒上限", `{"model":"seedance-2-0-fast","prompt":"x","duration":15}`, 15},
+		{"30 秒上限", `{"model":"seedance-2-0-fast","prompt":"x","duration":30}`, 30},
+		{"23 秒非档位值", `{"model":"seedance-2-0-fast","prompt":"x","duration":23}`, 23},
 	} {
 		c, info, a := postVideoCtx(t, tc.body)
 		require.Nil(t, a.ValidateRequestAndSetAction(c, info), tc.name)
@@ -1368,8 +1402,8 @@ func TestDoubaoAcceptsAutoRatioAndRejectsIllegal(t *testing.T) {
 		code string
 	}{
 		{"bad ratio", `{"model":"seedance-2-5","prompt":"x","ratio":"4:2"}`, "invalid_ratio"},
-		{"bad seconds", `{"model":"seedance-2-5","prompt":"x","seconds":8}`, "invalid_duration"},
-		{"bad duration", `{"model":"seedance-2-5","prompt":"x","duration":20}`, "invalid_duration"},
+		{"bad seconds", `{"model":"seedance-2-5","prompt":"x","seconds":0}`, "invalid_duration"},
+		{"bad duration", `{"model":"seedance-2-5","prompt":"x","duration":-1}`, "invalid_duration"},
 		{"unsupported resolution", `{"model":"seedance-2-5","prompt":"x","resolution":"4K"}`, "invalid_request"},
 		{"unknown model", `{"model":"doubao-seedance-2-0-260128","prompt":"x"}`, "invalid_model"},
 	}

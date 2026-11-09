@@ -70,38 +70,19 @@ const promptRouteLimitRunes = 5000
 // doubaoDefaultSeconds 是没传时长时的默认值，与源链路（youzanwan3）一致。
 const doubaoDefaultSeconds = 5
 
-// doubaoDurationTiers 是目标链路（豆包官网 Seedance 2.5）接受的时长档。
+// doubaoSecondsFor 校验客户请求的时长是否可以原样发给豆包链路。
 //
-// 与 relay/channel/task/manwu 的 allowedDoubaoDurations 同口径。中间件这里
-// 单独写一份而不是 import 那个包，是为了不在中间件层引入 relay 渠道包的依赖
-// （中间件跑在选渠道之前，不该知道具体渠道的实现）。
+// 2026-11-09 用户口径：new-api 传多少秒就下发多少秒，**禁止吸附/回落改写**。
+// 豆包 Seedance 2.5 支持任意正整数秒（官网时长控件是 4–30s 连续滑条，
+// 非档位值由 Worker 构造同构 option 直写；控件失败会显式报错，不会静默改值）。
 //
-// ⚠️ 改这里必须同步改 manwu 的表，否则会出现「中间件认为合法、上游 400」。
-var doubaoDurationTiers = map[int]bool{
-	5:  true,
-	10: true,
-	15: true,
-	30: true,
-}
-
-// doubaoTierFor 把客户请求的时长向上吸附到豆包支持的档位。
-//
-// 规则一的阈值改成「大于 TriggerSeconds」（默认 20）之后，21–29 秒没有同名档位：
-// 豆包只能按 30 秒生成。这里向上吸附而不是放弃改派，是因为这档时长在源链路
-// 已经比豆包更贵，留在源链路是纯亏；计费仍按客户**请求的秒数**记
-// （ContextKeyRouteBillingSeconds），不会因为多生成几秒而多收钱。
-//
-// 返回 false 表示超过豆包最大档（30 秒），调用方应放弃改派。
-func doubaoTierFor(seconds int) (int, bool) {
+// 返回 false 仅表示「秒数非法（<=0）」，不再有最大档限制 —— 以前 21–29 秒
+// 向上吸附到 30、>30 秒放弃改派的行为都已删除。
+func doubaoSecondsFor(seconds int) (int, bool) {
 	if seconds <= 0 {
 		return 0, false
 	}
-	for _, tier := range []int{5, 10, 15, 30} {
-		if seconds <= tier {
-			return tier, true
-		}
-	}
-	return 0, false
+	return seconds, true
 }
 
 // RouteOriginModel 返回改派前的原始模型名；没发生改派时返回空串。
@@ -114,8 +95,8 @@ func RouteOriginModel(c *gin.Context) string {
 // 三条规则，**首尾帧最先判，其次时长，最后比例**：
 //
 //	规则三（首尾帧）：源模型 + media 含 first_frame/last_frame → wan3.0-720p-特惠
-//	规则一（时长）：  源模型 + 30 秒 → seedance-2-5（豆包，按次 ¥3.50）
-//	规则二（比例）：  源模型 + 9:16（非 30 秒）→ wan3.0-720p-特惠（按秒 ¥0.20）
+//	规则一（时长）：  源模型 + 时长 > 阈值（生产 20 秒）→ seedance-2-5（豆包，按次 ¥3.50）
+//	规则二（比例）：  源模型 + 9:16（未超时长阈值）→ wan3.0-720p-特惠（按秒 ¥0.20）
 //
 // 规则三为什么排最前：源链路 youzan wan3 **已彻底不收首尾帧**（2026-10-28 上游
 // 取消 firstFrameAssetId/lastFrameAssetId），而规则一的目标（漫屋）也不支持首尾帧。
@@ -134,9 +115,8 @@ func RouteOriginModel(c *gin.Context) string {
 // 不路由的情形（**都不是错误**，一律放行原请求）：
 //   - 开关关闭（默认）或三条规则都没配全
 //   - 模型名不匹配
-//   - 时长规则：时长不等于触发值（含不传时长 → 默认 5 秒）
+//   - 时长规则：时长不大于触发阈值（含不传时长 → 默认 5 秒）
 //   - 时长规则：带了参考视频 / 参考音频（豆包链路不支持，见 hasUnsupportedMedia）
-//   - 时长规则：用户明确要了分辨率（豆包链路没有分辨率控件）
 //   - **目标模型在当前分组下没有可用渠道**（见 hasAvailableChannel）
 //   - 比例规则：用户明确要 1080P（目标模型交付 720P，做不到）
 //   - 请求不是 JSON，或 body 解析/转换失败
@@ -293,8 +273,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 					if applyRewrittenBody(c, newBody, sourceModel) {
 						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
 						// 把判定命中的秒数记下来，交给 relay_task.go 补进 OtherRatios。
-						// ⚠️ 记的是客户**请求时填的秒数**，不是豆包实际生成的档位：
-						// 23 秒会按 30 秒出片，但只收 23 秒的钱。
+						// ⚠️ 记的是客户**请求时填的秒数**；2026-11-09 起下发值也是同一个
+						// 秒数（不再吸附档位），不会出现「请求 23 秒、出片 30 秒」。
 						common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
 						// 这条日志是排查「请求到底被哪条规则改派」的唯一凭据：
 						// 规则一和规则四的目标模型是同一条豆包链路，改派后下游现象一致，
@@ -432,7 +412,7 @@ const perCallFixedTierSeconds = constant.Seedance25PerCallFixedSeconds
 //	比报错更糟。
 //
 // ⚠️ 归一时**必须写回请求体**：改派后目标链路是 wan3（缺省 5 秒）或豆包
-// （只认 5/10/15/30 四档）。不写回 seconds，客户会「按 30 秒的价拿到 5 秒的片」。
+// （时长原样下发，不改写）。不写回 seconds，客户会「按 30 秒的价拿到 5 秒的片」。
 func normalizeFixedTierSeconds(body map[string]interface{}) (map[string]interface{}, bool) {
 	seconds, hasSeconds := extractRequestSeconds(body)
 	if hasSeconds && seconds != perCallFixedTierSeconds {
@@ -511,12 +491,11 @@ func prepareSecondsRoute(c *gin.Context, body map[string]interface{}, policy see
 	if !doubaoTargetUsable(c, body, targetModel) {
 		return nil, false
 	}
-	// 豆包只有 5/10/15/30 四档：阈值 20 命中后，21–29 秒没有同名档位，
-	// 只能向上吸附到 30 秒出片。
-	routeSeconds, ok := doubaoTierFor(requestedSeconds)
+	// 2026-11-09：时长原样透传，不做任何吸附（用户口径：传多少秒就多少秒）。
+	routeSeconds, ok := doubaoSecondsFor(requestedSeconds)
 	if !ok {
 		logger.LogInfo(c, fmt.Sprintf(
-			"条件路由：跳过 %d 秒改派（超过豆包最大档 30 秒）", requestedSeconds))
+			"条件路由：跳过 %d 秒改派（时长非法）", requestedSeconds))
 		return nil, false
 	}
 	return rewriteBodyForDoubaoWithDuration(body, policy, targetModel, routeSeconds)
@@ -722,13 +701,12 @@ func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel
 // 目标链路（豆包 Seedance 2.5）能吃下更长的提示词。
 //
 // 与规则一的关键差别：**保留客户原本要的时长**。
-//   - 规则一的触发条件就是「30 秒」，所以它把 seconds 固定写成 30；
+//   - 规则一命中后的秒数同样原样下发（2026-11-09 起不再吸附档位）；
 //   - 规则四的触发条件是提示词长度，与时长无关。客户要 10 秒就得给 10 秒，
-//     照抄规则一的写法会让 10 秒的请求变成 30 秒 —— 错交付 + 多收钱。
+//     照抄旧写法会让 10 秒的请求变成 30 秒 —— 错交付 + 多收钱。
 //
-// 目标链路只认 5/10/15/30 四档。客户要的时长不在档位内（如 12 秒）时不路由：
-// 路由过去必被上游 400，而把 12 秒改成 15 秒同样是错交付。留在源链路至少还有
-// 可能成功（上游的提示词限制未必每一单都硬卡）。
+// 目标链路（豆包 2.5）接受任意正整数秒，因此不再需要四档白名单挡板：
+// 只要客户传的秒数 > 0 就原样透传。
 func preparePromptRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string) (map[string]interface{}, bool) {
 	if !doubaoTargetUsable(c, body, targetModel) {
 		return nil, false
@@ -739,7 +717,7 @@ func preparePromptRoute(c *gin.Context, body map[string]interface{}, policy seed
 		// 与目标链路的默认档一致，可以直接用。
 		seconds = doubaoDefaultSeconds
 	}
-	if !doubaoDurationTiers[seconds] {
+	if seconds <= 0 {
 		return nil, false
 	}
 	return rewriteBodyForDoubaoWithDuration(body, policy, targetModel, seconds)
@@ -1303,7 +1281,7 @@ func rewriteBodyForDoubaoWithDuration(body map[string]interface{}, policy seedan
 		out["input_reference"] = images
 	}
 
-	// 时长归一：目标链路只认 5/10/15/30 四档，字符串形态最通用。
+	// 时长原样下发：字符串形态最通用（2026-11-09 起不再吸附档位）。
 	out["seconds"] = strconv.Itoa(seconds)
 
 	if ratio, ok := extractRatio(body); ok {

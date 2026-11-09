@@ -16,7 +16,7 @@ import (
 //
 // 与规则一的关键差别：**规则一强制把时长改成 30 秒**（它的触发条件就是 30 秒），
 // 规则四必须**保留客户原本要的时长** —— 客户要 10 秒，改派后还是 10 秒。
-// 豆包只认 5/10/15/30 四档，其它时长不路由（宁可不路由，也不悄悄改客户参数）。
+// 豆包接受任意正整数秒且原样下发，其它时长也要路由（宁可不路由，也不悄悄改客户参数）。
 
 const promptRouteLimit = 5000
 
@@ -135,9 +135,9 @@ func TestPromptRouteKeepsRequestedDuration(t *testing.T) {
 	}
 }
 
-// 豆包只认 5/10/15/30 四档。12 秒的请求路由过去会被上游 400，
-// 所以这种请求不路由 —— 留在源链路，至少还有可能成功。
-func TestPromptRouteSkipsUnsupportedDuration(t *testing.T) {
+// 2026-11-09 用户口径：豆包 2.5 支持任意正整数秒。12 秒这种旧「非档位」
+// 请求必须原样改派，不得放弃、更不得改成 15 秒。
+func TestPromptRoutePassesNonTierDurationThroughUnchanged(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
@@ -145,8 +145,12 @@ func TestPromptRouteSkipsUnsupportedDuration(t *testing.T) {
 	})
 	seen, _ := runRoute(t, body)
 
-	if seen != body {
-		t.Fatalf("12 秒不在豆包档位内，不该改派:\n got %s\nwant %s", seen, body)
+	out := decodeBody(t, seen)
+	if out["model"] != testTargetModel {
+		t.Fatalf("model = %v, want %s（12 秒已是合法时长，应改派）", out["model"], testTargetModel)
+	}
+	if out["seconds"] != "12" {
+		t.Fatalf("seconds = %v, want \"12\"（必须原样透传，禁止吸附档位）", out["seconds"])
 	}
 }
 

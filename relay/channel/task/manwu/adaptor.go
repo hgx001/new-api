@@ -157,11 +157,11 @@ const (
 // 模型名口径：
 //   - seedance-2.0：dola 官网 Seedance 2.0（远端视频，时长固定 10 秒，按次计费）
 //   - seedance-2.5：dola 官网 Seedance 2.5（远端视频，固定 30 秒 / 720p，按次计费）
-//   - seedance-2-5：豆包官网 Seedance 2.5（远端视频，5/10/15/30 秒四档，
+//   - seedance-2-5：豆包官网 Seedance 2.5（远端视频，时长任意正整数秒原样透传，
 //     按次计费 ¥5.0/次）。公开名是短名（2026-10-08 用户定稿，2026-10-12 去掉
 //     db- 前缀），转发 ArcReel 前翻译成官网档位真名 doubao-seedance-2-5-260628
 //     （见 modelSpec.UpstreamModel）；与 dola 的 seedance-2.5 同名不同站，**互不通用**
-//   - seedance-2-0-fast：豆包官网 Seedance 2.0 Fast（远端视频，5-15 秒逐秒可选，
+//   - seedance-2-0-fast：豆包官网 Seedance 2.0 Fast（远端视频，4-30 秒逐秒可选，
 //     **按秒计费 ¥0.1/秒**），上游真名 doubao-seedance-2-0-fast-260128
 //   - Nano Banana Pro：ArcReel 抽象图片平台（PUBLIC_REMOTE_IMAGE_PLATFORM）。服务端
 //     MANWU_REMOTE_IMAGE_PROVIDER 决定实际走 gemini(nano_banana_2) 还是
@@ -237,7 +237,7 @@ const picsartUpstreamModel = "wan-3.0-video"
 const (
 	kindDolaVideo   = "dola_video"   // Seedance 2.0：时长固定 10 秒/比例/参考图白名单
 	kindDola25Video = "dola25_video" // Seedance 2.5：固定 30 秒/720p/比例/参考图白名单
-	kindDoubaoVideo = "doubao_video" // 豆包官网：5/10/15/30 秒四档/比例七档（含 auto）/参考图
+	kindDoubaoVideo = "doubao_video" // 豆包官网：时长原样透传（2.5 任意正整数/2.0 Fast 4–30）/比例七档（含 auto）/参考图
 	kindVeoVideo    = "veo_video"    // 只有宽高比：官网无模型/时长/分辨率控件
 	kindImage       = "image"        // 张数 + 宽高比 + 参考图
 	kindReverse     = "reverse"      // 单视频入参，文本出参
@@ -405,22 +405,28 @@ var allowedRatios = map[string]bool{
 	"21:9": true,
 }
 
-// 豆包官网参数白名单（2026-10-06 真机探针订正，与 Worker 侧
-// cron_video_brach src/platforms/doubao/params.ts 同口径）：
-//   - 时长分模型：2.5 四档 5/10/15/30；2.0 Fast 按 5–15 秒
-//     区间**透传**（2026-10-12 任意秒真跑，见
-//     validateSeedance20Duration——不再吸附），区间外直接 400——Worker 侧
-//     durationHack 武装失败会硬闸门拒单，这里提前挡避免用户下单后才失败；
-//     ⚠️ dola（seedance-2.0）不再是区间口径：2026-10-24 起锁定 10 秒
-//     （dolaFixedDuration），与本表无关；
+// 豆包官网参数白名单（与 Worker 侧 cron_video_brach
+// src/platforms/doubao/params.ts 同口径，2026-11-09 用户口径更新）：
+//   - 时长：2.5 **任意正整数秒原样透传、不设上限**（new-api 传多少秒就下发
+//     多少秒，禁止吸附/回落改写）；2.0 Fast 为 4–30 秒任意整数秒；
 //   - 比例七档，含官网出厂默认档 `auto`（「自动 · 10s」）；
 //   - 比例「未指定不编造」：豆包未指定时保持官网当前状态（App 侧
 //     resolveDoubaoRatioLabel 空 → null 纪律），不强补 16:9。
-var allowedDoubaoDurations = map[int]bool{
-	5:  true,
-	10: true,
-	15: true,
-	30: true,
+const (
+	doubao20FastMinDuration = 4
+	doubao20FastMaxDuration = 30
+)
+
+// validateDoubao20FastDuration 校验豆包 2.0 Fast 的 4–30 秒区间：
+// 区间内任意整数秒**原样透传**，区间外报错。
+// ⚠️ 与 dola 的 `validateSeedance20Duration`（5–15）刻意分开：
+// 两者曾共用一张表，但 2026-11-09 起豆包 2.0 Fast 已放宽到 4–30，
+// dola 仍保持 5–15，不能再合并。
+func validateDoubao20FastDuration(field string, value int, model string) (int, error) {
+	if value < doubao20FastMinDuration || value > doubao20FastMaxDuration {
+		return 0, fmt.Errorf("%s must be between 4 and 30 for %s, got %d", field, model, value)
+	}
+	return value, nil
 }
 
 var allowedDoubaoRatios = map[string]bool{
@@ -1591,8 +1597,8 @@ func checkWanEditReferenceVideoSeconds(videos []string) error {
 const doubaoDefaultDuration = 5
 
 // resolveDoubaoDuration 解析豆包时长：seconds（首选，数字或数字字符串）→ duration
-// → 缺省 5。口径分模型：2.5 四档白名单 5/10/15/30；2.0 Fast 按 **5–15 秒区间**
-// 透传（2026-10-12 任意秒真跑，与 dola 同口径，不再吸附）。缺省或 null 视为
+// → 缺省 5。口径分模型：2.5 任意正整数秒原样透传（客户传多少就多少，不吸附不改写）；
+// 2.0 Fast 按 **4–30 秒区间**透传。缺省或 null 视为
 // 未指定；字段存在但非法直接报错——与 resolveFixedDuration 同纪律，避免计费时长与
 // 实际生成时长脱节（ArcReel 侧对非法值会静默回落 5）。
 func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
@@ -1615,14 +1621,16 @@ func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
 	return doubaoDefaultDuration, nil
 }
 
-// checkDoubaoDuration 豆包时长口径：2.0 Fast = 5–15 秒区间透传（任意秒真跑）；
-// 2.5 = 5/10/15/30 四档白名单。
+// checkDoubaoDuration 豆包时长口径：
+//   - 2.0 Fast = 4–30 秒区间任意整数秒原样透传；
+//   - 2.5 = 任意正整数秒原样透传（不设上限，2026-11-09 用户口径：
+//     new-api 传多少秒就下发多少秒，禁止吸附/回落改写）。
 func checkDoubaoDuration(field string, value int, model string) (int, error) {
 	if model == ModelDoubao20Fast {
-		return validateSeedance20Duration(field, value, model)
+		return validateDoubao20FastDuration(field, value, model)
 	}
-	if !allowedDoubaoDurations[value] {
-		return 0, fmt.Errorf("%s must be one of 5/10/15/30 for %s, got %d", field, model, value)
+	if value < 1 {
+		return 0, fmt.Errorf("%s must be a positive integer number of seconds for %s, got %d", field, model, value)
 	}
 	return value, nil
 }

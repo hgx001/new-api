@@ -154,7 +154,7 @@ func TestDoubaoRoutePutsReferenceImagesOnTopLevel(t *testing.T) {
 	}
 }
 
-// 时长必须显式写成 30 秒 —— 豆包只认 5/10/15/30 四档。
+// 时长必须显式写成 30 秒 —— 触发规则一的就是 30 秒。
 func TestDoubaoRouteWritesTriggerDuration(t *testing.T) {
 	enableDoubaoFallbackRoute(t)
 

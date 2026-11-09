@@ -45,8 +45,9 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 //
 //	规则三（首尾帧）：SourceModel + media 含 first_frame/last_frame → FramesTargetModel
 //	               seedance2.5-特惠 + 首尾帧 → wan3.0-720p-特惠
-//	规则一（时长）：SourceModel + TriggerSeconds 秒 → TargetModel
-//	               seedance2.5-特惠 + 30 秒 → seedance-2-5（豆包按次 ¥3.50）
+//	规则一（时长）：SourceModel + 时长 > TriggerSeconds → TargetModel
+//	               seedance2.5-特惠 + 超过阈值（生产 20 秒）→ seedance-2-5（豆包按次 ¥3.50）
+//	               （2026-11-09 起时长原样下发，不再吸附档位）
 //	规则四（长提示词）：SourceModel + 提示词 > 5000 字符 → TargetModel
 //	               seedance2.5-特惠 + 超长提示词 → seedance-2-5
 //	规则二（比例）：SourceModel + TriggerRatio 比例 → RatioTargetModel
@@ -54,8 +55,8 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 //
 // **优先级：规则三最先判，然后规则一、规则四，最后规则二。**
 //
-//	规则一/二之间：老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」，
-//	  即 30 秒 + 9:16 走豆包，只有非 30 秒的 9:16 才走 wan3。
+//	规则一/二之间：老板 2026-10-30 拍板「长时长优先，豆包仍接 9:16」，
+//	  即超过阈值的 9:16 走豆包，只有未超阈值的 9:16 才走 wan3。
 //
 //	规则四为什么和规则一共用 TargetModel 与暂停窗口：两者的目标链路是同一条
 //	  豆包链路、同一份额度。额度用完时规则一会被自动暂停，规则四必须一起停 ——
@@ -96,7 +97,8 @@ type Policy struct {
 	//
 	// 2026-11-08 起语义由「等于」改为「大于」：豆包按次成本固定（¥3.50/次），
 	// 源链路按秒计价（¥0.20/秒），超过 20 秒以后源链路已经比豆包更贵，
-	// 没必要非等到 30 秒整才改派。非 30 的档位在中间件里向上吸附到豆包档位。
+	// 没必要非等到 30 秒整才改派。2026-11-09 起命中后的时长**原样下发**，
+	// 不再吸附到豆包的旧四档（用户口径：传多少秒就多少秒）。
 	TriggerSeconds int `json:"trigger_seconds"`
 
 	// RatioTargetModel 规则二的目标模型名。空 = 规则二不启用。
@@ -201,7 +203,7 @@ type Policy struct {
 	//
 	// 两者**不能共用目标模型**：母本按秒计价，活动版按次计价，
 	// 目标链路的计费口径与能力都不同（心笔是固定 30 秒按次，
-	// 豆包是 5/10/15/30 四档按次）。
+	// 豆包是按次且时长原样透传）。
 	//
 	// 只改 option 做不到这一点 —— 改了必然同时改到另一个成员。
 	// 所以这里加一层「按源模型覆盖」：未覆盖的源模型继续用公共字段，
