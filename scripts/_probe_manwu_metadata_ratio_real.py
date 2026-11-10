@@ -23,6 +23,7 @@ API = "https://api.heibaidao.cn"
 # seedance-2-5（manwu 渠道 20 在售的视频模型，走标准 task 链路）。
 MODEL = "seedance-2-5"
 EXPECT_RATIO = "9:16"
+EXPECT_SOURCE = "ratio"
 
 
 def sql(query: str) -> str:
@@ -46,11 +47,11 @@ def get_token() -> str:
 def main() -> int:
     token = get_token()
 
-    # 关键：比例放在 **metadata.ratio** —— 这是 manwu 之前完全不支持的路径。
+    # 关键：比例放在**顶层** ratio —— 这是 manwu 之前完全不支持的路径。
     payload = {
         "model": MODEL,
         "prompt": "一只橘猫在窗台上打盹，午后阳光斜照",
-        "metadata": {"ratio": EXPECT_RATIO},
+        "ratio": EXPECT_RATIO,
     }
     print(f"[submit] payload = {json.dumps(payload, ensure_ascii=False)}")
     raw = subprocess.run(
@@ -87,10 +88,10 @@ def main() -> int:
         print(f"   [payload 原文] {payload_raw[:400]}")
 
     ok_ratio = params.get("ratio") == EXPECT_RATIO
-    ok_source = params.get("ratio_source") == "metadata.ratio"
+    ok_source = params.get("ratio_source") == EXPECT_SOURCE
     print()
     print(f"{'✅' if ok_ratio else '❌'} 快照生效比例 = {params.get('ratio')!r}（期望 {EXPECT_RATIO!r}）")
-    print(f"{'✅' if ok_source else '❌'} 比例来源 = {params.get('ratio_source')!r}（期望 'metadata.ratio'）")
+    print(f"{'✅' if ok_source else '❌'} 比例来源 = {params.get('ratio_source')!r}（期望 {expect_source!r}）")
     return 0 if (ok_ratio and ok_source) else 1
 
 
