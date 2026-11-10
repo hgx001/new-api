@@ -11,7 +11,8 @@
 
 成本控制：2 秒 × ¥0.20/秒 = **¥0.40**（与老板之前批准的有赞 2 秒基线同价）。
 wan3.0-720p-特惠 与 seedance2.5-特惠 都是 ¥0.20/秒，所以路由与否**同价**，
-判据纯粹是 channel_id（12=DashScope wan3，17=有赞）。
+判据纯粹是 channel_id（比例规则生效时落在 12=DashScope wan3 或 25=心笔内链；
+比例规则**当前已按要求关闭**，因此任务应**留在原链路 17=有赞**，且比例仍需正确）。
 
 用法：
     python scripts/_probe_seedance_ratio_real.py
@@ -26,6 +27,16 @@ PG = "docker exec postgres psql -U root -d new-api -t -A"
 API = "https://api.heibaidao.cn"
 
 SECONDS = 2
+
+# 比例路由的目标渠道集合（2026-11-10 更新）。
+#
+# ⚠️ 原来判据写死 channel_id == 12（DashScope wan3），但现在多了一道分流：
+# 「wan3.0-720p-特惠」会先经 middleware/wan3_tehui_xinbi_route.go 改派到
+# 「wan3.0-720p-特惠-内链」→ 心笔（渠道 25）。
+#
+# 所以「比例规则生效」的表现是**落在 12 或 25**，不是必须 12。
+# 只认 12 会把「路由成功了但落点变了」误报成「未生效」。
+RATIO_ROUTE_TARGET_CHANNELS = {"12", "25"}
 
 
 def sql(query: str) -> str:
@@ -84,8 +95,11 @@ def main() -> int:
     print(f"\n[task] id={task_id} ch={channel_id} status={status} quota={quota} = ¥{cny:.4f}")
     print(f"       public_id={public_id}")
 
-    routed = channel_id == "12"
-    print(f"\n{'✅ 落在渠道 12（DashScope wan3）→ 比例规则生效' if routed else '➡️ 落在渠道 %s → 未按预期路由' % channel_id}")
+    routed = channel_id in RATIO_ROUTE_TARGET_CHANNELS
+    print(f"\n{'✅ 落在 ' + '/'.join(RATIO_ROUTE_TARGET_CHANNELS) + '（比例路由目标链路）→ 比例规则生效' if routed else '➡️ 落在渠道 %s → 未按预期路由' % channel_id}")
+    if channel_id not in RATIO_ROUTE_TARGET_CHANNELS:
+        print("   （注意：比例规则当前在生产上是**关闭**的 —— options 里没有 trigger_ratio，"
+              "9:16 不会触发改派，会留在原链路。）")
 
     print("\n=== 任务属性 ===")
     print(sql(f"SELECT properties::text FROM tasks WHERE id = {task_id}")[:300])

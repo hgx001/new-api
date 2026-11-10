@@ -269,22 +269,27 @@ func resolutionFromSize(size string) (string, bool) {
 	}
 }
 
-// resolveRatio 推断宽高比：优先 metadata 显式指定，其次由 size 推断，最后使用官方 adaptive。
+// resolveRatio 推断宽高比。
+//
+// 统一走 relaycommon.ResolveTaskRatio（全站唯一入口），优先级：
+//
+//	metadata.ratio → metadata.aspect_ratio → 顶层 ratio → 顶层 aspect_ratio
+//	→ size 推断 → adaptive
+//
+// ⚠️ 2026-11-10：此前本函数**只读 metadata**，客户端按 OpenAI 风格把比例
+// 放在请求体顶层（{"ratio":"9:16"}）时会被静默丢弃 → 落 adaptive，
+// 成片比例随机，但任务成功、照扣费、没有任何报错。
+// 首轮修复只补了 youzanwan3，漏了本包 —— 根因是全站性的，现统一收口。
 func resolveRatio(req relaycommon.TaskSubmitReq) string {
-	if req.Metadata != nil {
-		for _, key := range []string{"ratio", "aspect_ratio"} {
-			if r, ok := req.Metadata[key].(string); ok {
-				r = strings.TrimSpace(r)
-				if isValidRatio(r) {
-					return r
-				}
-			}
-		}
-	}
-	if r, ok := ratioFromSize(req.Size); ok {
-		return r
-	}
-	return defaultRatio
+	result := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		Candidates: relaycommon.TaskRatioCandidates{
+			"adaptive": true, "16:9": true, "9:16": true,
+			"4:3": true, "3:4": true, "1:1": true,
+		},
+		DefaultRatio: defaultRatio,
+		SizeToRatio:  ratioFromSize,
+	})
+	return result.Ratio
 }
 
 func isValidRatio(r string) bool {

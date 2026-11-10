@@ -120,34 +120,30 @@ func resolveDuration(req relaycommon.TaskSubmitReq) int {
 	return duration
 }
 
-// resolveAspectRatio 读比例：优先 metadata.ratio / metadata.aspect_ratio，其次从 size
-// （如 1280x720）反解，都没有则用上游默认的 adaptive。
+// resolveAspectRatio 读比例。
+//
+// 统一走 relaycommon.ResolveTaskRatio（全站唯一入口），优先级：
+//
+//	metadata.ratio → metadata.aspect_ratio → 顶层 ratio → 顶层 aspect_ratio
+//	→ size 反解 → adaptive
+//
 // 允许值以 /v1/catalog 的 aspect_ratios 为准，不接受目录外的值。
+//
+// ⚠️ 2026-11-10：此前本函数**只读 metadata**，客户端按 OpenAI 风格把比例
+// 放在请求体顶层时会被静默丢弃 → 落 adaptive，成片比例不对但任务成功、
+// 照扣费。首轮修复漏了本包 —— 根因是全站性的，现统一收口。
 func resolveAspectRatio(req relaycommon.TaskSubmitReq) (string, error) {
-	candidate := ""
-	if req.Metadata != nil {
-		for _, key := range []string{"ratio", "aspect_ratio"} {
-			if value, ok := req.Metadata[key].(string); ok {
-				candidate = strings.TrimSpace(value)
-				if candidate != "" {
-					break
-				}
-			}
-		}
-	}
-	if candidate == "" && strings.TrimSpace(req.Size) != "" {
-		if ratio, ok := ratioFromSize(req.Size); ok {
-			candidate = ratio
-		}
-	}
-	if candidate == "" {
-		return "adaptive", nil
-	}
-	if !allowedRatios[candidate] {
+	result := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		Candidates:    relaycommon.TaskRatioCandidates(allowedRatios),
+		DefaultRatio:  "adaptive",
+		SizeToRatio:   ratioFromSize,
+		RejectInvalid: true,
+	})
+	if result.Rejected != "" {
 		return "", errors.Errorf("%s does not support aspect_ratio %q (allowed: %s)",
-			PublicModel, candidate, strings.Join(sortedRatioKeys(), ", "))
+			PublicModel, result.Rejected, strings.Join(sortedRatioKeys(), ", "))
 	}
-	return candidate, nil
+	return result.Ratio, nil
 }
 
 // ratioFromSize 把 "1280x720" 这类尺寸反解成最简比例。

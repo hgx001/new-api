@@ -192,33 +192,39 @@ func parseResolutionNumber(raw string) (string, bool) {
 // resolveRatio 解析画幅比例。
 //
 // 上游接受 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / 21:9 / adaptive。
-// 优先取 metadata.ratio，其次 metadata.aspect_ratio，再次 req.Size（恰好是比例写法时）。
+//
+// 统一走 relaycommon.ResolveTaskRatio（全站唯一入口），优先级：
+//
+//	metadata.ratio → metadata.aspect_ratio → 顶层 ratio → 顶层 aspect_ratio
+//	→ size（恰好是比例写法时）→ 16:9
+//
+// ⚠️ 2026-11-10：此前本函数**只读 metadata**，客户端按 OpenAI 风格把比例
+// 放在请求体顶层（{"ratio":"9:16"}）时会被静默丢弃 → 落 16:9，
+// 成片比例不对但任务成功、照扣费。首轮修复漏了本包 —— 根因是全站性的。
+//
+// ⚠️ 视频生成车站的口径：非法比例**报错**（unsupported ratio），
+// 不静默降级 —— 档位是硬约束，提前报错能给客户可读原因。
 func resolveRatio(req relaycommon.TaskSubmitReq) (string, error) {
-	candidates := make([]string, 0, 3)
-	if req.Metadata != nil {
-		for _, key := range []string{"ratio", "aspect_ratio"} {
-			if v, ok := req.Metadata[key].(string); ok && strings.TrimSpace(v) != "" {
-				candidates = append(candidates, v)
+	result := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		Candidates:    relaycommon.TaskRatioCandidates(allowedRatios),
+		DefaultRatio:  defaultRatio,
+		RejectInvalid: true,
+		// size 只认「恰好是比例写法」的情况（"16:9"）；
+		// 像素写法（"1280x720"）不认，保持原有行为不变。
+		SizeToRatio: func(size string) (string, bool) {
+			if size == "" {
+				return "", false
 			}
-		}
-	}
-	if trimmed := strings.TrimSpace(req.Size); trimmed != "" {
-		candidates = append(candidates, trimmed)
-	}
-	for _, candidate := range candidates {
-		normalized := normalizeRatio(candidate)
-		if normalized == "" {
-			continue
-		}
-		if allowedRatios[normalized] {
-			return normalized, nil
-		}
-	}
-	if len(candidates) > 0 {
+			return size, true
+		},
+		// 客户端常用 "16/9"、"16：9"（全角冒号）写法，归一化后再比对档位。
+		Normalize: normalizeRatio,
+	})
+	if result.Rejected != "" {
 		return "", errors.Errorf("unsupported ratio %q, expected one of 16:9/9:16/1:1/4:3/3:4/21:9/adaptive",
-			candidates[0])
+			result.Rejected)
 	}
-	return defaultRatio, nil
+	return result.Ratio, nil
 }
 
 // normalizeRatio 把 "16/9" / "16：9"（全角冒号）归一化成 "16:9"。
@@ -322,10 +328,10 @@ func buildMedia(req relaycommon.TaskSubmitReq) (*mediaSet, error) {
 
 // mediaSet 是归一化后的素材集合，字段名与上游建单字段一一对应。
 type mediaSet struct {
-	mode      string
-	refs      []string
-	audioRefs []string
-	videoRefs []string
+	mode       string
+	refs       []string
+	audioRefs  []string
+	videoRefs  []string
 	firstFrame string
 	lastFrame  string
 }
@@ -519,8 +525,8 @@ func resolveAudio(req relaycommon.TaskSubmitReq) bool {
 // ────────────────────────────── 提交响应 ──────────────────────────────
 
 type createResponse struct {
-	OK  bool   `json:"ok"`
-	Msg string `json:"msg"`
+	OK   bool   `json:"ok"`
+	Msg  string `json:"msg"`
 	Task struct {
 		ID          string `json:"id"`
 		Status      string `json:"status"`
@@ -627,12 +633,12 @@ func (t *upstreamTask) taskID() string {
 
 // tasksResponse 是 GET /vr/api/tasks 的响应。
 type tasksResponse struct {
-	OK       bool          `json:"ok"`
-	Msg      string        `json:"msg"`
-	Tasks    []upstreamTask `json:"tasks"`
-	Total    int           `json:"total"`
-	Pages    int           `json:"pages"`
-	Remaining int          `json:"remaining"`
+	OK        bool           `json:"ok"`
+	Msg       string         `json:"msg"`
+	Tasks     []upstreamTask `json:"tasks"`
+	Total     int            `json:"total"`
+	Pages     int            `json:"pages"`
+	Remaining int            `json:"remaining"`
 }
 
 // FetchTask 轮询上游任务列表。
@@ -746,9 +752,9 @@ func wrapTargetTask(responseBody []byte, taskID string) ([]byte, bool) {
 // 也可能是原始列表（{"ok":true,"tasks":[...]}）—— 两种都要能解析。
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	var res struct {
-		OK    bool          `json:"ok"`
-		Msg   string        `json:"msg"`
-		Task  *upstreamTask `json:"task"`
+		OK    bool           `json:"ok"`
+		Msg   string         `json:"msg"`
+		Task  *upstreamTask  `json:"task"`
 		Tasks []upstreamTask `json:"tasks"`
 	}
 	if err := common.Unmarshal(respBody, &res); err != nil {

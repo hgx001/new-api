@@ -247,6 +247,10 @@ func resolveMegabyaiUpstreamModel(info *relaycommon.RelayInfo) string {
 
 // rawWan30Ratio 从原始请求体里取 ratio（本站通用入参里没有 ratio 字段，
 // 但客户端习惯直接传，透传给上游时不能丢）。
+//
+// ⚠️ 2026-11-10：原来只读顶层 "ratio"，漏了 "aspect_ratio" —— 客户端
+// 用 aspect_ratio 写法时，这条兜底路也拿不到比例。现在两个字段都读，
+// 与 TaskSubmitReq 的顶层字段口径一致。
 func rawWan30Ratio(c *gin.Context) string {
 	if c == nil {
 		return ""
@@ -263,8 +267,14 @@ func rawWan30Ratio(c *gin.Context) string {
 	if err := common.Unmarshal(raw, &bodyMap); err != nil {
 		return ""
 	}
-	ratio, _ := bodyMap["ratio"].(string)
-	return strings.TrimSpace(ratio)
+	for _, key := range []string{"ratio", "aspect_ratio"} {
+		if ratio, ok := bodyMap[key].(string); ok {
+			if ratio = strings.TrimSpace(ratio); ratio != "" {
+				return ratio
+			}
+		}
+	}
+	return ""
 }
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {

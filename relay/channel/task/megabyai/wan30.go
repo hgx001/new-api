@@ -151,37 +151,28 @@ func parseWan30Size(size string) (int, int, bool) {
 
 // resolveWan30Ratio 决定下发给上游的宽高比。
 //
-// 优先级：原始请求体的 ratio → 解码后的顶层 ratio / aspect_ratio →
-// metadata.ratio / metadata.aspect_ratio → 由 size 推断。
+// 优先级（2026-11-10 审查后与全站对齐）：
+//
+//	metadata.ratio → metadata.aspect_ratio → 顶层 ratio / aspect_ratio
+//	→ 原始请求体的 ratio → 由 size 推断
+//
 // 推断不出来就不下发（用上游自己的默认值），不编造比例。
 //
-// ⚠️ 2026-11-10：新增「解码后的顶层字段」这一档。TaskSubmitReq 此前没有
-// ratio / aspect_ratio 字段，客户端按 OpenAI 风格把比例放在请求体顶层时会被
-// Go 解码器**静默丢弃** —— raw body 那条路能救回来，但只有能拿到原始 body
-// 的调用方才有效。补上顶层字段后，多一条不依赖 raw body 的兜底，
-// 与 youzanwan3 的 resolveRatio 口径一致。
+// ⚠️ 为什么 metadata 排在最前：metadata 是站内**已验证**的传法
+// （生产已有大量 9:16 走这条路），顶层/原始 body 是后来为兼容
+// OpenAI 风格补的兜底。首轮修复把顶层排在 metadata 前面，与
+// youzanwan3 / wan3 / xinbiapi 等包的「metadata 优先」口径相反 ——
+// 同一条请求在不同渠道会解析出不同的比例。现统一为 metadata 优先。
 func resolveWan30Ratio(rawRatio string, req relaycommon.TaskSubmitReq) string {
-	if ratio := strings.TrimSpace(rawRatio); ratio != "" {
-		return ratio
+	result := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		DefaultRatio: "",
+		SizeToRatio:  ratioFromWan30Size,
+	})
+	if result.Ratio != "" {
+		return result.Ratio
 	}
-	for _, value := range []string{req.Ratio, req.AspectRatio} {
-		if ratio := strings.TrimSpace(value); ratio != "" {
-			return ratio
-		}
-	}
-	if req.Metadata != nil {
-		for _, key := range []string{"ratio", "aspect_ratio"} {
-			if value, ok := req.Metadata[key].(string); ok {
-				if value = strings.TrimSpace(value); value != "" {
-					return value
-				}
-			}
-		}
-	}
-	if ratio, ok := ratioFromWan30Size(req.Size); ok {
-		return ratio
-	}
-	return ""
+	// 原始 body 的 ratio —— 只有拿得到原始 body 时才生效（兜底）。
+	return strings.TrimSpace(rawRatio)
 }
 
 // ratioFromWan30Size 把 "1280x720" 之类的尺寸映射成宽高比；差距过大时返回 adaptive。

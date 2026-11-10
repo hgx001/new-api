@@ -639,29 +639,38 @@ func rejectNonImageMedia(req relaycommon.TaskSubmitReq) error {
 	return nil
 }
 
-// resolveRatio 取画面比例：metadata.ratio 优先，其次 size 恰好是比例写法时。
+// resolveRatio 取画面比例。
+//
+// 统一走 relaycommon.ResolveTaskRatio（全站唯一入口），优先级：
+//
+//	metadata.ratio → metadata.aspect_ratio → 顶层 ratio → 顶层 aspect_ratio
+//	→ size（恰好是比例写法时）→ adaptive
+//
+// ⚠️ 2026-11-10：此前本函数**只读 metadata**，客户端按 OpenAI 风格把比例
+// 放在请求体顶层（{"ratio":"9:16"}）时会被静默丢弃 → 落 adaptive，
+// 成片比例不对但任务成功、照扣费。首轮修复漏了本包 —— 根因是全站性的。
+//
+// ⚠️ 心笔的口径与其它渠道不同：非法比例**报错**（invalid_ratio），
+// 不静默降级 —— 心笔的档位是硬约束（它会直接拒单），提前报错能给客户
+// 可读原因，而不是建单后失败再退款。
 func resolveRatio(req relaycommon.TaskSubmitReq) (string, error) {
-	ratio := ""
-	if req.Metadata != nil {
-		if raw, ok := req.Metadata["ratio"]; ok {
-			if value, ok := raw.(string); ok {
-				ratio = strings.TrimSpace(value)
+	result := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		Candidates:    relaycommon.TaskRatioCandidates(ratios),
+		DefaultRatio:  defaultRatio,
+		RejectInvalid: true,
+		// 心笔只认「size 恰好是比例写法」的情况（"16:9"）；
+		// 像素写法（"1280x720"）不认，保持原有行为不变。
+		SizeToRatio: func(size string) (string, bool) {
+			if strings.Contains(size, ":") && !strings.Contains(strings.ToLower(size), "x") {
+				return size, true
 			}
-		}
+			return "", false
+		},
+	})
+	if result.Rejected != "" {
+		return "", fmt.Errorf("ratio %q is not supported, use one of adaptive, 16:9, 9:16, 1:1, 4:3, 3:4", result.Rejected)
 	}
-	if ratio == "" {
-		// 有些客户端把比例塞在 size 里（"16:9"）；像素写法（"1280x720"）不认。
-		if size := strings.TrimSpace(req.Size); strings.Contains(size, ":") && !strings.Contains(strings.ToLower(size), "x") {
-			ratio = size
-		}
-	}
-	if ratio == "" {
-		return defaultRatio, nil
-	}
-	if !ratios[ratio] {
-		return "", fmt.Errorf("ratio %q is not supported, use one of adaptive, 16:9, 9:16, 1:1, 4:3, 3:4", ratio)
-	}
-	return ratio, nil
+	return result.Ratio, nil
 }
 
 // collectReferenceImages 汇总参考图，并拦住上游一定拒的地址。

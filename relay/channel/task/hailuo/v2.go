@@ -493,24 +493,41 @@ func isAudioURL(u string) bool {
 // 比例 / 分辨率
 // ---------------------------------------------------------------------------
 
-// resolveV2Ratio 归一画面比例。来源优先级：metadata.ratio/aspect_ratio →
-// Size("1280x720") 归一 → adaptive。
+// resolveV2Ratio 归一画面比例。
+//
+// 统一走 relaycommon.ResolveTaskRatio（全站唯一入口），优先级：
+//
+//	metadata.ratio → metadata.aspect_ratio → 顶层 ratio → 顶层 aspect_ratio
+//	→ Size("1280x720") 归一 → adaptive
+//
+// ⚠️ 2026-11-10：此前本函数**只读 metadata**，客户端按 OpenAI 风格把比例
+// 放在请求体顶层（{"ratio":"9:16"}）时会被静默丢弃 → 落 adaptive，
+// 成片比例不对但任务成功、照扣费。首轮修复漏了本包 —— 根因是全站性的。
 func resolveV2Ratio(req *relaycommon.TaskSubmitReq) (string, error) {
-	if req.Metadata != nil {
-		for _, key := range []string{"ratio", "aspect_ratio"} {
-			if v, ok := req.Metadata[key]; ok {
-				if s := normalizeV2Ratio(fmt.Sprintf("%v", v)); s != "" {
-					return s, nil
-				}
+	if req == nil {
+		return "adaptive", nil
+	}
+	result := relaycommon.ResolveTaskRatio(*req, relaycommon.TaskRatioOptions{
+		Candidates:   relaycommon.TaskRatioCandidates(v2RatioCandidates()),
+		DefaultRatio: "adaptive",
+		SizeToRatio: func(size string) (string, bool) {
+			if s := ratioFromSizeV2(size); s != "" {
+				return s, true
 			}
-		}
+			return "", false
+		},
+		Normalize: normalizeV2Ratio,
+	})
+	return result.Ratio, nil
+}
+
+// v2RatioCandidates 把 v2Ratios 切片转成档位集合（供公共解析器比对）。
+func v2RatioCandidates() relaycommon.TaskRatioCandidates {
+	candidates := make(relaycommon.TaskRatioCandidates, len(v2Ratios))
+	for _, ratio := range v2Ratios {
+		candidates[ratio] = true
 	}
-	if size := strings.TrimSpace(req.Size); size != "" {
-		if s := ratioFromSizeV2(size); s != "" {
-			return s, nil
-		}
-	}
-	return "adaptive", nil
+	return candidates
 }
 
 func normalizeV2Ratio(raw string) string {

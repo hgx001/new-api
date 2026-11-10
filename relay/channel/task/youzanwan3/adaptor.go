@@ -571,38 +571,17 @@ func resolveRatio(req relaycommon.TaskSubmitReq) string {
 		allowedRatios = r2vRatios
 		fallback = r2vDefaultRatio
 	}
-	matches := func(value string) bool {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			return false
-		}
-		for _, allowed := range allowedRatios {
-			if value == allowed {
-				return true
-			}
-		}
-		return false
+	candidates := make(relaycommon.TaskRatioCandidates, len(allowedRatios))
+	for _, ratio := range allowedRatios {
+		candidates[ratio] = true
 	}
 
-	if req.Metadata != nil {
-		for _, key := range []string{"ratio", "aspect_ratio"} {
-			if value, ok := req.Metadata[key].(string); ok && matches(value) {
-				return strings.TrimSpace(value)
-			}
-		}
-	}
-	// 顶层字段（TaskSubmitReq.Ratio / AspectRatio）—— 客户端按 OpenAI 风格
-	// 传比例时落在这里。
-	for _, value := range []string{req.Ratio, req.AspectRatio} {
-		if matches(value) {
-			return strings.TrimSpace(value)
-		}
-	}
-	// size 兜底：仅 "1280x720" 这类尺寸能推出比例。
-	if ratio, ok := ratioFromSize(req.Size); ok && matches(ratio) {
-		return ratio
-	}
-	return fallback
+	result := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		Candidates:   candidates,
+		DefaultRatio: fallback,
+		SizeToRatio:  ratioFromSize,
+	})
+	return result.Ratio
 }
 
 // ratioFromSize 把 "1280x720" 这类尺寸映射到最接近的比例档位。

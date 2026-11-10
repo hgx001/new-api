@@ -2,7 +2,9 @@ package controller
 
 import (
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/model"
@@ -49,35 +51,53 @@ func buildTaskSubmitSnapshot(c *gin.Context, info *relaycommon.RelayInfo, quota 
 	if strings.TrimSpace(req.Size) != "" {
 		params["size"] = req.Size
 	}
-	// 比例有两条来源，都记下来（2026-11-10）。
+	// 比例记录（2026-11-10 审查后修正）。
 	//
-	// ⚠️ 为什么必须记**顶层**比例：此前这里只读 metadata.ratio，
+	// ⚠️ 为什么要记**顶层**比例：此前这里只读 metadata.ratio，
 	// 客户端把比例放在请求体顶层时（OpenAI 风格）快照里**看不到比例** ——
 	// 排查任务 task_cnJZv65dU4WljjaMoW6nmzNxTEOA3N1q 时，只能绕道查上游
-	// 有赞回执才发现实收 ratio=adaptive。快照记顶层比例后，这类问题
-	// 在 task_logs 里一眼可见，不用再翻上游。
+	// 有赞回执才发现实收 ratio=adaptive。
 	//
-	// 顶层与 metadata 都记（不互相覆盖）：两条来源都可能是客户端的真实意图，
-	// 记下来才能判断是「客户端没传」还是「传了但被丢弃」。
-	if ratio := strings.TrimSpace(req.Ratio); ratio != "" {
-		params["ratio"] = ratio
+	// ⚠️ 为什么要用 relaycommon.ResolveTaskRatio 统一算：快照必须回答的是
+	// 「**实际下发给上游的比例是什么**」，而不是「客户端在哪些字段里写了什么」。
+	// 首轮修复把顶层与 metadata 记成两个独立键（ratio / aspect_ratio），
+	// 排查时要自己推断谁优先 —— 而这正是各适配器口径曾经漂移的地方
+	// （megabyai 是顶层优先，youzanwan3 是 metadata 优先）。
+	// 现在用与适配器**同一个**解析器算，快照里的 ratio 就是上游收到的 ratio。
+	//
+	// 记三个东西：
+	//   ratio         —— 最终生效的比例（与上游实收一致）
+	//   ratio_source  —— 生效比例来自哪个字段（一眼区分「没传」与「被降级」）
+	//   ratio_raw     —— 客户端原始写法（顶层 / metadata 都保留，便于核对）
+	ratioResult := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		// 快照是全渠道通用的，用**并集**档位表 —— 各渠道自己的档位表是子集，
+		// 少一档就会把该渠道合法的比例误判成「非法」。
+		Candidates:   snapshotRatioCandidates(),
+		DefaultRatio: "",
+		SizeToRatio:  ratioFromSnapshotSize,
+	})
+	if ratioResult.Ratio != "" {
+		params["ratio"] = ratioResult.Ratio
+		params["ratio_source"] = string(ratioResult.Source)
 	}
-	if ratio := strings.TrimSpace(req.AspectRatio); ratio != "" {
-		params["aspect_ratio"] = ratio
+	if ratioResult.Rejected != "" {
+		// 客户端传了但不被支持的比例 —— 单独记，别混进 ratio，
+		// 否则会把「非法值」误当成「生效值」。
+		params["ratio_invalid"] = ratioResult.Rejected
+	}
+	// 原始写法：顶层与 metadata 都留，便于核对「顶层与 metadata 不一致」。
+	if raw := strings.TrimSpace(req.Ratio); raw != "" {
+		params["ratio_top_level"] = raw
+	}
+	if raw := strings.TrimSpace(req.AspectRatio); raw != "" {
+		params["aspect_ratio_top_level"] = raw
 	}
 	if req.Metadata != nil {
-		// 比例通常走 metadata（OpenAI 风格没有独立字段），单独提出来便于检索。
-		// 顶层没记到时才用 metadata 覆盖，避免抹掉「顶层与 metadata 不一致」
-		// 这条排查线索。
-		if _, ok := params["ratio"]; !ok {
-			if ratio, ok := req.Metadata["ratio"].(string); ok && strings.TrimSpace(ratio) != "" {
-				params["ratio"] = ratio
-			}
+		if raw, ok := req.Metadata["ratio"].(string); ok && strings.TrimSpace(raw) != "" {
+			params["ratio_metadata"] = strings.TrimSpace(raw)
 		}
-		if _, ok := params["aspect_ratio"]; !ok {
-			if ratio, ok := req.Metadata["aspect_ratio"].(string); ok && strings.TrimSpace(ratio) != "" {
-				params["aspect_ratio"] = ratio
-			}
+		if raw, ok := req.Metadata["aspect_ratio"].(string); ok && strings.TrimSpace(raw) != "" {
+			params["aspect_ratio_metadata"] = strings.TrimSpace(raw)
 		}
 	}
 	if req.Seed != nil {
@@ -248,4 +268,69 @@ func parseLimit(raw string) int {
 		}
 	}
 	return limit
+}
+
+// ratioFromSnapshotSize 把 size 尺寸推成比例档位，供提交快照使用。
+//
+// 快照是**全渠道通用**的记录，不该带某个渠道的档位表，所以这里只做
+// 「尺寸 → 最接近的常见比例」的映射，且差距超过 0.25 就判定为推不出
+// （返回 false）—— 宁可快照里不记比例，也不要记一个编造的比例。
+//
+// 各渠道适配器自己算比例时有各自的合法档位表（心笔只认 6 档、
+// 视频生成车站还多一档 21:9），快照记的是「客户端意图」，不是
+// 「渠道最终下发的值」—— 后者在各渠道的 task_logs 里另有记录。
+func ratioFromSnapshotSize(size string) (string, bool) {
+	size = strings.TrimSpace(strings.ToLower(size))
+	if size == "" {
+		return "", false
+	}
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		return "", false
+	}
+	width, errWidth := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, errHeight := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errWidth != nil || errHeight != nil || width <= 0 || height <= 0 {
+		return "", false
+	}
+	candidates := map[string]float64{
+		"16:9": 16.0 / 9.0,
+		"9:16": 9.0 / 16.0,
+		"4:3":  4.0 / 3.0,
+		"3:4":  3.0 / 4.0,
+		"1:1":  1.0,
+	}
+	ratio := float64(width) / float64(height)
+	best := ""
+	bestDiff := math.MaxFloat64
+	for name, value := range candidates {
+		if diff := math.Abs(ratio - value); diff < bestDiff {
+			bestDiff = diff
+			best = name
+		}
+	}
+	if bestDiff > 0.25 {
+		return "", false
+	}
+	return best, true
+}
+
+// snapshotRatioCandidates 是提交快照用的**并集**比例档位表。
+//
+// 各渠道的合法档位不一样（心笔 6 档、视频生成车站多一档 21:9、
+// 有赞按模型分 smart / r2v 两套）。快照要能认出「这些渠道都认的比例」，
+// 否则会把某个渠道合法的比例误标成非法。
+//
+// 这里取站内已知的全部档位的并集；出现未知写法时按「非法」记录到
+// ratio_invalid —— 那正是排查时最该看到的信号。
+func snapshotRatioCandidates() relaycommon.TaskRatioCandidates {
+	return relaycommon.TaskRatioCandidates{
+		"adaptive": true,
+		"16:9":     true,
+		"9:16":     true,
+		"4:3":      true,
+		"3:4":      true,
+		"1:1":      true,
+		"21:9":     true,
+	}
 }
