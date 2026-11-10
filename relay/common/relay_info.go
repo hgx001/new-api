@@ -758,6 +758,25 @@ type TaskSubmitReq struct {
 	Seed           *int64                 `json:"seed,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+
+	// Ratio / AspectRatio 是**顶层**画幅比例字段。
+	//
+	// ⚠️ 为什么必须有它们（2026-11-10 排障）：客户端常按 OpenAI / 视频 API 的
+	// 习惯把比例放在请求体顶层（{"ratio":"9:16"} 或 {"aspect_ratio":"9:16"}）。
+	// 此前本结构**没有**这两个字段，Go 的 json 解码器会把它们**静默丢弃** ——
+	// 不报错、不告警，只是字段消失。适配器只读 metadata.ratio / metadata.aspect_ratio，
+	// 于是比例一路落到 fallback（"adaptive"），用户拿到的是比例不对的成片，
+	// 钱照扣。这是「参数被吞」型故障，比报错更难发现。
+	//
+	// 为什么放在结构体而不是靠 raw body 兜底：raw body 兜底（像 megabyai 的
+	// rawWan30Ratio）每个适配器各写一遍、口径易漂移；在解码层统一承接，
+	// 所有适配器都能拿到，multipart 与 JSON 两条路径行为也一致。
+	//
+	// 与 metadata 的优先级：metadata.ratio > metadata.aspect_ratio >
+	// 顶层 ratio > 顶层 aspect_ratio > size 推断 > 各自的默认值。
+	// 见各适配器的 resolveRatio 实现。
+	Ratio       string `json:"ratio,omitempty"`
+	AspectRatio string `json:"aspect_ratio,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {

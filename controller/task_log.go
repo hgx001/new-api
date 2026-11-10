@@ -49,10 +49,35 @@ func buildTaskSubmitSnapshot(c *gin.Context, info *relaycommon.RelayInfo, quota 
 	if strings.TrimSpace(req.Size) != "" {
 		params["size"] = req.Size
 	}
+	// 比例有两条来源，都记下来（2026-11-10）。
+	//
+	// ⚠️ 为什么必须记**顶层**比例：此前这里只读 metadata.ratio，
+	// 客户端把比例放在请求体顶层时（OpenAI 风格）快照里**看不到比例** ——
+	// 排查任务 task_cnJZv65dU4WljjaMoW6nmzNxTEOA3N1q 时，只能绕道查上游
+	// 有赞回执才发现实收 ratio=adaptive。快照记顶层比例后，这类问题
+	// 在 task_logs 里一眼可见，不用再翻上游。
+	//
+	// 顶层与 metadata 都记（不互相覆盖）：两条来源都可能是客户端的真实意图，
+	// 记下来才能判断是「客户端没传」还是「传了但被丢弃」。
+	if ratio := strings.TrimSpace(req.Ratio); ratio != "" {
+		params["ratio"] = ratio
+	}
+	if ratio := strings.TrimSpace(req.AspectRatio); ratio != "" {
+		params["aspect_ratio"] = ratio
+	}
 	if req.Metadata != nil {
 		// 比例通常走 metadata（OpenAI 风格没有独立字段），单独提出来便于检索。
-		if ratio, ok := req.Metadata["ratio"].(string); ok && strings.TrimSpace(ratio) != "" {
-			params["ratio"] = ratio
+		// 顶层没记到时才用 metadata 覆盖，避免抹掉「顶层与 metadata 不一致」
+		// 这条排查线索。
+		if _, ok := params["ratio"]; !ok {
+			if ratio, ok := req.Metadata["ratio"].(string); ok && strings.TrimSpace(ratio) != "" {
+				params["ratio"] = ratio
+			}
+		}
+		if _, ok := params["aspect_ratio"]; !ok {
+			if ratio, ok := req.Metadata["aspect_ratio"].(string); ok && strings.TrimSpace(ratio) != "" {
+				params["aspect_ratio"] = ratio
+			}
 		}
 	}
 	if req.Seed != nil {

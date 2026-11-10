@@ -151,11 +151,23 @@ func parseWan30Size(size string) (int, int, bool) {
 
 // resolveWan30Ratio 决定下发给上游的宽高比。
 //
-// 优先级：原始请求体的 ratio → metadata.ratio / metadata.aspect_ratio → 由 size 推断。
+// 优先级：原始请求体的 ratio → 解码后的顶层 ratio / aspect_ratio →
+// metadata.ratio / metadata.aspect_ratio → 由 size 推断。
 // 推断不出来就不下发（用上游自己的默认值），不编造比例。
+//
+// ⚠️ 2026-11-10：新增「解码后的顶层字段」这一档。TaskSubmitReq 此前没有
+// ratio / aspect_ratio 字段，客户端按 OpenAI 风格把比例放在请求体顶层时会被
+// Go 解码器**静默丢弃** —— raw body 那条路能救回来，但只有能拿到原始 body
+// 的调用方才有效。补上顶层字段后，多一条不依赖 raw body 的兜底，
+// 与 youzanwan3 的 resolveRatio 口径一致。
 func resolveWan30Ratio(rawRatio string, req relaycommon.TaskSubmitReq) string {
 	if ratio := strings.TrimSpace(rawRatio); ratio != "" {
 		return ratio
+	}
+	for _, value := range []string{req.Ratio, req.AspectRatio} {
+		if ratio := strings.TrimSpace(value); ratio != "" {
+			return ratio
+		}
 	}
 	if req.Metadata != nil {
 		for _, key := range []string{"ratio", "aspect_ratio"} {

@@ -462,8 +462,43 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 	return false
 }
 
+// retiredChannelTypes 是**已退役、不得再新建/更新**的渠道类型编号 → 渠道名。
+//
+// 为什么要有这张闸门：删掉 relay/relay_adaptor.go 里的注册分支后，
+// 运营在后台新建一条该类型的渠道仍能建出来（前端类型下拉里也有这一项），
+// 但任务提交时 GetTaskAdaptor 返回 nil → 任务永远停在非终态：
+// 既看不到失败原因，也永远退不了款。钱扣了、任务不动。
+//
+// 所以闸门落在**建/改渠道这一刻**，让问题在建渠道时就暴露。
+//
+// ⚠️ 只列已退役的类型，不是「禁建渠道」总开关 —— 在售渠道照常可建。
+// 向里加编号时必须同时清掉 4 处：
+//  1. relay/relay_adaptor.go 的注册分支；
+//  2. common/endpoint_type.go 的端点声明；
+//  3. controller/video_proxy.go 的取件分支；
+//  4. web/default/src/features/channels/constants.ts 的下拉项。
+var retiredChannelTypes = map[int]string{
+	constant.ChannelTypeMegaAI: "MegaAI",
+}
+
+// isRetiredChannelType 判断渠道类型是否已退役。
+func isRetiredChannelType(channelType int) (string, bool) {
+	name, ok := retiredChannelTypes[channelType]
+	return name, ok
+}
+
 // validateChannel 通用的渠道校验函数
 func validateChannel(channel *model.Channel, isAdd bool) error {
+	// 已退役的渠道类型：直接拒绝，不给建/改的机会。
+	if channel != nil {
+		if name, retired := isRetiredChannelType(channel.Type); retired {
+			return fmt.Errorf(
+				"渠道类型 %d（%s）已于 2026-11-10 退役，不再接受新建或更新 —— "+
+					"该上游已下架，没有可用的任务适配器，建出来只会让客户任务卡在非终态",
+				channel.Type, name)
+		}
+	}
+
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())

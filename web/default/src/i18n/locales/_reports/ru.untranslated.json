@@ -11,7 +11,6 @@
   "Channel daily quota exhausted": "Channel daily quota exhausted",
   "Paused manually": "Paused manually",
   "Until {{time}}": "Until {{time}}",
-  "Requests of {{seconds}}s are routed to {{target}}": "Requests of {{seconds}}s are routed to {{target}}",
   "Pause until end of today": "Pause until end of today",
   "Resume now": "Resume now",
   "Pause until a specific time": "Pause until a specific time",

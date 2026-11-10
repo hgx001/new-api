@@ -151,7 +151,7 @@ var ChannelBaseURLs = []string{
 	"https://autodl.art",                        //61
 	"https://dashscope.aliyuncs.com",            //62 (DashScope 百炼)
 	"https://ai.youzan666.vip/v1",               //63 (有赞 Wan3)
-	"https://newapi.megabyai.cc",                //64 (MegaAI)
+	"",                                          //64 (MegaAI 已于 2026-11-10 退役；此槽位保留以维持索引对齐，勿删)
 	"",                                          //65
 	"https://arcreel.heibaidao.cn",              //66 (漫屋 ArcReel)
 	"http://47.93.118.167:5000",                 //67 (三元巡狩)

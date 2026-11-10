@@ -520,6 +520,40 @@ func TestSeedanceRouteSkipsRerouteWhenWan3InputMediaHasVideo(t *testing.T) {
 	}
 }
 
+// metadata.media 与 metadata.input.media 同时出现时只抬前者：同一批图被抬两遍
+// 会让 input_reference 出现重复项，参考图编号（图1..图N）整体错位。
+func TestSeedanceRoutePrefersMetadataMediaOverWan3InputMedia(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	body := `{"model":"seedance2.5-特惠","seconds":"26","metadata":{"media":[{"type":"reference_image","url":"https://x/a.png"}],"input":{"media":[{"type":"reference_image","url":"https://x/b.png"}]}}}`
+	seen, _ := runRoute(t, body)
+
+	out := decodeBody(t, seen)
+	images, ok := out["input_reference"].([]interface{})
+	if !ok {
+		t.Fatalf("input_reference missing, body = %s", seen)
+	}
+	if len(images) != 1 || images[0] != "https://x/a.png" {
+		t.Fatalf("input_reference = %v, want [https://x/a.png]（metadata.media 优先，不能重复抬图）", images)
+	}
+}
+
+// metadata.input.media 里图与视频混排时同样放弃改派：豆包链路只收图，
+// 丢掉视频等于换掉用户的参考素材，宁可留在源链路。
+func TestSeedanceRouteSkipsRerouteWhenWan3InputMediaMixesImageAndVideo(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	body := `{"model":"seedance2.5-特惠","seconds":"26","metadata":{"input":{"media":[{"type":"reference_image","url":"https://x/1.png"},{"type":"reference_video","url":"https://x/1.mp4"}]}}}`
+	seen, origin := runRoute(t, body)
+
+	if seen != body {
+		t.Fatalf("图+视频混排时应放弃改派、保留原请求，got %s", seen)
+	}
+	if origin != "" {
+		t.Fatalf("originModel = %q, want empty (not routed)", origin)
+	}
+}
+
 func TestSeedanceRouteMapsAdaptiveRatioToAuto(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 

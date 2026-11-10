@@ -10,6 +10,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"path"
@@ -543,6 +544,26 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	return duration
 }
 
+// resolveRatio 解析成片画幅比例。
+//
+// 读取顺序（2026-11-10 排障后调整）：
+//
+//	metadata.ratio → metadata.aspect_ratio → 顶层 ratio → 顶层 aspect_ratio
+//	→ size 推断 → 各自的 fallback（默认 "adaptive"）
+//
+// ⚠️ 为什么必须读**顶层**字段（2026-11-10）：客户端常按 OpenAI / 视频 API 的
+// 习惯把比例放在请求体顶层（{"ratio":"9:16"}）。此前 TaskSubmitReq 没有这两个
+// 字段，顶层比例被 Go 解码器**静默丢弃**，本函数只读 metadata，于是比例一路
+// 落到 fallback="adaptive"。实测任务 task_cnJZv65dU4WljjaMoW6nmzNxTEOA3N1q：
+// 用户要 9:16，上游实收 ratio=adaptive，成片 1280x720（横屏），钱照扣。
+//
+// ⚠️ 非法比例**不报错**、只是不生效（继续往下找，最后落到 fallback）。
+// 理由：比例是「锦上添花」的画幅参数，不是计费硬参数；为它拒绝整条请求会
+// 打断本来能正常出片的调用。但静默降级必须留日志（见 buildRequestBody），
+// 否则又是「参数被吞」型故障。
+//
+// ⚠️ size 推断只在顶层与 metadata 都没给比例时兜底，且**只认 "WxH"** 形式。
+// "720P" / "1080P" 这类分辨率写法不是尺寸，推断不出比例（见 ratioFromSize）。
 func resolveRatio(req relaycommon.TaskSubmitReq) string {
 	allowedRatios := smartRatios
 	fallback := defaultRatio
@@ -550,19 +571,81 @@ func resolveRatio(req relaycommon.TaskSubmitReq) string {
 		allowedRatios = r2vRatios
 		fallback = r2vDefaultRatio
 	}
+	matches := func(value string) bool {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return false
+		}
+		for _, allowed := range allowedRatios {
+			if value == allowed {
+				return true
+			}
+		}
+		return false
+	}
+
 	if req.Metadata != nil {
 		for _, key := range []string{"ratio", "aspect_ratio"} {
-			if value, ok := req.Metadata[key].(string); ok {
-				value = strings.TrimSpace(value)
-				for _, allowed := range allowedRatios {
-					if value == allowed {
-						return value
-					}
-				}
+			if value, ok := req.Metadata[key].(string); ok && matches(value) {
+				return strings.TrimSpace(value)
 			}
 		}
 	}
+	// 顶层字段（TaskSubmitReq.Ratio / AspectRatio）—— 客户端按 OpenAI 风格
+	// 传比例时落在这里。
+	for _, value := range []string{req.Ratio, req.AspectRatio} {
+		if matches(value) {
+			return strings.TrimSpace(value)
+		}
+	}
+	// size 兜底：仅 "1280x720" 这类尺寸能推出比例。
+	if ratio, ok := ratioFromSize(req.Size); ok && matches(ratio) {
+		return ratio
+	}
 	return fallback
+}
+
+// ratioFromSize 把 "1280x720" 这类尺寸映射到最接近的比例档位。
+//
+// ⚠️ 只认 "宽x高" 形式："720P" / "1080P" 是分辨率写法，推不出画幅比例，
+// 会被这里拒掉（返回 false），由调用方落到 adaptive。
+//
+// 与 dashscope / erchun / wan3 三处同名函数的判定口径保持一致：
+// 取最接近的候选档，差距超过 0.25 则判定为「推不出」而返回 adaptive。
+func ratioFromSize(size string) (string, bool) {
+	size = strings.TrimSpace(size)
+	if size == "" {
+		return "", false
+	}
+	parts := strings.Split(strings.ToLower(size), "x")
+	if len(parts) != 2 {
+		return "", false
+	}
+	width, errWidth := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, errHeight := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errWidth != nil || errHeight != nil || width <= 0 || height <= 0 {
+		return "", false
+	}
+	candidates := map[string]float64{
+		"16:9": 16.0 / 9.0,
+		"9:16": 9.0 / 16.0,
+		"4:3":  4.0 / 3.0,
+		"3:4":  3.0 / 4.0,
+		"1:1":  1.0,
+	}
+	ratio := float64(width) / float64(height)
+	best := ""
+	bestDiff := math.MaxFloat64
+	for name, value := range candidates {
+		if diff := math.Abs(ratio - value); diff < bestDiff {
+			bestDiff = diff
+			best = name
+		}
+	}
+	if bestDiff > 0.25 {
+		return "", false
+	}
+	return best, true
 }
 
 func metadataMedia(metadata map[string]interface{}) ([]relaycommon.TaskMedia, error) {

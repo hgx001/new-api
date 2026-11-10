@@ -112,6 +112,26 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 		req.Images = images
 	}
 
+	// 顶层画幅比例：与 JSON 路径对齐（2026-11-10）。
+	//
+	// multipart 的未知字段本来会自动进 metadata（见下方 isKnownTaskField 判断），
+	// 所以比例在 multipart 下**一直**能生效 —— 但数据只在 metadata 里，
+	// 顶层 req.Ratio 是空的。而 JSON 路径的比例在顶层字段。
+	// 两条路径的数据位置不一致，会让「按 req.Ratio 统计」的口径失真，
+	// 也让适配器要同时看两个地方。这里显式补齐，让两条路径完全一致。
+	for _, key := range []string{"ratio", "aspect_ratio"} {
+		value := strings.TrimSpace(formData.Get(key))
+		if value == "" {
+			continue
+		}
+		switch key {
+		case "ratio":
+			req.Ratio = value
+		case "aspect_ratio":
+			req.AspectRatio = value
+		}
+	}
+
 	for key, values := range formData {
 		if len(values) > 0 && !isKnownTaskField(key) {
 			if intVal, err := strconv.Atoi(values[0]); err == nil {

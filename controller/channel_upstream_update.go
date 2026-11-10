@@ -274,7 +274,6 @@ func getStaticChannelModelIDs(channelType int) ([]string, bool) {
 		constant.ChannelTypeYoukou,
 		constant.ChannelTypeWan3,
 		constant.ChannelTypeYouzanWan3,
-		constant.ChannelTypeMegaAI,
 		constant.ChannelTypeAutoDL,
 		constant.ChannelTypeDashScope,
 		constant.ChannelTypeManwu:
