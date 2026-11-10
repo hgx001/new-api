@@ -57,3 +57,7 @@ node_modules/
 # 全仓无代码引用，误提交会永久留在 git 历史里）。.tmp_pr.json 是草稿 PR 载荷。
 /output/
 .tmp_pr.json
+
+# Python 字节码：deploy/vpn-node-agent 的单测会在原地生成
+__pycache__/
+*.pyc
