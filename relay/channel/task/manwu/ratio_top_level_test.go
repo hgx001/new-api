@@ -1,8 +1,11 @@
 package manwu
 
 import (
+	"encoding/json"
+	"io"
 	"testing"
 
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -127,4 +130,91 @@ func TestResolveRawRatioDoubaoKeepsAuto(t *testing.T) {
 	ratio, err := resolveRawRatio(req, doubaoRatioCandidates(), nil)
 	require.NoError(t, err)
 	require.Equal(t, "auto", ratio)
+}
+
+// 端到端：metadata.ratio 必须真的进到发给 ArcReel 的建单载荷里。
+//
+// 这是最关键的一条 —— 前面几条只验证了 resolveRatio 这个纯函数，
+// 但「函数对」不等于「载荷对」（中间还有 normalizedRequest → BuildRequestBody
+// 两段）。2026-11-10 首轮的 bug 恰恰是「函数对、载荷错」。
+func TestMetadataRatioReachesUpstreamPayload(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{
+		"model":"seedance-2.0","prompt":"hi","seconds":10,
+		"metadata":{"ratio":"9:16"},
+		"idempotency_key":"key-ratio-1"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	videoParams, ok := payload["videoParams"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "9:16", videoParams["ratio"])
+}
+
+// 端到端：顶层 ratio 同样要进载荷。
+func TestTopLevelRatioReachesUpstreamPayload(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{
+		"model":"seedance-2.0","prompt":"hi","seconds":10,
+		"ratio":"9:16",
+		"idempotency_key":"key-ratio-2"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	videoParams, ok := payload["videoParams"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "9:16", videoParams["ratio"])
+}
+
+// 端到端：顶层 aspect_ratio 同样要进载荷。
+func TestTopLevelAspectRatioReachesUpstreamPayload(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{
+		"model":"seedance-2.0","prompt":"hi","seconds":10,
+		"aspect_ratio":"9:16",
+		"idempotency_key":"key-ratio-3"}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(data, &payload))
+	videoParams, ok := payload["videoParams"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "9:16", videoParams["ratio"])
+}
+
+// manwu 链路的提交快照必须能拿到请求参数。
+//
+// 2026-11-10 真机验证发现的既有缺陷：manwu 走自己的 ValidateRequestAndSetAction，
+// **不往 context 写 "task_request"**，于是 controller 的提交快照
+// （controller/task_log.go → relaycommon.GetTaskRequest）恒返回
+// "request not found in context" —— 所有 manwu 任务的比例/时长/素材
+// 在快照里**全部丢失**，事后完全无法追责。
+//
+// 这不是本轮比例修复引入的，但比例修复后如果快照仍记不到比例，
+// 就等于「修好了但没法证明修好了」—— 必须一起修。
+func TestValidateStoresTaskRequestForSnapshot(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{
+		"model":"seedance-2.0","prompt":"hi","seconds":10,
+		"metadata":{"ratio":"9:16"}}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	stored, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	// 快照存的是**原始客户端请求** —— 比例在 metadata 里，顶层 Ratio 自然为空。
+	require.Equal(t, "hi", stored.Prompt)
+	require.Equal(t, "9:16", stored.Metadata["ratio"])
 }

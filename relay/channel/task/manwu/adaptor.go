@@ -665,6 +665,30 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		)
 	}
 
+	// 把请求写回 context，让 controller 的提交快照能拿到参数。
+	//
+	// 2026-11-10 真机验证发现的既有缺陷：manwu 走自己的
+	// ValidateRequestAndSetAction（不经过 ValidateBasicTaskRequest），
+	// 于是 context 里**没有 "task_request"** ——
+	// controller/task_log.go 的 relaycommon.GetTaskRequest 恒返回
+	// "request not found in context"，所有 manwu 任务的比例/时长/素材
+	// 在快照里**全部丢失**，事后完全无法追责。
+	//
+	// 比例修复后如果快照仍记不到比例，等于「修好了但没法证明修好了」。
+	//
+	// ⚠️ 这里存的是**原始客户端请求**（未经归一化），不是 normalizedRequest ——
+	// 快照要回答的是「客户端到底传了什么」，而不是「我们最终下发了什么」。
+	relaycommon.StoreTaskRequest(c, info, constant.TaskActionGenerate, relaycommon.TaskSubmitReq{
+		Model:       req.Model,
+		Prompt:      req.Prompt,
+		Size:        req.Size,
+		Ratio:       req.Ratio,
+		AspectRatio: req.AspectRatio,
+		Resolution:  req.Resolution,
+		Metadata:    req.Metadata,
+		Seed:        nil,
+	})
+
 	// 幂等键口径：客户端显式传入则原样用（每次重试天然相同）；否则从 gin context
 	// 取本请求缓存的 key，没有才生成新的并缓存 —— 保证重试复用同一个 key，让
 	// ArcReel 的 (user_id, idempotency_key) 唯一索引 + 幂等重放真正生效。
