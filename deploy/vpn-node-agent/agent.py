@@ -199,9 +199,14 @@ def plan_change(cfg, manifest, dry_run):
 
 
 def run_command(args, timeout=60):
-    completed = subprocess.run(
-        args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout
-    )
+    try:
+        completed = subprocess.run(
+            args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        # 统一转换成返回码，调用点就不必各自 try/except —— 漏掉任何一条都会
+        # 留下「配置已换、服务未重启」的状态，而下一轮又认为无需变更。
+        return 124, "命令超时（%ss）: %s" % (timeout, " ".join(str(arg) for arg in args))
     return completed.returncode, completed.stdout.decode("utf-8", "replace").strip()
 
 
@@ -251,10 +256,27 @@ def ports_listening(ports):
     return all(port in listening for port in ports)
 
 
+def rollback_config(cfg, previous_text, reason):
+    """把配置写回变更前的内容并重启，让节点回到已知可用状态。
+
+    失败分支必须回滚，否则磁盘是新配置、进程是旧配置，而下一轮 plan_change
+    比较的是磁盘内容 → 认为「已同步」→ 不再重启，节点会永久停在不生效的状态。
+    """
+    try:
+        with open(cfg.singbox_config, "w", encoding="utf-8") as handle:
+            handle.write(previous_text)
+    except OSError as error:
+        return reason + "；回滚写回失败: %s" % error
+    code, output = run_command(["systemctl", "restart", cfg.service], timeout=90)
+    if code != 0:
+        return reason + "；回滚后重启仍失败: " + output
+    return reason + "，已回滚到旧配置（下一轮会重新尝试）"
+
+
 def restart_service(cfg, ports, previous_text):
     code, output = run_command(["systemctl", "restart", cfg.service], timeout=90)
     if code != 0:
-        return False, "systemctl restart 失败: " + output
+        return False, rollback_config(cfg, previous_text, "systemctl restart 失败: " + output)
     deadline = time.time() + 15
     while time.time() < deadline:
         code, _ = run_command(["systemctl", "is-active", "--quiet", cfg.service], timeout=15)
@@ -264,10 +286,7 @@ def restart_service(cfg, ports, previous_text):
                 return True, "服务已重启，端口正常"
         time.sleep(1)
     # 回滚：把刚才的备份写回并重启，宁可回退也不能让节点停在半死状态
-    with open(cfg.singbox_config, "w", encoding="utf-8") as handle:
-        handle.write(previous_text)
-    run_command(["systemctl", "restart", cfg.service], timeout=90)
-    return False, "重启后校验失败，已回滚到旧配置"
+    return False, rollback_config(cfg, previous_text, "重启后端口校验失败")
 
 
 # ------------------------------------------------------------------ 日志采集
@@ -433,8 +452,10 @@ def sync_config(cfg, manifest, dry_run):
 
     backup = backup_config(cfg, previous_text)
     log("已备份旧配置: " + backup)
+    # 端口从内存里的候选配置算：写盘后再读一遍会多一个失败点，一旦读失败就
+    # 会留下「已换配置但未重启」的状态。
+    ports = inbound_ports(json.loads(candidate))
     os.replace(candidate_path, cfg.singbox_config)
-    ports = inbound_ports(read_json_file(cfg.singbox_config))
     ok, message = restart_service(cfg, ports, previous_text)
     log(message)
     if not ok:

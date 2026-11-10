@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sys
 import tempfile
 import unittest
 
@@ -203,6 +204,86 @@ class PlanChangeTest(unittest.TestCase):
         self.cfg.inbound_tag = "nope"
         with self.assertRaises(SystemExit):
             agent.plan_change(self.cfg, {"users": []}, False)
+
+
+class SyncRollbackTest(unittest.TestCase):
+    """配置一旦落地就必须让 sing-box 真的用上它；失败要退回旧配置，不能留半截状态。"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.cfg = agent.Config(os.path.join(self.dir, "missing.env"))
+        self.cfg.singbox_config = os.path.join(self.dir, "config.json")
+        self.cfg.inbound_tag = "jp-vless-in"
+        self.cfg.service = "sing-box"
+        config = {
+            "log": {"level": "info"},
+            "inbounds": [
+                {"type": "vless", "tag": "jp-vless-in", "listen_port": 8443, "users": LEGACY},
+                {"type": "socks", "tag": "other", "listen_port": 1080},
+            ],
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+        }
+        with open(self.cfg.singbox_config, "w", encoding="utf-8") as handle:
+            json.dump(config, handle, indent=2)
+        with open(self.cfg.singbox_config, "r", encoding="utf-8") as handle:
+            self.original_text = handle.read()
+        self._real_run = agent.run_command
+        self._real_ports = agent.ports_listening
+        self.restart_failures = 0
+
+    def tearDown(self):
+        agent.run_command = self._real_run
+        agent.ports_listening = self._real_ports
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def fake_run(self, args, timeout=60):
+        if args[0] == "sing-box":
+            return 0, "ok"
+        if args[0] == "systemctl" and args[1] == "restart":
+            if self.restart_failures > 0:
+                self.restart_failures -= 1
+                return 1, "Job for sing-box.service failed"
+            return 0, ""
+        if args[0] == "systemctl" and args[1] == "is-active":
+            return 0, ""
+        return 0, ""
+
+    def read_config(self):
+        with open(self.cfg.singbox_config, "r", encoding="utf-8") as handle:
+            return handle.read()
+
+    def test_restart_failure_rolls_back_config(self):
+        """restart 失败若不回滚，下一轮会认为「磁盘已是最新」而永不重启。"""
+        agent.run_command = self.fake_run
+        agent.ports_listening = lambda ports: True
+        self.restart_failures = 99
+
+        ok = agent.sync_config(self.cfg, {"users": [{"name": "v7", "uuid": "u7"}]}, False)
+
+        self.assertFalse(ok)
+        self.assertEqual(self.read_config(), self.original_text)
+        parsed = json.loads(self.read_config())
+        self.assertEqual([u.get("name") for u in parsed["inbounds"][0]["users"]], [None, None])
+
+    def test_restart_success_keeps_new_config(self):
+        agent.run_command = self.fake_run
+        agent.ports_listening = lambda ports: True
+
+        ok = agent.sync_config(self.cfg, {"users": [{"name": "v7", "uuid": "u7"}]}, False)
+
+        self.assertTrue(ok)
+        parsed = json.loads(self.read_config())
+        names = [u.get("name") for u in parsed["inbounds"][0]["users"]]
+        self.assertEqual(names, [None, None, "v7"])
+        self.assertEqual(parsed["inbounds"][1]["listen_port"], 1080, "其它入站不能被动到")
+
+    def test_run_command_timeout_becomes_return_code(self):
+        """超时必须以返回码形式给出，否则异常会绕过所有回滚分支。"""
+        code, output = agent.run_command(
+            [sys.executable, "-c", "import time; time.sleep(10)"], timeout=1
+        )
+        self.assertEqual(code, 124)
+        self.assertIn("超时", output)
 
 
 if __name__ == "__main__":
