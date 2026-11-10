@@ -1,0 +1,14 @@
+[Unit]
+Description=VPN node agent (sync per-order VLESS credentials and report connection IPs)
+Documentation=https://github.com/QuantumNous/new-api/tree/main/deploy/vpn-node-agent
+After=network-online.target sing-box.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/vpn-node-agent --env-file /etc/vpn-node-agent/agent.env
+User=root
+Nice=10
+TimeoutStartSec=180
+# 单次失败不影响下一轮：timer 会继续触发，节点侧保持旧配置照常服务。
+SuccessExitStatus=0

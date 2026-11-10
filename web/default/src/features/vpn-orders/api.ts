@@ -20,6 +20,14 @@ import { api } from '@/lib/api'
 
 export type VpnOrderStatus = 'pending' | 'success' | 'failed' | 'expired'
 
+export interface VpnCredentialInfo {
+  /** 节点上的用户名（v1、v2…）；老订单没有独立凭据时为空 */
+  name: string
+  status: 'active' | 'frozen' | 'revoked' | ''
+  /** 24 小时内从多少个不同源 IP 连上过节点 */
+  ip_count: number
+}
+
 export interface VpnAdminOrder {
   id: number
   user_id: number
@@ -32,6 +40,9 @@ export interface VpnAdminOrder {
   status: VpnOrderStatus
   create_time: number
   complete_time: number
+  /** 下单请求的浏览器出口 IP（不是支付回调的网关 IP） */
+  client_ip: string
+  credential: VpnCredentialInfo
 }
 
 export interface VpnProviderStat {

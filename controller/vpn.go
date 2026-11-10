@@ -45,7 +45,9 @@ func vpnExpireTime(order *model.VpnOrder) int64 {
 	return base + int64(VpnPlanDays*24*time.Hour/time.Second)
 }
 
-// vpnNodeKey 支付成功后下发的节点导入密钥（VLESS Reality）
+// vpnNodeKey 历史订单的共享导入密钥，同时也是节点参数模板（地址/端口/Reality 参数）。
+// 新规则下的订单不再持有它：buildVpnShareLink 只复用这里的节点参数，
+// 把 userinfo 换成每个订单独立的 UUID。请勿把它重新用于新订单交付。
 const vpnNodeKey = "vless://d316bab5-3a45-4630-abdc-66c178532b2e@43.167.248.149:8443?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.apple.com&fp=random&pbk=qBs6CoSgvHwIBtPM87AgY5UOOEKEwUMfzOSDb5TPTFU&sid=6ba85179e30d4fc2&type=tcp&headerType=none#%E6%97%A5%E6%9C%AC%E4%B8%9C%E4%BA%AC"
 
 type VpnOrderRequest struct {
@@ -104,10 +106,11 @@ func requestVpnOrderAlipay(c *gin.Context, userId int) {
 		PaymentProvider: model.PaymentProviderAlipay,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
-		NodeKey:         vpnNodeKey,
+		ClientIp:        c.ClientIP(),
 	}
 	// 先落库再拉起支付：支付宝的异步通知随时可能到，订单不存在就查不到 → 钱付了不发货。
-	if err := order.Insert(); err != nil {
+	// 新订单不再持有共享 node_key，改由订阅地址下发独立凭据。
+	if err := model.CreateVpnOrderWithCredential(order); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("支付宝 VPN 创建订单失败 user_id=%d trade_no=%s error=%q", userId, tradeNo, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
 		return
@@ -188,9 +191,9 @@ func requestVpnOrderEpay(c *gin.Context, id int, paymentMethod string) {
 		PaymentProvider: model.PaymentProviderEpay,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
-		NodeKey:         vpnNodeKey,
+		ClientIp:        c.ClientIP(),
 	}
-	if err := order.Insert(); err != nil {
+	if err := model.CreateVpnOrderWithCredential(order); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 VPN 创建订单失败 user_id=%d trade_no=%s error=%q", id, tradeNo, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
 		return
@@ -409,9 +412,32 @@ func GetVpnMyKey(c *gin.Context) {
 		})
 		return
 	}
+	// 新规则：不再下发可随意转发的明文密钥，只给一个绑定订单的订阅地址。
+	// 老订单（SubToken 为空）继续按原样返回库里的 node_key，两位既有付费用户不受影响。
+	if order.SubToken != "" {
+		cred, err := model.GetVpnCredentialByOrder(order.Id)
+		if err != nil || cred == nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "凭据尚未就绪，请稍后刷新"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"data": gin.H{
+				"mode":          "subscription",
+				"trade_no":      order.TradeNo,
+				"plan":          order.Plan,
+				"pay_time":      order.CompleteTime,
+				"expire_time":   expireAt,
+				"subscribe_url": vpnSubscribeURL(order.SubToken),
+				"frozen":        cred.Status == model.VpnCredentialFrozen,
+			},
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
+			"mode":        "legacy",
 			"trade_no":    order.TradeNo,
 			"plan":        order.Plan,
 			"pay_time":    order.CompleteTime,

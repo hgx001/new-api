@@ -51,6 +51,11 @@ func AdminGetVpnOrders(c *gin.Context) {
 		}
 	}
 	usernames := model.GetVpnUsernames(ids)
+	orderIds := make([]int, 0, len(orders))
+	for _, order := range orders {
+		orderIds = append(orderIds, order.Id)
+	}
+	credentials := model.GetVpnCredentialInfos(orderIds, time.Now().Unix())
 
 	items := make([]gin.H, 0, len(orders))
 	for _, order := range orders {
@@ -66,6 +71,8 @@ func AdminGetVpnOrders(c *gin.Context) {
 			"status":           order.Status,
 			"create_time":      order.CreateTime,
 			"complete_time":    order.CompleteTime,
+			"client_ip":        order.ClientIp,
+			"credential":       credentials[order.Id],
 		})
 	}
 

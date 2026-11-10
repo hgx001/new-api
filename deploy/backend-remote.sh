@@ -93,7 +93,24 @@ fi
 for k in SQL_DSN SESSION_SECRET CRYPTO_SECRET; do
   grep -q "^$k=" "$ENVFILE" || die "env 快照缺少 $k，中止发版"
 done
-echo "ENV_OK: ${env_bytes} bytes"
+
+# 节点 agent 的共享令牌只存在服务器本地文件里（600），不进仓库、不进 compose。
+# 首次部署时补进 env 快照；之后快照会自动带上，文件仍作为唯一可信来源。
+AGENT_TOKEN_FILE="${VPN_AGENT_TOKEN_FILE:-/home/ubuntu/new-api/.vpn-agent.token}"
+if [ -f "$AGENT_TOKEN_FILE" ]; then
+  agent_token=$(tr -d ' \t\r\n' < "$AGENT_TOKEN_FILE")
+  [ -n "$agent_token" ] || die "节点 agent 令牌文件为空：$AGENT_TOKEN_FILE"
+  if ! grep -q '^VPN_NODE_AGENT_TOKEN=' "$ENVFILE"; then
+    printf 'VPN_NODE_AGENT_TOKEN=%s\n' "$agent_token" >> "$ENVFILE"
+    echo "ENV_AGENT_TOKEN: appended from $AGENT_TOKEN_FILE"
+  fi
+  # 快照里的旧值与文件不一致时以文件为准，避免换了令牌却还用旧的启动
+  if ! grep -qx "VPN_NODE_AGENT_TOKEN=$agent_token" "$ENVFILE"; then
+    sed -i "s|^VPN_NODE_AGENT_TOKEN=.*|VPN_NODE_AGENT_TOKEN=$agent_token|" "$ENVFILE"
+    echo "ENV_AGENT_TOKEN: refreshed from $AGENT_TOKEN_FILE"
+  fi
+fi
+echo "ENV_OK: $(wc -c < "$ENVFILE") bytes"
 
 docker stop new-api >/dev/null
 docker rename new-api "new-api-prev-$TS"

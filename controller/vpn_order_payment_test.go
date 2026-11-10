@@ -37,7 +37,7 @@ func setupVpnOrderPaymentDB(t *testing.T) {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.VpnOrder{}))
+	require.NoError(t, db.AutoMigrate(&model.VpnOrder{}, &model.VpnCredential{}, &model.VpnCredentialAccess{}))
 
 	oldDB, oldLogDB := model.DB, model.LOG_DB
 	model.DB = db
@@ -510,7 +510,13 @@ func TestRequestVpnOrderAlipayCreatesOrderBeforePayment(t *testing.T) {
 	assert.Equal(t, VpnPlanYearPrice, order.Money)
 	assert.Equal(t, model.PaymentProviderAlipay, order.PaymentProvider)
 	assert.Equal(t, 42, order.UserId)
-	assert.NotEmpty(t, order.NodeKey, "订单应带节点密钥，支付成功后可直接下发")
+	// 新规则：订单不再持有共享 node_key，而是在同一个事务里落订阅令牌与独立凭据。
+	assert.Empty(t, order.NodeKey, "新订单不能再写入共享密钥")
+	assert.NotEmpty(t, order.SubToken, "订单必须带订阅令牌，否则付款后拿不到订阅地址")
+	assert.NotEmpty(t, order.ClientIp, "下单出口 IP 要落库，便于事后对账")
+	cred, err := model.GetVpnCredentialByOrder(order.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.VpnCredentialActive, cred.Status)
 }
 
 // TestRequestVpnOrderEpayCreatesPendingOrder 易支付网关：落库 + 返回表单参数。

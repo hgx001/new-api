@@ -5455,7 +5455,11 @@
     "All statuses": "Tous les statuts",
     "No VPN orders found": "Aucune commande VPN",
     "Search by trade no, user ID or username": "Rechercher par n° de commande, ID utilisateur ou nom d'utilisateur",
-    "Failed to load VPN orders": "Echec du chargement des commandes VPN"
+    "Failed to load VPN orders": "Echec du chargement des commandes VPN",
+    "Client IP": "IP du client",
+    "Node Credential": "Identifiant de nœud",
+    "Frozen": "Gelé",
+    "Legacy key": "Ancienne clé partagée"
   },
   "Integration Tutorial": "Tutoriel d'intégration",
   "Claude Code Installation": "Installation de Claude Code",

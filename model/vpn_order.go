@@ -25,14 +25,44 @@ type VpnOrder struct {
 	CreateTime      int64   `json:"create_time"`
 	CompleteTime    int64   `json:"complete_time"`
 	NodeKey         string  `json:"-" gorm:"type:text"`
+	// ClientIp 是下单请求的浏览器出口 IP（不是支付回调的网关 IP）。
+	// SubToken 是订阅地址里的随机令牌，只有新规则下的订单才有；历史订单为空。
+	ClientIp string `json:"-" gorm:"type:varchar(64)"`
+	SubToken string `json:"-" gorm:"type:varchar(64);index"`
 }
 
 func (o *VpnOrder) Insert() error {
 	return DB.Create(o).Error
 }
 
+// CreateVpnOrderWithCredential 新规则下的下单：订单、订阅令牌、节点凭据
+// 必须在同一个事务里落库，否则支付成功却拿不到订阅地址。
+// 历史订单 SubToken 为空，继续走原来的明文 node_key 路径，不受影响。
+func CreateVpnOrderWithCredential(o *VpnOrder) error {
+	o.SubToken = NewVpnSubToken()
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(o).Error; err != nil {
+			return err
+		}
+		_, err := AllocateVpnCredential(tx, o.Id, o.UserId)
+		return err
+	})
+}
+
 func (o *VpnOrder) Update() error {
 	return DB.Save(o).Error
+}
+
+// GetVpnOrderBySubToken 订阅入口按令牌找订单。令牌只用于寻址，不构成登录凭据。
+func GetVpnOrderBySubToken(token string) (*VpnOrder, error) {
+	if token == "" {
+		return nil, errors.New("empty subscription token")
+	}
+	var o VpnOrder
+	if err := DB.Where("sub_token = ?", token).First(&o).Error; err != nil {
+		return nil, err
+	}
+	return &o, nil
 }
 
 func GetVpnOrderByTradeNo(tradeNo string) *VpnOrder {

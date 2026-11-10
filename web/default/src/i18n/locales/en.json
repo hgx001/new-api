@@ -5455,7 +5455,11 @@
     "All statuses": "All statuses",
     "No VPN orders found": "No VPN orders found",
     "Search by trade no, user ID or username": "Search by trade no, user ID or username",
-    "Failed to load VPN orders": "Failed to load VPN orders"
+    "Failed to load VPN orders": "Failed to load VPN orders",
+    "Client IP": "Client IP",
+    "Node Credential": "Node Credential",
+    "Frozen": "Frozen",
+    "Legacy key": "Legacy key"
   },
   "Integration Tutorial": "Integration Tutorial",
   "Claude Code Installation": "Claude Code Installation",

@@ -197,6 +197,10 @@ export function VpnOrders() {
                 <thead className='text-muted-foreground border-b text-xs'>
                   <tr>
                     <th className='py-2 pr-4 font-medium'>{t('Buyer')}</th>
+                    <th className='py-2 pr-4 font-medium'>{t('Client IP')}</th>
+                    <th className='py-2 pr-4 font-medium'>
+                      {t('Node Credential')}
+                    </th>
                     <th className='py-2 pr-4 font-medium'>{t('Trade No')}</th>
                     <th className='py-2 pr-4 font-medium'>{t('Plan')}</th>
                     <th className='py-2 pr-4 font-medium'>{t('Amount')}</th>
@@ -218,6 +222,31 @@ export function VpnOrders() {
                         <span className='text-muted-foreground ml-1 text-xs'>
                           #{order.user_id}
                         </span>
+                      </td>
+                      <td className='text-muted-foreground py-2 pr-4 font-mono text-xs'>
+                        {order.client_ip || '-'}
+                      </td>
+                      <td className='py-2 pr-4 text-xs'>
+                        {order.credential?.name ? (
+                          <span className='inline-flex items-center gap-1.5'>
+                            <span className='font-mono'>
+                              {order.credential.name}
+                            </span>
+                            {order.credential.status === 'frozen' ? (
+                              <span className='rounded bg-rose-500/15 px-1.5 py-0.5 text-rose-600'>
+                                {t('Frozen')}
+                              </span>
+                            ) : (
+                              <span className='text-muted-foreground tabular-nums'>
+                                {order.credential.ip_count} IP
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className='text-muted-foreground'>
+                            {t('Legacy key')}
+                          </span>
+                        )}
                       </td>
                       <td
                         className='text-muted-foreground max-w-[220px] truncate py-2 pr-4 font-mono text-xs'

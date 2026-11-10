@@ -29,7 +29,15 @@ export interface VpnKeyData {
   pay_time: number
   expire_time?: number
   expired?: boolean
+  /**
+   * `legacy`：老规则订单，返回一条所有人共享的明文 vless 链接（历史两位付费用户）。
+   * `subscription`：新规则订单，返回本订单专属的订阅地址，节点凭据按订单独立签发。
+   */
+  mode?: 'legacy' | 'subscription'
   key?: string
+  subscribe_url?: string
+  /** 订阅模式专用：凭据因多地同时使用被暂停，需要用户点「重置密钥」。 */
+  frozen?: boolean
 }
 
 export interface VpnKeyResult {
@@ -122,5 +130,32 @@ export async function getMyVpnKey(): Promise<VpnKeyResult | null> {
     }
   } catch {
     return null
+  }
+}
+
+export interface VpnResetResult {
+  success: boolean
+  message?: string
+  subscribe_url?: string
+}
+
+/**
+ * 重置节点密钥：作废当前 UUID 并换发新的，订阅地址不变。
+ * 用户主动「借给朋友」或多地同时使用被冻结后，都靠这一步恢复。
+ */
+export async function resetVpnSubscription(): Promise<VpnResetResult> {
+  try {
+    const res = await api.post(
+      '/api/user/vpn/reset',
+      {},
+      { skipBusinessError: true }
+    )
+    return {
+      success: !!res.data?.success,
+      message: res.data?.message as string | undefined,
+      subscribe_url: res.data?.subscribe_url as string | undefined,
+    }
+  } catch {
+    return { success: false, message: '网络错误，请稍后重试' }
   }
 }

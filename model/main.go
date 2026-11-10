@@ -280,6 +280,8 @@ func migrateDB() error {
 		&Midjourney{},
 		&TopUp{},
 		&VpnOrder{},
+		&VpnCredential{},
+		&VpnCredentialAccess{},
 		&QuotaData{},
 		&Task{},
 		&TaskLog{},

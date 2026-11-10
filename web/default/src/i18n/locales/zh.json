@@ -5455,7 +5455,11 @@
     "All statuses": "全部状态",
     "No VPN orders found": "暂无 VPN 订单",
     "Search by trade no, user ID or username": "按订单号、用户 ID 或用户名搜索",
-    "Failed to load VPN orders": "VPN 订单加载失败"
+    "Failed to load VPN orders": "VPN 订单加载失败",
+    "Client IP": "下单 IP",
+    "Node Credential": "节点凭据",
+    "Frozen": "已冻结",
+    "Legacy key": "旧版共享密钥"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",

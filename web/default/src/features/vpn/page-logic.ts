@@ -37,7 +37,7 @@ export const PENDING_FAST_WINDOW_SEC = 30 * 60
 export const POLL_FAST_MS = 3000
 export const POLL_SLOW_MS = 30000
 
-export type VpnState = 'active' | 'pending' | 'expired' | 'none'
+export type VpnState = 'active' | 'pending' | 'expired' | 'frozen' | 'none'
 
 export function formatDate(ts: number) {
   if (!ts) return '-'
@@ -78,11 +78,15 @@ export function resolveVpnState({
   hasKey,
   isExpired,
   hasPending,
+  isFrozen = false,
 }: {
   hasKey: boolean
   isExpired: boolean
   hasPending: boolean
+  isFrozen?: boolean
 }): VpnState {
+  // 冻结优先：有凭据但被暂停接入，不能显示成「已开通」让用户以为还能用。
+  if (isFrozen) return 'frozen'
   if (hasKey) return 'active'
   if (isExpired) return 'expired'
   if (hasPending) return 'pending'

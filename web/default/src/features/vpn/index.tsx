@@ -9,12 +9,15 @@ import {
   Download,
   Globe,
   Laptop,
+  Link2,
   Loader2,
   Lock,
   Monitor,
   QrCode,
+  RefreshCw,
   Rocket,
   Shield,
+  ShieldAlert,
   ShieldCheck,
   Smartphone,
   Sparkles,
@@ -43,6 +46,17 @@ import { SiAlipay } from 'react-icons/si'
 import { toast } from 'sonner'
 
 import { PublicLayout } from '@/components/layout'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -63,6 +77,7 @@ import {
   getMyVpnKey,
   getMyVpnOrders,
   getTopupInfo,
+  resetVpnSubscription,
   type TopupInfo,
   type VpnKeyResult,
   type VpnOrder,
@@ -154,7 +169,7 @@ const FAQS = [
   },
   {
     q: '密钥可以在多台设备上使用吗？',
-    a: '可以。同一密钥可在 Windows / macOS 客户端上同时导入使用，请合理使用避免影响速度。',
+    a: '可以在你自己的多台设备上使用（如家里的电脑和手机）。但请勿分享给他人：同一份订阅同时出现在多个网络时，系统会自动换发新密钥，分享出去的旧配置随之失效。',
   },
   {
     q: '套餐到期后如何续费？',
@@ -178,6 +193,10 @@ const STATE_CHIP: Record<VpnState, { label: string; className: string }> = {
   expired: {
     label: '已到期',
     className: 'border-amber-500/30 bg-amber-500/10 text-amber-600',
+  },
+  frozen: {
+    label: '已暂停',
+    className: 'border-rose-500/30 bg-rose-500/10 text-rose-600',
   },
   none: {
     label: '未开通',
@@ -242,12 +261,17 @@ export function Vpn() {
   const [orders, setOrders] = useState<VpnOrder[]>([])
   const [keyResult, setKeyResult] = useState<VpnKeyResult | null>(null)
   const [copied, setCopied] = useState(false)
+  const [resetting, setResetting] = useState(false)
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const firstLoadRef = useRef(true)
   const knownSuccessRef = useRef<Set<string>>(new Set())
   const paidFlagRef = useRef(false)
 
   const keyData = keyResult?.success ? keyResult.data : null
+  // 新规则订单下发订阅地址（每单独立 UUID），老订单仍是明文 vless 链接。
+  const isSubscription = keyData?.mode === 'subscription'
+  const subscribeURL = isSubscription ? (keyData?.subscribe_url ?? '') : ''
+  const isFrozen = isSubscription && !!keyData?.frozen
   const isExpired =
     !!keyResult && !keyResult.success && !!keyResult.data?.expired
   const hasPaid = orders.some((o) => o.status === 'success') || !!keyData
@@ -265,6 +289,7 @@ export function Vpn() {
     hasKey: !!keyData,
     isExpired,
     hasPending,
+    isFrozen,
   })
 
   const refresh = useCallback(async () => {
@@ -368,15 +393,30 @@ export function Vpn() {
   }
 
   const handleCopyKey = async () => {
-    if (!keyData?.key) return
-    const ok = await copyToClipboard(keyData.key)
+    const payload = keyData?.key || keyData?.subscribe_url
+    if (!payload) return
+    const ok = await copyToClipboard(payload)
     if (ok) {
       setCopied(true)
-      toast.success('密钥已复制到剪贴板')
+      toast.success(
+        keyData?.key ? '密钥已复制到剪贴板' : '订阅地址已复制到剪贴板'
+      )
       setTimeout(() => setCopied(false), 2000)
     } else {
       toast.error('复制失败，请手动选择复制')
     }
+  }
+
+  const handleResetKey = async () => {
+    setResetting(true)
+    const res = await resetVpnSubscription()
+    setResetting(false)
+    if (!res.success) {
+      toast.error(res.message || '重置失败，请稍后重试')
+      return
+    }
+    toast.success('已换发新密钥，请在客户端更新一次订阅')
+    await refresh()
   }
 
   const remainingRatio = keyData?.expire_time
@@ -391,7 +431,12 @@ export function Vpn() {
     : 0
 
   const keyPanelDescription = (() => {
-    if (keyData) return '支付已确认，复制下方密钥到 v2rayN 即可使用'
+    if (isFrozen) return '检测到多地同时使用，节点接入已暂停'
+    if (keyData) {
+      return isSubscription
+        ? '支付已确认，复制订阅地址到 v2rayN 更新订阅即可使用'
+        : '支付已确认，复制下方密钥到 v2rayN 即可使用'
+    }
     if (isExpired) return '套餐已到期，续费后密钥将重新开放'
     if (hasPending) return '已收到支付请求，正在等待支付确认'
     return '支付成功后，专属密钥将显示在这里'
@@ -415,30 +460,121 @@ export function Vpn() {
               </div>
             </div>
           ) : null}
-          <div className='bg-muted/50 rounded-lg border p-4 font-mono text-xs leading-relaxed break-all'>
-            {keyData.key}
-          </div>
-          <Button className='w-full' variant='outline' onClick={handleCopyKey}>
-            {copied ? (
-              <>
-                <Check className='mr-2 h-4 w-4 text-emerald-500' />
-                已复制
-              </>
-            ) : (
-              <>
-                <Copy className='mr-2 h-4 w-4' />
-                一键复制密钥
-              </>
-            )}
-          </Button>
-          <div className='text-muted-foreground rounded-lg border border-dashed p-4 text-sm'>
-            <div className='text-foreground mb-1 font-medium'>
-              导入方法（v2rayN）：
-            </div>
-            打开 v2rayN → 「服务器」→「从剪贴板导入批量URL」→
-            选中「日本东京」节点 → 回车设为活动服务器 →
-            托盘图标右键「系统代理」→「自动配置系统代理」。
-          </div>
+          {isSubscription ? (
+            <>
+              {isFrozen ? (
+                <div className='flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-600'>
+                  <ShieldAlert className='mt-0.5 h-3.5 w-3.5 shrink-0' />
+                  <span>
+                    同一个订阅在多个地点同时使用，已自动暂停接入。
+                    点下方「重置密钥」立即换发新密钥，分享出去的旧配置会同时失效。
+                  </span>
+                </div>
+              ) : null}
+              <div className='space-y-1.5'>
+                <div className='text-muted-foreground flex items-center gap-1.5 text-xs'>
+                  <Link2 className='h-3.5 w-3.5' />
+                  我的专属订阅地址
+                </div>
+                <div className='bg-muted/50 rounded-lg border p-3 font-mono text-[11px] leading-relaxed break-all'>
+                  {subscribeURL}
+                </div>
+              </div>
+              <div className='flex gap-2'>
+                <Button
+                  className='flex-1'
+                  variant='outline'
+                  onClick={handleCopyKey}
+                >
+                  {copied ? (
+                    <>
+                      <Check className='mr-2 h-4 w-4 text-emerald-500' />
+                      已复制
+                    </>
+                  ) : (
+                    <>
+                      <Copy className='mr-2 h-4 w-4' />
+                      复制订阅地址
+                    </>
+                  )}
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger
+                    render={<Button variant='outline' disabled={resetting} />}
+                  >
+                    {resetting ? (
+                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                    ) : (
+                      <RefreshCw className='mr-2 h-4 w-4' />
+                    )}
+                    重置密钥
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>确认重置节点密钥？</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        当前密钥会立即作废，已经分享出去的配置随之失效；
+                        订阅地址不变，重置后在客户端更新一次订阅即可恢复。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction
+                        variant='destructive'
+                        onClick={() => void handleResetKey()}
+                      >
+                        确认重置
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+              <div className='text-muted-foreground rounded-lg border border-dashed p-4 text-sm'>
+                <div className='text-foreground mb-1 font-medium'>
+                  导入方法（v2rayN）：
+                </div>
+                打开 v2rayN → 「订阅」→「订阅分组设置」→
+                添加订阅，地址粘贴上方链接 → 「更新订阅」→
+                选中「日本东京」节点设为活动服务器 →
+                托盘图标右键「系统代理」→「自动配置系统代理」。
+              </div>
+              <p className='text-muted-foreground flex items-start gap-1.5 text-xs'>
+                <Shield className='mt-0.5 h-3.5 w-3.5 shrink-0' />
+                订阅地址等同于你的身份凭证，仅供本人设备使用。系统检测到多地同时使用时会自动换发新密钥。
+              </p>
+            </>
+          ) : (
+            <>
+              <div className='bg-muted/50 rounded-lg border p-4 font-mono text-xs leading-relaxed break-all'>
+                {keyData.key}
+              </div>
+              <Button
+                className='w-full'
+                variant='outline'
+                onClick={handleCopyKey}
+              >
+                {copied ? (
+                  <>
+                    <Check className='mr-2 h-4 w-4 text-emerald-500' />
+                    已复制
+                  </>
+                ) : (
+                  <>
+                    <Copy className='mr-2 h-4 w-4' />
+                    一键复制密钥
+                  </>
+                )}
+              </Button>
+              <div className='text-muted-foreground rounded-lg border border-dashed p-4 text-sm'>
+                <div className='text-foreground mb-1 font-medium'>
+                  导入方法（v2rayN）：
+                </div>
+                打开 v2rayN → 「服务器」→「从剪贴板导入批量URL」→
+                选中「日本东京」节点 → 回车设为活动服务器 →
+                托盘图标右键「系统代理」→「自动配置系统代理」。
+              </div>
+            </>
+          )}
         </>
       )
     }
@@ -742,7 +878,7 @@ export function Vpn() {
                   <div className='flex items-start justify-between gap-3'>
                     <CardTitle className='flex items-center gap-2 text-xl'>
                       <BadgeCheck className='h-5 w-5 text-emerald-500' />
-                      我的专属密钥
+                      {isSubscription ? '我的节点订阅' : '我的专属密钥'}
                     </CardTitle>
                     <Badge
                       variant='outline'

@@ -5455,7 +5455,11 @@
     "All statuses": "Tất cả trạng thái",
     "No VPN orders found": "Không có đơn hàng VPN",
     "Search by trade no, user ID or username": "Tìm theo mã đơn, ID người dùng hoặc tên đăng nhập",
-    "Failed to load VPN orders": "Không tải được đơn hàng VPN"
+    "Failed to load VPN orders": "Không tải được đơn hàng VPN",
+    "Client IP": "IP khách hàng",
+    "Node Credential": "Thông tin xác thực nút",
+    "Frozen": "Đã tạm khóa",
+    "Legacy key": "Khóa chia sẻ cũ"
   },
   "Integration Tutorial": "Hướng dẫn tích hợp",
   "Claude Code Installation": "Cài đặt Claude Code",

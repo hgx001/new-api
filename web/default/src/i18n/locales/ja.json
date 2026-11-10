@@ -5455,7 +5455,11 @@
     "All statuses": "すべてのステータス",
     "No VPN orders found": "VPN 注文はありません",
     "Search by trade no, user ID or username": "注文番号・ユーザーID・ユーザー名で検索",
-    "Failed to load VPN orders": "VPN 注文の読み込みに失敗しました"
+    "Failed to load VPN orders": "VPN 注文の読み込みに失敗しました",
+    "Client IP": "接続元 IP",
+    "Node Credential": "ノード認証情報",
+    "Frozen": "凍結済み",
+    "Legacy key": "旧共有キー"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",

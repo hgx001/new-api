@@ -5455,7 +5455,11 @@
     "All statuses": "Все статусы",
     "No VPN orders found": "Заказов VPN нет",
     "Search by trade no, user ID or username": "Поиск по номеру заказа, ID пользователя или имени",
-    "Failed to load VPN orders": "Не удалось загрузить заказы VPN"
+    "Failed to load VPN orders": "Не удалось загрузить заказы VPN",
+    "Client IP": "IP клиента",
+    "Node Credential": "Учётные данные узла",
+    "Frozen": "Заморожено",
+    "Legacy key": "Старый общий ключ"
   },
   "Integration Tutorial": "Руководство по интеграции",
   "Claude Code Installation": "Установка Claude Code",

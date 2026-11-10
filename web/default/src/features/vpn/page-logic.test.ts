@@ -125,6 +125,28 @@ describe('vpn: 页面状态机', () => {
       'none'
     )
   })
+
+  test('因多地同时使用被暂停时，必须显示已暂停而不是已开通', () => {
+    assert.equal(
+      resolveVpnState({
+        hasKey: true,
+        isExpired: false,
+        hasPending: false,
+        isFrozen: true,
+      }),
+      'frozen'
+    )
+    // 冻结状态也不能被待支付覆盖：用户得先知道自己为什么连不上
+    assert.equal(
+      resolveVpnState({
+        hasKey: true,
+        isExpired: false,
+        hasPending: true,
+        isFrozen: true,
+      }),
+      'frozen'
+    )
+  })
 })
 
 describe('vpn: 待支付订单的轮询策略', () => {

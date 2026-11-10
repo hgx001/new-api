@@ -1,0 +1,11 @@
+[Unit]
+Description=Run VPN node agent every minute
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=vpn-node-agent.service
+
+[Install]
+WantedBy=timers.target

@@ -28,6 +28,9 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)
 		// VPN 套餐订单与收入是独立账（不进用户 quota / top_ups），管理端单独只读查看。
 		apiRouter.GET("/vpn/admin/orders", middleware.AdminAuth(), controller.AdminGetVpnOrders)
+		// 节点 agent 内部接口：专用 Bearer 令牌鉴权，不复用 AdminAuth。
+		apiRouter.GET("/vpn/node/manifest", controller.VpnNodeManifest)
+		apiRouter.POST("/vpn/node/connections", anonymousRequestBodyLimit, controller.VpnNodeConnections)
 		apiRouter.GET("/notice", controller.GetNotice)
 		apiRouter.GET("/user-agreement", controller.GetUserAgreement)
 		apiRouter.GET("/privacy-policy", controller.GetPrivacyPolicy)
@@ -164,6 +167,8 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.GET("/alipay/return", controller.AlipayReturn)
 			userRoute.POST("/alipay/return", anonymousRequestBodyLimit, controller.AlipayReturn)
 			userRoute.POST("/vpn/epay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.VpnEpayNotify)
+			// v2rayN 订阅是匿名 GET，靠随机令牌寻址；令牌不可枚举，且响应不缓存。
+			userRoute.GET("/vpn/sub/:token", controller.GetVpnSubscription)
 			userRoute.GET("/vpn/epay/notify", middleware.PaymentNotifyRateLimit(), controller.VpnEpayNotify)
 			userRoute.POST("/vpn/alipay/notify", middleware.PaymentNotifyRateLimit(), anonymousRequestBodyLimit, controller.VpnAlipayNotify)
 			userRoute.GET("/vpn/alipay/notify", middleware.PaymentNotifyRateLimit(), controller.VpnAlipayNotify)
@@ -193,6 +198,7 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.POST("/vpn/order", middleware.CriticalRateLimit(), controller.RequestVpnOrder)
 				selfRoute.GET("/vpn/orders", controller.GetVpnMyOrders)
 				selfRoute.GET("/vpn/key", controller.GetVpnMyKey)
+				selfRoute.POST("/vpn/reset", middleware.CriticalRateLimit(), controller.ResetVpnSubscription)
 				selfRoute.POST("/amount", controller.RequestAmount)
 				selfRoute.POST("/stripe/pay", middleware.CriticalRateLimit(), controller.RequestStripePay)
 				selfRoute.POST("/stripe/amount", controller.RequestStripeAmount)
