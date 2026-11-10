@@ -23,13 +23,13 @@ func withAdminRoutePolicy(t *testing.T, raw string) {
 	})
 }
 
-func TestParsePauseUntilDefaultsToNextBeijingMidnight(t *testing.T) {
-	// 不传 until：客户端/前端最常见用法，按「今天额度用完，明天再来」的语义
-	// 自动算到次日 0 点，不需要调用方懂时区。
+func TestParsePauseUntilDefaultsToNextBeijingQuotaReset(t *testing.T) {
+	// 不传 until：客户端/前端最常见用法，按「今天额度用完，等它重置」的语义
+	// 自动算到下一个额度重置点（北京时间凌晨 2 点），不需要调用方懂时区。
 	now := time.Date(2026, 11, 1, 13, 0, 0, 0, beijingZone)
 	until, err := parsePauseUntil(pauseDoubaoRouteRequest{}, now)
 	require.NoError(t, err)
-	assert.Equal(t, nextBeijingMidnight(now).Unix(), until)
+	assert.Equal(t, nextBeijingQuotaReset(now).Unix(), until)
 }
 
 func TestParsePauseUntilAcceptsExplicitDeadline(t *testing.T) {

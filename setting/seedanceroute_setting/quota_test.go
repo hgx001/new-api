@@ -72,7 +72,12 @@ func TestLooksLikeQuotaExhaustedMatchesUpstreamWording(t *testing.T) {
 	}
 }
 
-func TestAutoPauseUsesNextBeijingMidnight(t *testing.T) {
+// NextBeijingMidnight 仍然保留（controller 层还有包装函数引用它），
+// 但它**不再是默认截止时间** —— 默认口径已改为凌晨 2 点的
+// NextBeijingQuotaReset（见 quota_reset_test.go）。
+//
+// 这个用例只锁住函数本身的行为，别把它当成「默认截止时间」的依据。
+func TestNextBeijingMidnightIsRetainedButNotTheDefault(t *testing.T) {
 	cases := []struct {
 		name string
 		now  int64
@@ -124,7 +129,7 @@ func TestAutoPauseTriggersOnTargetModelQuotaFailure(t *testing.T) {
 	if !ok {
 		t.Fatal("ShouldAutoPause() = false, want true（目标模型 + 额度耗尽）")
 	}
-	if want := NextBeijingMidnight(now); until != want {
+	if want := NextBeijingQuotaReset(now); until != want {
 		t.Fatalf("until = %d, want %d", until, want)
 	}
 }
@@ -197,28 +202,28 @@ func TestAutoPauseDoesNotOverrideManualPause(t *testing.T) {
 	}
 }
 
-// 人工暂停的时间**早于**今天结束时的保护。
+// 人工暂停的时间**早于**额度重置点时的保护。
 //
 // 这个用例是补上来的：上面那个用例用 12-01 作截止时间，它恰好晚于
-// 「今天结束」，所以即使删掉 manual 保护，也会被「已暂停到不早于目标时刻」
+// 「重置点」，所以即使删掉 manual 保护，也会被「已暂停到不早于目标时刻」
 // 的幂等判断兜住 —— 测试照样绿，保护其实没被执行到。
 //
-// 真正的漏洞在这里：人工暂停到今天 18:00，自动检测算出「今天结束」是
-// 次日 0 点，18:00 < 次日 0 点，幂等判断放行 → 把截止时间**延长**到明天。
+// 真正的漏洞在这里：人工暂停到今天 18:00，自动检测算出「重置点」是
+// 次日 2 点，18:00 < 次日 2 点，幂等判断放行 → 把截止时间**延长**到明天。
 // 运营说的是「停到 18 点」，系统却停到了明天。
 func TestAutoPauseDoesNotExtendShorterManualPause(t *testing.T) {
 	autoPauseBaseline(t)
 	now := beijingNow(t, 2026, 11, 1, 13, 0)
 	stubNow(t, now)
 
-	// 人工暂停到今天 18:00 —— 比「今天结束」更早。
+	// 人工暂停到今天 18:00 —— 比「额度重置点」更早。
 	manualUntil := beijingNow(t, 2026, 11, 1, 18, 0)
 	if err := UpdateFromJSONString(MarshalJSONStringOf(WithManualPause(manualUntil))); err != nil {
 		t.Fatalf("manual pause: %v", err)
 	}
 
 	if _, ok := ShouldAutoPause(Get(), "seedance-2-5", "渠道今日额度已用完，明天再来！"); ok {
-		t.Fatal("ShouldAutoPause() = true, want false（不许把人工的 18:00 延长到明天 0 点）")
+		t.Fatal("ShouldAutoPause() = true, want false（不许把人工的 18:00 延长到次日 2 点）")
 	}
 	if got := SecondsRulePausedUntil(); got != manualUntil {
 		t.Fatalf("pausedUntil = %d, want %d（人工截止时间必须原样保留）", got, manualUntil)
@@ -231,11 +236,11 @@ func TestAutoPauseIsIdempotentWithinSameDay(t *testing.T) {
 	now := beijingNow(t, 2026, 11, 1, 13, 0)
 	stubNow(t, now)
 
-	if err := UpdateFromJSONString(MarshalJSONStringOf(WithAutoPause(NextBeijingMidnight(now), "额度用完"))); err != nil {
+	if err := UpdateFromJSONString(MarshalJSONStringOf(WithAutoPause(NextBeijingQuotaReset(now), "额度用完"))); err != nil {
 		t.Fatalf("auto pause: %v", err)
 	}
 
-	// 半小时后又一条额度耗尽失败：已经暂停到今天结束，不需要再写库。
+	// 半小时后又一条额度耗尽失败：已经暂停到重置点，不需要再写库。
 	stubNow(t, now+1800)
 	if _, ok := ShouldAutoPause(Get(), "seedance-2-5", "渠道今日额度已用完，明天再来！"); ok {
 		t.Fatal("ShouldAutoPause() = true, want false（已暂停到同一时刻，重复写库没有意义）")
@@ -246,7 +251,7 @@ func TestAutoPauseIsIdempotentWithinSameDay(t *testing.T) {
 func TestAutoPauseRefreshesExpiredAutoPause(t *testing.T) {
 	autoPauseBaseline(t)
 	day1 := beijingNow(t, 2026, 11, 1, 13, 0)
-	if err := UpdateFromJSONString(MarshalJSONStringOf(WithAutoPause(NextBeijingMidnight(day1), "额度用完"))); err != nil {
+	if err := UpdateFromJSONString(MarshalJSONStringOf(WithAutoPause(NextBeijingQuotaReset(day1), "额度用完"))); err != nil {
 		t.Fatalf("auto pause: %v", err)
 	}
 
@@ -257,7 +262,7 @@ func TestAutoPauseRefreshesExpiredAutoPause(t *testing.T) {
 	if !ok {
 		t.Fatal("ShouldAutoPause() = false, want true（跨天后应能再次触发）")
 	}
-	if want := NextBeijingMidnight(day2); until != want {
+	if want := NextBeijingQuotaReset(day2); until != want {
 		t.Fatalf("until = %d, want %d", until, want)
 	}
 }

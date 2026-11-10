@@ -125,7 +125,7 @@ export async function setVideoRouteFailoverModels(
 /**
  * 人工把源链路标记为不可用。
  *
- * until 省略 = 北京时间次日 0 点（对应「今天额度用完了」）。
+ * until 省略 = 北京时间凌晨 2 点（上游日额度的真实重置点，对应「今天额度用完了」）。
  * 与额度探针的自动标记分开：人工标记不会被一次成功自动解除。
  */
 export async function markVideoRouteFailoverUnavailable(
@@ -148,7 +148,8 @@ export async function clearVideoRouteFailoverUnavailable(): Promise<VideoRouteFa
 /**
  * 暂停「按时长改派」这条规则。
  *
- * until 省略 = 北京时间次日 0 点（对应「今天额度用完了」这个最常见的场景）。
+ * until 省略 = 北京时间凌晨 2 点（上游日额度的真实重置点，
+ * 对应「今天额度用完了」这个最常见的场景）。
  */
 export async function pauseVideoRoute(
   until?: number

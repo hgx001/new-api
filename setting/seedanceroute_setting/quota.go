@@ -5,11 +5,12 @@
 // 重选渠道，**不会退回源链路**（见 prepareDoubaoRoute 的注释）。
 //
 // 人工开关能救，但漏一次就是整天的 30 秒请求全失败。这里把判断做成纯函数，
-// 由 service 层在任务终态时调用：额度耗尽 → 自动暂停到今天结束；
+// 由 service 层在任务终态时调用：额度耗尽 → 自动暂停到额度重置点；
 // 出现成功 → 自动解除。
 //
-// 为什么暂停粒度是「今天结束」而不是固定 N 分钟：额度是按自然日重置的，
-// 暂停到 24 点正好对齐重置点，到点自动失效，不需要任何人值守。
+// 为什么暂停粒度是「额度重置点」而不是固定 N 分钟：额度是按自然日重置的，
+// 而**豆包的重置点是北京时间凌晨 2 点**（不是午夜），暂停到该点正好对齐
+// 重置时刻，到点自动失效，不需要任何人值守。
 package seedanceroute_setting
 
 import (
@@ -81,6 +82,43 @@ func NextBeijingMidnight(nowUnix int64) int64 {
 	return time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, beijingZone).Unix()
 }
 
+// quotaResetHour 是上游日额度的真实重置时刻（北京时间小时）。
+//
+// 为什么不是 0 点：**豆包的日额度在凌晨 2 点才重置**，不是午夜。
+// 这不是我们拍脑袋定的，是上游的实际行为 —— 11-10 生产日志里，
+// 22:37 与 21:37 两条请求都因为「额度已用完」失败，而 24 点前后
+// 额度并没有回来。
+//
+// 用错了会怎样：默认恢复时间按「次日 0 点」算，路由会在午夜提前 2 小时
+// 接回改派，然后那 2 小时里的请求全部撞「额度还没重置」而失败 ——
+// 而**系统没有任何报错**（路由层认为改派是成功的，失败发生在上游）。
+// 表现就是「每天半夜莫名其妙多出一截失败率」，排查成本极高。
+const quotaResetHour = 2
+
+// NextBeijingQuotaReset 返回「严格晚于 now 的下一个北京时间凌晨 2 点」（Unix 秒）。
+//
+// 这是所有「默认截止时间」的唯一口径：规则一自动暂停、规则五自动标记、
+// 以及两个人工按钮的缺省值，都必须对齐上游真实的额度重置点 ——
+// 早一点恢复 = 白白撞失败；晚一点恢复 = 白白多付贵链路的差价。
+//
+// 语义是「严格晚于 now」：
+//   - 凌晨 1 点 → 当天 2 点（还有 1 小时就重置，别多停一天）；
+//   - 恰逢 2 点整 → 次日 2 点（那一刻消耗的是刚重置的新周期额度，
+//     这一周期要到次日 2 点才再次重置；若取当天 2 点，暂停时长为 0，
+//     等于完全没暂停）；
+//   - 凌晨 3 点 → 次日 2 点。
+//
+// time.Date 会自己处理月末 / 年末进位（11-30 + 1 天 = 12-01）。
+func NextBeijingQuotaReset(nowUnix int64) int64 {
+	local := time.Unix(nowUnix, 0).In(beijingZone)
+	candidate := time.Date(local.Year(), local.Month(), local.Day(), quotaResetHour, 0, 0, 0, beijingZone)
+	if candidate.Unix() <= nowUnix {
+		// 当天的重置点已经过了（或者恰好就是此刻），下一个在次日。
+		candidate = candidate.AddDate(0, 0, 1)
+	}
+	return candidate.Unix()
+}
+
 // ShouldAutoPause 判断「这次任务失败要不要自动暂停规则一」，并给出暂停到的时刻。
 //
 // 三个条件缺一不可：
@@ -114,7 +152,7 @@ func ShouldAutoPause(p Policy, modelName, failReason string) (int64, bool) {
 		return 0, false
 	}
 
-	until := NextBeijingMidnight(now)
+	until := NextBeijingQuotaReset(now)
 	if p.SecondsRulePausedUntil >= until {
 		return 0, false
 	}

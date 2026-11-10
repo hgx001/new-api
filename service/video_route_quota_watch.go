@@ -136,8 +136,8 @@ func observeVideoTaskOutcome(task *model.Task) {
 // 源链路一旦成功出片，就说明它又通了，必须解除标记，否则之后的请求
 // 会一直白白改派到备胎（备胎慢 18 倍、且成片规格不同）。
 //
-// 标记的失效时间对齐**北京时间次日 0 点**：豆包额度按自然日重置，
-// 与规则一的暂停口径一致。
+// 标记的失效时间对齐**北京时间凌晨 2 点**（上游日额度的真实重置点）：
+// 豆包额度按自然日重置但不是午夜重置，与规则一的暂停口径一致。
 func observeFailoverSourceOutcome(policy seedanceroute_setting.Policy, task *model.Task, succeeded bool) bool {
 	if !seedanceroute_setting.IsFailoverRouteEnabled() {
 		return false
@@ -177,7 +177,7 @@ func observeFailoverSourceOutcome(policy seedanceroute_setting.Policy, task *mod
 		return true
 	}
 
-	until := seedanceroute_setting.NextBeijingMidnight(time.Now().Unix())
+	until := seedanceroute_setting.NextBeijingQuotaReset(time.Now().Unix())
 	// 已经在标记中，且截止时间不早于目标时刻 → 不重复写。
 	if seedanceroute_setting.FailoverUnavailable(time.Now().Unix()) &&
 		seedanceroute_setting.FailoverUnavailableUntil() >= until {

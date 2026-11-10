@@ -129,7 +129,7 @@ export function FailoverSwitchCard({ channelModels }: FailoverSwitchCardProps) {
     void apply(
       'mark',
       () => markVideoRouteFailoverUnavailable(),
-      t('Source marked unavailable until tomorrow')
+      t('Source marked unavailable until quota reset')
     )
   }, [apply, t])
 
@@ -241,7 +241,7 @@ export function FailoverSwitchCard({ channelModels }: FailoverSwitchCardProps) {
               disabled={busyNow}
               onClick={handleMark}
             >
-              {t('Mark source unavailable today')}
+              {t('Mark source unavailable until quota reset')}
             </Button>
           )}
           {!view.targetReady ? (

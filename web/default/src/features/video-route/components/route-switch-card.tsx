@@ -112,7 +112,7 @@ export function RouteSwitchCard({ channelModels }: RouteSwitchCardProps) {
         void applyPolicy('toggle', () => resumeVideoRoute(), t('Routing is on'))
         return
       }
-      // 关掉 = 暂停到今天结束，明天 0 点自动接回。
+      // 关掉 = 暂停到额度重置点（北京时间凌晨 2 点），到点自动接回。
       void applyPolicy('toggle', () => pauseVideoRoute(), t('Routing is off'))
     },
     [applyPolicy, t]

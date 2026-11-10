@@ -86,9 +86,9 @@ func TestObserveVideoTaskOutcome_AutoPausesOnQuotaExhausted(t *testing.T) {
 	assert.Equal(t, seedanceroute_setting.PauseSourceAuto, policy.PauseSource)
 	assert.Equal(t, seedanceroute_setting.ReasonQuotaExhausted, policy.PauseReason)
 	assert.Equal(t,
-		seedanceroute_setting.NextBeijingMidnight(time.Now().Unix()),
+		seedanceroute_setting.NextBeijingQuotaReset(time.Now().Unix()),
 		policy.SecondsRulePausedUntil,
-		"应暂停到下一个北京时间 0 点")
+		"应暂停到下一个北京时间凌晨 2 点（上游额度重置点）")
 	assert.False(t, seedanceroute_setting.IsEnabled(), "规则一应立刻失效")
 	assert.True(t, seedanceroute_setting.IsRatioRouteEnabled(), "比例规则不该被波及")
 }

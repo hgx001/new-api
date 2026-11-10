@@ -145,8 +145,8 @@ func SetFailoverModelsAdmin(c *gin.Context) {
 
 // failoverUnavailableRequest 是「人工标记源链路不可用」的请求体。
 type failoverUnavailableRequest struct {
-	// Until 标记截止时间（Unix 秒）。0 或缺省 = 北京时间次日 0 点
-	//（对应「今天额度用完了」这个最常见的场景）。
+	// Until 标记截止时间（Unix 秒）。0 或缺省 = 北京时间凌晨 2 点
+	//（上游日额度的真实重置点，对应「今天额度用完了」这个最常见的场景）。
 	Until int64 `json:"until"`
 	// Reason 原因文案（给运营/客户看）。缺省用「上游额度已用完」。
 	Reason string `json:"reason"`
@@ -221,12 +221,12 @@ func ClearFailoverSourceUnavailableAdmin(c *gin.Context) {
 // parseFailoverUntil 解析人工标记的截止时间。
 //
 // 与规则一的 parsePauseUntil 同口径：
-//   - 0/缺省 = 北京时间次日 0 点；
+//   - 0/缺省 = 北京时间凌晨 2 点（上游日额度的真实重置点）；
 //   - 过去的时间戳必须拒绝（静默接受会得到「看起来成功但完全没标记」的结果）；
 //   - 超过 30 天必须拒绝（把毫秒当秒传会把源链路标记成不可用几十年）。
 func parseFailoverUntil(until int64, now time.Time) (int64, error) {
 	if until <= 0 {
-		until = nextBeijingMidnight(now).Unix()
+		until = nextBeijingQuotaReset(now).Unix()
 	}
 	if until <= now.Unix() {
 		return 0, errors.New("until must be in the future")
@@ -256,7 +256,7 @@ func GetFailoverPolicyAdmin(c *gin.Context) {
 // 静态不可用不需要状态位 —— 渠道一恢复就自动恢复。
 //
 // 之所以要单独给出 failover_source_available：运营需要区分
-// 「渠道被人关了」（去渠道页开回来）与「额度用完了」（等次日 0 点）。
+// 「渠道被人关了」（去渠道页开回来）与「额度用完了」（等凌晨 2 点重置）。
 // 只给一个「不可用」的话，两种原因要靠猜。
 func failoverAdminState(c *gin.Context) gin.H {
 	policy := seedanceroute_setting.Get()

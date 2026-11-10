@@ -15,7 +15,8 @@ import (
 // 条件路由的运维开关：暂停 / 恢复「按时长改派到豆包」这条规则。
 //
 // 谁在用：客户端（cron_video）账号管理面板里的「标记今日额度已用完」按钮。
-// 点一下 = 暂停到**北京时间次日 0 点**，到点自动恢复 —— 不需要有人记得回来打开。
+// 点一下 = 暂停到**北京时间凌晨 2 点**（上游日额度的真实重置点），
+// 到点自动恢复 —— 不需要有人记得回来打开。
 //
 // 为什么不用「关渠道」实现：目标链路所在的渠道（ch20 漫屋ArcReel）上还挂着
 // 另外 7 个与豆包无关的模型（gemini-web-video / Nano Banana Pro / wan2.7-图生 …）。
@@ -46,6 +47,17 @@ func nextBeijingMidnight(now time.Time) time.Time {
 	return time.Unix(seedanceroute_setting.NextBeijingMidnight(now.Unix()), 0).In(beijingZone)
 }
 
+// nextBeijingQuotaReset 返回「严格晚于 now 的下一个北京时间凌晨 2 点」。
+//
+// 这是**默认截止时间**的唯一口径：上游日额度在凌晨 2 点才重置，
+// 路由的恢复时间必须对齐这个点。早一点恢复 → 撞「额度还没重置」的失败；
+// 晚一点恢复 → 白白多付贵链路的差价。
+//
+// 真正的计算在 setting 包，这里只做 time.Time 包装。
+func nextBeijingQuotaReset(now time.Time) time.Time {
+	return time.Unix(seedanceroute_setting.NextBeijingQuotaReset(now.Unix()), 0).In(beijingZone)
+}
+
 // parsePauseUntil 解析暂停请求，返回最终的截止时间。
 //
 // 抽成纯函数是为了能直接测边界：过去的时间戳必须拒绝（静默接受会得到
@@ -54,8 +66,9 @@ func nextBeijingMidnight(now time.Time) time.Time {
 func parsePauseUntil(req pauseDoubaoRouteRequest, now time.Time) (int64, error) {
 	until := req.Until
 	if until <= 0 {
-		// 不传 = 北京时间次日 0 点，对应「今天额度用完了」这个最常见的场景。
-		until = nextBeijingMidnight(now).Unix()
+		// 不传 = 下一个北京时间凌晨 2 点（上游日额度的真实重置点），
+		// 对应「今天额度用完了，等它重置」这个最常见的场景。
+		until = nextBeijingQuotaReset(now).Unix()
 	}
 	if until <= now.Unix() {
 		return 0, errors.New("until must be in the future")
@@ -68,7 +81,7 @@ func parsePauseUntil(req pauseDoubaoRouteRequest, now time.Time) (int64, error) 
 
 // pauseDoubaoRouteRequest 是暂停请求体。整个 body 可以省略。
 type pauseDoubaoRouteRequest struct {
-	// Until 暂停截止时间（Unix 秒）。0 或缺省 = 北京时间次日 0 点。
+	// Until 暂停截止时间（Unix 秒）。0 或缺省 = 北京时间凌晨 2 点。
 	Until int64 `json:"until"`
 }
 
@@ -89,7 +102,7 @@ func PauseDoubaoRouteAdmin(c *gin.Context) {
 
 func pauseDoubaoRoute(c *gin.Context, source string, state func() gin.H) {
 	var req pauseDoubaoRouteRequest
-	// body 允许为空（客户端通常什么都不传，让服务端算次日 0 点）。
+	// body 允许为空（客户端通常什么都不传，让服务端算凌晨 2 点的额度重置点）。
 	// io.EOF 表示「没有 body」，不是错误；其它解析错误要明确报出来，不能猜。
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		c.JSON(http.StatusBadRequest, gin.H{
