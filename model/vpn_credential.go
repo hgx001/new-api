@@ -9,8 +9,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// VPN 凭据状态。frozen 的节点侧会被 reject，但订阅地址不变，
-// 用户点「重置」后换一个全新 UUID 即可恢复，分享出去的旧配置永久失效。
+// VPN 凭据状态。frozen 的凭据不再下发到节点，下一轮同步时从 sing-box 的
+// users 里移除，旧 UUID 直接认证失败（不是靠 reject 规则）；订阅地址不变，
+// 用户点「重置」换一个全新 UUID 即可恢复，分享出去的旧配置永久失效。
 const (
 	VpnCredentialActive  = "active"
 	VpnCredentialRevoked = "revoked"
@@ -230,8 +231,9 @@ func FreezeVpnCredential(cred *VpnCredential, now int64) (bool, error) {
 
 // ListVpnNodeManifest 生成节点清单：只包含已支付、未过期的 active 凭据。
 // cutoffCompleteTime 由调用方按套餐有效期算出，避免 model 依赖 controller 常量。
-// frozen 名单单独下发，节点据此生成 reject 规则；旧的 frozen 凭据即使被 reset，
-// name 也不会被复用（自增主键），所以名单只增不减是安全的。
+// frozen 凭据不进 users（等于节点侧认证失败），单独放在 frozen 名单里仅供
+// 排障与审计；旧的 frozen 凭据即使被 reset，name 也不会被复用（自增主键），
+// 所以名单只增不减是安全的。
 func ListVpnNodeManifest(cutoffCompleteTime int64, now int64) (VpnNodeManifest, error) {
 	manifest := VpnNodeManifest{Users: []VpnNodeUser{}, Frozen: []string{}}
 	var rows []VpnCredential
