@@ -450,7 +450,7 @@ var allowedDoubaoRatios = map[string]bool{
 // 值用**官网文案**（「自动」），不是 fiber 的 'auto'：
 // Worker 侧写控件时按 label/value 两侧都试，label 是官网文案。
 var allowedSeedreamImageRatios = map[string]bool{
-	"自动": true,
+	"自动":   true,
 	"9:16": true,
 	"2:3":  true,
 	"3:4":  true,
@@ -467,14 +467,21 @@ var allowedSeedreamImageRatios = map[string]bool{
 // clientRequest 是厂商侧请求体。seconds/duration/input_reference/images 等用
 // json.RawMessage 承接，以便宽容解析数字/字符串、单值/数组等别名形态。
 type clientRequest struct {
-	Model          string          `json:"model"`
-	Prompt         string          `json:"prompt"`
-	Seconds        json.RawMessage `json:"seconds"`
-	Duration       json.RawMessage `json:"duration"`
-	Size           string          `json:"size"`
-	Ratio          string          `json:"ratio"`
-	AspectRatio    string          `json:"aspect_ratio"`
-	Resolution     string          `json:"resolution"`
+	Model       string          `json:"model"`
+	Prompt      string          `json:"prompt"`
+	Seconds     json.RawMessage `json:"seconds"`
+	Duration    json.RawMessage `json:"duration"`
+	Size        string          `json:"size"`
+	Ratio       string          `json:"ratio"`
+	AspectRatio string          `json:"aspect_ratio"`
+	Resolution  string          `json:"resolution"`
+	// Metadata 是客户端传比例的**站内已验证路径**（metadata.ratio / metadata.aspect_ratio）。
+	//
+	// 2026-11-10 审查发现：原来 clientRequest **没有这个字段**，
+	// resolveRatio 只读 size → ratio → aspect_ratio，
+	// 于是客户端用 metadata.ratio = "9:16" 时比例被**完全丢弃** → 落默认 16:9。
+	// 其他 7 个适配器早已支持 metadata，只有这里漏了 —— 口径漂移的又一处证据。
+	Metadata       map[string]any  `json:"metadata"`
 	InputReference json.RawMessage `json:"input_reference"`
 	Images         json.RawMessage `json:"images"`
 	// 参考图别名字段（2026-10-22 丢图事故）：第三方客户端用的字段名五花八门，
@@ -748,20 +755,16 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		// 豆包比例「未指定不编造」：公共段 resolveRatio 已把空值填成 16:9（dola
 		// 口径），豆包要用原始值覆盖回去 —— 空值原样透传，让 Worker 保持官网
 		// 当前状态（出厂「自动」档），而不是静默改掉用户没选的参数。
-		rawRatio := firstNonEmpty(
-			strings.TrimSpace(req.Size),
-			strings.TrimSpace(req.Ratio),
-			strings.TrimSpace(req.AspectRatio),
-		)
+		rawRatio, rawErr := resolveRawRatio(req, doubaoRatioCandidates(), nil)
+		if rawErr != nil {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("ratio must be one of auto/16:9/9:16/1:1/4:3/3:4/21:9, %w", rawErr),
+				"invalid_ratio", http.StatusBadRequest,
+			)
+		}
 		if rawRatio == "" {
 			norm.Ratio = ""
 		} else {
-			if !allowedDoubaoRatios[rawRatio] {
-				return service.TaskErrorWrapperLocal(
-					fmt.Errorf("ratio must be one of auto/16:9/9:16/1:1/4:3/3:4/21:9, got %q", rawRatio),
-					"invalid_ratio", http.StatusBadRequest,
-				)
-			}
 			norm.Ratio = rawRatio
 		}
 		// 分辨率归一成链路档位字面量（480p/720p）；空串 = 未指定，不下发键。
@@ -803,20 +806,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		// 比例「未指定不编造」：空 → 留空，不下发 aspectRatio，
 		// 让 Worker 保持官网出厂的「自动」档（用户没选就别替他选）。
-		rawRatio := firstNonEmpty(
-			strings.TrimSpace(req.Size),
-			strings.TrimSpace(req.Ratio),
-			strings.TrimSpace(req.AspectRatio),
-		)
+		rawRatio, rawErr := resolveRawRatio(req, seedreamImageRatioCandidates(), normalizeSeedreamImageRatio)
+		if rawErr != nil {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("ratio must be one of 自动/9:16/2:3/3:4/1:1/4:3/3:2/16:9, %w", rawErr),
+				"invalid_ratio", http.StatusBadRequest,
+			)
+		}
 		if rawRatio != "" {
-			normalizedRatio := normalizeSeedreamImageRatio(rawRatio)
-			if normalizedRatio == "" {
-				return service.TaskErrorWrapperLocal(
-					fmt.Errorf("ratio must be one of 自动/9:16/2:3/3:4/1:1/4:3/3:2/16:9, got %q", rawRatio),
-					"invalid_ratio", http.StatusBadRequest,
-				)
-			}
-			norm.Ratio = normalizedRatio
+			norm.Ratio = rawRatio
 		}
 		count, err := resolveImageCount(req, maxSeedreamImageCount)
 		if err != nil {
@@ -912,22 +910,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		norm.Duration = duration
 		// 比例「未指定不编造」：空 → 不下发，让官网用它自己的 adaptive 默认档。
-		rawRatio := firstNonEmpty(
-			strings.TrimSpace(req.Size),
-			strings.TrimSpace(req.Ratio),
-			strings.TrimSpace(req.AspectRatio),
-		)
+		rawRatio, rawErr := resolveRawRatio(req, picsartRatioCandidates(), normalizePicsartRatio)
+		if rawErr != nil {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("ratio must be one of adaptive/16:9/9:16/1:1/4:3/3:4, %w", rawErr),
+				"invalid_ratio", http.StatusBadRequest,
+			)
+		}
 		if rawRatio == "" {
 			norm.Ratio = ""
 		} else {
-			normalizedRatio := normalizePicsartRatio(rawRatio)
-			if normalizedRatio == "" {
-				return service.TaskErrorWrapperLocal(
-					fmt.Errorf("ratio must be one of adaptive/16:9/9:16/1:1/4:3/3:4, got %q", rawRatio),
-					"invalid_ratio", http.StatusBadRequest,
-				)
-			}
-			norm.Ratio = normalizedRatio
+			norm.Ratio = rawRatio
 		}
 		resolution, resErr := resolvePicsartResolution(req)
 		if resErr != nil {
@@ -1654,22 +1647,88 @@ func resolveFixedDuration(req clientRequest, modelName string, expected int) (in
 	return expected, nil
 }
 
-// resolveRatio 解析画面比例：size（首选）→ ratio → aspect_ratio → 缺省 16:9。
+// resolveRatio 解析画面比例。
+//
+// 2026-11-10 审查：原来只读 size → ratio → aspect_ratio，**不读 metadata** ——
+// 客户端用站内已验证的 metadata.ratio 传比例时被完全丢弃（用户要的 9:16 出成 16:9）。
+// 现在改用全站统一入口 relaycommon.ResolveTaskRatio，口径与其余适配器一致：
+//
+//	metadata.ratio → metadata.aspect_ratio → 顶层 ratio → 顶层 aspect_ratio
+//	→ size → 默认 16:9
+//
+// ⚠️ 与其他适配器的差异：manwu 的比例是**硬约束**，非法值必须报错而不是静默降级
+// （上游会直接拒单，提前报错能给客户可读原因）。
 func resolveRatio(req clientRequest) (string, error) {
-	candidate := strings.TrimSpace(req.Size)
-	if candidate == "" {
-		candidate = strings.TrimSpace(req.Ratio)
+	result := relaycommon.ResolveTaskRatio(relaycommon.TaskSubmitReq{
+		Ratio:       req.Ratio,
+		AspectRatio: req.AspectRatio,
+		Size:        req.Size,
+		Metadata:    req.Metadata,
+	}, relaycommon.TaskRatioOptions{
+		Candidates:    manwuRatioCandidates(),
+		DefaultRatio:  defaultRatio,
+		RejectInvalid: true,
+		// manwu 的既定契约：size 在官网语义里就是比例，且优先于顶层 ratio。
+		// 该渠道已上线并有测试保护（size="1:1" + ratio="9:16" → 1:1），
+		// 不能为了跟其他适配器"看起来一致"而悄悄改行为。
+		SizeFirst: true,
+	})
+	if result.Rejected != "" {
+		return "", fmt.Errorf("ratio must be one of 16:9/9:16/1:1/4:3/3:4/21:9, got %q", result.Rejected)
 	}
-	if candidate == "" {
-		candidate = strings.TrimSpace(req.AspectRatio)
+	return result.Ratio, nil
+}
+
+// manwuRatioCandidates 是本渠道支持的档位。
+func manwuRatioCandidates() relaycommon.TaskRatioCandidates {
+	candidates := make(relaycommon.TaskRatioCandidates, len(allowedRatios))
+	for ratio := range allowedRatios {
+		candidates[ratio] = true
 	}
-	if candidate == "" {
-		return defaultRatio, nil
+	return candidates
+}
+
+// resolveRawRatio 解析「官网有自动/不指定档位」的三条路线（豆包视频、豆包图片、
+// Picsart）用的比例：没指定就返回空串，交给官网自己的「自动」档，
+// **不补默认值** —— 补 16:9 等于把「用户没选」静默改写成一次参数变更。
+//
+// 2026-11-10 审查：原来这三处各写一遍 firstNonEmpty(size, ratio, aspect_ratio)，
+// 同样漏掉 metadata —— 客户端用站内已验证的 metadata.ratio 传比例时被丢弃。
+// 现在统一走 relaycommon.ResolveTaskRatio，档位表由调用方给（各路线档位不同）。
+func resolveRawRatio(req clientRequest, candidates relaycommon.TaskRatioCandidates,
+	normalize func(string) string) (string, error) {
+	result := relaycommon.ResolveTaskRatio(relaycommon.TaskSubmitReq{
+		Ratio:       req.Ratio,
+		AspectRatio: req.AspectRatio,
+		Size:        req.Size,
+		Metadata:    req.Metadata,
+	}, relaycommon.TaskRatioOptions{
+		Candidates:      candidates,
+		DefaultRatio:    "",
+		RejectInvalid:   true,
+		SizeFirst:       true,
+		AllowEmptyRatio: true,
+		Normalize:       normalize,
+	})
+	if result.Rejected != "" {
+		return "", fmt.Errorf("got %q", result.Rejected)
 	}
-	if !allowedRatios[candidate] {
-		return "", fmt.Errorf("ratio must be one of 16:9/9:16/1:1/4:3/3:4/21:9, got %q", candidate)
-	}
-	return candidate, nil
+	return result.Ratio, nil
+}
+
+// doubaoRatioCandidates 是豆包视频路线的档位（含官网「自动」档 auto）。
+func doubaoRatioCandidates() relaycommon.TaskRatioCandidates {
+	return relaycommon.TaskRatioCandidates(allowedDoubaoRatios)
+}
+
+// seedreamImageRatioCandidates 是豆包系图片路线的档位（含中文「自动」）。
+func seedreamImageRatioCandidates() relaycommon.TaskRatioCandidates {
+	return relaycommon.TaskRatioCandidates(allowedSeedreamImageRatios)
+}
+
+// picsartRatioCandidates 是 Picsart 路线的档位（含 adaptive）。
+func picsartRatioCandidates() relaycommon.TaskRatioCandidates {
+	return relaycommon.TaskRatioCandidates(picsartAllowedRatios)
 }
 
 // referenceImageField 描述一个「参考图候选字段」：名字 + 取值函数。

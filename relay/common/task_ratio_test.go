@@ -135,3 +135,49 @@ func TestResolveTaskRatioInvalidIsRejectedNotApplied(t *testing.T) {
 	require.Equal(t, TaskRatioSourceInvalidRejected, got.Source)
 	require.Equal(t, "not-a-ratio", got.Rejected)
 }
+
+// SizeFirst：size 的原始比例写法优先于顶层 ratio。
+// 唯一使用场景是 manwu（type=66）—— 官网以 size 为准，是已上线的既定契约。
+func TestResolveTaskRatioSizeFirst(t *testing.T) {
+	result := ResolveTaskRatio(TaskSubmitReq{
+		Ratio: "9:16",
+		Size:  "1:1",
+	}, TaskRatioOptions{
+		DefaultRatio: "16:9",
+		SizeFirst:    true,
+	})
+	require.Equal(t, "1:1", result.Ratio)
+	require.Equal(t, TaskRatioSourceSize, result.Source)
+}
+
+// 不开 SizeFirst 时（默认全站口径），顶层 ratio 优先于 size。
+func TestResolveTaskRatioTopLevelWinsOverSizeByDefault(t *testing.T) {
+	result := ResolveTaskRatio(TaskSubmitReq{
+		Ratio: "9:16",
+		Size:  "1:1",
+	}, TaskRatioOptions{
+		DefaultRatio: "16:9",
+	})
+	require.Equal(t, "9:16", result.Ratio)
+	require.Equal(t, TaskRatioSourceTopLevelRatio, result.Source)
+}
+
+// AllowEmptyRatio：没指定比例时返回空串而不是默认值。
+// 用于官网有「自动/不指定」档位的场景 —— 补默认值等于把「用户没选」改成参数变更。
+func TestResolveTaskRatioAllowEmpty(t *testing.T) {
+	result := ResolveTaskRatio(TaskSubmitReq{}, TaskRatioOptions{
+		DefaultRatio:    "16:9",
+		AllowEmptyRatio: true,
+	})
+	require.Equal(t, "", result.Ratio)
+	require.Equal(t, TaskRatioSourceDefault, result.Source)
+}
+
+// AllowEmptyRatio 不影响显式传值：客户端给了就必须生效。
+func TestResolveTaskRatioAllowEmptyStillRespectsExplicitValue(t *testing.T) {
+	result := ResolveTaskRatio(TaskSubmitReq{Ratio: "9:16"}, TaskRatioOptions{
+		DefaultRatio:    "16:9",
+		AllowEmptyRatio: true,
+	})
+	require.Equal(t, "9:16", result.Ratio)
+}

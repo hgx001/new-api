@@ -79,6 +79,23 @@ type TaskRatioOptions struct {
 	//	false —— 有赞 / DashScope 等：比例是画幅参数不是计费硬参数，
 	//	         继续往下一个来源找，全都没命中就落默认值，不打断请求。
 	RejectInvalid bool
+	// SizeFirst 让 size 的**原始比例写法**优先于顶层 ratio / aspect_ratio。
+	//
+	// 默认 false（全站口径：顶层字段优先于 size）。设为 true 的唯一场景是
+	// manwu（type=66）：它的 size 字段在官网语义里**就是比例**
+	// （Worker 侧 picsart/doubao params.ts 把 size 直接映射为比例档位），
+	// 且「size 优先」是该渠道已上线并有测试保护的既定契约 ——
+	// 客户端同时传 size="1:1" 与 ratio="9:16" 时，官网以 size 为准。
+	//
+	// 为什么用显式选项而不是各包各写一遍：口径差异必须是**声明式的**，
+	// 否则又回到"改 A 忘 B / 口径悄悄漂移"的老路。
+	SizeFirst bool
+	// AllowEmptyRatio 表示「客户端没指定比例」是合法状态，此时 Ratio 返回空串
+	// 而不是默认值。
+	//
+	// 用于官网有「自动 / 不指定」档位的场景（manwu 的豆包视频、豆包图片、
+	// Picsart）：补一个 16:9 等于把「用户没选」静默改写成一次参数变更。
+	AllowEmptyRatio bool
 }
 
 // ResolveTaskRatio 是全站统一的画幅比例解析入口。
@@ -151,8 +168,19 @@ func ResolveTaskRatio(req TaskSubmitReq, opts TaskRatioOptions) TaskRatioResult 
 	// ⚠️ 只有「看起来像比例」的 size 才参与（"16:9"、"4/3"、"16：9"）——
 	// 像素尺寸（"1280x720"）**不是**比例写法，不能当比例原样下发，
 	// 否则上游会收到 "1920x1080" 这种荒谬的 ratio 值。
+	//
+	// ⚠️ SizeFirst 时 size 要排在顶层字段**之前**（manwu 的既定契约：
+	// 官网以 size 为准），否则就要把候选重新排一遍。
+	sizeCandidate := candidate{}
 	if rawSize := trimSpace(req.Size); rawSize != "" && looksLikeRatio(rawSize) {
-		candidates = append(candidates, candidate{raw: rawSize, source: TaskRatioSourceSize})
+		sizeCandidate = candidate{raw: rawSize, source: TaskRatioSourceSize}
+		if opts.SizeFirst {
+			candidates = append([]candidate{sizeCandidate}, candidates...)
+			sizeCandidate = candidate{}
+		}
+	}
+	if sizeCandidate.raw != "" {
+		candidates = append(candidates, sizeCandidate)
 	}
 
 	rejected := ""
@@ -228,6 +256,10 @@ func ResolveTaskRatio(req TaskSubmitReq, opts TaskRatioOptions) TaskRatioResult 
 			Rejected: rejected,
 		}
 	}
+	if opts.AllowEmptyRatio {
+		// 「没指定」是合法状态 —— 不补默认值，让上游用它自己的「自动」档。
+		return TaskRatioResult{Ratio: "", Source: TaskRatioSourceDefault}
+	}
 	return TaskRatioResult{Ratio: opts.DefaultRatio, Source: TaskRatioSourceDefault}
 }
 
@@ -269,6 +301,7 @@ func topLevelRatio(req TaskSubmitReq, key string) string {
 // looksLikeRatio 判断一个字符串「看起来像比例写法」。
 //
 // 判据：含 ':' 或 '/'，且不是像素尺寸。
+//
 //	"16:9"    → 是
 //	"4/3"     → 是
 //	"16：9"   → 是（全角冒号）

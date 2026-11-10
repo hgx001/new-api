@@ -161,25 +161,33 @@ func (a *TaskAdaptor) resolveDuration(req relaycommon.TaskSubmitReq) int {
 	return d
 }
 
-// resolveRatio 解析客户端要求的画面比例：优先 metadata.ratio，其次 req.Size（"1280x720"），最后默认 16:9。
+// resolveRatio 解析客户端要求的画面比例。
+//
+// 2026-11-10 审查：原实现只读 metadata.ratio，客户端把比例放在**请求体顶层**
+// （OpenAI 风格的 "ratio" / "aspect_ratio"）时会被静默丢弃 → 上游收到 adaptive（1:1）。
+// 现在改用全站统一入口 relaycommon.ResolveTaskRatio，口径与其他适配器一致。
+//
+// 优先级：metadata.ratio → metadata.aspect_ratio → 顶层 ratio → 顶层 aspect_ratio
+// → size 尺寸推断 → 默认 16:9
 func resolveRatio(req relaycommon.TaskSubmitReq) string {
-	if req.Metadata != nil {
-		if r, ok := req.Metadata["ratio"].(string); ok && isValidRatio(r) {
-			return r
-		}
-	}
-	if r, ok := ratioFromSize(req.Size); ok {
-		return r
-	}
-	return defaultRatio
+	result := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		Candidates:   dashscopeRatioCandidates(),
+		DefaultRatio: defaultRatio,
+		SizeToRatio:  ratioFromSize,
+	})
+	return result.Ratio
 }
 
-func isValidRatio(r string) bool {
-	switch r {
-	case "adaptive", "16:9", "4:3", "1:1", "3:4", "9:16":
-		return true
+// dashscopeRatioCandidates 是本渠道支持的档位。
+func dashscopeRatioCandidates() relaycommon.TaskRatioCandidates {
+	return relaycommon.TaskRatioCandidates{
+		"adaptive": true,
+		"16:9":     true,
+		"9:16":     true,
+		"4:3":      true,
+		"3:4":      true,
+		"1:1":      true,
 	}
-	return false
 }
 
 // ratioFromSize 把 "1280x720" 这类尺寸映射到最接近的 ratio 档位
