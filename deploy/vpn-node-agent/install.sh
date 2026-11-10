@@ -22,7 +22,7 @@ ENV_DIR="/etc/vpn-node-agent"
 ENV_FILE="${ENV_DIR}/agent.env"
 BIN="/usr/local/bin/vpn-node-agent"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TOKEN=""
+TOKEN="${VPN_AGENT_TOKEN:-}"
 FORCE_ENV=0
 SKIP_LOG_LEVEL=0
 
@@ -49,7 +49,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$(id -u)" -eq 0 ]] || die "需要 root 权限"
-[[ -n "$TOKEN" ]] || die "--token 必填（与网站侧 VPN_NODE_AGENT_TOKEN 保持一致）"
+[[ -n "$TOKEN" ]] || die "--token 必填（或用环境变量 VPN_AGENT_TOKEN 传入；须与网站侧一致）"
 command -v python3 >/dev/null || die "缺少 python3"
 command -v sing-box >/dev/null || die "缺少 sing-box"
 
@@ -84,27 +84,35 @@ echo "[systemd] 已安装 vpn-node-agent.service / .timer"
 
 if [[ "$SKIP_LOG_LEVEL" -eq 0 ]]; then
   python3 - "$CONFIG" "$SERVICE" <<'PY'
-import json, os, shutil, subprocess, sys, time
+import json, re, shutil, subprocess, sys, time
 
 path, service = sys.argv[1], sys.argv[2]
 with open(path, "r", encoding="utf-8") as handle:
-    config = json.load(handle)
-log = config.setdefault("log", {})
-level = str(log.get("level", "info"))
+    original = handle.read()
+config = json.loads(original)
+log_block = config.get("log") or {}
+level = str(log_block.get("level", "info"))
 if level in ("info", "debug", "trace"):
     print("[log] 已经是 %s 级，无需调整" % level)
+    sys.exit(0)
+
+# 只替换 log 块里的 level，保留原文件格式：整份 json.dump 重写会把 5000 行配置
+# 重排成看不懂的 diff，以后谁都不敢动。
+pattern = re.compile(r'("log"\s*:\s*\{.*?)"level"\s*:\s*"warning"', re.S)
+updated, count = pattern.subn(r'\1"level": "info"', original, count=1)
+if count != 1:
+    print("[log] 没找到可替换的 log.level，跳过（请人工处理）")
     sys.exit(0)
 
 backup = path + ".bak-loglevel"
 shutil.copy2(path, backup)
 with open(path, "w", encoding="utf-8") as handle:
-    json.dump(config, handle, indent=2, ensure_ascii=False)
-    handle.write("\n")
+    handle.write(updated)
 
 check = subprocess.run(["sing-box", "check", "-c", path], capture_output=True, text=True)
-if check.returncode != 0:
+if check.returncode != 0 or json.loads(open(path, encoding="utf-8").read())["log"]["level"] != "info":
     shutil.copy2(backup, path)
-    print("[log] 改完后 sing-box check 失败，已回滚:\n" + (check.stdout + check.stderr))
+    print("[log] 改完后校验失败，已回滚:\n" + (check.stdout + check.stderr))
     sys.exit(1)
 
 subprocess.run(["systemctl", "restart", service], check=True)

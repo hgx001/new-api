@@ -44,6 +44,8 @@
 ```bash
 scp -P 877 -r deploy/vpn-node-agent ubuntu@43.167.248.149:/tmp/
 ssh -p 877 ubuntu@43.167.248.149
+# Windows 上 scp 过去的文件可能带 CRLF，bash 会报 "set: pipefail: invalid option name"
+sudo sed -i 's/\r$//' /tmp/vpn-node-agent/*
 sudo bash /tmp/vpn-node-agent/install.sh --token '<与网站侧一致的令牌>'
 ```
 
