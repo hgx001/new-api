@@ -59,11 +59,19 @@ import {
 
 const route = getRouteApi('/_authenticated/dashboard/$section')
 
+const LazyFinanceDashboard = lazy(() =>
+  import('@/features/finance').then((m) => ({
+    default: m.FinanceDashboard,
+  }))
+)
+
 const LazyLogStatCards = lazy(() =>
   import('./components/models/log-stat-cards').then((m) => ({
     default: m.LogStatCards,
   }))
 )
+
+const ADMIN_ONLY_SECTION_IDS: string[] = ['users', 'finance']
 
 const LazyModelCharts = lazy(() =>
   import('./components/models/model-charts').then((m) => ({
@@ -161,6 +169,9 @@ const SECTION_META: Record<DashboardSectionId, { titleKey: string }> = {
   users: {
     titleKey: 'User Analytics',
   },
+  finance: {
+    titleKey: 'Finance & Cost',
+  },
 }
 
 export function Dashboard() {
@@ -220,7 +231,9 @@ export function Dashboard() {
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
-        (section) => section !== 'overview' && (section !== 'users' || isAdmin)
+        (section) =>
+          section !== 'overview' &&
+          (!ADMIN_ONLY_SECTION_IDS.includes(section) || isAdmin)
       ),
     [isAdmin]
   )
@@ -379,6 +392,13 @@ export function Dashboard() {
                   filters={modelFilters}
                   sensitiveVisible={flowSensitiveVisible}
                 />
+              </Suspense>
+            </FadeIn>
+          )}
+          {activeSection === 'finance' && isAdmin && (
+            <FadeIn>
+              <Suspense fallback={<LogStatCardsFallback />}>
+                <LazyFinanceDashboard />
               </Suspense>
             </FadeIn>
           )}

@@ -28,6 +28,21 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/status/test", middleware.AdminAuth(), controller.TestStatus)
 		// VPN 套餐订单与收入是独立账（不进用户 quota / top_ups），管理端单独只读查看。
 		apiRouter.GET("/vpn/admin/orders", middleware.AdminAuth(), controller.AdminGetVpnOrders)
+		// 经营统计：充值实付（现金口径）与渠道消耗金额（经营口径）分开统计，
+		// 上游没有可用账单接口，成本由管理员手工录入。全部接口要求 AdminAuth。
+		financeRoute := apiRouter.Group("/finance")
+		financeRoute.Use(middleware.AdminAuth())
+		{
+			financeRoute.GET("/summary", controller.GetFinanceSummary)
+			financeRoute.GET("/channels", controller.GetFinanceChannels)
+			financeRoute.GET("/channels/options", controller.GetFinanceChannelOptions)
+			financeRoute.GET("/trend", controller.GetFinanceTrend)
+			financeRoute.GET("/costs", controller.GetFinanceCosts)
+			financeRoute.POST("/costs", controller.CreateFinanceCost)
+			financeRoute.PUT("/costs/:id", controller.UpdateFinanceCost)
+			financeRoute.DELETE("/costs/:id", controller.VoidFinanceCost)
+			financeRoute.GET("/export", controller.ExportFinanceCosts)
+		}
 		// 节点 agent 内部接口：专用 Bearer 令牌鉴权，不复用 AdminAuth。
 		apiRouter.GET("/vpn/node/manifest", controller.VpnNodeManifest)
 		apiRouter.POST("/vpn/node/connections", anonymousRequestBodyLimit, controller.VpnNodeConnections)

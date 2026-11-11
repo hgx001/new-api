@@ -46,6 +46,7 @@ import {
   CardStaggerItem,
 } from '@/components/page-transition'
 import { Button } from '@/components/ui/button'
+import { OverviewFinanceCard } from '@/features/finance/components/overview-finance-card'
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import type { ApiKey } from '@/features/keys/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -746,6 +747,8 @@ export function OverviewDashboard() {
       )}
 
       <SummaryCards />
+
+      {isAdmin && <OverviewFinanceCard />}
 
       {showContentPanels && (
         <CardStaggerContainer

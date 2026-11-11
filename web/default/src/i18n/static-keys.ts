@@ -552,4 +552,17 @@ export const STATIC_I18N_KEYS = [
   'Failed to load',
   'Expired at',
   'Cancelled at',
+
+  // Finance dashboard (section title, preset labels, cost categories)
+  'Finance & Cost',
+  'This month',
+  'Last month',
+  'Last 30 days',
+  'This year',
+  'Custom range',
+  'Top-up',
+  'API prepay',
+  'Bandwidth',
+  'Other',
+  'Refund',
 ] as const
