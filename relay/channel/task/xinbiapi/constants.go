@@ -46,14 +46,13 @@ const ModelNameTehuiRoute = "wan3.0-720p-特惠-内链"
 
 // ModelList 本渠道对外的模型列表。
 //
-// ⚠️ seedance2.5-活动（2026-11-03 起）是本渠道的**常驻**对外模型：
-// 活动版不再是「有赞常驻 + 30 秒改派心笔」，而是**反过来** ——
-// 心笔是活动版的常驻链路，豆包（seedance-2-5）是它的兜底路由。
-// 活动版与 ModelNamePayPerCall 是**同一条链路**（同一上游模型、同一档位、
-// 同一成本），区别只在对外名称与计费口径（活动版按次 ¥4.50、时长 2–30 秒）。
+// ⚠️ 2026-11-11 起 seedance2.5-活动 **不再属于本渠道**：
+// 活动版常驻链路已切回有赞原生 720P（ch17），心笔只保留自己的按次档
+// （wan3.0-720p-按次）与特惠分流目标（wan3.0-720p-特惠-内链）。
+// 适配器仍能处理活动版（与按次档同链路），但对外清单不能再声明它 ——
+// 否则渠道编辑下拉/按清单同步会把活动版重新挂回心笔。
 var ModelList = []string{
 	ModelNamePayPerCall,
-	constant.Seedance25HuoDongModel,
 	ModelNameTehuiRoute,
 }
 
@@ -124,20 +123,21 @@ const (
 //
 // 函数名沿用内部实现术语，对外文案不得使用该说法（见 ModelNamePayPerCall 注释）。
 //
-// ⚠️ 2026-11-03：seedance2.5-活动 成为本渠道的常驻对外模型后，
-// 这个白名单**不能再只认 ModelNamePayPerCall 一个名字** ——
+// ⚠️ 判据是「本渠道可能处理到的对外模型名」，不是「当前 ModelList 里的名字」：
 //
-//	活动版走心笔时 properties.origin_model_name 记的是「seedance2.5-活动」
-//	（对外模型名，不是上游模型名）。白名单漏了它 → 画质增强不触发 →
-//	客户拿到 480P 原始片，而对外承诺是 720P。**这是静默降质**：
-//	任务照样成功、账单照收 ¥4.50，客户拿到的是低一档的成片。
-//
-//	所以判据改成「是不是本渠道的对外模型」而不是「是不是某一个名字」：
-//	新增对外模型时只要加进 ModelList，增强自动跟上。
+//	活动版 2026-11-11 起常驻有赞、已移出 ModelList，但适配器仍保留处理它的能力
+//	（与按次档同链路）。一旦生产回滚或兜底把它重新落到本渠道，
+//	properties.origin_model_name 仍是「seedance2.5-活动」；
+//	如果漏判 → 画质增强不触发 → 客户拿到 480P 原始片，而对外承诺 720P。
+//	**这是静默降质**：任务照样成功、账单照收 ¥4.50，客户拿到低一档的成片。
+//	所以活动版必须显式保留在这里，其余按 ModelList 自动覆盖。
 func needsSuperResolution(originModelName string) bool {
 	name := strings.TrimSpace(originModelName)
 	if name == "" {
 		return false
+	}
+	if name == constant.Seedance25HuoDongModel {
+		return true
 	}
 	for _, publicModel := range ModelList {
 		if name == publicModel {

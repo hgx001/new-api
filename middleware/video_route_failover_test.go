@@ -568,7 +568,7 @@ func TestFailoverDoesNotDegradeWhenDoubaoAvailable(t *testing.T) {
 // 活动版配了 failover_after_doubao_enabled=false：
 // 规则一改派到豆包后，即使豆包链路不可用也**不再降级到班车**。
 //
-// 这是 2026-11-11 的口径：活动版只走「心笔常驻 → 豆包兜底」，不落到班车；
+// 这是 2026-11-11 的口径：活动版只走「有赞常驻 → 豆包兜底」，不落到班车；
 // 母本的「促销族 → 豆包 → 班车」降级链必须保持不变。
 func TestFailoverAfterDoubaoSwitchStopsActivityDowngrade(t *testing.T) {
 	previous := seedanceroute_setting.Get()

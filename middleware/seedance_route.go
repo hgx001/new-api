@@ -456,8 +456,9 @@ func applyRewrittenBody(c *gin.Context, body map[string]interface{}, originModel
 //   - 心笔按次链路（wan3.0-720p-按次）：本改派只转参考图；带首尾帧/
 //     参考视频/参考音频/seed 的请求留在源链路，时长 2–30 秒（默认 30）、只交付 720P。
 //
-// ⚠️ 2026-11-03：活动版的**常驻链路换成了心笔**（母本仍是有赞常驻 + 豆包兜底，
-// 活动版是心笔常驻 + 豆包兜底）。两条链路的入参契约不同，所以必须分开处理 ——
+// ⚠️ 2026-11-03 活动版曾把常驻链路换到心笔，2026-11-11 又切回有赞原生 720P
+// （老板口径：有赞原生 720P 效果更好）。现在母本与活动版**同渠道常驻**，
+// 只剩「>阈值改派豆包」一条差异；但两条链路的入参契约不同，仍必须分开处理 ——
 // 用同一套改写逻辑会让其中一条必然失败（历史上踩过：豆包链路不认 metadata.media → 丢图）。
 func prepareSecondsRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, requestedSeconds int) (map[string]interface{}, bool) {
 	if isXinbiPerCallTarget(targetModel) {
@@ -500,7 +501,7 @@ func isXinbiPerCallTarget(targetModel string) bool {
 //
 // 注意：心笔链路本体 2026-11-11 起已支持参考视频 / 参考音频（各限 5 个），
 // 但**本改派函数**只转 reference_images。带音视频的请求继续留在源链路 ——
-// 源链路（有赞 / 活动版的心笔常驻）都能跑，能力不受影响，只是不走这条低成本改派。
+// 源链路（有赞：母本与活动版同渠道）都能跑，能力不受影响，只是不走这条低成本改派。
 //
 // 时长：心笔按次档同期放开 2–30 秒（默认 30），不再要求恰好 30 秒。
 func prepareXinbiPerCallRoute(c *gin.Context, body map[string]interface{}, targetModel string) (map[string]interface{}, bool) {

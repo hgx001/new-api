@@ -488,3 +488,15 @@ func TestBuildRequestURLEndpoints(t *testing.T) {
 	assert.Equal(t, "https://www.xinbiapi.com/newapi/v1/video/generations", url)
 	assert.True(t, strings.HasPrefix(url, "https://"))
 }
+
+// 活动版 2026-11-11 起常驻有赞原生 720P，不再是心笔渠道的对外商品。
+//
+// 必须从 ModelList 移除：这份清单会喂给渠道编辑下拉/按清单同步，
+// 留着会把 activity 模型重新挂回心笔渠道（= 常驻链路被悄悄改回去）。
+// 心笔自己的两个模型照旧保留。
+func TestModelListExcludesHuodongAfterYouzanCutover(t *testing.T) {
+	assert.NotContains(t, ModelList, constant.Seedance25HuoDongModel,
+		"活动版已切回有赞，不能再出现在心笔渠道的模型清单里")
+	assert.Contains(t, ModelList, ModelNamePayPerCall)
+	assert.Contains(t, ModelList, ModelNameTehuiRoute)
+}

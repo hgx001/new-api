@@ -305,7 +305,7 @@ func tryFailoverAfterDoubaoRoute(
 		return false, ""
 	}
 	// 按**计费原点**（客户最初请求的促销族模型）判是否允许这第二段降级。
-	// 活动版可以单独关闭（只走「心笔常驻 → 豆包兜底」，不落班车），
+	// 活动版可以单独关闭（只走「有赞常驻 → 豆包兜底」，不落班车），
 	// 母本默认开启 —— 公共 failover 配置不能按源模型区分，所以用覆盖开关。
 	if !seedanceroute_setting.IsFailoverAfterDoubaoEnabledFor(billingOriginModel) {
 		logger.LogInfo(c, fmt.Sprintf(
