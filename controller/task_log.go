@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"math"
 	"net/http"
 	"strconv"
@@ -183,28 +182,9 @@ func collectRequestMedia(req relaycommon.TaskSubmitReq) []map[string]string {
 
 // compactMediaURL 把内联 base64 媒体压成可读摘要。
 //
-// 为什么必须压：部分客户端直接传 `data:image/png;base64,...`，单条可达数 MB。
-// 原样落库有两个后果 —— 一是把表撑爆，二是快照被 16KB 上限截断成**非法 JSON**
-// （实测 381 条提交快照里 18 条如此，`payload::jsonb` 直接报错）。
-//
-// 压成摘要反而更好用：既能看出「确实是内联图」，又能看到体积与格式，
-// 还保留了「这张图根本没上过 CDN」这个关键信息。
+// 具体实现收敛在 relaycommon.CompactTaskMediaURL（日志详情与提交快照共用一套口径）。
 func compactMediaURL(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if !strings.HasPrefix(strings.ToLower(trimmed), "data:") {
-		return trimmed
-	}
-	comma := strings.IndexByte(trimmed, ',')
-	if comma < 0 {
-		return "data:<malformed>"
-	}
-	header := trimmed[:comma]
-	payload := trimmed[comma+1:]
-	if strings.HasSuffix(strings.ToLower(header), ";base64") {
-		// base64 每 4 字符还原 3 字节，不必解码整段。
-		return fmt.Sprintf("%s,<%d bytes>", header, len(payload)*3/4)
-	}
-	return fmt.Sprintf("%s,<%d chars>", header, len(payload))
+	return relaycommon.CompactTaskMediaURL(raw)
 }
 
 func metadataKeys(metadata map[string]any) []string {

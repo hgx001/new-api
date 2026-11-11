@@ -30,6 +30,7 @@ import {
   UserCog,
   Info,
   LogIn,
+  FileJson,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -56,12 +57,13 @@ import {
   getResponseTimeColor,
   renderAuditContent,
 } from '../../lib/format'
+import { buildRequestParamRows } from '../../lib/request-params'
+import { resolveTimingDisplay } from '../../lib/timing'
 import {
   getLogTypeConfig,
   isPerCallBilling,
   isTimingLogType,
 } from '../../lib/utils'
-import { resolveTimingDisplay } from '../../lib/timing'
 import type { LogOtherData } from '../../types'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
@@ -538,6 +540,10 @@ export function DetailsDialog(props: DetailsDialogProps) {
     props.log.type !== 6 &&
     (other?.request_path || conversionChain.length > 0)
 
+  // 客户原始请求参数摘要：只在管理员视图展示，用于回答「这次到底传了什么」。
+  const requestParamRows =
+    props.isAdmin && other ? buildRequestParamRows(other.request_params) : []
+
   const useChannel = other?.admin_info?.use_channel
   const channelChain =
     useChannel && useChannel.length > 0 ? useChannel.join(' → ') : undefined
@@ -637,9 +643,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
           {showTiming && timing.displayable && (
             <DetailRow
               label={
-                timing.kind === 'task'
-                  ? t('Task duration')
-                  : t('Response Time')
+                timing.kind === 'task' ? t('Task duration') : t('Response Time')
               }
               value={
                 <span
@@ -648,9 +652,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
                     timingTextColorClass(
                       getResponseTimeColor(
                         timing.seconds,
-                        timing.kind === 'task'
-                          ? 0
-                          : props.log.completion_tokens
+                        timing.kind === 'task' ? 0 : props.log.completion_tokens
                       )
                     )
                   )}
@@ -676,6 +678,24 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
         </div>
+
+        {/* Request parameters (admin only): what the client actually sent,
+            captured before conditional routing rewrites the body */}
+        {requestParamRows.length > 0 && (
+          <DetailSection
+            icon={<FileJson className='size-3.5' aria-hidden='true' />}
+            label={t('Request Parameters')}
+          >
+            {requestParamRows.map((row) => (
+              <DetailRow
+                key={row.labelKey}
+                label={t(row.labelKey)}
+                value={<span className='whitespace-pre-wrap'>{row.value}</span>}
+                mono
+              />
+            ))}
+          </DetailSection>
+        )}
 
         {/* Request conversion (admin only, not for refund) */}
         {showConversion && (

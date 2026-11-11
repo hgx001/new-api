@@ -32,6 +32,9 @@ func SetVideoRouter(router *gin.Engine) {
 	// 再改写成特惠只会多绕一次素材搬运，没有任何收益。
 	videoV1Router.Use(
 		middleware.TokenAuth(),
+		// 必须在所有条件路由之前：它们会改写 body 的 model/seconds，
+		// 之后捕获到的就不是客户原始请求参数了（日志详情要按原始请求展示）。
+		middleware.CaptureTaskRequestParams(),
 		middleware.Seedance25TeHuiRoute(),
 		middleware.Wan3PromptCompress(),
 		middleware.Wan3TehuiXinbiRoute(),

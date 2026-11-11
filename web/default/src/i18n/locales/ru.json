@@ -5570,5 +5570,12 @@
   "Voided entries no longer count toward any total.": "Отменённые записи не учитываются в итогах.",
   "Unused prepayments, granted quota, discounts and refunds create this gap.": "Разница из-за неиспользованных предоплат, бонусов, скидок, возвратов и доходов VPN / подписок / серверов (отдельные книги).",
   "Cash revenue is paid top-ups. Channel figures use billed consumption. They are two separate measures.": "Доход — оплаченные пополнения. Каналы — расход по начислениям. Это разные показатели.",
-  "Record an upstream payment. The full amount counts on the selected day.": "Запишите платёж поставщику. Вся сумма учитывается в выбранный день."
+  "Record an upstream payment. The full amount counts on the selected day.": "Запишите платёж поставщику. Вся сумма учитывается в выбранный день.",
+  "Request Parameters": "Параметры запроса",
+  "Seconds": "Секунды",
+  "Resolution": "Разрешение",
+  "Size": "Размер",
+  "Seed": "Seed",
+  "Media": "Медиа",
+  "Media Fields": "Поля медиа"
 }

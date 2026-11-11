@@ -23,6 +23,13 @@ const (
 	// 不要直接读这个键去算钱。
 	ContextKeyRouteOriginModel ContextKey = "route_origin_model"
 
+	// ContextKeyTaskRequestParams 是「客户原始请求参数」的摘要（管理员日志可见）。
+	//
+	// 必须在条件路由改写 body 之前捕获：改派会把 model 换成内部目标模型，
+	// 事后从 body 反推只会得到「客户根本没用过的参数」。
+	// 写入方 middleware.CaptureTaskRequestParams，读取方是消费/错误日志落库处。
+	ContextKeyTaskRequestParams ContextKey = "task_request_params"
+
 	// ContextKeyRouteBillingSeconds 是条件路由改派时「源模型口径的计费秒数」。
 	//
 	// 为什么需要单独记：计费按源模型算，而源模型（seedance2.5-特惠）是按秒计价的；

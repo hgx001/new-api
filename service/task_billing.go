@@ -45,6 +45,11 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	other := make(map[string]interface{})
 	other["is_task"] = true
 	other["request_path"] = c.Request.URL.Path
+	// 客户原始请求参数摘要：路由改派后 body 已被改写，必须用前置捕获的那份。
+	// 只给管理员看，客户侧由 formatUserLogs 按已有白名单规则处理。
+	if requestParams := relaycommon.GetTaskRequestParams(c); len(requestParams) > 0 {
+		other["request_params"] = requestParams
+	}
 	other["model_price"] = info.PriceData.ModelPrice
 	if info.PriceData.ModelRatio > 0 {
 		other["model_ratio"] = info.PriceData.ModelRatio

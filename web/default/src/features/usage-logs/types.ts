@@ -92,6 +92,20 @@ export interface ChannelAffinityInfo {
   using_group?: string
 }
 
+export interface LogRequestParams {
+  model?: string
+  prompt?: string
+  seconds?: string
+  duration?: number
+  resolution?: string
+  size?: string
+  ratio?: string
+  seed?: number
+  media?: Array<{ type?: string; url?: string }>
+  media_counts?: Record<string, number>
+  media_fields?: Record<string, number>
+}
+
 export interface LogOtherData {
   admin_info?: {
     is_multi_key?: boolean
@@ -131,6 +145,8 @@ export interface LogOtherData {
   login_method?: string
   user_agent?: string
   request_path?: string
+  // 客户原始请求参数摘要（任务提交时、条件路由改写之前捕获）
+  request_params?: LogRequestParams
   request_conversion?: string[]
   ws?: boolean
   audio?: boolean

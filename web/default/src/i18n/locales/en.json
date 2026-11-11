@@ -5570,5 +5570,12 @@
   "Voided entries no longer count toward any total.": "Voided entries no longer count toward any total.",
   "Unused prepayments, granted quota, discounts and refunds create this gap.": "Unused prepayments, granted quota, discounts, refunds and revenue from VPN, subscription and server orders (kept as separate ledgers) create this gap.",
   "Cash revenue is paid top-ups. Channel figures use billed consumption. They are two separate measures.": "Cash revenue is paid top-ups. Channel figures use billed consumption. They are two separate measures.",
-  "Record an upstream payment. The full amount counts on the selected day.": "Record an upstream payment. The full amount counts on the selected day."
+  "Record an upstream payment. The full amount counts on the selected day.": "Record an upstream payment. The full amount counts on the selected day.",
+  "Request Parameters": "Request Parameters",
+  "Seconds": "Seconds",
+  "Resolution": "Resolution",
+  "Size": "Size",
+  "Seed": "Seed",
+  "Media": "Media",
+  "Media Fields": "Media Fields"
 }

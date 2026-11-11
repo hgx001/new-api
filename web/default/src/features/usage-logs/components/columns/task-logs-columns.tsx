@@ -153,8 +153,16 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
                 {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
               </AvatarFallback>
             </Avatar>
-            <span className='text-muted-foreground truncate text-sm hover:underline'>
-              {sensitiveVisible ? displayName : '••••'}
+            <span className='flex min-w-0 flex-col'>
+              <span className='text-muted-foreground truncate text-sm hover:underline'>
+                {sensitiveVisible ? displayName : '••••'}
+              </span>
+              {/* 用户名可能重名且会被脱敏，用户 ID 才是排查时的唯一标识 */}
+              {log.user_id > 0 && (
+                <span className='text-muted-foreground/70 font-mono text-[10px] leading-tight'>
+                  ID {log.user_id}
+                </span>
+              )}
             </span>
           </button>
         )

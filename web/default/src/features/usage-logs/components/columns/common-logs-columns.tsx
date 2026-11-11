@@ -55,13 +55,13 @@ import {
   isViolationFeeLog,
   renderAuditContent,
 } from '../../lib/format'
+import { resolveTimingDisplay } from '../../lib/timing'
 import {
   isDisplayableLogType,
   isTimingLogType,
   getLogTypeConfig,
   isPerCallBilling,
 } from '../../lib/utils'
-import { resolveTimingDisplay } from '../../lib/timing'
 import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { ModelBadge } from '../model-badge'
@@ -506,20 +506,28 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                   {sensitiveVisible ? getUserAvatarFallback(log.username) : '•'}
                 </AvatarFallback>
               </Avatar>
-              <TooltipProvider delay={300}>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <span className='text-muted-foreground max-w-[100px] truncate text-sm hover:underline' />
-                    }
-                  >
-                    {sensitiveVisible ? log.username : '••••'}
-                  </TooltipTrigger>
-                  {sensitiveVisible && log.username.length > 12 && (
-                    <TooltipContent side='top'>{log.username}</TooltipContent>
-                  )}
-                </Tooltip>
-              </TooltipProvider>
+              <span className='flex min-w-0 flex-col'>
+                <TooltipProvider delay={300}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className='text-muted-foreground max-w-[100px] truncate text-sm hover:underline' />
+                      }
+                    >
+                      {sensitiveVisible ? log.username : '••••'}
+                    </TooltipTrigger>
+                    {sensitiveVisible && log.username.length > 12 && (
+                      <TooltipContent side='top'>{log.username}</TooltipContent>
+                    )}
+                  </Tooltip>
+                </TooltipProvider>
+                {/* 用户名可能重名且会被脱敏，用户 ID 才是排查时的唯一标识 */}
+                {log.user_id > 0 && (
+                  <span className='text-muted-foreground/70 font-mono text-[10px] leading-tight'>
+                    ID {log.user_id}
+                  </span>
+                )}
+              </span>
             </button>
           )
         },
@@ -630,9 +638,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           timingLabel = t('Stream')
         }
         const tokensPerSecond =
-          !isTaskTiming &&
-          useTime > 0 &&
-          log.completion_tokens > 0
+          !isTaskTiming && useTime > 0 && log.completion_tokens > 0
             ? log.completion_tokens / useTime
             : null
         const timeVariant = getResponseTimeColor(

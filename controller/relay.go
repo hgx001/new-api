@@ -377,6 +377,11 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		if c.Request != nil && c.Request.URL != nil {
 			other["request_path"] = c.Request.URL.Path
 		}
+		// 客户原始请求参数摘要：错误日志同样需要看到「他到底传了什么」，
+		// 否则 422/502 只能靠猜（例如参考视频是否真的存在、时长多少）。
+		if requestParams := relaycommon.GetTaskRequestParams(c); len(requestParams) > 0 {
+			other["request_params"] = requestParams
+		}
 		// 条件路由改派过：日志的 model_name 用**用户请求的源模型**，
 		// 实际执行的目标模型放进 other（管理员可见、客户侧由 formatUserLogs 抹掉）。
 		// 否则客户在错误日志里看到「调 A 报 B 的错」，等于暴露改派本身。
