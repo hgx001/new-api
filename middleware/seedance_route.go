@@ -192,34 +192,34 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 写死成某一个源模型名会让「客户请求活动版、日志却显示特惠版」完全对不上账。
 		sourceModel := strings.TrimSpace(modelName)
 
-		// ── 按次固定档：先把「固定时长」的语义锁定 ──
+		// ── 按次档：先把时长区间锁定 ──
 		//
 		// 为什么必须在这一步做（2026-11-02 上架 seedance2.5-活动 时查出来的绕过路径）：
 		//
-		//	「客户端传 5 秒 → 400」这个 fail-loud 门控写在**源链路**
-		//	（youzanwan3 的 validatePerCallFixedTier），而条件路由中间件发生在
+		//	「越界时长 → 400」这个 fail-loud 门控写在**源链路**
+		//	（youzanwan3 / xinbiapi 的按次校验），而条件路由中间件发生在
 		//	**源 adaptor 校验之前**。改派后 req.Model 已经是目标模型，
 		//	源链路那道门控根本不会执行 ——
 		//
-		//	· 客户显式传 5 秒 → 可能命中规则二/三/四被改派 → 门控被绕过 →
-		//	  「固定 30 秒」的承诺被静默打破，没有报错；
+		//	· 客户显式传 1 秒（2026-11-11 前是 5 秒）→ 可能命中规则二/三被改派
+		//	  → 门控被绕过 → 越界请求被静默放行，没有报错；
 		//	· 客户不传时长 → 源链路本应归一到 30 秒 → 改派到 wan3 后
 		//	  wan3 的 resolveDuration 缺省是 **5 秒** → 「按 30 秒卖、实际出 5 秒」
 		//	  的**错交付**。
 		//
-		// 所以固定档必须在**路由层**（改派之前）就锁定，不能只依赖源 adaptor。
+		// 所以按次档的时长必须先在**路由层**（改派之前）校验，不能只依赖源 adaptor。
 		//
 		// 处置口径：
-		//	· 显式传了非固定时长 → **不放行路由**（让请求原样走到源链路，
+		//	· 显式传了越界时长 → **不放行路由**（让请求原样走到源链路，
 		//	  由源链路报 400）—— 不做就近吸附，静默改档比报错更糟；
-		//	· 没传时长 → 归一成固定时长再继续判规则（这样 30 秒规则能正常命中）。
+		//	· 没传时长 → 归一成默认 30 秒再继续判规则（这样 30 秒规则能正常命中）。
 		if constant.IsSeedance25PerCall(sourceModel) {
 			normalized, ok := normalizeFixedTierSeconds(body)
 			if !ok {
-				// 显式传了非 30 秒：放弃路由，放行原请求 → 源链路会返回 400。
+				// 显式传了越界时长：放弃路由，放行原请求 → 源链路会返回 400。
 				logger.LogInfo(c, fmt.Sprintf(
-					"条件路由：按次固定档模型 %s 的时长不是 %d 秒，放弃路由（保持源链路 fail-loud 门控）",
-					sourceModel, perCallFixedTierSeconds))
+					"条件路由：按次固定档模型 %s 的时长越界（合法区间 %d-%d 秒），放弃路由（保持源链路 fail-loud 门控）",
+					sourceModel, perCallMinSeconds, perCallMaxSeconds))
 				c.Next()
 				return
 			}
@@ -360,11 +360,18 @@ func isDoubaoTarget(targetModel string) bool {
 // 「实际跑多久」在客户侧悄悄脱节。派生关系把这个失败模式彻底消除。
 const perCallFixedTierSeconds = constant.Seedance25PerCallFixedSeconds
 
+// 按次档允许的时长区间。2026-11-11 起活动版与 wan3.0-720p-按次
+// 都放开 2–30 秒（此前锁死 30 秒），按次价格仍不随时长变化。
+const (
+	perCallMinSeconds = 2
+	perCallMaxSeconds = 30
+)
+
 // normalizeFixedTierSeconds 把按次档请求的时长归一成默认值。
 //
 // 返回值：
-//   - (body, true)：时长合规（显式传了默认值，或没传 → 已归一成默认值）；
-//   - (nil, false)：显式传了**其它**时长 → 放弃路由。
+//   - (body, true)：时长在合法区间 2–30 秒内（没传 → 已归一成默认值）；
+//   - (nil, false)：显式传了越界时长 → 放弃路由。
 //
 // 为什么「没传」要归一而不是放弃：
 //
@@ -383,7 +390,7 @@ const perCallFixedTierSeconds = constant.Seedance25PerCallFixedSeconds
 // （时长原样下发，不改写）。不写回 seconds，客户会「按 30 秒的价拿到 5 秒的片」。
 func normalizeFixedTierSeconds(body map[string]interface{}) (map[string]interface{}, bool) {
 	seconds, hasSeconds := extractRequestSeconds(body)
-	if hasSeconds && seconds != perCallFixedTierSeconds {
+	if hasSeconds && (seconds < perCallMinSeconds || seconds > perCallMaxSeconds) {
 		return nil, false
 	}
 	if !hasSeconds {
@@ -453,7 +460,7 @@ func applyRewrittenBody(c *gin.Context, body map[string]interface{}, originModel
 // 用同一套改写逻辑会让其中一条必然失败（历史上踩过：豆包链路不认 metadata.media → 丢图）。
 func prepareSecondsRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, requestedSeconds int) (map[string]interface{}, bool) {
 	if isXinbiPerCallTarget(targetModel) {
-		// 心笔按次固定 30 秒，内部写死，不依赖客户请求的时长。
+		// 心笔按次档 2026-11-11 起支持 2–30 秒，生成时长必须与客户请求一致。
 		return prepareXinbiPerCallRoute(c, body, targetModel)
 	}
 	if !doubaoTargetUsable(c, body, targetModel) {
@@ -490,22 +497,21 @@ func isXinbiPerCallTarget(targetModel string) bool {
 //	拒绝：first_frame / last_frame / reference_videos / reference_audios
 //	      / media[] / input_reference / negative_prompt / seed
 //
-// 所以这里的挡板是**硬能力约束**，不是保守取舍：带参考视频/参考音频/首尾帧的请求
-// 路由过去必然 400（上游 UNSUPPORTED_FIELD），留在源链路反而能跑。
+// 注意：心笔链路本体 2026-11-11 起已支持参考视频 / 参考音频（各限 5 个），
+// 但**本改派函数**只转 reference_images。带音视频的请求继续留在源链路 ——
+// 源链路（有赞 / 活动版的心笔常驻）都能跑，能力不受影响，只是不走这条低成本改派。
 //
-// 另一个硬约束：**固定 30 秒**。心笔按次模型只卖 30 秒，传别的时长上游 400。
-// 活动版本身就是固定 30 秒档，所以这条天然成立 —— 但仍要显式写下去，
-// 不能依赖「源模型恰好是 30 秒档」这个隐含前提。
+// 时长：心笔按次档同期放开 2–30 秒（默认 30），不再要求恰好 30 秒。
 func prepareXinbiPerCallRoute(c *gin.Context, body map[string]interface{}, targetModel string) (map[string]interface{}, bool) {
-	// 参考视频 / 参考音频：兼容口不支持，路由过去必被上游 400。
+	// 参考视频 / 参考音频：本改派只转 reference_images，留在源链路跑。
 	if hasUnsupportedMedia(body) {
-		logger.LogInfo(c, "条件路由跳过心笔按次：请求带参考视频/参考音频，该链路只支持参考图")
+		logger.LogInfo(c, "条件路由跳过心笔按次：请求带参考视频/参考音频，本改派只转参考图")
 		return nil, false
 	}
 
-	// 首尾帧：同上，兼容口明确不支持。留在源链路（有赞已不收首尾帧但至少能报错）。
+	// 首尾帧：兼容口没有声明尾帧字段，留在源链路。
 	if hasFrameMedia(body) {
-		logger.LogInfo(c, "条件路由跳过心笔按次：请求带首尾帧，该链路只支持参考图")
+		logger.LogInfo(c, "条件路由跳过心笔按次：请求带首尾帧，该链路只收参考图")
 		return nil, false
 	}
 
@@ -542,8 +548,8 @@ func prepareXinbiPerCallRoute(c *gin.Context, body map[string]interface{}, targe
 	if hasUnsupported {
 		return nil, false
 	}
-	// 参考图数量上限：心笔上游 mediaConstraints 限 9 张，
-	// 源链路（有赞）限 10 张 —— 超 9 张时改派过去必被上游 400。
+	// 参考图数量上限：心笔上游 mediaConstraints 限 10 张（2026-11-11 实测），
+	// 与源链路（有赞）一致；超过时改派过去必被上游 400。
 	if len(images) > xinbiMaxReferenceImages {
 		logger.LogInfo(c, fmt.Sprintf("条件路由跳过心笔按次：参考图 %d 张超过该链路上限 %d 张",
 			len(images), xinbiMaxReferenceImages))
@@ -555,9 +561,9 @@ func prepareXinbiPerCallRoute(c *gin.Context, body map[string]interface{}, targe
 
 // xinbiMaxReferenceImages 是心笔链路的参考图张数上限。
 //
-// 2026-11-03 实测上游 mediaConstraints：reference_image max = 9。
-// 源链路（有赞）限 10 张，所以 10 张的请求改派过去必然被拒 —— 必须挡住。
-const xinbiMaxReferenceImages = 9
+// 2026-11-11 实测上游 mediaConstraints：reference_image max = 10（原先是 9），
+// 与源链路（有赞）一致，因此 10 张的请求改派过去不再被拒。
+const xinbiMaxReferenceImages = 10
 
 // rewriteBodyForXinbiPerCall 组装改派到心笔按次链路的请求体。
 //
@@ -601,9 +607,19 @@ func rewriteBodyForXinbiPerCall(body map[string]interface{}, targetModel string)
 		out["reference_images"] = images
 	}
 
-	// 时长：心笔按次固定 30 秒，显式写下去保证「生成时长 = 计费时长」。
-	// 源模型（活动版）本身就是固定 30 秒档，这里与源请求一致。
-	out["seconds"] = strconv.Itoa(perCallFixedTierSeconds)
+	// 时长：保留客户请求的秒数（2–30 区间内），没传时落默认 30 秒。
+	//
+	// 2026-11-11 前这里写死 30 秒 —— 那时心笔按次只接受恰好 30 秒。
+	// 上游放开 2–30 秒后仍写死会让「请求 22 秒」的客户拿到 30 秒的片，
+	// 属于静默改档；按次售价与时长无关，没有理由不按客户要的时长生成。
+	// 越界值不会走到这里：按次源已在 normalizeFixedTierSeconds 放弃路由，
+	// 按秒源由源链路夹取到 2–30。
+	seconds := perCallFixedTierSeconds
+	if requested, ok := extractRequestSeconds(body); ok &&
+		requested >= perCallMinSeconds && requested <= perCallMaxSeconds {
+		seconds = requested
+	}
+	out["seconds"] = strconv.Itoa(seconds)
 
 	// 比例：落进 metadata.ratio。
 	// 心笔的 ratio 枚举是 adaptive/16:9/9:16/1:1/4:3/3:4 —— 与源链路同口径，

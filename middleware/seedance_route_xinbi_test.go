@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -260,10 +261,11 @@ func TestHuoDongRouteToDoubaoWhenDurationOmitted(t *testing.T) {
 	}
 }
 
-// 活动版传**非 30 秒**时必须放弃路由、留在源链路（心笔会 fail-loud 报 400）。
+// 活动版传 10 秒（合法区间 2–30 内，但没超过阈值 20 秒）→ 留在源链路。
 //
-// 这条锁的是「不做就近吸附」：客户要 5 秒却按 30 秒计费，比报错更糟。
-func TestHuoDongRouteAbandonsOnNonFixedDuration(t *testing.T) {
+// 2026-11-11 起活动版支持 2-30 秒逐秒可选，10 秒是**合法请求**，
+// 不该被改派到豆包（规则一只收超过阈值的），也不该被归一成 30 秒。
+func TestHuoDongRouteKeepsShortDurationOnSourceChain(t *testing.T) {
 	enableDoubaoFallbackRoute(t)
 
 	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":10,"prompt":"a cat"}`)
@@ -272,6 +274,45 @@ func TestHuoDongRouteAbandonsOnNonFixedDuration(t *testing.T) {
 	}
 	if origin != "" {
 		t.Fatalf("10 秒的请求记录了来源模型 %q，应该为空（没发生改派）", origin)
+	}
+}
+
+// 活动版传 25 秒（超过阈值）→ 改派豆包，且下发时长必须还是 25 秒。
+//
+// 放开时长区间后，规则一改派不能再把时长改写成 30 秒：
+// 客户要 25 秒却拿到 30 秒的片属于静默改档（按次价格与时长无关，
+// 没有任何理由不按客户要的时长生成）。
+func TestHuoDongRouteKeepsRequestedDurationWithinRange(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
+
+	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":25,"prompt":"a cat"}`)
+	decoded := decodeBody(t, seen)
+	if got := decoded["model"]; got != doubaoTargetModel {
+		t.Fatalf("25 秒的请求没有改派到豆包（model=%v）", got)
+	}
+	if origin != constant.Seedance25HuoDongModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", origin, constant.Seedance25HuoDongModel)
+	}
+	if got := decoded["seconds"]; got != "25" {
+		t.Fatalf("seconds = %v, want \"25\"（不能吸附成 30 秒）", got)
+	}
+}
+
+// 活动版传越界时长（1 秒 / 31 秒）→ 放弃路由，原样放行到源链路报 400。
+//
+// 不做就近吸附：静默改档比报错更糟。
+func TestHuoDongRouteAbandonsOnOutOfRangeDuration(t *testing.T) {
+	enableDoubaoFallbackRoute(t)
+
+	for _, seconds := range []int{1, 31} {
+		seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":`+
+			strconv.Itoa(seconds)+`,"prompt":"a cat"}`)
+		if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
+			t.Fatalf("%d 秒的请求被改派了（model=%v），应该留在源链路", seconds, got)
+		}
+		if origin != "" {
+			t.Fatalf("%d 秒的请求记录了来源模型 %q，应该为空（没发生改派）", seconds, origin)
+		}
 	}
 }
 

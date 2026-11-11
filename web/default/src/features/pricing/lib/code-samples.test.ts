@@ -22,12 +22,14 @@ For commercial licensing, please contact support@quantumnous.com
  * ── 这道闸门存在的理由 ──────────────────────────────────────────────────
  *
  * 示例代码是客户**直接照抄**的东西。它一旦和后端校验口径不一致，
- * 客户照抄就吃 400，而报错信息（「this model has a fixed duration of
- * 30 seconds, got 5」）与示例里写的值对不上，排查成本极高。
+ * 客户照抄就吃 400，而报错信息与示例里写的值对不上，排查成本极高。
  *
  * 这个坑已经真实存在过：`buildVideoSample` 对**所有**视频模型一律写
- * `seconds=5`，而 seedance2.5-活动 是**固定 30 秒**的按次档 ——
- * 后端对固定档是 fail-loud（不做就近吸附），所以照抄必 400。
+ * `seconds=5`，而 seedance2.5-活动 是按次档（当时锁死 30 秒）——
+ * 后端对越界时长是 fail-loud（不做就近吸附），所以照抄必 400。
+ *
+ * 2026-11-11 起活动版放开 2-30 秒，5 秒也合法了；示例仍写默认 30 秒，
+ * 但这条守卫继续保证「示例值一定落在后端合法区间内」。
  */
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
@@ -80,12 +82,9 @@ function extractSeconds(sample: string): string[] {
   return values
 }
 
-describe('固定档模型的示例代码', () => {
-  // 核心断言：活动版固定 30 秒，示例必须写 30。
-  //
-  // 写 5 秒的话，客户照抄 → 后端 400
-  // （「this model has a fixed duration of 30 seconds, got 5」）。
-  test('seedance2.5-活动 的示例时长是 30 秒，不是 5 秒', () => {
+describe('按次档模型的示例代码', () => {
+  // 核心断言：活动版示例写默认 30 秒（后端合法区间 2-30 内）。
+  test('seedance2.5-活动 的示例时长是 30 秒', () => {
     for (const lang of VIDEO_LANGS) {
       const sample = videoSample(SEEDANCE25_HUODONG, lang)
       const values = extractSeconds(sample)
@@ -139,7 +138,7 @@ describe('固定档模型的示例代码', () => {
   })
 
   // 母本**不能**被误伤：它按秒计费、时长 2—30 秒可选，
-  // 示例写 5 秒是对的（把母本也标成固定 30 秒会让想跑短片的客户被误导）。
+  // 示例写 5 秒是对的（示例取各自模型的代表档位，不是活动版的默认档）。
   test('seedance2.5-特惠 的示例保持 5 秒（母本时长可选）', () => {
     for (const lang of VIDEO_LANGS) {
       const sample = videoSample(SEEDANCE25_TEHUI, lang)

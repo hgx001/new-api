@@ -88,11 +88,11 @@ func TestProdPolicy_活动版不传时长归一成30秒并命中(t *testing.T) {
 	}
 }
 
-// 活动版显式传非 30 秒 → **放弃路由**，原样放行到源链路，
-// 由源链路的 fail-loud 门控返回 400。
+// 活动版显式传 5 秒（2026-11-11 起合法，但没超过阈值 20 秒）→ 不改派，
+// 留在源链路按客户要的 5 秒生成。
 //
 // 绝不能静默改档 —— 客户要 5 秒却出了 30 秒，是错交付。
-func TestProdPolicy_活动版显式传非30秒放弃路由(t *testing.T) {
+func TestProdPolicy_活动版显式传区间内短时长不改派(t *testing.T) {
 	enableProdRoutePolicy(t)
 
 	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":5,"prompt":"a cat"}`)

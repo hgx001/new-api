@@ -590,14 +590,13 @@ export function buildVideoSample(lang: Lang, ctx: SampleContext): string {
   const autoDLResolution = isAutoDLB99 ? '736p竖' : '768p竖'
   const autoDLSeed = '212238359716024'
 
-  // ── 时长：固定档模型必须写真实档位 ─────────────────────────────────
+  // ── 时长：按次档模型写默认档位 ─────────────────────────────────
   //
-  // seedance2.5-活动 是**固定 30 秒**的按次档：客户端显式传 5 秒会被后端
-  // 400 拒掉（后端不做就近吸附 —— 用户要 5 秒却按 30 秒计费，比报错更糟）。
+  // seedance2.5-活动 是按次档（¥4.5/条）：2026-11-11 起支持 2-30 秒
+  // 逐秒可选、默认 30 秒。示例写默认值 30 秒，客户照抄即可；
+  // 想跑短片自行改成 2-30 内的整数（越界会被后端 400，不做吸附）。
   //
-  // 示例是客户**直接照抄**的东西。统一写 seconds=5 的话，客户照抄就吃 400，
-  // 而且报错信息是「fixed duration of 30 seconds」，与示例里的 5 秒对不上，
-  // 排查成本极高。所以这里必须按模型给出真实档位。
+  // 示例是客户**直接照抄**的东西，所以必须写一个后端真正接受的值。
   const fixedTier = getSeedance25SampleSpec(ctx.modelName)
   const secondsValue = fixedTier ? String(fixedTier.seconds) : '5'
 

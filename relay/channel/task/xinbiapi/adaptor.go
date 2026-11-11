@@ -80,10 +80,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if _, err := resolveRatio(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
 	}
-	// 素材类型：本渠道只收参考图。带参考视频/参考音频/首尾帧时**明确报错**，
-	// 不能靠 collectReferenceImages 的「只挑图片」把它们静默丢掉 ——
-	// 任务照建、照扣费，客户要的素材根本没进去。
-	if err := rejectNonImageMedia(req); err != nil {
+	// 素材：参考图 / 参考视频 / 参考音频三类都收（上限与上游一致），
+	// 首尾帧与未知类型在这里明确报错 —— 不能静默丢掉后照建单照扣费。
+	if _, err := collectReferenceMedia(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
 	// 档位锁定：按次档只卖 720P。
@@ -95,9 +94,6 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	// 客户看到的是同一个模型时好时坏。所以按秒档一律忽略该参数。
 	if err := rejectResolutionMismatch(req, executedModelName(info)); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
-	}
-	if _, err := collectReferenceImages(req); err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
 	// seed 上游不支持（parameterSchema 只有 ratio/duration/resolution，
 	// 且 additionalProperties: false）。本地先拒：上游的 422 只说「传了未声明的参数」，
@@ -208,6 +204,8 @@ type submitRequest struct {
 	Duration        int               `json:"duration"`
 	Metadata        map[string]string `json:"metadata"`
 	ReferenceImages []string          `json:"reference_images,omitempty"`
+	Videos          []string          `json:"videos,omitempty"`
+	Audios          []string          `json:"audios,omitempty"`
 }
 
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
@@ -223,7 +221,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, &taskcommon.UserError{Err: err, Code: "invalid_ratio"}
 	}
-	images, err := collectReferenceImages(req)
+	media, err := collectReferenceMedia(req)
 	if err != nil {
 		return nil, &taskcommon.UserError{Err: err, Code: "invalid_input_reference"}
 	}
@@ -237,7 +235,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			"resolution": generationResolution,
 			"ratio":      ratio,
 		},
-		ReferenceImages: images,
+		ReferenceImages: media.Images,
+		Videos:          media.Videos,
+		Audios:          media.Audios,
 	}
 	encoded, err := common.Marshal(body)
 	if err != nil {
@@ -552,9 +552,9 @@ var _ interface {
 //
 // 两个口径，按**实际执行的模型名**区分：
 //
-//   - 按次档（ModelNamePayPerCall / seedance2.5-活动）：固定 30 秒。
-//     不传就按 30 秒；传了别的值直接报错。不做「就近吸附」——
-//     用户要 5 秒却按 30 秒计费，是比报错更糟的体验。
+//   - 按次档（ModelNamePayPerCall / seedance2.5-活动）：2–30 秒逐秒可选。
+//     不传就按默认 30 秒；越界直接报错。不做「就近吸附」——
+//     用户要越界时长时静默改档，是比报错更糟的体验。
 //
 //   - 按秒档（ModelNameTehuiRoute）：2–30 秒透传，缺省 5 秒，越界夹取。
 //     与源链路 Wan3 的 resolveDuration 同口径（duration 优先、再 seconds、
@@ -578,13 +578,13 @@ func resolveDuration(req relaycommon.TaskSubmitReq, modelName string) (int, erro
 	if duration == 0 {
 		return fixedDuration, nil
 	}
-	if duration != fixedDuration {
+	if duration < perCallMinDuration || duration > perCallMaxDuration {
 		// 刻意不带模型名：本模型在脱敏名单里（model/upstream_redact.go），
 		// 报错里的 "wan3.0" 会被替换成「上游」，出来是「上游-720p-按次」这种碎词。
 		// 用户本来就知道自己调的是哪个模型，不需要在这里重复。
-		return 0, fmt.Errorf("this model has a fixed duration of %d seconds, got %d", fixedDuration, duration)
+		return 0, fmt.Errorf("duration must be between %d and %d seconds, got %d", perCallMinDuration, perCallMaxDuration, duration)
 	}
-	return fixedDuration, nil
+	return duration, nil
 }
 
 // resolvePerSecondDuration 复刻 Wan3 的时长归一：duration 优先、再 seconds、
@@ -618,25 +618,6 @@ func executedModelName(info *relaycommon.RelayInfo) string {
 		return ""
 	}
 	return strings.TrimSpace(info.OriginModelName)
-}
-
-// rejectNonImageMedia 拦住本渠道吃不住的素材。
-//
-// 兼容口只接受参考图（reference_image / image）与 https 图片直链；
-// 首尾帧、参考视频、参考音频一律没有对应字段。静默丢掉它们的后果是
-// 「任务成功、账单照收、客户要的素材根本没进去」—— 必须在建单前报错。
-func rejectNonImageMedia(req relaycommon.TaskSubmitReq) error {
-	if strings.TrimSpace(req.Audio) != "" || len(req.Audios) > 0 {
-		return fmt.Errorf("this model only supports reference images, reference audio is not supported")
-	}
-	for _, media := range req.Media {
-		mediaType := strings.ToLower(strings.TrimSpace(media.Type))
-		if mediaType == "" || strings.Contains(mediaType, "image") {
-			continue
-		}
-		return fmt.Errorf("this model only supports reference images, %q is not supported", media.Type)
-	}
-	return nil
 }
 
 // resolveRatio 取画面比例。
@@ -673,71 +654,131 @@ func resolveRatio(req relaycommon.TaskSubmitReq) (string, error) {
 	return result.Ratio, nil
 }
 
-// collectReferenceImages 汇总参考图，并拦住上游一定拒的地址。
+// referenceMedia 是一次请求里收集到的三类参考素材。
 //
-// 兼容口只收 https 直链 / data URL / base64（实测 http 与内网地址被 FILE_3000037 拒）。
-// 在本地先拦，用户拿到的是可读原因，而不是建单后失败再退款。
+// ⚠️ 2026-11-03 的教训仍然有效：取值必须覆盖 metadata.media / metadata.input.media。
+// seedance2.5-活动 常驻前走渠道 17（有赞 Wan3），那个 adaptor 会读 metadata.media，
+// 客户端已经形成这个用法。只读顶层 image/images/media[] 会让素材**静默丢掉** ——
+// 任务照建单、照扣费、状态照 SUCCESS，成片却没有参考素材。
 //
-// ⚠️ 2026-11-03：取值范围扩到 metadata.media / metadata.input.media。
+// 兼容口只收 https 直链 / data URL（实测 http 与内网地址被 FILE_3000037 拒），
+// 本地先拦，用户拿到可读原因，而不是建单后失败再退款。
+type referenceMedia struct {
+	Images []string
+	Videos []string
+	Audios []string
+}
+
+// collectReferenceMedia 收集参考图 / 参考视频 / 参考音频。
 //
-//	seedance2.5-活动 改成心笔常驻之前走的是渠道 17「有赞 Wan3」，
-//	那个 adaptor **会**读 metadata.media（见 youzanwan3.metadataMedia）。
-//	客户端（尤其是把素材塞进 metadata 的那批）已经形成了这个用法。
-//	心笔适配器原来只读顶层 image / images / media[] —— 客户端传
-//	metadata.media 时，图会被**静默丢掉**：任务照建单、照扣费、状态照 SUCCESS，
-//	成片却完全没有参考图，prompt 里的 @图片N 全部落空。
+// 上游 wan3.0-video 的 mediaConstraints 声明 VIDEO_REFERENCE 可带
+// reference_image ≤10、reference_video ≤5、reference_audio ≤5，
+// 兼容口一律收 https 直链（平台代取入库）或 data: URL。
 //
-//	这是「静默错交付」：没有任何报错，只能靠客户投诉发现。
-//	所以口径对齐站内其它渠道（youzanwan3 / wan3 / erchun / sanyuan），
-//	把 metadata.media 也收进来。
-func collectReferenceImages(req relaycommon.TaskSubmitReq) ([]string, error) {
-	images := make([]string, 0, len(req.Images)+1)
+// 首尾帧继续拒绝：兼容口没有声明尾帧字段，原生接口里首尾帧与参考件也互斥。
+func collectReferenceMedia(req relaycommon.TaskSubmitReq) (referenceMedia, error) {
+	var out referenceMedia
 	if image := strings.TrimSpace(req.Image); image != "" {
-		images = append(images, image)
+		out.Images = append(out.Images, image)
 	}
 	for _, image := range req.Images {
 		if trimmed := strings.TrimSpace(image); trimmed != "" {
-			images = append(images, trimmed)
+			out.Images = append(out.Images, trimmed)
 		}
 	}
+	if audio := strings.TrimSpace(req.Audio); audio != "" {
+		out.Audios = append(out.Audios, audio)
+	}
+	for _, audio := range req.Audios {
+		if trimmed := strings.TrimSpace(audio); trimmed != "" {
+			out.Audios = append(out.Audios, trimmed)
+		}
+	}
+	// 心笔兼容口的视频参考在顶层 video / videos（与 audio / audios 同形）。
+	if video := strings.TrimSpace(req.Video); video != "" {
+		out.Videos = append(out.Videos, video)
+	}
+	for _, video := range req.Videos {
+		if trimmed := strings.TrimSpace(video); trimmed != "" {
+			out.Videos = append(out.Videos, trimmed)
+		}
+	}
+	// media 与 metadata.media / metadata.input.media 是并行关系，不是备选。
 	for _, media := range req.Media {
-		if strings.Contains(strings.ToLower(media.Type), "image") && strings.TrimSpace(media.URL) != "" {
-			images = append(images, strings.TrimSpace(media.URL))
+		if err := classifyMedia(&out, media.Type, media.URL); err != nil {
+			return referenceMedia{}, err
 		}
 	}
-	// metadata.media / metadata.input.media：与顶层 media 并行，不是备选。
-	//
-	// ⚠️ 只收**图片**类型：video / audio 这条链路根本不支持，
-	// 混进来会让上游收到它不认识的素材类型。它们的拒绝在别处处理
-	// （见 middleware 的 hasUnsupportedMedia 与本 adaptor 的能力校验）。
-	metadataImages, hasUnsupportedMetadataMedia := metadataReferenceImages(req)
-	if hasUnsupportedMetadataMedia {
-		return nil, fmt.Errorf("this model only supports reference images")
+	metadataMedia, err := metadataReferenceMedia(req)
+	if err != nil {
+		return referenceMedia{}, err
 	}
-	images = append(images, metadataImages...)
-	if len(images) > maxReferenceImages {
-		return nil, fmt.Errorf("too many reference images: %d, max %d", len(images), maxReferenceImages)
+	out.Images = append(out.Images, metadataMedia.Images...)
+	out.Videos = append(out.Videos, metadataMedia.Videos...)
+	out.Audios = append(out.Audios, metadataMedia.Audios...)
+
+	if len(out.Images) > maxReferenceImages {
+		return referenceMedia{}, fmt.Errorf("too many reference images: %d, max %d", len(out.Images), maxReferenceImages)
 	}
-	for _, image := range images {
-		if strings.HasPrefix(image, "data:") {
+	if len(out.Videos) > maxReferenceVideos {
+		return referenceMedia{}, fmt.Errorf("too many reference videos: %d, max %d", len(out.Videos), maxReferenceVideos)
+	}
+	if len(out.Audios) > maxReferenceAudios {
+		return referenceMedia{}, fmt.Errorf("too many reference audios: %d, max %d", len(out.Audios), maxReferenceAudios)
+	}
+	for _, media := range out.all() {
+		if strings.HasPrefix(media, "data:") {
 			continue
 		}
-		if !strings.HasPrefix(strings.ToLower(image), "https://") {
-			return nil, fmt.Errorf("reference image must be an https url, got %q", truncate([]byte(image)))
+		if !strings.HasPrefix(strings.ToLower(media), "https://") {
+			return referenceMedia{}, fmt.Errorf("reference media must be an https url, got %q", truncate([]byte(media)))
 		}
 	}
-	return images, nil
+	return out, nil
 }
 
-// metadataReferenceImages 从 metadata.media / metadata.input.media 里取参考图。
+// all 按图、视频、音频顺序返回全部素材，便于统一做 URL 校验。
+func (m referenceMedia) all() []string {
+	merged := make([]string, 0, len(m.Images)+len(m.Videos)+len(m.Audios))
+	merged = append(merged, m.Images...)
+	merged = append(merged, m.Videos...)
+	merged = append(merged, m.Audios...)
+	return merged
+}
+
+// classifyMedia 按 media.type 把素材归入对应类别。
 //
-// 返回值：
-//   - (images, false)：取到的图片 URL 列表；
-//   - (nil, true)：metadata 里有**非图片**素材（视频/音频）—— 这条链路不支持，
-//     必须报错而不是丢掉（丢掉 = 静默错交付）。
-func metadataReferenceImages(req relaycommon.TaskSubmitReq) ([]string, bool) {
+// 空 type 视作图片（兼容老客户端），未知类型直接报错 —— 不能静默丢弃，
+// 否则客户传的素材没进上游，任务却照建照扣费。
+func classifyMedia(out *referenceMedia, mediaType, url string) error {
+	trimmedURL := strings.TrimSpace(url)
+	if trimmedURL == "" {
+		return nil
+	}
+	normalized := strings.ToLower(strings.TrimSpace(mediaType))
+	switch {
+	case strings.Contains(normalized, "first_frame"), strings.Contains(normalized, "last_frame"):
+		return fmt.Errorf("this model does not support first frame or last frame; use reference_image instead")
+	case normalized == "" || strings.Contains(normalized, "image"):
+		out.Images = append(out.Images, trimmedURL)
+	case strings.Contains(normalized, "video"):
+		out.Videos = append(out.Videos, trimmedURL)
+	case strings.Contains(normalized, "audio"):
+		out.Audios = append(out.Audios, trimmedURL)
+	default:
+		return fmt.Errorf("unsupported media type %q", mediaType)
+	}
+	return nil
+}
+
+// metadataReferenceMedia 从 metadata.media / metadata.input.media 里取三类素材。
+//
+// 返回错误只表示**能解析出但类型不认识**（由调用方拒单，避免静默丢弃）；
+// 字段读不懂（不是数组、marshal 失败）一律当没有，不能因为一个残缺字段拒单。
+func metadataReferenceMedia(req relaycommon.TaskSubmitReq) (referenceMedia, error) {
+	var out referenceMedia
 	if req.Metadata == nil {
-		return nil, false
+		return out, nil
 	}
 	raw, ok := req.Metadata["media"]
 	if !ok {
@@ -746,31 +787,22 @@ func metadataReferenceImages(req relaycommon.TaskSubmitReq) ([]string, bool) {
 		}
 	}
 	if !ok || raw == nil {
-		return nil, false
+		return out, nil
 	}
 	encoded, err := common.Marshal(raw)
 	if err != nil {
-		// 解析不了就当没有 —— 不能因为一个读不懂的字段就拒单。
-		return nil, false
+		return out, nil
 	}
 	var media []relaycommon.TaskMedia
 	if err := common.Unmarshal(encoded, &media); err != nil {
-		return nil, false
+		return out, nil
 	}
-	var images []string
 	for _, item := range media {
-		url := strings.TrimSpace(item.URL)
-		if url == "" {
-			continue
+		if err := classifyMedia(&out, item.Type, item.URL); err != nil {
+			return out, err
 		}
-		mediaType := strings.ToLower(strings.TrimSpace(item.Type))
-		if mediaType != "" && !strings.Contains(mediaType, "image") {
-			// 视频/音频：这条链路只收参考图，报错比丢掉强。
-			return nil, true
-		}
-		images = append(images, url)
 	}
-	return images, false
+	return out, nil
 }
 
 func firstNonEmpty(values ...string) string {

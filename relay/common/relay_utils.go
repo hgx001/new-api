@@ -112,6 +112,15 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 		req.Images = images
 	}
 
+	// 参考视频与 JSON 路径对齐：multipart 下顶层 videos/video 必须进字段，
+	// 否则会落进 metadata（适配器读不到），等于静默丢弃参考视频。
+	if videos := formData["videos"]; len(videos) > 0 {
+		req.Videos = videos
+	}
+	if video := strings.TrimSpace(formData.Get("video")); video != "" {
+		req.Video = video
+	}
+
 	// 顶层画幅比例：与 JSON 路径对齐（2026-11-10）。
 	//
 	// multipart 的未知字段本来会自动进 metadata（见下方 isKnownTaskField 判断），
@@ -234,6 +243,8 @@ func isKnownTaskField(field string) bool {
 		"images":          true,
 		"audio":           true,
 		"audios":          true,
+		"video":           true,
+		"videos":          true,
 		"size":            true,
 		"resolution":      true,
 		"duration":        true,

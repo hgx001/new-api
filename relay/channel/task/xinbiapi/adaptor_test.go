@@ -30,6 +30,8 @@ func newAdaptor() *TaskAdaptor {
 	return &TaskAdaptor{baseURL: "https://www.xinbiapi.com", apiKey: "test-key"}
 }
 
+// 按次档（wan3.0-720p-按次 / seedance2.5-活动）2026-11-11 起放开 2–30 秒。
+// 上游 parameterSchema 本来就是 2–30，按次定价不随时长变化；越界必须报错不夹取。
 func TestResolveDurationPerCallModels(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -38,10 +40,12 @@ func TestResolveDurationPerCallModels(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "显式 30 秒", req: relaycommon.TaskSubmitReq{Duration: 30}, want: 30},
-		{name: "缺省按固定 30 秒", req: relaycommon.TaskSubmitReq{}, want: 30},
+		{name: "显式 2 秒", req: relaycommon.TaskSubmitReq{Duration: 2}, want: 2},
+		{name: "显式 5 秒", req: relaycommon.TaskSubmitReq{Duration: 5}, want: 5},
+		{name: "缺省按 30 秒", req: relaycommon.TaskSubmitReq{}, want: 30},
 		{name: "seconds 字符串 30", req: relaycommon.TaskSubmitReq{Seconds: "30"}, want: 30},
-		{name: "传 2 秒被拒（固定时长）", req: relaycommon.TaskSubmitReq{Duration: 2}, wantErr: true},
-		{name: "传 5 秒被拒（固定时长）", req: relaycommon.TaskSubmitReq{Duration: 5}, wantErr: true},
+		{name: "1 秒越界拒绝（不夹取）", req: relaycommon.TaskSubmitReq{Duration: 1}, wantErr: true},
+		{name: "31 秒越界拒绝（不夹取）", req: relaycommon.TaskSubmitReq{Duration: 31}, wantErr: true},
 		{name: "seconds 非数字", req: relaycommon.TaskSubmitReq{Seconds: "abc"}, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -108,50 +112,55 @@ func TestResolveRatio(t *testing.T) {
 	}
 }
 
-func TestCollectReferenceImages(t *testing.T) {
+func TestCollectReferenceMedia(t *testing.T) {
 	t.Run("https 通过", func(t *testing.T) {
-		got, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+		got, err := collectReferenceMedia(relaycommon.TaskSubmitReq{
 			Image:  "https://cdn.example.com/a.png",
 			Images: []string{"https://cdn.example.com/b.png"},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, []string{"https://cdn.example.com/a.png", "https://cdn.example.com/b.png"}, got)
+		assert.Equal(t, []string{"https://cdn.example.com/a.png", "https://cdn.example.com/b.png"}, got.Images)
 	})
 
 	t.Run("data URL 通过", func(t *testing.T) {
-		got, err := collectReferenceImages(relaycommon.TaskSubmitReq{Images: []string{"data:image/png;base64,AAAA"}})
+		got, err := collectReferenceMedia(relaycommon.TaskSubmitReq{Images: []string{"data:image/png;base64,AAAA"}})
 		require.NoError(t, err)
-		assert.Len(t, got, 1)
+		assert.Len(t, got.Images, 1)
 	})
 
 	t.Run("http 被拒（上游 FILE_3000037）", func(t *testing.T) {
-		_, err := collectReferenceImages(relaycommon.TaskSubmitReq{Images: []string{"http://cdn.example.com/a.png"}})
+		_, err := collectReferenceMedia(relaycommon.TaskSubmitReq{Images: []string{"http://cdn.example.com/a.png"}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "https")
 	})
 
-	t.Run("超过 9 张被拒", func(t *testing.T) {
-		images := make([]string, 10)
-		for i := range images {
-			images[i] = "https://cdn.example.com/x.png"
-		}
-		_, err := collectReferenceImages(relaycommon.TaskSubmitReq{Images: images})
+	t.Run("10 张允许", func(t *testing.T) {
+		_, err := collectReferenceMedia(relaycommon.TaskSubmitReq{
+			Images: repeatURL("https://cdn.example.com/x.png", maxReferenceImages),
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("11 张被拒", func(t *testing.T) {
+		_, err := collectReferenceMedia(relaycommon.TaskSubmitReq{
+			Images: repeatURL("https://cdn.example.com/x.png", maxReferenceImages+1),
+		})
 		require.Error(t, err)
 	})
 }
 
-// metadata.media 里的参考图必须被收进来（2026-11-03 活动版换常驻链路时补的）。
+// metadata.media 里的参考素材必须被收进来（2026-11-03 活动版换常驻链路时补的）。
 //
 // 背景：seedance2.5-活动 换成心笔常驻之前走的是渠道 17「有赞 Wan3」，
 // 那个 adaptor **会**读 metadata.media（youzanwan3.metadataMedia）。
 // 客户端已经形成了把素材塞进 metadata 的用法。
 //
 // 心笔适配器原来只读顶层 image/images/media[] —— 客户端传 metadata.media 时
-// 图被**静默丢掉**：任务照建单、照扣费、状态照 SUCCESS，成片却没有参考图。
+// 素材被**静默丢掉**：任务照建单、照扣费、状态照 SUCCESS，成片却没有参考素材。
 // 那是「静默错交付」，只能靠客户投诉发现。
-func TestCollectReferenceImagesFromMetadataMedia(t *testing.T) {
+func TestCollectReferenceMediaFromMetadataMedia(t *testing.T) {
 	t.Run("metadata.media 里的图片被收进来", func(t *testing.T) {
-		got, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+		got, err := collectReferenceMedia(relaycommon.TaskSubmitReq{
 			Metadata: map[string]interface{}{
 				"media": []interface{}{
 					map[string]interface{}{"type": "reference_image", "url": "https://cdn.example.com/a.png"},
@@ -159,11 +168,11 @@ func TestCollectReferenceImagesFromMetadataMedia(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, []string{"https://cdn.example.com/a.png"}, got)
+		assert.Equal(t, []string{"https://cdn.example.com/a.png"}, got.Images)
 	})
 
 	t.Run("metadata.input.media 里的图片被收进来", func(t *testing.T) {
-		got, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+		got, err := collectReferenceMedia(relaycommon.TaskSubmitReq{
 			Metadata: map[string]interface{}{
 				"input": map[string]interface{}{
 					"media": []interface{}{
@@ -173,11 +182,11 @@ func TestCollectReferenceImagesFromMetadataMedia(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		assert.Equal(t, []string{"https://cdn.example.com/a.png"}, got)
+		assert.Equal(t, []string{"https://cdn.example.com/a.png"}, got.Images)
 	})
 
 	t.Run("与顶层 media 并行合并，不是二选一", func(t *testing.T) {
-		got, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+		got, err := collectReferenceMedia(relaycommon.TaskSubmitReq{
 			Media: []relaycommon.TaskMedia{
 				{Type: "reference_image", URL: "https://cdn.example.com/top.png"},
 			},
@@ -188,32 +197,33 @@ func TestCollectReferenceImagesFromMetadataMedia(t *testing.T) {
 			},
 		})
 		require.NoError(t, err)
-		assert.Len(t, got, 2)
-		assert.Contains(t, got, "https://cdn.example.com/top.png")
-		assert.Contains(t, got, "https://cdn.example.com/meta.png")
+		assert.Len(t, got.Images, 2)
+		assert.Contains(t, got.Images, "https://cdn.example.com/top.png")
+		assert.Contains(t, got.Images, "https://cdn.example.com/meta.png")
 	})
 
-	t.Run("metadata.media 里的视频被拒（不能静默丢掉）", func(t *testing.T) {
-		_, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+	t.Run("metadata.media 里的视频被收进参考视频（不能静默丢掉）", func(t *testing.T) {
+		got, err := collectReferenceMedia(relaycommon.TaskSubmitReq{
 			Metadata: map[string]interface{}{
 				"media": []interface{}{
 					map[string]interface{}{"type": "reference_video", "url": "https://cdn.example.com/a.mp4"},
 				},
 			},
 		})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "reference images")
+		require.NoError(t, err)
+		assert.Equal(t, []string{"https://cdn.example.com/a.mp4"}, got.Videos)
 	})
 
-	t.Run("metadata.media 里的音频被拒", func(t *testing.T) {
-		_, err := collectReferenceImages(relaycommon.TaskSubmitReq{
+	t.Run("metadata.media 里的音频被收进参考音频", func(t *testing.T) {
+		got, err := collectReferenceMedia(relaycommon.TaskSubmitReq{
 			Metadata: map[string]interface{}{
 				"media": []interface{}{
 					map[string]interface{}{"type": "reference_audio", "url": "https://cdn.example.com/a.mp3"},
 				},
 			},
 		})
-		require.Error(t, err)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"https://cdn.example.com/a.mp3"}, got.Audios)
 	})
 }
 
@@ -237,7 +247,7 @@ func TestBuildRequestBodyShape(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &decoded))
 
 	assert.Equal(t, upstreamModel, decoded["model"], "必须固定发上游别名，不信任渠道映射")
-	assert.Equal(t, float64(fixedDuration), decoded["duration"], "固定 30 秒，缺省也显式下发")
+	assert.Equal(t, float64(fixedDuration), decoded["duration"], "不传时长时按默认 30 秒并在请求体里显式下发")
 	metadata, ok := decoded["metadata"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, generationResolution, metadata["resolution"], "生成档位恒为 480P")

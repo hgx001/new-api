@@ -148,8 +148,8 @@ func TestWan3TehuiXinbiRoute_KeepsUnsupportedRequestsOnWan3(t *testing.T) {
 			body: `{"model":"` + tehuiModel + `","prompt":"x","seed":42}`,
 		},
 		{
-			name: "10 张参考图",
-			body: `{"model":"` + tehuiModel + `","prompt":"x","images":["https://a/1.png","https://a/2.png","https://a/3.png","https://a/4.png","https://a/5.png","https://a/6.png","https://a/7.png","https://a/8.png","https://a/9.png","https://a/10.png"]}`,
+			name: "11 张参考图",
+			body: `{"model":"` + tehuiModel + `","prompt":"x","images":["https://a/1.png","https://a/2.png","https://a/3.png","https://a/4.png","https://a/5.png","https://a/6.png","https://a/7.png","https://a/8.png","https://a/9.png","https://a/10.png","https://a/11.png"]}`,
 		},
 		{
 			name: "http 参考图",

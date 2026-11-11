@@ -35,3 +35,35 @@ func TestTaskSubmitReqAcceptsSecondsAsStringOrNumber(t *testing.T) {
 	var fractional TaskSubmitReq
 	require.ErrorContains(t, common.Unmarshal([]byte(`{"seconds":15.5}`), &fractional), "seconds must be an integer")
 }
+
+// video / videos 必须被显式承接，不能静默丢弃。
+//
+// WHY（2026-11-11）：心笔兼容口用顶层 videos 传参考视频，而 TaskSubmitReq
+// 此前没有这两个字段 —— Go 的 json 解码器会把它们直接扔掉，适配器拿不到
+// 参考视频就按纯文生建单：客户付了钱，成片却没有参考片。参数被吞属于
+// 最隐蔽的错交付，必须锁住「解析后字段还在」。
+func TestTaskSubmitReqKeepsTopLevelVideos(t *testing.T) {
+	var arrayVideos TaskSubmitReq
+	require.NoError(t, common.Unmarshal([]byte(
+		`{"videos":["https://a.example/1.mp4","https://a.example/2.mp4"]}`), &arrayVideos))
+	assert.Equal(t, []string{"https://a.example/1.mp4", "https://a.example/2.mp4"}, arrayVideos.Videos)
+
+	var singleVideo TaskSubmitReq
+	require.NoError(t, common.Unmarshal([]byte(`{"video":"https://a.example/1.mp4"}`), &singleVideo))
+	assert.Equal(t, "https://a.example/1.mp4", singleVideo.Video)
+	assert.Empty(t, singleVideo.Videos)
+
+	// 单数接数组时按 audio 的既有口径摊进复数字段。
+	var singleAsArray TaskSubmitReq
+	require.NoError(t, common.Unmarshal([]byte(
+		`{"video":["https://a.example/1.mp4","https://a.example/2.mp4"]}`), &singleAsArray))
+	assert.Equal(t, []string{"https://a.example/1.mp4", "https://a.example/2.mp4"}, singleAsArray.Videos)
+
+	var nullVideos TaskSubmitReq
+	require.NoError(t, common.Unmarshal([]byte(`{"videos":null,"video":null}`), &nullVideos))
+	assert.Empty(t, nullVideos.Videos)
+	assert.Empty(t, nullVideos.Video)
+
+	var invalidVideos TaskSubmitReq
+	require.ErrorContains(t, common.Unmarshal([]byte(`{"videos":{"url":"x"}}`), &invalidVideos), "videos must be a string or array")
+}

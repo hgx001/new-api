@@ -762,6 +762,8 @@ type TaskSubmitReq struct {
 	Images         []string               `json:"images,omitempty"`
 	Audio          string                 `json:"audio,omitempty"`
 	Audios         []string               `json:"audios,omitempty"`
+	Video          string                 `json:"video,omitempty"`
+	Videos         []string               `json:"videos,omitempty"`
 	Media          []TaskMedia            `json:"media,omitempty"`
 	Size           string                 `json:"size,omitempty"`
 	Resolution     string                 `json:"resolution,omitempty"`
@@ -823,6 +825,8 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		Images         json.RawMessage `json:"images,omitempty"`
 		Audio          json.RawMessage `json:"audio,omitempty"`
 		Audios         json.RawMessage `json:"audios,omitempty"`
+		Video          json.RawMessage `json:"video,omitempty"`
+		Videos         json.RawMessage `json:"videos,omitempty"`
 		AudioDuration  json.RawMessage `json:"audio_duration,omitempty"`
 		RefAudio0      json.RawMessage `json:"ref_audio_0,omitempty"`
 		RefAudio1      json.RawMessage `json:"ref_audio_1,omitempty"`
@@ -895,6 +899,34 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("audios must be a string or array")
 		}
 		t.Audios = append(t.Audios, values...)
+	}
+
+	// video / videos 与 audio / audios 同形：单数接字符串，复数接数组。
+	//
+	// 为什么必须显式接住（2026-11-11）：心笔兼容口用顶层 videos 传参考视频，
+	// 而本结构此前没有这两个字段 —— Go 的 json 解码器会**静默丢弃**，
+	// 适配器拿不到参考视频就按纯文生建单，客户付了钱却拿到没参考片的成片。
+	// 参数被吞比报错更难排查，所以这里按 audio 的同一口径严格解析。
+	if len(aux.Video) > 0 && string(aux.Video) != "null" {
+		values, err := parseStringValues(aux.Video)
+		if err != nil {
+			return fmt.Errorf("video must be a string or array")
+		}
+		if len(values) > 0 {
+			if len(values) == 1 {
+				t.Video = values[0]
+			} else {
+				t.Videos = append(t.Videos, values...)
+			}
+		}
+	}
+
+	if len(aux.Videos) > 0 && string(aux.Videos) != "null" {
+		values, err := parseStringValues(aux.Videos)
+		if err != nil {
+			return fmt.Errorf("videos must be a string or array")
+		}
+		t.Videos = append(t.Videos, values...)
 	}
 
 	for _, raw := range []json.RawMessage{aux.RefAudio0, aux.RefAudio1, aux.RefAudio2} {

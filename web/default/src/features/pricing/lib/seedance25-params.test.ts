@@ -23,9 +23,9 @@ For commercial licensing, please contact support@quantumnous.com
  * 客户会传一个后端必然 400 的参数 —— 而且是「参数表说可以、实际不行」，
  * 属于最难解释的那一类问题。
  *
- * 已知两处偏差（本测试的由来）：
+ * 历史偏差（均已修复，保留作回归背景）：
  *   1. seedance2.5-活动 原先落到通用 VIDEO_PARAMS → 显示「duration 1~60」，
- *      实际是**固定 30 秒**（传别的值后端直接 400）。
+ *      实际当时锁死 30 秒（2026-11-11 起放开 2-30 秒逐秒可选）。
  *   2. seedance2.5-特惠 原先落到通用 wan3 表 → 显示「resolution 480P/720P/1080P，
  *      默认 480P」，实际它是 prime 别名，只接受 **720P/1080P，默认 720P**。
  */

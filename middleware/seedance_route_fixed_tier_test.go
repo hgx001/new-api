@@ -11,11 +11,11 @@ import (
 // enableFixedTierRoute 打开多源路由 + 比例规则 + 首尾帧规则，测试结束恢复原状。
 //
 // 为什么三条规则都要配：
-//   - 规则一（30 秒）：按次档未传时长归一后要靠它命中，验证「改派后仍是 30 秒」；
-//   - 规则二（9:16）：验证「按次档显式传 5 秒 + 9:16」不得被改派；
-//   - 规则三（首尾帧）：验证「按次档显式传 5 秒 + 首尾帧」也不得被改派。
+//   - 规则一（threshold）：按次档未传时长归一后要靠它命中，验证「改派后仍是 30 秒」；
+//   - 规则二（9:16）：验证「按次档显式传越界时长 + 9:16」不得被改派；
+//   - 规则三（首尾帧）：验证「按次档显式传越界时长 + 首尾帧」也不得被改派。
 //
-// 只配规则一时，「显式传 5 秒」本来就不命中任何规则 —— 那种用例是假绿。
+// 只配规则一时，「显式传越界时长」本来就不命中任何规则 —— 那种用例是假绿。
 func enableFixedTierRoute(t *testing.T, sources []string) {
 	t.Helper()
 	previous := seedanceroute_setting.Get()
@@ -41,82 +41,78 @@ func enableFixedTierRoute(t *testing.T, sources []string) {
 	})
 }
 
-// 按次档（seedance2.5-活动）在条件路由中的**固定时长保持**。
+// 按次档（seedance2.5-活动）在条件路由中的**时长区间保持**。
 //
 // 背景（2026-11-02 上架 seedance2.5-活动 时查出来的绕过路径）：
 //
-//	活动版是**按次固定 30 秒**档：¥4.5/次，固定 30 秒，固定 720P。
-//	「客户端传 5 秒 → 400」这个 fail-loud 门控写在**源链路**
-//	（youzanwan3 的 validatePerCallFixedTier）里。
+//	活动版是**按次固定价**档：¥4.5/次，时长 2026-11-11 起放开为 2–30 秒。
+//	「越界时长 → 400」这个 fail-loud 门控写在**源链路**
+//	（youzanwan3 / xinbiapi 的按次校验）里。
 //
 //	但条件路由中间件发生在**源 adaptor 校验之前**：
 //	middleware → 改写请求体的 model → 选渠道/选 adaptor → 源 adaptor 校验
 //
-//	改派后 req.Model 已经是**目标模型**，源链路的 validatePerCallFixedTier
+//	改派后 req.Model 已经是**目标模型**，源链路的按次校验
 //	（它按 req.Model 判断是不是按次档）**根本不会执行**。于是：
 //
-//	场景 A：客户传 seconds=5
-//	  → 不命中规则一（触发值是 30），但可能命中规则二/三/四 → 被改派
-//	  → 源校验没跑 → 请求通过 → 客户要 5 秒的片，按 ¥4.5/次 的价收了，
-//	    而实际出片时长由**目标链路**决定（wan3 默认 5 秒，豆包时长原样）
-//	  → **固定 30 秒的承诺被静默打破**，且没有任何报错。
+//	场景 A：客户传 seconds=1（越界）
+//	  → 不命中规则一（触发值是 20 秒），但可能命中规则二/三 → 被改派
+//	  → 源校验没跑 → 越界请求通过 → 由目标链路的缺省时长决定出片
+//	  → **「越界报错」的承诺被静默打破**，且没有任何报错。
 //
 //	场景 B：客户不传时长
-//	  → 源链路本应归一到 30 秒（固定档默认值）
+//	  → 源链路本应归一到 30 秒（按次档默认值）
 //	  → 被改派到 wan3 链路 → wan3 的 resolveDuration 缺省是 **5 秒**
 //	  → **按 30 秒卖、实际出 5 秒** —— 错交付，客户白等一轮。
 //
-// 所以固定档的语义必须在**路由层**（改派之前）就锁定，不能只依赖源 adaptor。
+// 所以按次档的时长语义必须在**路由层**（改派之前）就锁定，不能只依赖源 adaptor。
 
-// 按次档显式传了非 30 秒 → **不得改派**。
+// 按次档显式传了越界时长（1 秒）→ **不得改派**。
 //
 // ⚠️ 用例必须带一个**会命中其它规则**的条件（这里用 9:16 → 规则二）：
-// 只传 seconds=5 的话，它本来就不命中任何规则（规则一的触发值是 30），
-// 无论固定档逻辑在不在都「不改派」—— 那种用例是假绿，抓不住任何变异。
+// 只传 seconds=1 的话，它本来就不命中任何规则（规则一的触发值是 20 秒），
+// 无论按次档逻辑在不在都「不改派」—— 那种用例是假绿，抓不住任何变异。
 //
-// 真实绕过形态：客户传 seconds=5 + 9:16 → 命中规则二 → 被改派到 wan3 链路
-// → 源链路的 validatePerCallFixedTier 根本没执行（req.Model 已变成目标模型）
-// → 「固定 30 秒」的 fail-loud 门控被静默绕过。
+// 真实绕过形态：客户传 seconds=1 + 9:16 → 命中规则二 → 被改派到 wan3 链路
+// → 源链路的按次校验根本没执行（req.Model 已变成目标模型）
+// → 「越界报错」的 fail-loud 门控被静默绕过。
 //
 // 不改派 = 请求原样走到源链路 = 源链路报 400。这正是 fail-loud 的口径。
-func TestFixedTierRoute_RejectsNonFixedDurationBeforeRouting(t *testing.T) {
+func TestFixedTierRoute_RejectsOutOfRangeDurationBeforeRouting(t *testing.T) {
 	enableFixedTierRoute(t, []string{
 		constant.Seedance25TeHuiModel,
 		constant.Seedance25HuoDongModel,
 	})
 
 	seen, origin := runRoute(t,
-		`{"model":"`+constant.Seedance25HuoDongModel+`","seconds":5,"ratio":"9:16","prompt":"a cat"}`)
+		`{"model":"`+constant.Seedance25HuoDongModel+`","seconds":1,"ratio":"9:16","prompt":"a cat"}`)
 
 	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("按次档显式传 5 秒仍被改派了（model=%v）—— 源链路的 400 门控被绕过", got)
+		t.Fatalf("按次档显式传 1 秒仍被改派了（model=%v）—— 源链路的 400 门控被绕过", got)
 	}
 	if origin != "" {
 		t.Fatalf("RouteOriginModel() = %q, want 空串（不该发生改派）", origin)
 	}
 }
 
-// 按次档显式传非 30 秒 + 带首尾帧 → 同样不得改派。
+// 按次档显式传越界时长（31 秒）+ 带首尾帧 → 同样不得改派。
 //
 // 规则三（首尾帧）是**能力兜底**型改派：源链路不收首尾帧，带首尾帧的请求
 // 不改派就必然 400。所以规则三看起来「必须改派」—— 但对按次档来说，
-// 固定 30 秒的承诺优先：客户要 5 秒 + 首尾帧，本来就是非法组合，
-// 让它走到源链路报 400（时长不对）才是正确口径。
-//
-// 静默改派的后果：客户拿到 30 秒的片（他只想要 5 秒）或者更糟 ——
-// 固定档在改派后完全失效。
-func TestFixedTierRoute_RejectsNonFixedDurationWithFrames(t *testing.T) {
+// 时长区间的承诺优先：客户要 31 秒 + 首尾帧，本来就是非法组合，
+// 让它走到源链路报 400（时长越界）才是正确口径。
+func TestFixedTierRoute_RejectsOutOfRangeDurationWithFrames(t *testing.T) {
 	enableFixedTierRoute(t, []string{
 		constant.Seedance25TeHuiModel,
 		constant.Seedance25HuoDongModel,
 	})
 
 	seen, origin := runRoute(t,
-		`{"model":"`+constant.Seedance25HuoDongModel+`","seconds":5,"prompt":"a cat",`+
+		`{"model":"`+constant.Seedance25HuoDongModel+`","seconds":31,"prompt":"a cat",`+
 			`"media":[{"type":"first_frame","url":"https://x/a.png"}]}`)
 
 	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("按次档显式传 5 秒仍被首尾帧规则改派了（model=%v）", got)
+		t.Fatalf("按次档显式传 31 秒仍被首尾帧规则改派了（model=%v）", got)
 	}
 	if origin != "" {
 		t.Fatalf("RouteOriginModel() = %q, want 空串（不该发生改派）", origin)

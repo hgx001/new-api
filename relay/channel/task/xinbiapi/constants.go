@@ -17,7 +17,7 @@ const ChannelName = "心笔 Model Router"
 // 同一套做法，直接在代码里兜底。
 const upstreamModel = "wan3.0-video"
 
-// ModelNamePayPerCall 是对外售卖的按次模型名：**原生 720P，固定 30 秒**。
+// ModelNamePayPerCall 是对外售卖的按次模型名：**原生 720P，时长 2–30 秒可选**。
 //
 // 与 wan3.0-720p-特惠 的区别只在计费口径：特惠按秒（¥0.20/秒），
 // 本模型按次（¥4.5/次，与时长无关）。
@@ -39,8 +39,9 @@ const ModelNamePayPerCall = "wan3.0-720p-按次"
 // 也不对客展示：中间的 middleware 会把 RouteOriginModel 写成特惠，
 // 所有出口（任务列表 / OpenAI Video 响应 / 日志 model_name）仍显示特惠。
 //
-// ⚠️ 不要把它加进 constant 的按次能力组：它是按秒商品（2–30 秒透传），
-// 与 ModelNamePayPerCall 的固定 30 秒按次口径是两回事。
+// ⚠️ 不要把它加进 constant 的按次能力组：它是按秒商品（2–30 秒透传、缺省 5 秒），
+// 与 ModelNamePayPerCall 的按次口径（2–30 秒区间、缺省 30 秒）是两回事 ——
+// 两者时长区间相同，但**缺省值和计费方式**不同，不能共用一个判定。
 const ModelNameTehuiRoute = "wan3.0-720p-特惠-内链"
 
 // ModelList 本渠道对外的模型列表。
@@ -49,7 +50,7 @@ const ModelNameTehuiRoute = "wan3.0-720p-特惠-内链"
 // 活动版不再是「有赞常驻 + 30 秒改派心笔」，而是**反过来** ——
 // 心笔是活动版的常驻链路，豆包（seedance-2-5）是它的兜底路由。
 // 活动版与 ModelNamePayPerCall 是**同一条链路**（同一上游模型、同一档位、
-// 同一成本），区别只在对外名称与计费口径（活动版按次 ¥4.50 固定 30 秒）。
+// 同一成本），区别只在对外名称与计费口径（活动版按次 ¥4.50、时长 2–30 秒）。
 var ModelList = []string{
 	ModelNamePayPerCall,
 	constant.Seedance25HuoDongModel,
@@ -64,15 +65,21 @@ const generationResolution = "480P"
 // deliveredResolution 是对外承诺的交付档位，也是校验客户端传参的唯一合法值。
 const deliveredResolution = "720P"
 
-// fixedDuration 是本模型的固定时长（秒）。
+// fixedDuration 是按次档的**默认**时长（秒），不再是唯一合法值。
 //
-// 2026-11-01 定稿：**固定 30 秒**，不开放其它档位。
-// 理由：按次定价（¥4.5/次）只有在时长固定时才不会出现「长片亏本」——
-// 30 秒已经是这一档的成本上限。
+// 2026-11-11 起放开 2–30 秒（上游 schema 就是 2–30）。按次定价（¥4.5/次）
+// 仍然与时长无关，成本上限由上游 mediaConstraints.maxInputOutputSeconds=30
+// 兜住：480P ¥0.135/秒 × 30 秒 = ¥4.05 < 售价 ¥4.50，不会亏。
 //
-// 客户端显式传别的时长一律 400（不能静默改成 30 秒：那是「用户以为买的是 5 秒」）。
-// 完全不传时按 30 秒处理，并在上游请求里**显式下发 30**，保证实际生成与计费口径一致。
+// 客户端显式传越界值一律 400，不夹取 —— 夹取会让客户以为买的是 2 秒、
+// 实际按 30 秒生成。完全不传时按 30 秒处理并显式下发。
 const fixedDuration = 30
+
+// 按次档（含活动版）的合法时长区间，与上游 parameterSchema 一致。
+const (
+	perCallMinDuration = 2
+	perCallMaxDuration = 30
+)
 
 // 按秒分流目标（ModelNameTehuiRoute）的时长口径 —— 与 Wan3 特惠链路一致：
 // 2–30 秒透传，缺省 5 秒，越界夹取（源链路就是夹取，分流不能改变同一份请求的结果）。
@@ -84,7 +91,7 @@ const (
 
 // isPerSecondRouteModel 判断某个对外/内部模型名是否走「按秒透传」口径。
 //
-// 只认分流目标一个名字：按次档（含活动版）必须保持固定 30 秒，
+// 只认分流目标一个名字：按次档（含活动版）走 2–30 秒区间、缺省 30 秒，
 // 用前缀或能力组判断会把两种计价口径混在一起。
 func isPerSecondRouteModel(modelName string) bool {
 	return strings.TrimSpace(modelName) == ModelNameTehuiRoute
@@ -104,8 +111,14 @@ var ratios = map[string]bool{
 // defaultRatio 与上游 schema 一致：不传即 adaptive。
 const defaultRatio = "adaptive"
 
-// maxReferenceImages 参考图张数上限（上游 mediaConstraints：reference_image ≤ 9）。
-const maxReferenceImages = 9
+// 参考素材上限，与上游 wan3.0-video 的 mediaConstraints.input_role_rules 对齐
+// （2026-11-11 实测 GET /v1/media/models：reference_image ≤10、reference_video ≤5、
+// reference_audio ≤5，合计 media ≤20）。旧实现的 9 张与「只收图」已过时。
+const (
+	maxReferenceImages = 10
+	maxReferenceVideos = 5
+	maxReferenceAudios = 5
+)
 
 // needsSuperResolution 判断该对外模型名是否走「交付前画质增强」这一步。
 //
