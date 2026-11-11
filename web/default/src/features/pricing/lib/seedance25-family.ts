@@ -34,13 +34,14 @@ export const SEEDANCE25_TEHUI = 'seedance2.5-特惠'
 export const SEEDANCE25_HUODONG = 'seedance2.5-活动'
 
 /**
- * 固定档规格。
+ * 按次档示例规格。
  *
- * `seconds` = 该模型唯一合法的生成时长（后端对其它值直接 400）。
- * `resolution` = 该模型唯一合法的分辨率。
+ * `seconds` = 示例代码里的时长，同时也是**默认时长**（客户不传时后端按它跑）。
+ *   2026-11-11 起时长放开为 2-30 秒逐秒可选，所以它**不再是唯一合法值**。
+ * `resolution` = 该模型唯一合法的分辨率（仍锁死）。
  *
- * 只有**按次档**（活动版）是固定档：按次定价只有在时长固定时才不会出现
- * 「长片亏本」，而母本是按秒计费、时长 2—30 秒可选。
+ * 只有**按次档**（活动版）进这张表：它锁死 720P，示例必须写实值；
+ * 母本是按秒计费、分辨率 720P/1080P 可选，不适用。
  */
 export type Seedance25SampleSpec = {
   seconds: number
@@ -48,13 +49,13 @@ export type Seedance25SampleSpec = {
 }
 
 /**
- * 促销族的**固定档**表。
+ * 促销族的**按次档示例**表。
  *
  * 母本（seedance2.5-特惠）按秒计费、时长 2—30 秒可选、分辨率 720P/1080P
- * 可选 → **不是固定档**，示例沿用通用的 5 秒 / 720P。
+ * 可选 → **不在表里**，示例沿用通用的 5 秒 / 720P。
  *
- * 活动版（seedance2.5-活动）按次计费、**固定 30 秒**、**固定 720P**
- * → 是固定档，示例必须写实值。
+ * 活动版（seedance2.5-活动）按次计费、时长 2-30 秒可选（默认 30 秒）、
+ * 分辨率**固定 720P** → 进表，示例写 30 秒（默认值，也是典型用法）。
  */
 const SEEDANCE25_FIXED_TIER_SPECS: Record<string, Seedance25SampleSpec> = {
   [SEEDANCE25_HUODONG]: {
@@ -77,9 +78,12 @@ export function getSeedance25SampleSpec(
 }
 
 /**
- * 该模型是否是「固定档（时长锁死）」模型。
+ * 该模型是否走「按次档」参数表（分辨率单档 + 预置示例时长）。
  *
- * 后端对这类模型会**显式拒绝**非档位的时长（400），不做就近吸附。
+ * ⚠️ 2026-11-11 起活动版时长放开 2-30 秒，本函数**不再表示时长锁死** ——
+ * 只表示「参数表必须按按次档单列，不能落进通用 wan3 表」（否则会把
+ * 480P/1080P 列成可选，客户传了被后端 400）。时长范围见
+ * mock-stats 的 `range: '2 ~ 30'`。
  */
 export function isFixedTierModel(modelName: string): boolean {
   return getSeedance25SampleSpec(modelName) !== null

@@ -76,29 +76,42 @@ func TestHuoDong_母本仍是按秒(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 守卫 2：固定 30 秒 / 固定 720P（fail-loud）
+// 守卫 2：时长 2-30 秒自由 / 固定 720P（fail-loud）
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestHuoDong_时长固定30秒 守的是「按次档只有一种时长规格」。
+// TestHuoDong_时长2到30秒可选 守的是「按次档时长自由、价格不变」。
 //
-// ⚠️ 最危险的表现是「静默吸附」：客户要 5 秒、我们跑 5 秒、却按 30 秒收钱
-// （反过来更糟：客户要 30 秒、我们跑 5 秒）。两种都必须用 400 挡住。
-func TestHuoDong_时长固定30秒(t *testing.T) {
-	// 不传时长 → 30 秒。
+// 2026-11-11 老板改口：活动版不再固定 30 秒，**2-30 秒逐秒可选**，
+// 但售价恒为 ¥4.5/条（不随时长变化）。所以这里守两件事：
+//  1. 2-30 秒都能过校验，且下发时长等于客户要的值；
+//  2. 越界（<2 / >30）必须 400，不能静默夹紧 —— 客户要 60 秒却只出 30 秒，
+//     或者要 1 秒却按 2 秒跑，都是「付了钱拿不到想要的片」。
+//
+// ⚠️ 计费不受时长影响：EstimateBilling 仍返回 nil（见 TestHuoDong_EstimateBilling返回nil），
+// 客户传 2 秒和 30 秒都扣 ¥4.5。这条是**有意为之**，不是 bug。
+func TestHuoDong_时长2到30秒可选(t *testing.T) {
+	// 不传时长 → 30 秒（默认值，与旧行为一致：不传的客户仍拿最长片）。
 	assert.Equal(t, 30, resolveDurationForModel(relaycommon.TaskSubmitReq{Model: huoDongModel}, huoDongModel))
-	// 显式传 30 → 30。
-	assert.Equal(t, 30, resolveDurationForModel(relaycommon.TaskSubmitReq{Model: huoDongModel, Duration: 30}, huoDongModel))
 	// 显式传 30（字符串形态）→ 30。
 	assert.Equal(t, 30, resolveDurationForModel(relaycommon.TaskSubmitReq{Model: huoDongModel, Seconds: "30"}, huoDongModel))
 
-	// ⚠️ 传别的值必须 400，不能吸附。
-	for _, bad := range []int{5, 10, 15, 29, 31, 60} {
+	// 2-30 秒逐秒可选：校验通过，且下发的 duration 与客户请求一致。
+	for _, sec := range []int{2, 5, 10, 15, 29, 30} {
+		req := relaycommon.TaskSubmitReq{Model: huoDongModel, Duration: sec}
+		require.Nil(t, validatePerCallFixedTier(req),
+			"时长 %d 秒必须允许 —— 活动版已放开 2-30 秒", sec)
+		assert.Equal(t, sec, resolveDurationForModel(req, huoDongModel),
+			"下发的时长必须等于客户请求的 %d 秒", sec)
+	}
+
+	// ⚠️ 越界必须 400（不是夹紧）。
+	for _, bad := range []int{1, 31, 60} {
 		req := relaycommon.TaskSubmitReq{Model: huoDongModel, Duration: bad}
 		taskErr := validatePerCallFixedTier(req)
-		require.NotNil(t, taskErr, "时长 %d 秒必须被拒 —— 静默吸附会让客户为不想要的时长付全价", bad)
+		require.NotNil(t, taskErr, "时长 %d 秒必须被拒 —— 静默夹紧会让客户拿到不是自己点的那一档", bad)
 	}
 	// 母本不受影响：5 秒是合法的（按秒档 2—30 秒逐秒可选）。
-	require.Nil(t, validatePerCallFixedTier(relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 5}),
+	assert.Nil(t, validatePerCallFixedTier(relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 5}),
 		"母本必须仍然允许 5 秒 —— 按秒档本来就可以逐秒选")
 }
 
@@ -129,7 +142,8 @@ func TestHuoDong_分辨率固定720P(t *testing.T) {
 // 本模型在脱敏名单里（model/upstream_redact.go），报错里的模型名会被
 // 替换成「上游」——「上游-活动」这种碎词客户读不懂。
 func TestHuoDong_错误文案不带模型名(t *testing.T) {
-	req := relaycommon.TaskSubmitReq{Model: huoDongModel, Duration: 5}
+	// 用越界时长触发报错（2026-11-11 起 2-30 秒都合法，只有越界才会拒）。
+	req := relaycommon.TaskSubmitReq{Model: huoDongModel, Duration: 99}
 	taskErr := validatePerCallFixedTier(req)
 	require.NotNil(t, taskErr)
 	assert.NotContains(t, taskErr.Message, huoDongModel,

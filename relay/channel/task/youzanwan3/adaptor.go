@@ -241,11 +241,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // validatePerCallFixedTier 校验「按次档」的固定时长与固定分辨率。
 //
-// 按次档（seedance2.5-活动）只卖一种规格：**30 秒 + 720P**，价 ¥4.5/次。
+// 按次档（seedance2.5-活动）：**时长 2-30 秒逐秒可选、售价恒 ¥4.5/条**
+// （2026-11-11 起放开时长；此前固定 30 秒），分辨率固定 720P。
 //
 // 两条硬约束，都必须 fail-loud：
-//   - **时长**：不传 → 30 秒；传了别的值 → 400。不做「就近吸附」——
-//     用户要 5 秒却按 30 秒计费，比报错更糟。
+//   - **时长**：2-30 秒都合法；<2 或 >30 → 400。**不做就近夹紧** ——
+//     客户要 60 秒却只出 30 秒、或要 1 秒却按 2 秒跑，都是「付了钱拿不到
+//     想要的片」。不传 → 由 resolveDurationForModel 补默认值 30 秒。
 //   - **分辨率**：只接受 720P。1080P 的上游成本是 720P 的 1.33 倍
 //     （¥0.20/秒 vs ¥0.15/秒），卖同一个价就在 1080P 上倒挂；
 //     而静默降到 720P 等于「收 1080P 的钱给 720P 的片」。
@@ -261,10 +263,10 @@ func validatePerCallFixedTier(req relaycommon.TaskSubmitReq) *dto.TaskError {
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 	}
-	if duration != 0 && duration != perCallFixedDuration {
+	if duration != 0 && (duration < minDuration || duration > maxDuration) {
 		return service.TaskErrorWrapperLocal(
-			errors.Errorf("this model has a fixed duration of %d seconds, got %d",
-				perCallFixedDuration, duration),
+			errors.Errorf("duration must be between %d and %d seconds, got %d",
+				minDuration, maxDuration, duration),
 			"invalid_duration", http.StatusBadRequest)
 	}
 	// 分辨率：只在客户端**显式**给了非 720P 时报错。
@@ -405,9 +407,9 @@ func isTehuiModel(model string) bool {
 // 同一个上游模型（wan3.0-video-prime）、同一条路由规则。
 //
 // 按次的三个硬性后果（改代码前先看这三条）：
-//  1. 时长固定 30 秒 —— 传别的值 400（不吸附）；
+//  1. 时长 2-30 秒逐秒可选，越界 400（不吸附）；没传 → 默认 30 秒；
 //  2. 分辨率固定 720P —— 1080P 成本是 720P 的 1.33 倍，卖同一价会倒挂；
-//  3. 不乘任何倍率 —— EstimateBilling 返回 nil，售价就是 ¥4.5/次。
+//  3. 不乘任何倍率 —— EstimateBilling 返回 nil，售价就是 ¥4.5/条（与时长无关）。
 func isPerCallModel(model string) bool {
 	return constant.IsSeedance25PerCall(model)
 }
@@ -513,18 +515,19 @@ func resolveDuration(req relaycommon.TaskSubmitReq) int {
 // （supportsSmartDuration=false，但 2—30 秒逐秒可选），不再固定 30 秒；
 // 两个在售模型因此共用同一套夹紧规则。
 //
-// ⚠️ 按次档（seedance2.5-活动）是**例外**：固定 30 秒，与母本不同。
-// 客户端传了别的时长在 Validate 阶段就已 400（见 validatePerCallFixedTier），
-// 走到这里只可能是「没传」→ 按 30 秒处理。
+// ⚠️ 按次档（seedance2.5-活动）**不在这里固定**：2026-11-11 起时长放开为
+// 2-30 秒逐秒可选（售价恒 ¥4.5/条，与时长无关）。只有「没传」才补默认 30 秒 ——
+// 保持旧客户不传时长时拿到的片长不变。越界已在 validatePerCallFixedTier 400 拒掉。
 func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
-	if isPerCallModel(model) {
-		return perCallFixedDuration
-	}
 	duration := req.Duration
 	if duration <= 0 {
 		duration, _ = strconv.Atoi(req.Seconds)
 	}
 	if duration <= 0 {
+		// 按次档没传 → 30 秒（保持旧客户拿到的片长）；其余模型默认 5 秒。
+		if isPerCallModel(model) {
+			return perCallFixedDuration
+		}
 		return defaultDuration
 	}
 	if isR2VModel(model) {
@@ -537,9 +540,8 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	if duration < minDuration {
 		return minDuration
 	}
-	maxAllowedDuration := maxDuration
-	if duration > maxAllowedDuration {
-		return maxAllowedDuration
+	if duration > maxDuration {
+		return maxDuration
 	}
 	return duration
 }

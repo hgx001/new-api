@@ -63,25 +63,25 @@ function parametersByName(modelName: string) {
 }
 
 describe('seedance2.5 促销族的参数表', () => {
-  // 活动版：固定档。duration 只有 30 一个值，resolution 只有 720P 一个值。
-  test('活动版的 duration 只有 30 秒一个取值', () => {
+  // 活动版：按次档。duration 2-30 秒可选（默认 30），resolution 只有 720P。
+  test('活动版的 duration 是 2~30 秒可选、默认 30 秒', () => {
     const params = parametersByName(SEEDANCE25_HUODONG)
     const duration = params.duration
     assert.ok(duration, '活动版必须列出 duration 参数')
     assert.equal(
       duration.defaultValue,
       30,
-      '活动版 duration 默认值应是 30（固定档）'
+      '活动版 duration 默认值应是 30（不传时长时后端按 30 秒跑）'
     )
     assert.equal(
       duration.range,
-      undefined,
-      '活动版 duration 不该有区间 —— 它不是「2~30 秒可选」而是「固定 30 秒」'
+      '2 ~ 30',
+      '2026-11-11 起活动版时长放开 2-30 秒 —— 参数表必须显示区间，否则客户不知道能传短时长'
     )
     assert.equal(
       duration.enumValues,
       undefined,
-      '活动版 duration 不该有枚举 —— 它是单一取值'
+      '活动版 duration 是区间不是枚举'
     )
   })
 

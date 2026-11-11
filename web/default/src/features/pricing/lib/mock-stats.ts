@@ -830,17 +830,17 @@ function buildWan3PrimeVideoParameters(): SupportedParameter[] {
 }
 
 /**
- * seedance2.5-活动：**固定档**参数表（按次 ¥4.5/次、固定 30 秒、固定 720P）。
+ * seedance2.5-活动：**按次档**参数表（按次 ¥4.5/条、时长 2-30 秒、固定 720P）。
  *
  * 为什么必须单列，不能落进通用表：
- *   - 落进通用 VIDEO_PARAMS → 显示「duration 1~60」，客户传 5 秒；
- *   - 后端对固定档是 **fail-loud**（不做就近吸附），直接 400。
+ *   - 落进通用 VIDEO_PARAMS → 显示「resolution 480P/720P/1080P」，客户传 1080P；
+ *   - 后端对按次档的分辨率是 **fail-loud**（不做就近吸附），直接 400。
  *     「参数表说可以、实际不行」是最难解释的一类问题。
- *   - 落进 prime 表 → 显示「duration 2~30 / resolution 720P,1080P」，
- *     同样会被后端拒（活动版锁死 30 秒 / 720P）。
+ *   - 落进 prime 表 → 显示「resolution 720P,1080P」，同样会被后端拒
+ *     （活动版锁死 720P）。
  *
- * 时长写成 defaultValue=30 且**不给 range** —— 语义就是「只有这一个值」；
- * 给 range 会被前端渲染成「可选区间」，等于又告诉客户可以传别的。
+ * 时长写 range='2 ~ 30' + defaultValue=30（2026-11-11 起放开；此前锁死 30）。
+ * default 只是「不传时按 30 秒跑」，不是唯一合法值。
  */
 function buildSeedance25FixedTierVideoParameters(
   spec: Seedance25SampleSpec
@@ -850,6 +850,9 @@ function buildSeedance25FixedTierVideoParameters(
     {
       name: 'duration',
       type: 'integer',
+      // 2026-11-11 起活动版时长放开为 2-30 秒（售价仍恒 ¥4.5/条），
+      // spec.seconds 只是**默认值**（不传时按它跑），不再是唯一合法取值。
+      range: '2 ~ 30',
       defaultValue: spec.seconds,
       descriptionKey: 'Video length in seconds',
     },

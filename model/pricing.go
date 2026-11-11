@@ -439,7 +439,8 @@ func isAllowedPricingModel(name string) bool {
 		return true
 	}
 	// seedance2.5-活动（2026-11-02 上架）：seedance2.5 促销族的**按次档**，
-	// 与母本 seedance2.5-特惠 同货源同链路，只是定价口径不同（¥4.5/次 固定 30 秒）。
+	// 与母本 seedance2.5-特惠 同货源同链路，只是定价口径不同
+	// （¥4.5/条，与时长无关；2026-11-11 起支持 2-30 秒）。
 	//
 	// ⚠️ 判定走**能力组**（constant.IsSeedance25PerCall），不要在这里手写模型名 ——
 	// 能力组是「谁是这一族 + 谁按次计费」的唯一来源；将来促销族再加按次档位，
