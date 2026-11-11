@@ -896,6 +896,18 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 				"refund":      shouldRefund,
 			})
 
+		// 回填任务真实完成时长到提交时写的那条消费日志。
+		//
+		// 为什么放在这里（CAS 成功之后）：只有确认状态**真的**迁移了，
+		// 这次观测才是「任务完成」这件事的唯一一次有效记录。
+		// 放前面的话，同一批轮询里会被重复观察，
+		// 时长会被反复改写（虽然 model 层有 task_duration=0 的幂等保护，
+		// 但终态观测点只应有一个，避免以后加别的字段时踩同样的坑）。
+		//
+		// 时长口径 = FinishTime - SubmitTime：这是用户真正体感的等待时间。
+		// 失败任务同样要记 —— 「跑了 3 分钟才失败」是排障的关键信息。
+		recordTaskDuration(task)
+
 		// 额度探针：渠道额度用完时自动暂停「30 秒改派到豆包」，额度恢复后自动接回。
 		//
 		// 放在 CAS 成功之后，是因为只有这里才能确认状态**真的**迁移了；
@@ -911,6 +923,37 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+// recordTaskDuration 把任务真实完成时长回填到提交时写的那条消费日志。
+//
+// 时长口径 = FinishTime - SubmitTime：
+//   - SubmitTime 是本站提交任务的时刻（model.InitTask 里落的）
+//   - FinishTime 是任务进入终态的时刻（轮询收敛时落的）
+// 两者相减 = 用户从拿到 task id 到拿到成片的等待时间。
+//
+// 为什么用 SubmitTime 而不是 StartTime：
+// StartTime 是**上游开始跑**的时刻，提交到上游受理之间还有排队时间。
+// 用户等的是 SubmitTime 到 FinishTime 这整段。
+//
+// 拿不到任一时间戳就跳过：老任务可能没有 SubmitTime，
+// 这时算出来的时长是负数或零，写进日志只会误导。
+func recordTaskDuration(task *model.Task) {
+	if task == nil {
+		return
+	}
+	if task.SubmitTime <= 0 || task.FinishTime <= 0 {
+		return
+	}
+	duration := task.FinishTime - task.SubmitTime
+	if duration <= 0 {
+		return
+	}
+	if err := model.UpdateLogTaskDuration(task.TaskID, int(duration)); err != nil {
+		// 统计失败不能影响任务主链路，记一条系统日志就够了。
+		logger.LogWarn(context.Background(), fmt.Sprintf(
+			"回填任务完成时长失败 task %s: %s", task.TaskID, err.Error()))
+	}
 }
 
 func redactVideoResponseBody(body []byte) []byte {

@@ -61,6 +61,7 @@ import {
   isPerCallBilling,
   isTimingLogType,
 } from '../../lib/utils'
+import { resolveTimingDisplay } from '../../lib/timing'
 import type { LogOtherData } from '../../types'
 
 // Maps a channel-update changed-field token (as recorded by the backend audit)
@@ -426,6 +427,12 @@ export function DetailsDialog(props: DetailsDialogProps) {
     !!other?.expr_b64
   const hasAudioTokens = other?.ws || other?.audio
   const showTiming = isTimingLogType(props.log.type)
+  // 任务类请求用真实完成时长（提交 → 终态），文本类用 use_time。
+  const timing = resolveTimingDisplay({
+    type: props.log.type,
+    useTime: props.log.use_time,
+    taskDuration: props.log.task_duration,
+  })
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
@@ -627,22 +634,28 @@ export function DetailsDialog(props: DetailsDialogProps) {
             />
           )}
 
-          {showTiming && props.log.use_time > 0 && (
+          {showTiming && timing.displayable && (
             <DetailRow
-              label={t('Response Time')}
+              label={
+                timing.kind === 'task'
+                  ? t('Task duration')
+                  : t('Response Time')
+              }
               value={
                 <span
                   className={cn(
                     'font-medium',
                     timingTextColorClass(
                       getResponseTimeColor(
-                        props.log.use_time,
-                        props.log.completion_tokens
+                        timing.seconds,
+                        timing.kind === 'task'
+                          ? 0
+                          : props.log.completion_tokens
                       )
                     )
                   )}
                 >
-                  {formatUseTime(props.log.use_time)}
+                  {formatUseTime(timing.seconds)}
                   {props.log.is_stream &&
                     other?.frt != null &&
                     other.frt > 0 && (

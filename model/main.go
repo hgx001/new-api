@@ -452,6 +452,7 @@ CREATE TABLE IF NOT EXISTS logs (
 	prompt_tokens Int32 DEFAULT 0,
 	completion_tokens Int32 DEFAULT 0,
 	use_time Int32 DEFAULT 0,
+	task_duration Int32 DEFAULT 0,
 	is_stream UInt8 DEFAULT 0,
 	channel_id Int32 DEFAULT 0,
 	token_id Int32 DEFAULT 0,
@@ -459,6 +460,7 @@ CREATE TABLE IF NOT EXISTS logs (
 	ip String DEFAULT '',
 	request_id String DEFAULT '',
 	upstream_request_id String DEFAULT '',
+	task_id String DEFAULT '',
 	other String DEFAULT ''
 )
 ENGINE = MergeTree()

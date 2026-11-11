@@ -90,6 +90,57 @@ func TestClickHouseLogCreateTableSQL(t *testing.T) {
 	assert.Contains(t, withTTL, "TTL toDateTime(created_at) + INTERVAL 30 DAY DELETE")
 }
 
+// TestClickHouseLogCreateTableSQL_覆盖Log模型全部字段 防止漏字段。
+//
+// 为什么要守这个：ClickHouse 的日志表是**手写建表语句**，
+// 不走 AutoMigrate —— 给 model.Log 加了字段却忘了改建表语句，
+// 生产切到 ClickHouse 日志库时写入会直接报「未知列」。
+// 那种错误只在切换日志库时才暴露，代价很高。
+//
+// 断言方式：把 model.Log 的每个 JSON 字段名都拿去建表语句里找一遍。
+// 少数列在 CH 里名字不一样（channel_id 对应 json tag 的 channel），
+// 这里用一张映射表显式列出对应关系，而不是放宽断言。
+func TestClickHouseLogCreateTableSQL_覆盖Log模型全部字段(t *testing.T) {
+	// json tag → ClickHouse 列名。绝大多数同名，只有 channel_id 不同名。
+	columnByJSONField := map[string]string{
+		"id":                  "id",
+		"user_id":             "user_id",
+		"created_at":          "created_at",
+		"type":                "type",
+		"content":             "content",
+		"username":            "username",
+		"token_name":          "token_name",
+		"model_name":          "model_name",
+		"quota":               "quota",
+		"prompt_tokens":       "prompt_tokens",
+		"completion_tokens":   "completion_tokens",
+		"use_time":            "use_time",
+		"task_duration":       "task_duration",
+		"is_stream":           "is_stream",
+		"channel":             "channel_id",
+		"channel_name":        "", // gorm:"->" 只读虚拟列，不入库
+		"token_id":            "token_id",
+		"group":               "group",
+		"ip":                  "ip",
+		"request_id":          "request_id",
+		"upstream_request_id": "upstream_request_id",
+		"task_id":             "task_id",
+		"other":               "other",
+	}
+
+	createSQL := clickHouseLogCreateTableSQL(0)
+	for jsonField, column := range columnByJSONField {
+		if column == "" {
+			continue
+		}
+		// group 是 SQL 保留字，建表时用反引号包起来，两种写法都算存在。
+		plain := column + " "
+		quoted := "`" + column + "` "
+		assert.True(t, strings.Contains(createSQL, plain) || strings.Contains(createSQL, quoted),
+			"ClickHouse 建表语句缺少 Log 字段 %q 对应的列 %q", jsonField, column)
+	}
+}
+
 func TestClickHouseCreateTableHasTTL(t *testing.T) {
 	assert.True(t, clickHouseCreateTableHasTTL("CREATE TABLE logs (...)\nTTL toDateTime(created_at) + INTERVAL 30 DAY DELETE"))
 	assert.True(t, clickHouseCreateTableHasTTL("CREATE TABLE logs (...) TTL toDateTime(created_at)"))

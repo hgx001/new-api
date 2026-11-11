@@ -36,6 +36,8 @@ export const usageLogSchema = z.object({
   prompt_tokens: z.number().default(0),
   completion_tokens: z.number().default(0),
   use_time: z.number().default(0),
+  // 任务类请求的真实完成时长（秒）。0 = 不是任务或还没跑完。
+  task_duration: z.number().default(0),
   is_stream: z.boolean().default(false),
   channel: z.number().default(0),
   channel_name: z.string().nullish().default(''),
@@ -45,6 +47,7 @@ export const usageLogSchema = z.object({
   other: z.string().default(''),
   request_id: z.string().default(''),
   upstream_request_id: z.string().default(''),
+  task_id: z.string().default(''),
 })
 
 export type UsageLog = z.infer<typeof usageLogSchema>

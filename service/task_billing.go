@@ -73,7 +73,11 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		Content:   logContent,
 		TokenId:   info.TokenId,
 		Group:     info.UsingGroup,
-		Other:     other,
+		// 把本站公开任务号写进日志：任务跑完后靠它把真实完成时长
+		// 回填到这条日志上（见 model.UpdateLogTaskDuration）。
+		// 缺了这个键，日志页的「耗时」对任务类请求就永远是提交往返耗时。
+		TaskId: info.PublicTaskIDOrEmpty(),
+		Other:  other,
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)

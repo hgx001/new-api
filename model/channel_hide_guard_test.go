@@ -126,6 +126,37 @@ func TestFormatUserLogs_Other里的渠道键全部被删(t *testing.T) {
 	assert.Equal(t, "/v1/videos", other["request_path"], "请求路径要留")
 }
 
+// TestFormatUserLogs_任务号与耗时可给客户看 断言两个新字段**不脱敏**。
+//
+// 为什么它们可以给客户看：
+//   - task_id 是**本站**的公开任务号（task_xxx），客户提交任务时就拿到了，
+//     他本来就在用这个 ID 查任务，拿去对不上任何渠道。
+//   - task_duration 是任务跑了多久，与走哪条链路无关。
+//
+// 对比 upstream_request_id：那是**上游**的任务号，客户拿它能去上游后台查单，
+// 等于泄露了货源，所以必须清空。两者的区别就是「本站的」与「上游的」。
+func TestFormatUserLogs_任务号与耗时可给客户看(t *testing.T) {
+	logs := []*Log{
+		{
+			Type:         LogTypeConsume,
+			ModelName:    "seedance2.5-特惠",
+			ChannelId:    17,
+			TaskId:       "task_cnJZv65dU4WljjaMoW6nmzNxTEOA3N1q",
+			TaskDuration: 143,
+			UseTime:      2,
+		},
+	}
+
+	formatUserLogs(logs, 0)
+
+	assert.Equal(t, "task_cnJZv65dU4WljjaMoW6nmzNxTEOA3N1q", logs[0].TaskId,
+		"本站公开任务号要给客户 —— 这是他自己提交任务时拿到的 ID")
+	assert.Equal(t, 143, logs[0].TaskDuration,
+		"任务完成时长要给客户 —— 与渠道无关")
+	assert.Equal(t, 0, logs[0].ChannelId,
+		"但渠道编号仍然必须清空 —— 耗时可以给，货源不能给")
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Log 字段清单守卫
 // ────────────────────────────────────────────────────────────────────────────
@@ -151,6 +182,7 @@ var logKnownFields = []string{
 	"prompt_tokens",
 	"completion_tokens",
 	"use_time",
+	"task_duration", // 任务真实完成时长（秒）：与渠道无关，可直接给客户
 	"is_stream",
 	"channel",      // ⚠️ json tag 就叫 channel（值是渠道 ID），必须置 0
 	"channel_name", // ⚠️ 必须清空
@@ -159,6 +191,7 @@ var logKnownFields = []string{
 	"ip",
 	"request_id",
 	"upstream_request_id", // ⚠️ 必须清空
+	"task_id",             // 本站公开任务号（task_xxx）：客户自己就在用这个 ID 查任务
 	"other",               // ⚠️ 自由格式，靠 userLogDroppedOtherKeys 逐个删
 }
 

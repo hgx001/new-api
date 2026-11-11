@@ -241,6 +241,19 @@ func (info *RelayInfo) BillingModelName() string {
 	return info.OriginModelName
 }
 
+// PublicTaskIDOrEmpty 返回本站公开任务号（task_xxx）。
+//
+// 为什么单独一个方法而不是直接访问 info.PublicTaskID：
+// PublicTaskID 挂在**内嵌指针** TaskRelayInfo 上，而 TaskRelayInfo
+// 只在任务/Midjourney 链路初始化 —— 文本类请求它是 nil，
+// 直接访问 info.PublicTaskID 会 panic（解引用 nil 内嵌指针）。
+func (info *RelayInfo) PublicTaskIDOrEmpty() string {
+	if info == nil || info.TaskRelayInfo == nil {
+		return ""
+	}
+	return info.PublicTaskID
+}
+
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)

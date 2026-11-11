@@ -61,6 +61,7 @@ import {
   getLogTypeConfig,
   isPerCallBilling,
 } from '../../lib/utils'
+import { resolveTimingDisplay } from '../../lib/timing'
 import type { LogOtherData } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { ModelBadge } from '../model-badge'
@@ -611,11 +612,33 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const useTime = row.getValue('use_time') as number
         const other = parseLogOther(log.other)
         const frt = other?.frt
+        // 任务类请求显示**真实完成时长**（提交 → 终态），
+        // 不是提交往返耗时 —— 后者对任务恒为 2.0s 那种误导性的数字。
+        const timing = resolveTimingDisplay({
+          type: log.type,
+          useTime,
+          taskDuration: log.task_duration,
+        })
+        if (!timing.displayable) return null
+
+        const isTaskTiming = timing.kind === 'task'
+        // 任务类显示「任务已完成」，文本类沿用流式/非流式标注。
+        let timingLabel = t('Non-stream')
+        if (isTaskTiming) {
+          timingLabel = t('Task completed')
+        } else if (log.is_stream) {
+          timingLabel = t('Stream')
+        }
         const tokensPerSecond =
-          useTime > 0 && log.completion_tokens > 0
+          !isTaskTiming &&
+          useTime > 0 &&
+          log.completion_tokens > 0
             ? log.completion_tokens / useTime
             : null
-        const timeVariant = getResponseTimeColor(useTime, log.completion_tokens)
+        const timeVariant = getResponseTimeColor(
+          timing.seconds,
+          isTaskTiming ? 0 : log.completion_tokens
+        )
         const frtVariant = frt
           ? getFirstResponseTimeColor(frt / 1000)
           : 'neutral'
@@ -635,12 +658,17 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           <div className='flex flex-col gap-1'>
             <div className='flex items-center gap-1.5'>
               <StatusBadge
-                label={formatUseTime(useTime)}
+                label={formatUseTime(timing.seconds)}
                 variant={timeVariant as StatusBadgeProps['variant']}
                 size='sm'
                 copyable={false}
                 className={cn('rounded-md font-mono', timingBgMap[timeVariant])}
               />
+              {isTaskTiming && (
+                <span className='text-muted-foreground/60 [font-family:var(--font-body)] !text-xs leading-none'>
+                  {t('Task duration')}
+                </span>
+              )}
               {log.is_stream &&
                 (frt != null && frt > 0 ? (
                   <StatusBadge
@@ -667,7 +695,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             </div>
             <div className='flex items-center gap-1 [font-family:var(--font-body)] !text-xs leading-none'>
               <span className='text-muted-foreground/60 [font-family:var(--font-body)] !text-xs leading-none'>
-                {log.is_stream ? t('Stream') : t('Non-stream')}
+                {timingLabel}
+
                 {tokensPerSecond != null && (
                   <>
                     {' · '}

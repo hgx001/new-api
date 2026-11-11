@@ -132,6 +132,17 @@ type Log struct {
 	PromptTokens      int    `json:"prompt_tokens" gorm:"default:0"`
 	CompletionTokens  int    `json:"completion_tokens" gorm:"default:0"`
 	UseTime           int    `json:"use_time" gorm:"default:0"`
+	// TaskDuration 是**任务类**请求的真实完成时长（秒），0 = 不适用或未回填。
+	//
+	// 为什么要有它：use_time 对任务类请求记的是**提交往返**耗时
+	//（消费日志在提交那一刻就写了，那时上游只回了「已受理」），
+	// 生产实测普遍是 2.0s —— 用户看到会以为视频 2 秒就生成了，
+	// 而实际上游要跑 1~3 分钟。真实时长只在轮询收敛（任务变终态）时存在，
+	// 那时 task.FinishTime 已落库，于是回写到提交时写的这条日志上。
+	//
+	// 语义：FinishTime - SubmitTime，只在任务进终态时回填一次；
+	// 文本类请求恒为 0。
+	TaskDuration      int    `json:"task_duration" gorm:"default:0"`
 	IsStream          bool   `json:"is_stream"`
 	ChannelId         int    `json:"channel" gorm:"index"`
 	ChannelName       string `json:"channel_name" gorm:"->"`
@@ -140,6 +151,15 @@ type Log struct {
 	Ip                string `json:"ip" gorm:"index;default:''"`
 	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
+	// TaskId 是本站公开任务号（task_xxx），任务类请求才有。
+	//
+	// 它是「提交时写的消费日志」与「任务终态」之间的关联键：
+	// 提交时只知道 task id，任务跑完才知道真实耗时，
+	// 靠这一列把两者对上（用 other 里的 JSON 做 LIKE 匹配既慢又脆）。
+	//
+	// 这是**本站自己的**任务号，客户能看到（他本来就在用这个 ID 查任务），
+	// 与「上游任务号」不是一回事 —— 后者属于渠道痕迹，客户侧要清掉。
+	TaskId            string `json:"task_id,omitempty" gorm:"type:varchar(191);index:idx_logs_task_id;default:''"`
 	Other             string `json:"other"`
 }
 
@@ -164,6 +184,32 @@ func ensureLogRequestId(log *Log) {
 func createLog(log *Log) error {
 	ensureLogRequestId(log)
 	return LOG_DB.Create(log).Error
+}
+
+// UpdateLogTaskDuration 把任务真实完成时长回填到提交时写的那条消费日志上。
+//
+// 关联键是 logs.task_id 列 —— 提交链路（LogTaskConsumption）会把它写进去，
+// 任务终态收敛时再用同一个 task_id 找回这条日志。
+//
+// 幂等：WHERE 里带了 `task_duration = 0`，所以重复调用不会覆盖已有值，
+// 也不会把时长累加。多个实例同时轮询到同一任务时，只有一次会真正生效。
+//
+// 没找到日志不算错误：老任务、日志被清理、日志库与主库分离都可能找不到，
+// 这时候直接返回，绝不能因为「统计耗时」而打断任务主链路。
+func UpdateLogTaskDuration(taskID string, durationSeconds int) error {
+	if taskID == "" || durationSeconds <= 0 {
+		return nil
+	}
+	tx := LOG_DB.Model(&Log{}).
+		Where("task_id = ?", taskID).
+		Where("task_duration = 0")
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		// ClickHouse 上 GORM 的 Update 会走 mutation，列名映射保持一致。
+		tx = tx.Updates(map[string]interface{}{"task_duration": durationSeconds})
+	} else {
+		tx = tx.Update("task_duration", durationSeconds)
+	}
+	return tx.Error
 }
 
 func clickHouseLogOrder(prefix string) string {
@@ -467,7 +513,11 @@ type RecordConsumeLogParams struct {
 	UseTimeSeconds   int                    `json:"use_time_seconds"`
 	IsStream         bool                   `json:"is_stream"`
 	Group            string                 `json:"group"`
-	Other            map[string]interface{} `json:"other"`
+	// TaskId 是本站公开任务号（task_xxx）。任务类请求填它，
+	// 任务跑完后靠它把真实完成时长回填到这条日志上（见 UpdateLogTaskDuration）。
+	// 文本类请求留空。
+	TaskId string                 `json:"task_id"`
+	Other  map[string]interface{} `json:"other"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -511,6 +561,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		}(),
 		RequestId:         requestId,
 		UpstreamRequestId: upstreamRequestId,
+		TaskId:            params.TaskId,
 		Other:             otherStr,
 	}
 	err := createLog(log)
