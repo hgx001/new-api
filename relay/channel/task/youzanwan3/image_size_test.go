@@ -7,6 +7,7 @@ import (
 	"image/jpeg"
 	"testing"
 
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,6 +39,12 @@ func TestFlattenImageRejectsTooSmallReferenceImage(t *testing.T) {
 	require.Error(t, err, "204×360 远低于交付档，必须本地拒绝")
 	assert.Contains(t, err.Error(), "204x360", "报错要带实际尺寸，方便客户判断")
 	assert.Contains(t, err.Error(), "720", "报错要带最低要求")
+
+	// 尺寸不足是客户自己换张图就能修的，必须降级成 400，
+	// 不能被 relay_task 包成 500（500 会触发重试与渠道 AutoBan）。
+	var userErr *taskcommon.UserError
+	require.ErrorAs(t, err, &userErr)
+	assert.Equal(t, "invalid_request", userErr.Code)
 }
 
 // 边界：短边差 1px 也要拒绝，避免「差不多就行」的模糊口径。

@@ -816,10 +816,11 @@ func flattenImage(data []byte) ([]byte, string, error) {
 	}
 	// 尺寸过小直接本地拒绝：上游会回「图片无法读取或格式不支持」（实际是分辨率不够），
 	// 客户要么白等一次退款，要么反复重试同一张图。
+	// 用 UserError 是为了降级成 400：换张图就能修，不能算渠道故障（500 会重试 + AutoBan）。
 	if bounds := img.Bounds(); bounds.Dx() < minReferenceImageShortSide || bounds.Dy() < minReferenceImageShortSide {
-		return nil, "", errors.Errorf(
-			"youzan wan3 reference image is too small: %dx%d, short side must be at least %dpx",
-			bounds.Dx(), bounds.Dy(), minReferenceImageShortSide)
+		return nil, "", taskcommon.NewUserError(errors.Errorf(
+			"参考图分辨率过低：%dx%d，短边至少需要 %dpx，请更换清晰图片后重试",
+			bounds.Dx(), bounds.Dy(), minReferenceImageShortSide), "")
 	}
 	background := image.NewRGBA(img.Bounds())
 	draw.Draw(background, background.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
