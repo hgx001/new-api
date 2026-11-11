@@ -258,6 +258,25 @@ type SourceOverride struct {
 	// 所有源模型一起改，source_overrides[ratio_target_model] 为空又会回落公共值
 	// （现有字段做不到按源关闭）—— 只有独立开关才能「只停一个、默认全开」。
 	RatioRuleEnabled *bool `json:"ratio_rule_enabled,omitempty"`
+
+	// FailoverAfterDoubaoEnabled 是该源模型专属的「改派到豆包后是否继续
+	// 降级到班车」开关（2026-11-11 起）。
+	//
+	// 语义与上面两个开关一致（三态指针）：
+	//   - nil（配置里没写这个字段）= **默认开启**，行为与加这个字段之前逐字节一致；
+	//   - 显式 false = 该源模型被规则一改派到豆包后，即使豆包链路不可用，
+	//     也**不再**继续降级到班车 —— 请求留在豆包，由它自己失败/退款；
+	//   - 显式 true = 明确开启（用于把别人关掉的开关改回来）。
+	//
+	// 只影响**规则一改派之后的第二段降级**，不影响规则五的顶层判定：
+	// 客户直接请求 seedance-2-5 时（failover_source_model 本身），
+	// 仍按公共 failover 配置降级到班车。
+	//
+	// 为什么需要它：活动版常驻心笔、豆包只是兜底，而班车的成本口径与
+	// 交付形态都不同 —— 2026-11-11 要求活动版只走「心笔（常驻）→ 豆包（兜底）」，
+	// 不要再落到班车。公共 failover 配置一改就是所有源模型一起改
+	// （母本的豆包→班车降级链必须保留），所以必须按源模型独立开关。
+	FailoverAfterDoubaoEnabled *bool `json:"failover_after_doubao_enabled,omitempty"`
 }
 
 // overrideFor 返回「这个源模型的专属覆盖」以及是否存在。
@@ -300,6 +319,16 @@ func (p Policy) ratioRuleEnabledFor(sourceModel string) bool {
 		return true
 	}
 	return *override.RatioRuleEnabled
+}
+
+// failoverAfterDoubaoEnabledFor 判断该源模型的「改派到豆包后继续降级」
+// 是否被单独关掉。默认 = 开启（三态指针 nil）。
+func (p Policy) failoverAfterDoubaoEnabledFor(sourceModel string) bool {
+	override, ok := p.overrideFor(sourceModel)
+	if !ok || override.FailoverAfterDoubaoEnabled == nil {
+		return true
+	}
+	return *override.FailoverAfterDoubaoEnabled
 }
 
 // targetFor 返回「这个源模型实际生效的目标模型名」。
@@ -853,6 +882,17 @@ func IsRatioRouteEnabledFor(sourceModel string) bool {
 	return ratioRuleReadyFor(current, sourceModel)
 }
 
+// IsFailoverAfterDoubaoEnabledFor 判断「该源模型被规则一改派到豆包后，
+// 是否允许继续降级到班车」。默认开启（三态指针 nil）。
+//
+// ⚠️ 只用于规则一改派之后的第二段降级（tryFailoverAfterDoubaoRoute），
+// 不用于规则五的顶层判定 —— 客户直接请求 seedance-2-5 时仍按公共配置降级。
+func IsFailoverAfterDoubaoEnabledFor(sourceModel string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.failoverAfterDoubaoEnabledFor(sourceModel)
+}
+
 // IsFramesRouteEnabledFor 判断「规则三（首尾帧）对某个源模型是否生效」。
 // 目标模型名按源模型取。
 func IsFramesRouteEnabledFor(sourceModel string) bool {
@@ -1087,6 +1127,10 @@ func clonePolicy(p Policy) Policy {
 			if value.RatioRuleEnabled != nil {
 				enabled := *value.RatioRuleEnabled
 				value.RatioRuleEnabled = &enabled
+			}
+			if value.FailoverAfterDoubaoEnabled != nil {
+				enabled := *value.FailoverAfterDoubaoEnabled
+				value.FailoverAfterDoubaoEnabled = &enabled
 			}
 			out.SourceOverrides[key] = value
 		}

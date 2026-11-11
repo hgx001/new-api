@@ -293,3 +293,67 @@ func TestGetReturnsDeepCopyOfRatioRuleSwitch(t *testing.T) {
 	require.False(t, IsRatioRouteEnabledFor("seedance2.5-特惠"),
 		"改副本的开关指针把全局状态也改了 —— clonePolicy 没做深拷贝")
 }
+
+// ─────────────────────────────────────────────────────────────
+// 按源模型的「改派到豆包后是否继续降级到班车」开关
+// （failover_after_doubao_enabled，2026-11-11）
+//
+// 背景：活动版常驻心笔、豆包只是兜底；老板要求活动版**不要**再落到班车，
+// 且只影响活动版 —— 母本的「促销族 → 豆包 → 班车」降级链必须保持不变。
+// 公共 failover 配置一改就是所有源模型一起改，所以必须按源模型独立开关。
+// ─────────────────────────────────────────────────────────────
+
+// failoverAfterDoubaoPolicy 是本节测试共用的配置：
+// 促销族两个成员 + 规则一 + 规则五，活动版关闭「改派后降级」。
+func failoverAfterDoubaoPolicy() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled":               true,
+		"source_models":         []string{"seedance2.5-特惠", "seedance2.5-活动"},
+		"target_model":          "seedance-2-5",
+		"trigger_seconds":       20,
+		"failover_enabled":      true,
+		"failover_source_model": "seedance-2-5",
+		"failover_target_model": "wan3.0-班车",
+		"source_overrides": map[string]interface{}{
+			"seedance2.5-活动": map[string]interface{}{
+				"failover_after_doubao_enabled": false,
+			},
+		},
+	}
+}
+
+// 只关活动版的「改派后降级」：活动版不降级、母本照旧。
+func TestFailoverAfterDoubaoSwitchOffPerSource(t *testing.T) {
+	applyPolicy(t, failoverAfterDoubaoPolicy())
+
+	require.False(t, IsFailoverAfterDoubaoEnabledFor("seedance2.5-活动"),
+		"活动版配了 failover_after_doubao_enabled=false，改派到豆包后不能再降级到班车")
+	require.True(t, IsFailoverAfterDoubaoEnabledFor("seedance2.5-特惠"),
+		"只关活动版不能把母本的降级链一起关掉")
+}
+
+// 没配这个开关的源模型必须默认开启 —— 三态指针 nil = 开。
+//
+// 升级安全：生产 options 里没有这个字段，解析后是 nil；
+// 若被当成「关掉」，升级当天母本的「豆包 → 班车」降级会静默失效。
+func TestFailoverAfterDoubaoSwitchAbsentMeansEnabled(t *testing.T) {
+	payload := failoverAfterDoubaoPolicy()
+	delete(payload, "source_overrides")
+	applyPolicy(t, payload)
+
+	require.True(t, IsFailoverAfterDoubaoEnabledFor("seedance2.5-活动"),
+		"覆盖里没写 failover_after_doubao_enabled（nil）必须按默认开启处理")
+	require.True(t, IsFailoverAfterDoubaoEnabledFor("seedance2.5-特惠"))
+}
+
+// Get() 的深拷贝必须连这个新开关的指针一起拷。
+func TestGetReturnsDeepCopyOfFailoverAfterDoubaoSwitch(t *testing.T) {
+	applyPolicy(t, failoverAfterDoubaoPolicy())
+
+	copied := Get()
+	require.NotNil(t, copied.SourceOverrides["seedance2.5-活动"].FailoverAfterDoubaoEnabled)
+	*copied.SourceOverrides["seedance2.5-活动"].FailoverAfterDoubaoEnabled = true
+
+	require.False(t, IsFailoverAfterDoubaoEnabledFor("seedance2.5-活动"),
+		"改副本的开关指针把全局状态也改了 —— clonePolicy 没做深拷贝")
+}

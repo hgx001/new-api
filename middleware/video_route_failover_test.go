@@ -26,6 +26,8 @@ const (
 	failoverSourceModel = "seedance-2-5"
 	// failoverTargetModel 常量在 video_route_failover.go 里定义，这里只做断言。
 	failoverBackupModel = "wan3.0-班车"
+	// failoverActivityModel 是促销族活动版（按次档），用于验证按源模型的开关。
+	failoverActivityModel = "seedance2.5-活动"
 )
 
 // enableFailover 打开规则五（故障转移）的开关与源/目标模型。
@@ -556,6 +558,73 @@ func TestFailoverDoesNotDegradeWhenDoubaoAvailable(t *testing.T) {
 
 	seen, originModel := runFailover(t, `{"model":"seedance2.5-特惠","seconds":30,"prompt":"a cat"}`)
 	assertModelRouted(t, seen, failoverSourceModel)
+	if originModel != testSourceModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
+	}
+}
+
+// ───────────────────────── 按源模型关闭「改派后降级」开关 ─────────────────────────
+
+// 活动版配了 failover_after_doubao_enabled=false：
+// 规则一改派到豆包后，即使豆包链路不可用也**不再降级到班车**。
+//
+// 这是 2026-11-11 的口径：活动版只走「心笔常驻 → 豆包兜底」，不落到班车；
+// 母本的「促销族 → 豆包 → 班车」降级链必须保持不变。
+func TestFailoverAfterDoubaoSwitchStopsActivityDowngrade(t *testing.T) {
+	previous := seedanceroute_setting.Get()
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+
+	payload := map[string]interface{}{
+		"enabled":               true,
+		"source_models":         []string{testSourceModel, failoverActivityModel},
+		"target_model":          failoverSourceModel,
+		"trigger_seconds":       20,
+		"failover_enabled":      true,
+		"failover_source_model": failoverSourceModel,
+		"failover_target_model": failoverBackupModel,
+		"source_overrides": map[string]interface{}{
+			failoverActivityModel: map[string]interface{}{
+				"failover_after_doubao_enabled": false,
+			},
+		},
+	}
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+
+	// 豆包渠道还活着（只是额度用完），备胎也有渠道。
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: true,
+		failoverBackupModel: true,
+	})
+	until := timeNowUnix() + 3600
+	marked := seedanceroute_setting.WithFailoverUnavailable(until, seedanceroute_setting.ReasonQuotaExhausted)
+	markedEncoded, err := common.Marshal(marked)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(markedEncoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+
+	// 活动版：改派到豆包后停住，不落到班车。
+	seen, originModel := runFailover(t, `{"model":"seedance2.5-活动","seconds":30,"prompt":"a cat"}`)
+	assertModelRouted(t, seen, failoverSourceModel)
+	if originModel != failoverActivityModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q（计费原点必须是活动版）",
+			originModel, failoverActivityModel)
+	}
+
+	// 母本没配这个开关：照旧降级到班车，证明只影响活动版。
+	seen, originModel = runFailover(t, `{"model":"seedance2.5-特惠","seconds":30,"prompt":"a cat"}`)
+	assertModelRouted(t, seen, failoverBackupModel)
 	if originModel != testSourceModel {
 		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
 	}
