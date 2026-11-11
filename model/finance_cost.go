@@ -135,7 +135,18 @@ func UpdateChannelCost(id int, fields map[string]interface{}) (bool, error) {
 	if result.Error != nil {
 		return false, result.Error
 	}
-	return result.RowsAffected == 1, nil
+	if result.RowsAffected == 1 {
+		return true, nil
+	}
+	// MySQL 在字段值完全未变化时也会返回 RowsAffected=0，不能据此判定记录
+	// 不存在或已作废；复查一次 active 状态，避免管理员原样保存被误报失败。
+	var count int64
+	if err := DB.Model(&ChannelCost{}).
+		Where("id = ? AND status = ?", id, ChannelCostStatusActive).
+		Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func VoidChannelCost(id int) (bool, error) {

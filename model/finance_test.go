@@ -20,7 +20,9 @@ func setupFinanceDB(t *testing.T) {
 	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&ChannelCost{}, &TopUp{}, &QuotaData{}, &Channel{}))
+	require.NoError(t, db.AutoMigrate(
+		&ChannelCost{}, &TopUp{}, &QuotaData{}, &Channel{}, &SubscriptionOrder{},
+	))
 
 	oldDB := DB
 	oldQuotaPerUnit := common.QuotaPerUnit
@@ -156,6 +158,33 @@ func TestFinanceSummaryKeepsTwoMeasuresSeparate(t *testing.T) {
 	assert.Equal(t, "8.80", byChannel[0].Cost)
 }
 
+// TestFinanceRevenueExcludesSubscriptionMirror 订阅购买成功会往 top_ups 同步一条
+// 同 trade_no 的镜像流水；它是 subscription_orders 独立账，按确认口径不计入
+// 「充值实收」，汇总、笔数与趋势三条路径都必须一致地排除。
+func TestFinanceRevenueExcludesSubscriptionMirror(t *testing.T) {
+	setupFinanceDB(t)
+	start, end := financeTestRange()
+	paidAt := time.Date(2026, 11, 10, 12, 0, 0, 0, time.Local).Unix()
+
+	addFinanceTopUp(t, "CASH-1", common.TopUpStatusSuccess, 100.00, paidAt)
+	addFinanceTopUp(t, "SUB-MIRROR", common.TopUpStatusSuccess, 199.00, paidAt)
+	require.NoError(t, DB.Create(&SubscriptionOrder{
+		UserId: 1, PlanId: 1, Money: 199.00, TradeNo: "SUB-MIRROR",
+		PaymentMethod: PaymentMethodAlipay, Status: common.TopUpStatusSuccess,
+		CreateTime: paidAt, CompleteTime: paidAt,
+	}).Error)
+
+	summary, err := GetFinanceSummary(start, end)
+	require.NoError(t, err)
+	assert.Equal(t, "100.00", summary.Revenue)
+	assert.Equal(t, int64(1), summary.RevenueCount)
+
+	points, err := GetFinanceTrend(start, end, FinanceGranularityMonth)
+	require.NoError(t, err)
+	require.Len(t, points, 1)
+	assert.Equal(t, "100.00", points[0].Revenue)
+}
+
 func TestFinanceCostEditsAndVoidAreGuarded(t *testing.T) {
 	setupFinanceDB(t)
 	ts := time.Date(2026, 11, 10, 12, 0, 0, 0, time.Local).Unix()
@@ -171,6 +200,11 @@ func TestFinanceCostEditsAndVoidAreGuarded(t *testing.T) {
 	after, err := GetChannelCostById(cost.Id)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2500), after.AmountCents)
+
+	// 原样保存：MySQL 下 RowsAffected 会是 0，仍需判定为成功。
+	unchanged, err := UpdateChannelCost(cost.Id, map[string]interface{}{"amount_cents": int64(2500)})
+	require.NoError(t, err)
+	assert.True(t, unchanged)
 
 	first, err := VoidChannelCost(cost.Id)
 	require.NoError(t, err)

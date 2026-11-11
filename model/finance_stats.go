@@ -9,12 +9,16 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/shopspring/decimal"
+	"gorm.io/gorm"
 )
 
 // 金额口径说明：
 // - revenue（现金实收）= top_ups.money where status=success，按 complete_time 落期；
+//   订阅购买成功时 upsertSubscriptionTopUpTx 会往 top_ups 同步一条同 trade_no 的
+//   镜像流水（amount=0），它属于 subscription_orders 独立账，必须排除，否则重复计收入。
 // - billed（渠道消耗金额）= quota_data.quota / QuotaPerUnit * USDExchangeRate，按消费小时桶落期；
 // 两者是不同的账，差额单独下发，绝不互相替代。成本表只提供 cash out 的金额。
+// VPN / 服务器订单各有独立订单表，不写 top_ups，天然不在现金口径内。
 
 const FinanceGranularityDay = "day"
 const FinanceGranularityMonth = "month"
@@ -79,6 +83,16 @@ func moneyString(d decimal.Decimal) string {
 	return d.Round(2).StringFixed(2)
 }
 
+// cashRevenueQuery 现金实收只取真实充值流水。subscription_orders 由 AutoMigrate 建表，
+// NOT EXISTS 在 SQLite / MySQL / PostgreSQL 都可用；不用 amount > 0 区分是因为
+// TOKENS 显示模式下真实充值也可能算出 amount=0，用 trade_no 关联才可靠。
+func cashRevenueQuery(start, end int64) *gorm.DB {
+	return DB.Table("top_ups").Where(
+		"status = ? AND complete_time >= ? AND complete_time <= ? AND NOT EXISTS (SELECT 1 FROM subscription_orders s WHERE s.trade_no = top_ups.trade_no)",
+		common.TopUpStatusSuccess, start, end,
+	)
+}
+
 func percentString(part, whole decimal.Decimal) string {
 	if whole.LessThanOrEqual(decimal.Zero) {
 		return "0.00"
@@ -135,7 +149,8 @@ func getChannelNames(ids []int) map[int]string {
 }
 
 // GetFinanceChannelStats 渠道维度统计：消耗金额（计费额）、归属成本、毛利、毛利率、成本占比。
-// 成本表里有支出但本期无消耗的渠道也会出现；channel_id=0 的公共成本单列且不计算毛利率。
+// 成本表里有支出但本期无消耗的渠道也会出现；channel_id=0 单列公共成本，
+// 若该行无计费额则毛利率按 0 展示（分母为 0 无定义），不计入渠道毛利判断。
 // 汇总与渠道表共用本函数，保证两处金额严格一致。
 func GetFinanceChannelStats(start, end int64) ([]FinanceChannelStat, error) {
 	usage, err := GetFinanceUsageByChannel(start, end)
@@ -214,16 +229,13 @@ func GetFinanceSummary(start, end int64) (FinanceSummary, error) {
 	}
 
 	var revenue decimal.Decimal
-	if err := DB.Model(&TopUp{}).
+	if err := cashRevenueQuery(start, end).
 		Select("COALESCE(SUM(money), 0)").
-		Where("status = ? AND complete_time >= ? AND complete_time <= ?", common.TopUpStatusSuccess, start, end).
 		Row().Scan(&revenue); err != nil {
 		return summary, err
 	}
 	var revenueCount int64
-	if err := DB.Model(&TopUp{}).
-		Where("status = ? AND complete_time >= ? AND complete_time <= ?", common.TopUpStatusSuccess, start, end).
-		Count(&revenueCount).Error; err != nil {
+	if err := cashRevenueQuery(start, end).Count(&revenueCount).Error; err != nil {
 		return summary, err
 	}
 
@@ -295,9 +307,8 @@ func GetFinanceTrend(start, end int64, granularity string) ([]FinanceTrendPoint,
 		CompleteTime int64   `gorm:"column:complete_time"`
 		Money        float64 `gorm:"column:money"`
 	}, 0)
-	if err := DB.Table("top_ups").
+	if err := cashRevenueQuery(start, end).
 		Select("complete_time, money").
-		Where("status = ? AND complete_time >= ? AND complete_time <= ?", common.TopUpStatusSuccess, start, end).
 		Scan(&topups).Error; err != nil {
 		return nil, err
 	}

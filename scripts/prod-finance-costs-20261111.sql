@@ -3,9 +3,14 @@
 -- 日期：2026-11-11
 -- 背景：上游充值没有可用账单接口，成本由管理员在管理页手工录入。
 --       收入分两套口径，互不替代：
---         · 现金实收 = top_ups.money where status='success'（按 complete_time）
+--         · 现金实收 = top_ups.money where status='success'（按 complete_time），
+--           且排除 subscription_orders 的同 trade_no 镜像流水（订阅是独立账，
+--           不并入充值实收）；VPN / 服务器订单不写 top_ups，天然不在口径内
 --         · 渠道消耗金额 = quota_data.quota / QuotaPerUnit * USDExchangeRate
 --       本脚本只建一张旁路表 channel_costs，不改任何现有表、不碰计费/充值链路。
+-- 前置条件：渠道消耗金额依赖 quota_data，而 quota_data 只在系统开启「数据看板导出」
+--       (common.DataExportEnabled) 时才落库；若该开关关闭，渠道消耗金额会全是 0，
+--       上线后请先确认数据看板有消耗数据。
 --       金额以「分」为单位的 bigint 保存；channel_id=0 表示公共成本；
 --       status='voided' 表示作废，统计一律只取 status='active'。
 --
@@ -59,6 +64,10 @@ ORDER BY ordinal_position;
 SELECT count(*) AS cost_rows FROM channel_costs;
 
 -- 4) 现有资金数据未被本脚本改动（对比发版前后即可）
-SELECT (SELECT count(*) FROM top_ups WHERE status = 'success') AS paid_topups,
+-- 与后端「充值实收」口径一致：排除订阅订单同步进 top_ups 的镜像流水
+SELECT (SELECT count(*) FROM top_ups t
+        WHERE t.status = 'success'
+          AND NOT EXISTS (SELECT 1 FROM subscription_orders s
+                          WHERE s.trade_no = t.trade_no))      AS paid_topups,
        (SELECT count(*) FROM quota_data)                        AS quota_data_rows,
        (SELECT count(*) FROM channels)                         AS channels;

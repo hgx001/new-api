@@ -292,6 +292,20 @@ func VoidFinanceCost(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{"id": id})
 }
 
+// csvSafeCell 防止凭证号/备注/渠道名以 = + - @ 开头时被 Excel 当成公式执行。
+// 金额列是纯数字，不做转义，否则导出的对账金额会变成文本。
+func csvSafeCell(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + s
+	default:
+		return s
+	}
+}
+
 // ExportFinanceCosts 给财务对账用的 CSV，UTF-8 BOM 避免 Excel 打开中文乱码。
 func ExportFinanceCosts(c *gin.Context) {
 	start, end, ok := parseFinanceRange(c)
@@ -311,11 +325,11 @@ func ExportFinanceCosts(c *gin.Context) {
 		_ = writer.Write([]string{
 			time.Unix(item.OccurredAt, 0).In(time.Local).Format("2006-01-02 15:04:05"),
 			strconv.Itoa(item.ChannelId),
-			item.ChannelName,
+			csvSafeCell(item.ChannelName),
 			model.CentsToAmountString(item.AmountCents),
 			item.Category,
-			item.ReferenceNo,
-			item.Note,
+			csvSafeCell(item.ReferenceNo),
+			csvSafeCell(item.Note),
 			strconv.Itoa(item.CreatedBy),
 		})
 	}

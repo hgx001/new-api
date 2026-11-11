@@ -5559,7 +5559,7 @@
   "Void": "作废",
   "Void cost?": "作废这笔成本？",
   "Voided entries no longer count toward any total.": "作废后不再计入任何汇总。",
-  "Unused prepayments, granted quota, discounts and refunds create this gap.": "差额来自预充值未消费、赠送额度、折扣与退款。",
+  "Unused prepayments, granted quota, discounts and refunds create this gap.": "差额来自预充值未消费、赠送额度、折扣、退款，以及 VPN / 订阅 / 服务器订单收入（独立账，未并入实收）。",
   "Cash revenue is paid top-ups. Channel figures use billed consumption. They are two separate measures.": "实收取成功充值实付，渠道数据取计费消耗额，两者是不同口径。",
   "Record an upstream payment. The full amount counts on the selected day.": "录入一笔上游付款，金额按所选日期全额计入。"
 }
