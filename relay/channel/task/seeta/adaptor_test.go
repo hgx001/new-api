@@ -575,6 +575,76 @@ func TestBuildRequestHeaderUsesRawToken(t *testing.T) {
 	require.Equal(t, "raw-token", req.Header.Get("Authorization"))
 }
 
+// TestBuildRequestHeaderForwardsArcReelClient 任务通道走 DoTaskApiRequest，
+// 不经过 processHeaderOverride，所以渠道配置里的「头透传」对视频提交无效，
+// 只能在这里显式转发 X-ArcReel-Client。
+func TestBuildRequestHeaderForwardsArcReelClient(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+	adaptor.apiKey = "raw-token"
+
+	req, err := http.NewRequest(http.MethodPost, "https://example.test", nil)
+	require.NoError(t, err)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request, err = http.NewRequest(http.MethodPost, "/v1/videos", nil)
+	require.NoError(t, err)
+	c.Request.Header.Set("X-ArcReel-Client", "site-client-abc")
+
+	require.NoError(t, adaptor.BuildRequestHeader(c, req, seetaRelayInfo("minimax_h3-文生")))
+	require.Equal(t, "site-client-abc", req.Header.Get("X-ArcReel-Client"))
+}
+
+// TestBuildRequestHeaderDoesNotForwardCredentials 只转发 X-ArcReel-Client 一个头，
+// 不能把客户自带的凭证头（Authorization / X-Api-Key）一并带到上游。
+func TestBuildRequestHeaderDoesNotForwardCredentials(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+	adaptor.apiKey = "raw-token"
+
+	req, err := http.NewRequest(http.MethodPost, "https://example.test", nil)
+	require.NoError(t, err)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request, err = http.NewRequest(http.MethodPost, "/v1/videos", nil)
+	require.NoError(t, err)
+	c.Request.Header.Set("X-ArcReel-Client", "site-client-abc")
+	c.Request.Header.Set("X-Api-Key", "client-secret")
+	c.Request.Header.Set("Authorization", "Bearer client-token")
+
+	require.NoError(t, adaptor.BuildRequestHeader(c, req, seetaRelayInfo("minimax_h3-文生")))
+	// Authorization 必须仍是上游 token，不能被客户的覆盖
+	require.Equal(t, "raw-token", req.Header.Get("Authorization"))
+	require.Empty(t, req.Header.Get("X-Api-Key"))
+}
+
+// TestBuildRequestHeaderToleratesNilContext 没有 gin context 时不能 panic。
+func TestBuildRequestHeaderToleratesNilContext(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+	adaptor.apiKey = "raw-token"
+
+	req, err := http.NewRequest(http.MethodPost, "https://example.test", nil)
+	require.NoError(t, err)
+	require.NotPanics(t, func() {
+		require.NoError(t, adaptor.BuildRequestHeader(nil, req, seetaRelayInfo("minimax_h3-文生")))
+	})
+	require.Empty(t, req.Header.Get("X-ArcReel-Client"))
+}
+
+// TestBuildRequestHeaderUsesRelayInfoRequestHeaders 优先用 RelayInfo 里克隆的
+// 客户端请求头快照（任务链路的正规来源），不依赖实时 gin context。
+func TestBuildRequestHeaderUsesRelayInfoRequestHeaders(t *testing.T) {
+	adaptor := seetaAdaptor(t, "minimax_h3-文生")
+	adaptor.apiKey = "raw-token"
+
+	req, err := http.NewRequest(http.MethodPost, "https://example.test", nil)
+	require.NoError(t, err)
+
+	info := seetaRelayInfo("minimax_h3-文生")
+	info.RequestHeaders = map[string]string{"X-Arcreel-Client": "snapshot-client"}
+
+	require.NoError(t, adaptor.BuildRequestHeader(nil, req, info))
+	require.Equal(t, "snapshot-client", req.Header.Get("X-ArcReel-Client"))
+}
+
 // TestGetModelList 2026-11-08：V2 退役，对外只留 Omni；旧中文名与 V2 都不再暴露。
 func TestGetModelList(t *testing.T) {
 	adaptor := seetaAdaptor(t, "minimax_h3_omni")

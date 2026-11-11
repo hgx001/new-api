@@ -251,7 +251,42 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 	// 实测带 "Bearer " 前缀也能通过，但裸 token 是该协议的原生写法。
 	req.Header.Set("Authorization", a.apiKey)
 	req.Header.Set("Content-Type", "application/json")
+	// H3 网关按授权码算并发配额（每码 1 视频 + 1 图片，超出排队）。站端把身份放在
+	// X-ArcReel-Client 头里，但**任务通道走 DoTaskApiRequest，不经过
+	// processHeaderOverride**（relay/channel/api_request.go:535，2026-11-10 读代码确认），
+	// 所以渠道配置里的「头透传 / 头覆盖」对视频提交完全无效，只能在这里显式转发。
+	//
+	// 只转发这一个头、不做通配：任务通道是计费链路，把客户自带的头一股脑塞给上游
+	// 会把 Authorization / X-Api-Key 这类凭证也带过去。
+	if v := arcReelClientHeader(c, info); v != "" {
+		req.Header.Set("X-ArcReel-Client", v)
+	}
 	return nil
+}
+
+// arcReelClientHeader 取站端身份头 X-ArcReel-Client。
+//
+// 优先读 info.RequestHeaders —— 那是 genBaseRelayInfo 在请求入口克隆的
+// 客户端请求头快照，任务链路的正规来源，也不依赖 gin context 是否还活着。
+// 快照缺失时回落到实时的 c.Request（老链路/内部调用可能没走 GenRelayInfo）。
+//
+// c 可能为 nil（单测直接传 nil、内部调用不建 context），必须全程 nil 安全，
+// 否则这里一 panic 会把整个渠道打掉。
+func arcReelClientHeader(c *gin.Context, info *relaycommon.RelayInfo) string {
+	if info != nil {
+		for key, value := range info.RequestHeaders {
+			// http.Header 的键大小写不敏感，这里按大小写无关匹配。
+			if strings.EqualFold(key, "X-ArcReel-Client") {
+				if v := strings.TrimSpace(value); v != "" {
+					return v
+				}
+			}
+		}
+	}
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.Request.Header.Get("X-ArcReel-Client"))
 }
 
 // BuildRequestBody 构造上游请求体。
