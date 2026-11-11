@@ -18,23 +18,23 @@ func SetVideoRouter(router *gin.Engine) {
 
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
-	// ⚠️ 顺序是「豆包优先 → 压缩兜底 → 特惠分流 → 活动版参考视频改派」的实现：
+	// ⚠️ 顺序是「豆包优先 → 压缩兜底 → 特惠分流」的实现：
 	//   · Seedance25TeHuiRoute 先按故障转移 / 首尾帧 / 时长 / 比例改派
 	//     （2026-11-11 起 9:16 直接改派到心笔 480P 内链；原「超长提示词改派豆包」已删除）；
 	//   · Wan3PromptCompress 处理「没被改派到豆包」且仍超过 5000 字符的请求；
 	//   · Wan3TehuiXinbiRoute 再把 wan3.0-720p-特惠 里心笔能跑的请求分流过去
-	//     （480P 生成 + 交付 720P，成本更低）；带首尾帧/参考视频/音频的留在 Wan3；
-	//   · Seedance25HuoDongRefVideoRoute 最后把活动版带参考视频的请求改派到有赞 prime
-	//     （心笔会把参考视频秒数并入上游计费，按次售价可能倒挂）。必须排在特惠分流之后，
-	//     否则改写成特惠的请求会被特惠分流再次改写回心笔。
-	// 四者都必须早于 Distribute()：渠道是读 body 的 model 字段选定的。
+	//     （480P 生成 + 交付 720P，成本更低）；带首尾帧/参考视频/音频的留在 Wan3。
+	// 三者都必须早于 Distribute()：渠道是读 body 的 model 字段选定的。
 	// 任何一步不确定都「放弃/放行」，不会挡客户的请求。
+	//
+	// 2026-11-11：活动版常驻链路已从心笔切回有赞原生 720P，
+	// 「活动版参考视频改派有赞」规则随之删除 —— 源链路就是目标链路，
+	// 再改写成特惠只会多绕一次素材搬运，没有任何收益。
 	videoV1Router.Use(
 		middleware.TokenAuth(),
 		middleware.Seedance25TeHuiRoute(),
 		middleware.Wan3PromptCompress(),
 		middleware.Wan3TehuiXinbiRoute(),
-		middleware.Seedance25HuoDongRefVideoRoute(),
 		middleware.Distribute(),
 	)
 	{
