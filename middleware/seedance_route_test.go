@@ -1363,3 +1363,150 @@ func TestSeedanceRouteForwardsSupportedResolution(t *testing.T) {
 	}
 }
 
+// ─────────────────────────────────────────────────────────────
+// 规则二：9:16 → 心笔 480P 内链（2026-11-11 生产配置）
+//
+// ratio_target_model = wan3.0-720p-特惠-内链 时，请求体必须按**心笔兼容口**
+// 的契约改写，不能沿用 wan3 官网那套（metadata.media 会被静默丢图）。
+// ─────────────────────────────────────────────────────────────
+
+const testXinbiRatioTargetModel = "wan3.0-720p-特惠-内链"
+
+func TestRatioRuleRoutesToXinbiTehuiTarget(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat",` +
+		`"metadata":{"ratio":"9:16","media":[{"type":"reference_image","url":"https://example.com/a.png"}]}}`
+	seen, originModel := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	require.Equal(t, testXinbiRatioTargetModel, out["model"], "9:16 必须直连心笔 480P 内链")
+	assert.Equal(t, testSourceModel, originModel, "计费原点仍是客户请求的模型")
+	assert.Equal(t, "10", out["seconds"], "按秒链路必须保留客户请求时长，不能改成 30")
+	metadata, ok := out["metadata"].(map[string]interface{})
+	require.True(t, ok, "心笔只认 metadata.ratio")
+	assert.Equal(t, "9:16", metadata["ratio"])
+	images, ok := out["reference_images"].([]interface{})
+	require.True(t, ok, "参考图必须落到顶层 reference_images[]")
+	assert.Equal(t, []interface{}{"https://example.com/a.png"}, images)
+	_, hasMedia := out["media"]
+	assert.False(t, hasMedia, "顶层 media 必须摘掉，否则参考图会被重复投递")
+}
+
+func TestRatioRuleXinbiKeepsNonTierSeconds(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":7,"prompt":"a cat","ratio":"9:16"}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	require.Equal(t, testXinbiRatioTargetModel, out["model"])
+	assert.Equal(t, "7", out["seconds"], "7 秒原样透传，不吸附档位")
+}
+
+func TestRatioRuleXinbiSkipsWhenChannelUnavailable(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	stubChannelAvailable(t, false)
+
+	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"9:16"}}`
+	seen, originModel := runRouteRaw(t, body)
+
+	assert.Equal(t, body, seen, "目标链路没有可用渠道时不该改派")
+	assert.Empty(t, originModel)
+}
+
+func TestRatioRuleXinbiSkipsFrameMedia(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"9:16"},` +
+		`"media":[{"type":"first_frame","url":"https://example.com/first.png"}]}`
+	seen, originModel := runRoute(t, body)
+
+	assert.Equal(t, body, seen, "心笔兼容口不收首尾帧，必须留在源链路")
+	assert.Empty(t, originModel)
+}
+
+func TestRatioRuleXinbiSkipsReferenceVideo(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"9:16"},` +
+		`"media":[{"type":"reference_video","url":"https://example.com/ref.mp4"}]}`
+	seen, _ := runRoute(t, body)
+
+	assert.Equal(t, body, seen, "心笔兼容口只收参考图，带参考视频不改派")
+}
+
+func TestRatioRuleXinbiSkipsNonTriggerRatio(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"16:9"}}`
+	seen, originModel := runRoute(t, body)
+
+	assert.Equal(t, body, seen, "非触发比例不该改派")
+	assert.Empty(t, originModel)
+}
+
+// ─────────────────────────────────────────────────────────────
+// 按源模型的比例改派开关（2026-11-11）：只取消 seedance2.5-特惠 → 心笔
+// ─────────────────────────────────────────────────────────────
+
+// enableRatioRuleWithSwitch 打开「促销族双源 + 时长 + 比例（心笔内链）」，
+// 并把 switchedOffSource 的比例改派单独关掉。
+//
+// trigger_seconds 抬到 40 而不是常规的 20：seedance2.5-活动 是按次固定 30 秒档，
+// 没传时长会被归一成 30 —— 阈值必须高于 30，否则规则一（30 > 20）会抢在
+// 规则二前面命中，活动版的「比例仍改派」就测不到了。
+func enableRatioRuleWithSwitch(t *testing.T, switchedOffSource string) {
+	t.Helper()
+	previous := seedanceroute_setting.Get()
+	payload := map[string]interface{}{
+		"enabled":            true,
+		"source_models":      []string{testSourceModel, "seedance2.5-活动"},
+		"target_model":       testTargetModel,
+		"trigger_seconds":    40,
+		"ratio_target_model": testXinbiRatioTargetModel,
+		"trigger_ratio":      "9:16",
+		"source_overrides": map[string]interface{}{
+			switchedOffSource: map[string]interface{}{
+				"ratio_rule_enabled": false,
+			},
+		},
+	}
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+}
+
+// 母本的比例改派被关掉后，9:16 请求必须逐字节原样放行 —— 不改派心笔。
+func TestRatioRuleSwitchSkipsRerouteForSwitchedOffSource(t *testing.T) {
+	enableRatioRuleWithSwitch(t, testSourceModel)
+
+	body := `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"},"prompt":"a cat"}`
+	seen, originModel := runRoute(t, body)
+
+	assert.Equal(t, body, seen,
+		"seedance2.5-特惠 的比例改派已取消，请求体必须逐字节不变")
+	assert.Empty(t, originModel, "没有发生改派，不该记录改派原点")
+}
+
+// 只关母本：活动版的 9:16 仍要改派到心笔内链（别的模型路由到心笔的不变）。
+func TestRatioRuleSwitchKeepsRerouteForOtherSource(t *testing.T) {
+	enableRatioRuleWithSwitch(t, testSourceModel)
+
+	// 活动版是按次固定档：不传时长会被归一成 30 秒，再进入规则判定。
+	body := `{"model":"seedance2.5-活动","metadata":{"ratio":"9:16"},"prompt":"a cat"}`
+	seen, originModel := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	assert.Equal(t, testXinbiRatioTargetModel, out["model"],
+		"活动版没被关开关，9:16 必须照旧改派到心笔内链")
+	assert.Equal(t, "seedance2.5-活动", originModel)
+}

@@ -15,7 +15,7 @@ import (
 //
 //	改造前：活动版常驻渠道 17 有赞，30 秒改派心笔 wan3.0-720p-按次
 //	改造后：活动版常驻渠道 25 心笔（= wan3.0-720p-按次 的同一条链路），
-//	        **豆包 seedance-2-5 变成兜底路由**（30 秒命中 + 提示词超长命中）
+//	        **豆包 seedance-2-5 变成兜底路由**（仅时长超过阈值时命中）
 //
 // 为什么兜底是豆包而不是心笔：
 //
@@ -28,7 +28,7 @@ import (
 //
 // 本文件锁四件事：
 //  1. 活动版的 30 秒请求改派豆包，母本同样改派豆包但计费口径互不干扰；
-//  2. 活动版的提示词超长请求也改派豆包（规则四对它同样生效）；
+//  2. 超长提示词**不再**触发改派（2026-11-11 删除规则四）；
 //  3. 改派后计费与展示仍按「客户请求的模型」——源模型名不变；
 //  4. 豆包扛不住的请求（参考视频/音频、明确分辨率）**留在源链路**。
 
@@ -93,40 +93,38 @@ func TestTeHuiRouteUnaffectedByHuoDongOverride(t *testing.T) {
 	}
 }
 
-// 活动版的提示词超长请求也必须改派豆包。
+// 规则四已删除：活动版的超长提示词（非 30 秒）不再改派豆包。
 //
-// 心笔常驻链路自己吃 20000 字符提示词，但把超长提示词导到豆包既能赚毛利
-// 也能消耗额度 —— 所以规则四不再只对母本生效。
-//
-// ⚠️ 时长用 30 秒（活动版是固定 30 秒档）。传别的时长会被**按次固定档归一**
-// 提前挡掉（fail-loud，那是对的）—— 那样就轮不到规则四了。
-func TestHuoDongRouteToDoubaoOnLongPrompt(t *testing.T) {
+// 心笔常驻链路自己吃 20000 字符提示词；超长提示词统一交给后面的压缩中间件，
+// 不再走「悄悄换一条链路」这条路。
+func TestHuoDongLongPromptDoesNotRerouteToDoubao(t *testing.T) {
 	enableDoubaoFallbackRoute(t)
 
-	longPrompt := ""
-	for i := 0; i < 6000; i++ {
-		longPrompt += "字"
+	longPrompt := strings.Repeat("字", 6000)
+	body := `{"model":"` + constant.Seedance25HuoDongModel + `","seconds":10,"prompt":"` + longPrompt + `"}`
+	seen, origin := runRoute(t, body)
+	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
+		t.Fatalf("超长提示词不该改派到豆包，实际 model=%v", got)
 	}
-	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":30,"prompt":"`+longPrompt+`"}`)
-	if got := decodeBody(t, seen)["model"]; got != doubaoTargetModel {
-		t.Fatalf("提示词超长的活动版请求没有改派到豆包（model=%v）", got)
+	if origin != "" {
+		t.Fatalf("没改派却记下了计费原点 %q", origin)
 	}
-	if origin != constant.Seedance25HuoDongModel {
-		t.Fatalf("RouteOriginModel() = %q, want %q", origin, constant.Seedance25HuoDongModel)
+	if seen != body {
+		t.Fatalf("超长提示词不该改写请求体")
 	}
 }
 
-// 母本的提示词超长请求仍然改派豆包（这条规则本来就是为母本加的，不能被改坏）。
-func TestTeHuiRouteToDoubaoOnLongPrompt(t *testing.T) {
+// 母本同理：10 秒 + 超长提示词留在有赞源链路，由压缩中间件处理。
+func TestTeHuiLongPromptDoesNotRerouteToDoubao(t *testing.T) {
 	enableDoubaoFallbackRoute(t)
 
-	longPrompt := ""
-	for i := 0; i < 6000; i++ {
-		longPrompt += "字"
+	longPrompt := strings.Repeat("字", 6000)
+	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25TeHuiModel+`","seconds":10,"prompt":"`+longPrompt+`"}`)
+	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25TeHuiModel {
+		t.Fatalf("超长提示词不该改派到豆包，实际 model=%v", got)
 	}
-	seen, _ := runRoute(t, `{"model":"`+constant.Seedance25TeHuiModel+`","seconds":10,"prompt":"`+longPrompt+`"}`)
-	if got := decodeBody(t, seen)["model"]; got != doubaoTargetModel {
-		t.Fatalf("母本提示词超长的请求没有改派到豆包（model=%v）", got)
+	if origin != "" {
+		t.Fatalf("没改派却记下了计费原点 %q", origin)
 	}
 }
 

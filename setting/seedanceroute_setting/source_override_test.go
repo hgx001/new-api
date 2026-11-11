@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/stretchr/testify/require"
 )
 
 // 「按源模型分别配置目标模型」的测试（2026-11-03）。
@@ -197,4 +198,98 @@ func TestSourceOverrideTrimsWhitespace(t *testing.T) {
 	if got := policy.TargetModelFor(" seedance2.5-活动 "); got != "wan3.0-720p-按次" {
 		t.Fatalf("带空格的源模型名没命中覆盖，目标模型 = %q", got)
 	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 按源模型的比例改派开关（ratio_rule_enabled，2026-11-11）
+//
+// 背景：老板要求「只取消 seedance2.5-特惠 → 心笔 的 9:16 改派，
+// 别的模型路由到心笔的不变」。公共 ratio_target_model 一改就是两个源模型
+// 一起改，所以必须给规则二加一个与 SecondsRuleEnabled 同形的三态开关。
+// ─────────────────────────────────────────────────────────────
+
+// ratioSwitchPolicy 是本节测试共用的配置：促销族两个成员 + 时长规则 + 比例规则，
+// 母本 seedance2.5-特惠 的比例改派被单独关掉。
+func ratioSwitchPolicy() map[string]interface{} {
+	return map[string]interface{}{
+		"enabled":            true,
+		"source_models":      []string{"seedance2.5-特惠", "seedance2.5-活动"},
+		"target_model":       "seedance-2-5",
+		"trigger_seconds":    30,
+		"ratio_target_model": "wan3.0-720p-特惠-内链",
+		"trigger_ratio":      "9:16",
+		"source_overrides": map[string]interface{}{
+			"seedance2.5-特惠": map[string]interface{}{
+				"ratio_rule_enabled": false,
+			},
+		},
+	}
+}
+
+// 只关母本的比例改派：母本不生效、活动版照旧、规则一不受牵连。
+func TestSourceOverrideRatioRuleSwitch(t *testing.T) {
+	applyPolicy(t, ratioSwitchPolicy())
+
+	require.False(t, IsRatioRouteEnabledFor("seedance2.5-特惠"),
+		"母本配了 ratio_rule_enabled=false，比例改派必须不生效")
+	require.True(t, IsRatioRouteEnabledFor("seedance2.5-活动"),
+		"只关母本不能把活动版的比例改派一起关掉")
+	require.True(t, IsSecondsRuleEnabledFor("seedance2.5-特惠"),
+		"比例开关不能牵连规则一（时长改派）")
+	require.True(t, IsAnyRouteEnabled(),
+		"时长/活动版比例都还在跑，中间件不能被整个跳过")
+}
+
+// 没配 ratio_rule_enabled 的源模型必须默认开启 —— 三态指针 nil = 开。
+//
+// 这是升级安全的硬要求：生产 options 里没有这个字段，
+// 解析后是 nil，若被当成「关掉」，升级当天就静默停掉全站 9:16 改派。
+func TestRatioRuleSwitchAbsentMeansEnabled(t *testing.T) {
+	payload := ratioSwitchPolicy()
+	payload["source_overrides"] = map[string]interface{}{
+		"seedance2.5-特惠": map[string]interface{}{
+			"target_model": "seedance-2-5",
+		},
+	}
+	applyPolicy(t, payload)
+
+	require.True(t, IsRatioRouteEnabledFor("seedance2.5-特惠"),
+		"覆盖里没写 ratio_rule_enabled（nil）必须按默认开启处理")
+	require.True(t, IsRatioRouteEnabledFor("seedance2.5-活动"))
+}
+
+// 两个源模型的比例改派都被关掉时，校验不能把整份策略打回 Enabled=false。
+//
+// 这是 anyRuleReady 的回归：它必须看「配全没配全」（configured），
+// 不能看「开关开没开」。若那里也看开关，只配了比例规则的策略会被判成
+// 「一条都没配全」而 Enabled=false —— 将来重新打开开关时路由已死，且无报错。
+func TestRatioRuleSwitchOffDoesNotDisablePolicy(t *testing.T) {
+	payload := ratioSwitchPolicy()
+	payload["source_overrides"] = map[string]interface{}{
+		"seedance2.5-特惠": map[string]interface{}{"ratio_rule_enabled": false},
+		"seedance2.5-活动": map[string]interface{}{"ratio_rule_enabled": false},
+	}
+	// 只留比例规则：时长/首尾帧/故障转移全不配。
+	delete(payload, "target_model")
+	delete(payload, "trigger_seconds")
+	applyPolicy(t, payload)
+
+	policy := Get()
+	require.True(t, policy.Enabled,
+		"规则只是被开关关掉、没有配错 —— anyRuleReady 不能把它打回 false")
+	require.False(t, IsRatioRouteEnabledFor("seedance2.5-特惠"))
+	require.False(t, IsRatioRouteEnabledFor("seedance2.5-活动"),
+		"两个源模型的按源门控都关掉后，规则二对谁都不该生效")
+}
+
+// Get() 的深拷贝必须连新开关的指针一起拷 —— 改副本不能污染全局状态。
+func TestGetReturnsDeepCopyOfRatioRuleSwitch(t *testing.T) {
+	applyPolicy(t, ratioSwitchPolicy())
+
+	copied := Get()
+	require.NotNil(t, copied.SourceOverrides["seedance2.5-特惠"].RatioRuleEnabled)
+	*copied.SourceOverrides["seedance2.5-特惠"].RatioRuleEnabled = true
+
+	require.False(t, IsRatioRouteEnabledFor("seedance2.5-特惠"),
+		"改副本的开关指针把全局状态也改了 —— clonePolicy 没做深拷贝")
 }

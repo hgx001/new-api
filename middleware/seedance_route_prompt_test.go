@@ -2,21 +2,19 @@ package middleware
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
-	"time"
 )
 
-// 规则四（提示词超长）的测试。
+// 「提示词超长不再触发条件路由」的回归测试（2026-11-11）。
 //
-// 背景：源链路（MegaAI 的 wan-3.0）对提示词有 5000 字符上限，超了必失败；
-// 目标链路（豆包官网 Seedance 2.5）能吃下更长的提示词。所以「提示词超长」
-// 和「30 秒」「9:16」「首尾帧」一样，是一条独立的改派条件。
+// 原规则四（提示词 > 5000 字符 → 豆包）已删除：它几乎总被规则一抢先，
+// 且超长提示词本就该交给后面的 Wan3PromptCompress 压缩（压不下来明确 400）。
 //
-// 与规则一的关键差别：**规则一强制把时长改成 30 秒**（它的触发条件就是 30 秒），
-// 规则四必须**保留客户原本要的时长** —— 客户要 10 秒，改派后还是 10 秒。
-// 豆包接受任意正整数秒且原样下发，其它时长也要路由（宁可不路由，也不悄悄改客户参数）。
+// 这里钉死三件事，防止有人把隐式改派又加回来：
+//  1. 超长提示词**本身**不触发任何改派，请求体逐字节不变；
+//  2. 规则一（时长）与规则二（比例）仍照常生效，不受提示词长度影响；
+//  3. 长提示词 + 30 秒走的是规则一，不是「超长」改派。
 
 const promptRouteLimit = 5000
 
@@ -40,9 +38,10 @@ func buildPromptBody(t *testing.T, prompt string, extra map[string]interface{}) 
 	return string(encoded)
 }
 
-// TestPromptRouteTriggersWhenPromptExceedsLimit 是规则四的主用例：
-// 5001 个字符必须改派到豆包，且来源模型被记下来（计费/日志都靠它）。
-func TestPromptRouteTriggersWhenPromptExceedsLimit(t *testing.T) {
+// 超长提示词 + 短时长：不该有任何改派，body 一个字节都不能动。
+//
+// 这条是「规则四已删除」的主断言：以前它会改派到 testTargetModel。
+func TestLongPromptDoesNotTriggerRoute(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
@@ -50,182 +49,67 @@ func TestPromptRouteTriggersWhenPromptExceedsLimit(t *testing.T) {
 	})
 	seen, originModel := runRoute(t, body)
 
-	out := decodeBody(t, seen)
-	if out["model"] != testTargetModel {
-		t.Fatalf("model = %v, want %s（超长提示词没被改派）", out["model"], testTargetModel)
+	if seen != body {
+		t.Fatalf("超长提示词不该触发改派，body 却被改了:\n got %s\nwant %s", seen, body)
+	}
+	if originModel != "" {
+		t.Fatalf("RouteOriginModel() = %q, want empty（没改派就不该记计费原点）", originModel)
+	}
+	if got := decodeBody(t, seen)["model"]; got != testSourceModel {
+		t.Fatalf("model = %v, want %s", got, testSourceModel)
+	}
+}
+
+// 中文按字符算 6001 字（旧规则同样会命中），也必须留在源模型。
+func TestLongChinesePromptDoesNotTriggerRoute(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	body := buildPromptBody(t, strings.Repeat("汉", promptRouteLimit+1000), map[string]interface{}{
+		"seconds": 12,
+	})
+	seen, originModel := runRoute(t, body)
+
+	if seen != body || originModel != "" {
+		t.Fatalf("中文超长提示词不该触发改派（origin=%q）", originModel)
+	}
+}
+
+// 长提示词 + 30 秒：仍然由规则一改派到豆包。
+// 证明「删规则四」没有把正常的时长改派一起删掉。
+func TestLongPromptStillHitsSecondsRule(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
+		"seconds": 30,
+	})
+	seen, originModel := runRoute(t, body)
+
+	if got := decodeBody(t, seen)["model"]; got != testTargetModel {
+		t.Fatalf("30 秒请求仍应改派到 %s，实际 model = %v", testTargetModel, got)
 	}
 	if originModel != testSourceModel {
 		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
 	}
 }
 
-// 老板的原话是「大于 5000」—— 正好 5000 不触发。
-// 边界写错的后果是双向的：写成 >= 会让一条合法请求白白改派，
-// 写成 > 5001 会让真正的超长请求漏过去。
-func TestPromptRouteNotTriggerAtExactLimit(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit), map[string]interface{}{
-		"seconds": 10,
-	})
-	seen, originModel := runRoute(t, body)
-
-	if seen != body {
-		t.Fatalf("正好 5000 字符不该改派，body 却被改了:\n got %s\nwant %s", seen, body)
-	}
-	if originModel != "" {
-		t.Fatalf("RouteOriginModel() = %q, want empty", originModel)
-	}
-}
-
-func TestPromptRouteNotTriggerForShortPrompt(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	body := buildPromptBody(t, "a cat walking in the rain", map[string]interface{}{
-		"seconds": 10,
-	})
-	seen, _ := runRoute(t, body)
-
-	if seen != body {
-		t.Fatalf("短提示词不该改派，body 却被改了:\n got %s\nwant %s", seen, body)
-	}
-}
-
-// 按**字符**（rune）算，不按字节算。
-//
-// 5000 个汉字按字节是 15000，按字符是 5000 —— 用 len() 判断会让
-// 「刚好在限制内」的中文提示词被误判成超长。反过来，如果上游真按字节卡，
-// 这个用例会保护我们不去猜，而是保持当前口径（字符）。
-func TestPromptRouteCountsChineseCharactersAsOneRune(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	// 正好 5000 个汉字：字节数 15000，但字符数 5000 → 不该改派。
-	atLimit := buildPromptBody(t, strings.Repeat("汉", promptRouteLimit), map[string]interface{}{
-		"seconds": 10,
-	})
-	if seen, _ := runRoute(t, atLimit); seen != atLimit {
-		t.Fatalf("5000 个汉字按字符算正好在限制内，不该改派")
-	}
-
-	// 5001 个汉字 → 改派。
-	overLimit := buildPromptBody(t, strings.Repeat("汉", promptRouteLimit+1), map[string]interface{}{
-		"seconds": 10,
-	})
-	seen, _ := runRoute(t, overLimit)
-	if got := decodeBody(t, seen)["model"]; got != testTargetModel {
-		t.Fatalf("5001 个汉字应改派到 %s，实际 model = %v", testTargetModel, got)
-	}
-}
-
-// 规则四必须**保留客户要的时长**。
-//
-// 复用规则一的改写逻辑会把 seconds 强行写成 30 —— 客户要 10 秒，
-// 最后拿到 30 秒的片并按 30 秒付钱，属于错交付。
-func TestPromptRouteKeepsRequestedDuration(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
+// 长提示词 + 9:16：仍然由规则二改派（目标模型由配置决定）。
+func TestLongPromptStillHitsRatioRule(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
-		"seconds": 10,
+		"seconds":  10,
+		"metadata": map[string]interface{}{"ratio": "9:16"},
 	})
 	seen, _ := runRoute(t, body)
 
-	out := decodeBody(t, seen)
-	if out["seconds"] != "10" {
-		t.Fatalf("seconds = %v, want \"10\"（规则四不能把时长改成 30）", out["seconds"])
+	if got := decodeBody(t, seen)["model"]; got != testRatioTargetModel {
+		t.Fatalf("9:16 请求仍应改派到 %s，实际 model = %v", testRatioTargetModel, got)
 	}
 }
 
-// 2026-11-09 用户口径：豆包 2.5 支持任意正整数秒。12 秒这种旧「非档位」
-// 请求必须原样改派，不得放弃、更不得改成 15 秒。
-func TestPromptRoutePassesNonTierDurationThroughUnchanged(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
-		"seconds": 12,
-	})
-	seen, _ := runRoute(t, body)
-
-	out := decodeBody(t, seen)
-	if out["model"] != testTargetModel {
-		t.Fatalf("model = %v, want %s（12 秒已是合法时长，应改派）", out["model"], testTargetModel)
-	}
-	if out["seconds"] != "12" {
-		t.Fatalf("seconds = %v, want \"12\"（必须原样透传，禁止吸附档位）", out["seconds"])
-	}
-}
-
-// 没传时长时按源链路默认 5 秒算，5 秒是豆包支持的档位 → 可以改派。
-func TestPromptRouteDefaultsToFiveSecondsWhenDurationMissing(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), nil)
-	seen, _ := runRoute(t, body)
-
-	out := decodeBody(t, seen)
-	if out["model"] != testTargetModel {
-		t.Fatalf("model = %v, want %s", out["model"], testTargetModel)
-	}
-	if out["seconds"] != "5" {
-		t.Fatalf("seconds = %v, want \"5\"（缺省按源链路默认时长）", out["seconds"])
-	}
-}
-
-// 目标链路额度用完时，规则一会被自动暂停。规则四打的是同一条链路、
-// 同一份额度，必须一起停 —— 否则暂停期间超长提示词照样打过去、照样失败。
-func TestPromptRouteRespectsPausedWindow(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-	pauseSecondsRule(t, time.Now().Unix()+3600)
-
-	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
-		"seconds": 10,
-	})
-	seen, _ := runRoute(t, body)
-
-	if seen != body {
-		t.Fatalf("暂停期内不该改派:\n got %s\nwant %s", seen, body)
-	}
-}
-
-// 规则四（提示词超长）命中时，分辨率必须跟着透传（豆包三档全支持）。
-func TestPromptRouteForwardsExplicitResolution(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
-		"seconds":    10,
-		"resolution": "720p",
-	})
-	seen, _ := runRoute(t, body)
-
-	out := decodeBody(t, seen)
-	if out["model"] != testTargetModel {
-		t.Fatalf("超长提示词未改派（model=%v）", out["model"])
-	}
-	if out["resolution"] != "720p" {
-		t.Fatalf("resolution = %v, want 720p", out["resolution"])
-	}
-}
-
-// 带参考视频/音频 → 不路由（目标链路只吃参考图）。
-func TestPromptRouteSkipsReferenceVideo(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
-		"seconds": 10,
-		"media": []map[string]string{
-			{"type": "reference_video", "url": "https://example.com/ref.mp4"},
-		},
-	})
-	seen, _ := runRoute(t, body)
-
-	if seen != body {
-		t.Fatalf("带参考视频不该改派:\n got %s\nwant %s", seen, body)
-	}
-}
-
-// 首尾帧优先于长提示词：首尾帧只有 wan3 能跑，豆包根本不支持。
-// 两条规则同时命中时必须走 wan3，否则带首尾帧的请求会直接失败。
-func TestPromptRouteKeepsFramesRulePriority(t *testing.T) {
-	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testRatioTargetModel)
+// 长提示词 + 首尾帧：仍然由规则三（能力约束）优先改派。
+func TestLongPromptStillHitsFramesRule(t *testing.T) {
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 10,
@@ -235,53 +119,19 @@ func TestPromptRouteKeepsFramesRulePriority(t *testing.T) {
 	})
 	seen, _ := runRoute(t, body)
 
-	if got := decodeBody(t, seen)["model"]; got != testRatioTargetModel {
-		t.Fatalf("首尾帧 + 长提示词应走 %s（首尾帧规则优先），实际 model = %v", testRatioTargetModel, got)
+	if got := decodeBody(t, seen)["model"]; got != testFramesTargetModel {
+		t.Fatalf("首尾帧 + 长提示词应走 %s，实际 model = %v", testFramesTargetModel, got)
 	}
 }
 
-// 改派后计费仍按源模型（按秒 ¥0.20/秒）算，而目标 adaptor 是按次的、
-// 不返回 seconds。不补这个秒数，10 秒的请求只按 1 秒收钱 —— 少收 9 秒。
-func TestPromptRouteRecordsBillingSeconds(t *testing.T) {
+// 没传时长的超长提示词也不改派（旧规则会按 5 秒档改派到豆包）。
+func TestLongPromptWithoutDurationDoesNotTriggerRoute(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
-	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
-		"seconds": 10,
-	})
-	rec := runRouteFull(t, body)
+	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), nil)
+	seen, originModel := runRoute(t, body)
 
-	if !rec.hasBillingSec {
-		t.Fatalf("规则四命中后没有记录计费秒数（key 缺失）")
-	}
-	if rec.billingSeconds != 10 {
-		t.Fatalf("计费秒数 = %v, want 10", rec.billingSeconds)
-	}
-}
-
-// 规则四与规则一互相独立：15 秒不是 30 秒，规则一不命中，
-// 但提示词超长，规则四必须接手。
-func TestPromptRouteIndependentOfSecondsTrigger(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
-		"seconds": 15,
-	})
-	seen, _ := runRoute(t, body)
-
-	if got := decodeBody(t, seen)["model"]; got != testTargetModel {
-		t.Fatalf("15 秒 + 超长提示词应改派，实际 model = %v", got)
-	}
-}
-
-// 非源模型的请求一个字节都不能动 —— 规则四只认 SourceModel。
-func TestPromptRouteIgnoresOtherModels(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	body := fmt.Sprintf(`{"model":"seedance-2.5","seconds":10,"prompt":%q}`,
-		strings.Repeat("a", promptRouteLimit+1))
-	seen, _ := runRoute(t, body)
-
-	if seen != body {
-		t.Fatalf("非源模型不该被改派:\n got %s\nwant %s", seen, body)
+	if seen != body || originModel != "" {
+		t.Fatalf("未传时长的超长提示词不该触发改派（origin=%q）", originModel)
 	}
 }

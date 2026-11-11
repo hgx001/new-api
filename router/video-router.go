@@ -19,8 +19,9 @@ func SetVideoRouter(router *gin.Engine) {
 	videoV1Router := router.Group("/v1")
 	videoV1Router.Use(middleware.RouteTag("relay"))
 	// ⚠️ 顺序是「豆包优先 → 压缩兜底 → 特惠分流」的实现：
-	//   · Seedance25TeHuiRoute 先尝试把 30 秒 / 超长提示词改派到豆包（吃 20000 字符，不用压）；
-	//   · Wan3PromptCompress 只处理「豆包没接走」且仍超过 5000 字符的请求；
+	//   · Seedance25TeHuiRoute 先按故障转移 / 首尾帧 / 时长 / 比例改派
+	//     （2026-11-11 起 9:16 直接改派到心笔 480P 内链；原「超长提示词改派豆包」已删除）；
+	//   · Wan3PromptCompress 处理「没被改派到豆包」且仍超过 5000 字符的请求；
 	//   · Wan3TehuiXinbiRoute 再把 wan3.0-720p-特惠 里心笔能跑的请求分流过去
 	//     （480P 生成 + 交付 720P，成本更低）；带首尾帧/参考视频/音频的留在 Wan3。
 	// 三者都必须早于 Distribute()：渠道是读 body 的 model 字段选定的。

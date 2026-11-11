@@ -43,25 +43,21 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 //
 // 目前有**四条独立规则**，共用 Enabled 总开关与 SourceModel：
 //
+//	规则五（故障转移）：FailoverSourceModel 源链路不可用 → FailoverTargetModel（最优先）
 //	规则三（首尾帧）：SourceModel + media 含 first_frame/last_frame → FramesTargetModel
-//	               seedance2.5-特惠 + 首尾帧 → wan3.0-720p-特惠
-//	规则一（时长）：SourceModel + 时长 > TriggerSeconds → TargetModel
-//	               seedance2.5-特惠 + 超过阈值（生产 20 秒）→ seedance-2-5（豆包按次 ¥3.50）
+//	规则一（时长）：SourceModel + 时长 > TriggerSeconds → TargetModel（豆包按次）
 //	               （2026-11-09 起时长原样下发，不再吸附档位）
-//	规则四（长提示词）：SourceModel + 提示词 > 5000 字符 → TargetModel
-//	               seedance2.5-特惠 + 超长提示词 → seedance-2-5
 //	规则二（比例）：SourceModel + TriggerRatio 比例 → RatioTargetModel
-//	               seedance2.5-特惠 + 9:16 → wan3.0-720p-特惠（¥0.20/秒）
+//	               生产 2026-11-11 起：9:16 → wan3.0-720p-特惠-内链（心笔 480P 链路）
 //
-// **优先级：规则三最先判，然后规则一、规则四，最后规则二。**
+// 2026-11-11 删除原「规则四（长提示词 > 5000 字符 → TargetModel）」：
+// 它几乎总被规则一抢先，且超长提示词已有 Wan3PromptCompress 处理，
+// 不需要第二条隐式改派。中间件里不再读提示词长度，Policy 也不再有对应字段。
 //
-//	规则一/二之间：老板 2026-10-30 拍板「长时长优先，豆包仍接 9:16」，
-//	  即超过阈值的 9:16 走豆包，只有未超阈值的 9:16 才走 wan3。
+// **优先级：规则五 → 规则三 → 规则一 → 规则二。**
 //
-//	规则四为什么和规则一共用 TargetModel 与暂停窗口：两者的目标链路是同一条
-//	  豆包链路、同一份额度。额度用完时规则一会被自动暂停，规则四必须一起停 ——
-//	  否则暂停期间超长提示词照样打过去、照样失败。也因为这个原因，规则四
-//	  **没有独立的开关字段**：它跟着 IsEnabled() 走。
+//	规则一/二之间：老板 2026-10-30 拍板「长时长优先」，即超过阈值的 9:16 走豆包，
+//	  只有未超阈值的 9:16 才走比例规则。
 //
 //	规则三为什么必须排在最前：源链路（youzan wan3）**已经彻底不收首尾帧**
 //	  （2026-10-28 上游取消 firstFrameAssetId/lastFrameAssetId），带首尾帧的请求
@@ -69,7 +65,7 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 //	  所以「带首尾帧」的请求只有 wan3 直连能跑，这个约束优先级高于时长/比例
 //	  的成本优化 —— 否则 30 秒的首尾帧请求会被规则一改派到漫屋，直接失败。
 //
-// ⚠️ 规则二/三/四的字段**全部 omitempty 且可为空**：旧的生产 option JSON 里没有它们，
+// ⚠️ 规则二/三/五的字段**全部 omitempty 且可为空**：旧的生产 option JSON 里没有它们，
 // 解析后为空 → 对应规则不生效 → 行为与改造前逐字节一致。这是硬要求，
 // 因为改这份配置的人不一定同步改 SQL。
 type Policy struct {
@@ -114,20 +110,20 @@ type Policy struct {
 
 	// ─────────────────── 规则五：故障转移（failover）───────────────────
 	//
-	// 前四条规则的触发源都是**请求特征**（时长 / 比例 / 首尾帧 / 提示词长度），
+	// 前三条规则的触发源都是**请求特征**（时长 / 比例 / 首尾帧），
 	// 规则五的触发源完全不同：**源链路本身不可用**（额度用完 / 渠道被关）。
 	//
-	// 为什么必须独立成一条规则、不能塞进前四条：
+	// 为什么必须独立成一条规则、不能塞进前三条：
 	//  1. 触发条件不是「请求长什么样」，而是「渠道状态如何」，两者没有共同表达；
-	//  2. 源模型的口径相反 —— 前四条是「促销族模型 → 别的模型」，
+	//  2. 源模型的口径相反 —— 前三条是「促销族模型 → 别的模型」，
 	//     规则五是「**已经是别的模型的对外名** → 备胎模型」；
 	//     seedance-2-5 既是规则一的**目标**，又是规则五的**源**，
 	//     混用同一份 source_models 会让「源 == 目标」的自循环风险出现；
-	//  3. 规则五的可用性判定要查**渠道状态**，前四条不查。
+	//  3. 规则五的可用性判定要查**渠道状态**，前三条不查。
 	//
 	// FailoverSourceModel 是「会触发故障转移的源模型名」（如 seedance-2-5）。
 	//
-	// ⚠️ **刻意与 SourceModel / SourceModels 分开存**：那两份是前四条规则的源，
+	// ⚠️ **刻意与 SourceModel / SourceModels 分开存**：那两份是前三条规则的源，
 	// 规则一的 target_model 恰好就是 seedance-2-5 —— 若把规则五的源写进
 	// source_models，中间件会先命中规则一、又把请求改派成同一个模型名，
 	// 形成「改派到自己」的循环。这里用独立字段，从结构上杜绝。
@@ -196,7 +192,7 @@ type Policy struct {
 
 	// SourceOverrides 是**按源模型分别配置**的目标模型覆盖（2026-11-03 起）。
 	//
-	// 为什么需要：source_models 是一个列表，四条规则**共用同一套目标模型**。
+	// 为什么需要：source_models 是一个列表，三条规则**共用同一套目标模型**。
 	// 但促销族的两个成员需要不同的兜底链路：
 	//
 	//	seedance2.5-特惠（母本，按秒 ¥0.20/秒）→ 30 秒走豆包 seedance-2-5（成本 ≈ ¥0）
@@ -231,7 +227,7 @@ type SourceOverride struct {
 	//
 	// 语义：
 	//   - nil（配置里没写这个字段）= **默认开启**，行为与加这个字段之前逐字节一致；
-	//   - 显式 false = 该源模型的规则一与规则四都不改派，请求留在自己的常驻链路；
+	//   - 显式 false = 该源模型的规则一不改派，请求留在自己的常驻链路；
 	//   - 显式 true = 明确开启（用于把别人关掉的开关改回来）。
 	//
 	// 为什么用指针而不是 bool：必须是三态。用 bool 会让「没配」和「配了 false」
@@ -242,6 +238,19 @@ type SourceOverride struct {
 	// 母本改派豆包是纯赚差价，活动版改派豆包会贴钱。老板需要能**只停一个**，
 	// 而全局的 SecondsRulePausedUntil 一停就是两个一起停。
 	SecondsRuleEnabled *bool `json:"seconds_rule_enabled,omitempty"`
+
+	// RatioRuleEnabled 是该源模型专属的「按比例改派」开关（2026-11-11 起）。
+	//
+	// 语义与 SecondsRuleEnabled 完全一致（三态指针）：
+	//   - nil（配置里没写这个字段）= **默认开启**，行为与加这个字段之前逐字节一致；
+	//   - 显式 false = 该源模型的规则二不改派，请求留在自己的常驻链路；
+	//   - 显式 true = 明确开启（用于把别人关掉的开关改回来）。
+	//
+	// 为什么需要它：老板 2026-11-11 要求「只取消 seedance2.5-特惠 → 心笔 的
+	// 9:16 改派，别的模型路由到心笔的不变」。公共 ratio_target_model 一改就是
+	// 所有源模型一起改，source_overrides[ratio_target_model] 为空又会回落公共值
+	// （现有字段做不到按源关闭）—— 只有独立开关才能「只停一个、默认全开」。
+	RatioRuleEnabled *bool `json:"ratio_rule_enabled,omitempty"`
 }
 
 // overrideFor 返回「这个源模型的专属覆盖」以及是否存在。
@@ -273,6 +282,17 @@ func (p Policy) secondsRuleEnabledFor(sourceModel string) bool {
 		return true
 	}
 	return *override.SecondsRuleEnabled
+}
+
+// ratioRuleEnabledFor 判断该源模型的「按比例改派」是否被单独关掉。
+//
+// 默认（没配覆盖、或覆盖里没写这个字段）= 开启，与 secondsRuleEnabledFor 同口径。
+func (p Policy) ratioRuleEnabledFor(sourceModel string) bool {
+	override, ok := p.overrideFor(sourceModel)
+	if !ok || override.RatioRuleEnabled == nil {
+		return true
+	}
+	return *override.RatioRuleEnabled
 }
 
 // targetFor 返回「这个源模型实际生效的目标模型名」。
@@ -481,7 +501,7 @@ func (p Policy) anyRuleReady() bool {
 		return true
 	}
 	for _, source := range p.allSourceModels() {
-		if secondsRuleConfiguredFor(p, source) || ratioRuleReadyFor(p, source) || framesRuleReadyFor(p, source) {
+		if secondsRuleConfiguredFor(p, source) || ratioRuleConfiguredFor(p, source) || framesRuleReadyFor(p, source) {
 			return true
 		}
 	}
@@ -948,9 +968,23 @@ func ratioRuleReady(p Policy) bool {
 		p.TriggerRatio != ""
 }
 
-// ratioRuleReadyFor 判断「规则二对某个具体源模型是否配全」。
+// ratioRuleReadyFor 判断「规则二对某个具体源模型是否配全**且未被单独关掉**」。
 // 目标模型名按源模型取（公共值或该源模型的专属覆盖）。
+//
+// 与 ratioRuleConfiguredFor 的分工完全对齐 secondsRuleReadyFor / secondsRuleConfiguredFor：
+// **这里叠加该源模型的专属开关**（source_overrides[模型].ratio_rule_enabled），
+// 开关决定「要不要改派」；「配没配全」由 configured 那一份供 anyRuleReady 使用。
 func ratioRuleReadyFor(p Policy, sourceModel string) bool {
+	return ratioRuleConfiguredFor(p, sourceModel) && p.ratioRuleEnabledFor(sourceModel)
+}
+
+// ratioRuleConfiguredFor 判断「规则二对某个源模型是否配全」（不看开关）。
+//
+// 为什么需要单独一份：anyRuleReady 用它判断「整份策略配全了没有」。
+// 若那里也看开关，两个源模型的比例改派都被关掉时会把 Enabled 判成 false ——
+// 配置的语义只是「先别改派」，不是「这份配置作废」；
+// 将来重新打开开关时路由已经死了，而且没有任何报错。
+func ratioRuleConfiguredFor(p Policy, sourceModel string) bool {
 	return p.Enabled &&
 		p.hasSourceModel() &&
 		p.RatioTargetModelFor(sourceModel) != "" &&
@@ -982,11 +1016,15 @@ func clonePolicy(p Policy) Policy {
 	if p.SourceOverrides != nil {
 		out.SourceOverrides = make(map[string]SourceOverride, len(p.SourceOverrides))
 		for key, value := range p.SourceOverrides {
-			// SecondsRuleEnabled 是指针：浅拷贝会让副本与全局状态共享同一个 bool，
-			// 调用方一改就悄悄改到了全局配置（与 map 浅拷贝同一类问题）。
+			// SecondsRuleEnabled / RatioRuleEnabled 是指针：浅拷贝会让副本与全局状态
+			// 共享同一个 bool，调用方一改就悄悄改到了全局配置（与 map 浅拷贝同一类问题）。
 			if value.SecondsRuleEnabled != nil {
 				enabled := *value.SecondsRuleEnabled
 				value.SecondsRuleEnabled = &enabled
+			}
+			if value.RatioRuleEnabled != nil {
+				enabled := *value.RatioRuleEnabled
+				value.RatioRuleEnabled = &enabled
 			}
 			out.SourceOverrides[key] = value
 		}
