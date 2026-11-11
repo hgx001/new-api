@@ -75,7 +75,7 @@ func Wan3TehuiXinbiRoute() gin.HandlerFunc {
 			return
 		}
 
-		newBody, seconds, routed := prepareTehuiXinbiRoute(c, body)
+		newBody, seconds, routed := prepareTehuiXinbiRoute(c, body, xinbiTehuiTargetModel)
 		if !routed {
 			c.Next()
 			return
@@ -91,25 +91,37 @@ func Wan3TehuiXinbiRoute() gin.HandlerFunc {
 	}
 }
 
+// isXinbiTehuiTarget 判断目标模型是不是心笔的 480P 按秒内链。
+//
+// 2026-11-11 起规则二（比例）也可以直接指向这条链路 —— 命中后必须走
+// prepareTehuiXinbiRoute 的改写，不能用 wan3 官网那套（会静默丢参考图）。
+func isXinbiTehuiTarget(modelName string) bool {
+	return strings.TrimSpace(modelName) == xinbiTehuiTargetModel
+}
+
 // prepareTehuiXinbiRoute 判断能否分流并组装请求体。
 //
+// targetModel 由调用方给：Wan3TehuiXinbiRoute 用内链常量，
+// 条件路由的规则二用配置里的 ratio_target_model —— 两者当前是同一个名字，
+// 但分开传能让「配置改成别的名字」立刻生效，而不是悄悄仍用常量。
+//
 // 第二个返回值是归一后的计费/生成秒数（仅用于日志）。
-func prepareTehuiXinbiRoute(c *gin.Context, body map[string]interface{}) (map[string]interface{}, int, bool) {
-	if !tehuiXinbiCompatible(c, body) {
+func prepareTehuiXinbiRoute(c *gin.Context, body map[string]interface{}, targetModel string) (map[string]interface{}, int, bool) {
+	if !tehuiXinbiCompatible(c, body, targetModel) {
 		return nil, 0, false
 	}
 	seconds, ok := tehuiXinbiSeconds(body)
 	if !ok {
 		return nil, 0, false
 	}
-	return rewriteBodyForXinbiPerSecond(body, xinbiTehuiTargetModel, seconds), seconds, true
+	return rewriteBodyForXinbiPerSecond(body, targetModel, seconds), seconds, true
 }
 
 // tehuiXinbiCompatible 是分流的能力/参数边界。
 //
 // 任何一条不满足都**留在原链路**：宁可多付官网的钱，也不能让客户拿到
-// 建单失败或素材被丢的结果。
-func tehuiXinbiCompatible(c *gin.Context, body map[string]interface{}) bool {
+// 建单失败或素材被丢的结果。targetModel 同时用于渠道可用性预检。
+func tehuiXinbiCompatible(c *gin.Context, body map[string]interface{}, targetModel string) bool {
 	// 参考视频 / 参考音频（含顶层 audio/audios）：兼容口没有对应字段。
 	if hasUnsupportedMedia(body) {
 		logger.LogInfo(c, "条件路由跳过特惠分流：请求带参考视频/参考音频")
@@ -165,7 +177,7 @@ func tehuiXinbiCompatible(c *gin.Context, body map[string]interface{}) bool {
 
 	// 目标模型没有可用渠道 → 不分流。改写后重试只会用同一个模型名重选渠道，
 	// 不会退回特惠。
-	if !channelAvailabilityProbe(c, xinbiTehuiTargetModel) {
+	if !channelAvailabilityProbe(c, targetModel) {
 		logger.LogInfo(c, "条件路由跳过特惠分流：目标模型在当前分组下没有可用渠道")
 		return false
 	}

@@ -7,7 +7,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -53,22 +52,16 @@ import (
 // 它回答的是「这条任务在哪个链路上跑」，与「按谁收费」是两个问题。
 const routeOriginModelKey = string(constant.ContextKeyRouteOriginModel)
 
-// promptRouteLimitRunes 是「提示词超长」的触发阈值（字符数）。
+// promptRouteLimitRunes 是 wan3 上游的提示词上限（字符数，按 rune 算）。
 //
-// 5000 是源链路（MegaAI 的 wan-3.0）的提示词上限：超了上游直接拒单，
-// 客户白等一轮预扣退款。目标链路（豆包 Seedance 2.5）能吃下更长的提示词，
-// 所以超过这个长度的请求改派过去。
+// ⚠️ 2026-11-11 起它**不再是条件路由的触发条件**：原「规则四（提示词超长 →
+// 豆包）」已删除。超长提示词统一由链路后一道 Wan3PromptCompress 处理
+// （能压就压、压不下来明确 400），不再悄悄换链路。
 //
-// 按**字符**（rune）算而不是字节：5000 个汉字按字节是 15000，
-// 用 len() 判断会让「刚好在限制内」的中文提示词被误判成超长。
-//
-// 为什么是常量而不是 policy 字段：这条阈值是上游能力的镜像，不是运营策略。
-// 上游改了上限就该跟着改代码（并补测试），不该让人在后台随便调 —— 调错的
-// 后果是把不该改派的请求改派走，客户按源模型付钱、拿到的却是另一条链路的片。
+// 这个常量仍被 wan3_prompt_compress.go / _guard.go 用作「上游限长」与
+// 「可压缩上界」的事实来源，所以留在这里而不是搬走。按字符而不是字节算：
+// 5000 个汉字按字节是 15000，用 len() 会把刚好合规的中文提示词误判成超长。
 const promptRouteLimitRunes = 5000
-
-// doubaoDefaultSeconds 是没传时长时的默认值，与源链路（youzanwan3）一致。
-const doubaoDefaultSeconds = 5
 
 // doubaoSecondsFor 校验客户请求的时长是否可以原样发给豆包链路。
 //
@@ -92,33 +85,39 @@ func RouteOriginModel(c *gin.Context) string {
 
 // Seedance25TeHuiRoute 在满足条件时把请求改派到另一个对外模型。
 //
-// 三条规则，**首尾帧最先判，其次时长，最后比例**：
+// 四条规则，**顺序即优先级**：
 //
-//	规则三（首尾帧）：源模型 + media 含 first_frame/last_frame → wan3.0-720p-特惠
-//	规则一（时长）：  源模型 + 时长 > 阈值（生产 20 秒）→ seedance-2-5（豆包，按次 ¥3.50）
-//	规则二（比例）：  源模型 + 9:16（未超时长阈值）→ wan3.0-720p-特惠（按秒 ¥0.20）
+//	规则五（故障转移）：seedance-2-5 源链路不可用 → 备胎（最优先，独立字段判定）
+//	规则三（首尾帧）：  源模型 + media 含 first_frame/last_frame → frames_target_model
+//	规则一（时长）：    源模型 + 时长 > 阈值（生产 20 秒）→ target_model（豆包按次）
+//	规则二（比例）：    源模型 + 命中 trigger_ratio → ratio_target_model
+//	                    生产配 9:16 → wan3.0-720p-特惠-内链（心笔 480P 链路，ch25）
+//
+// 2026-11-11 删除原「规则四（提示词 >5000 字符 → 豆包）」：它几乎总被规则一
+// 抢先，且超长提示词本来就该由后面的 Wan3PromptCompress 压缩（压不下来明确
+// 400）。规则四没有独立开关、跟着时长规则走，留着只会让同一份长提示词在
+// 「改派豆包」与「留在源链路压缩」之间漂移。删掉后长提示词**不再触发任何改派**。
 //
 // 规则三为什么排最前：源链路 youzan wan3 **已彻底不收首尾帧**（2026-10-28 上游
 // 取消 firstFrameAssetId/lastFrameAssetId），而规则一的目标（漫屋）也不支持首尾帧。
 // 「带首尾帧」的请求只有 wan3 直连能跑 —— 这是能力约束，优先级高于时长/比例的
 // 成本优化。排在规则一之后就漏了「30 秒 + 首尾帧」这个组合（会被改派到漫屋必挂）。
 //
-// 规则一/二之间仍是**时长优先**（老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」）。
+// 规则一/二之间仍是**时长优先**（老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」），
+// 所以规则二实际只接「未超过时长阈值」的 9:16 请求。
 //
-// 改派**只决定内部走哪条链路，不改变对客价格**：三条规则的计费都按源模型
-// （seedance2.5-特惠，¥0.20/秒）算，客户请求什么模型就按什么模型收。
-// 所以 30 秒这一单客户付 ¥6.00（0.20×30），内部走豆包 ¥3.50/次的成本 ——
-// 差价是调度收益，不进客户账单。
+// 改派**只决定内部走哪条链路，不改变对客价格**：四条规则的计费都按源模型
+// （客户请求的那一个）算，RouteOriginModel 记的就是它。
 //
 // 源/目标/触发值全部从 seedanceroute_setting 读，改配置不用改代码。
 //
 // 不路由的情形（**都不是错误**，一律放行原请求）：
-//   - 开关关闭（默认）或三条规则都没配全
+//   - 开关关闭（默认）或规则都没配全
 //   - 模型名不匹配
-//   - 时长规则：时长不大于触发阈值（含不传时长 → 默认 5 秒）
+//   - 时长规则：时长不大于触发阈值（含不传时长）
 //   - 时长规则：带了参考视频 / 参考音频（豆包链路不支持，见 hasUnsupportedMedia）
 //   - **目标模型在当前分组下没有可用渠道**（见 hasAvailableChannel）
-//   - 比例规则：用户明确要 1080P（目标模型交付 720P，做不到）
+//   - 比例规则：目标链路的能力边界不满足（见 prepareWan3Route / tehuiXinbiCompatible）
 //   - 请求不是 JSON，或 body 解析/转换失败
 func Seedance25TeHuiRoute() func(c *gin.Context) {
 	return func(c *gin.Context) {
@@ -149,7 +148,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		//
 		// 为什么排在最前、且排在 IsSourceModel 检查**之前**：
 		//
-		//	1. 触发源不同：前四条规则看的是「请求长什么样」，
+		//	1. 触发源不同：前三条规则看的是「请求长什么样」，
 		//	   规则五看的是「源链路还能不能用」。源链路都挂了，
 		//	   再去优化「这条 30 秒的请求该走哪条更便宜的链路」没有意义 ——
 		//	   客户要的是能出片，不是最便宜的片。
@@ -162,12 +161,11 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 所以规则五走独立的字段（failover_source_model）与独立的判定函数，
 		// 必须在 IsSourceModel 的早退**之前**判。
 		//
-		// ⚠️ 但只判这一次**不够**：规则一/规则四的目标模型恰恰就是
-		// seedance-2-5 —— 也就是说规则五的源模型是前两条规则的**目标**。
-		// 豆包额度用完时，规则一把 30 秒请求改派到豆包 → 豆包必然失败 →
-		// 客户白等一轮 + 白烧一次预扣。
+		// ⚠️ 但只判这一次**不够**：规则一的目标模型恰恰就是 seedance-2-5，
+		// 也就是说规则五的源模型是规则一的**目标**。豆包额度用完时，规则一
+		// 把 30 秒请求改派到豆包 → 豆包必然失败 → 客户白等一轮 + 白烧一次预扣。
 		//
-		// 所以规则一/规则四改派成功后**必须再判一次规则五**（见
+		// 所以规则一改派成功后**必须再判一次规则五**（见
 		// tryFailoverAfterDoubaoRoute）。那个函数会在「豆包链路也不可用」
 		// 时把请求继续改派到备胎（班车），形成一条完整的降级链：
 		//
@@ -277,8 +275,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						// 秒数（不再吸附档位），不会出现「请求 23 秒、出片 30 秒」。
 						common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
 						// 这条日志是排查「请求到底被哪条规则改派」的唯一凭据：
-						// 规则一和规则四的目标模型是同一条豆包链路，改派后下游现象一致，
-						// 不打日志就分不清是「时长超阈值」还是「提示词超长」触发的。
+						// 改派后下游只能看到目标模型名，不打日志就分不清是
+						// 「时长超阈值」还是「故障转移」把它送过去的。
 						logger.LogInfo(c, fmt.Sprintf(
 							"条件路由：命中时长 %d 秒（超过阈值 %d 秒），改派 %s → %s",
 							seconds, policy.TriggerSeconds, sourceModel, secondsTarget))
@@ -299,62 +297,34 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			}
 		}
 
-		// ── 规则四（提示词超长）──
-		//
-		// 源链路（MegaAI 的 wan-3.0）提示词上限 5000 字符，超了上游必拒单；
-		// 目标链路（豆包 Seedance 2.5）能吃下更长的提示词。
-		//
-		// 排在规则一之后：两条规则的目标模型是同一条豆包链路，30 秒的请求
-		// 走规则一（时长固定写 30），其余超长提示词走这里（保留客户原时长）。
-		// 放在规则二之前：超长提示词是「源链路跑不了」的硬约束，优先级高于
-		// 「按比例省钱」的调度偏好 —— 否则长提示词 + 9:16 会被丢去 wan3，
-		// 一样撞上源链路的提示词上限。
-		//
-		// ⚠️ 只在**目标是豆包链路**时适用：心笔按次链路自己就吃 20000 字符提示词，
-		// 超长提示词对它不是问题，不需要改派。
-		//
-		// 2026-11-03：活动版的兜底目标也改成豆包了，所以这条规则**对活动版同样生效**
-		// —— 活动版的常驻链路（心笔）虽然能吃长提示词，但把它导到豆包既能赚毛利
-		// （成本 ¥2.00 vs 售价 ¥4.50）又能消耗每天刷新的豆包额度。
-		if seedanceroute_setting.IsSecondsRuleEnabledFor(sourceModel) && isDoubaoTarget(secondsTarget) {
-			if requestPromptRunes(body) > promptRouteLimitRunes {
-				if newBody, routed := preparePromptRoute(c, body, policy, secondsTarget); routed {
-					if applyRewrittenBody(c, newBody, sourceModel) {
-						// 与规则一同理：计费按源模型（按秒）算，目标 adaptor 是按次的、
-						// 不给 seconds。不补这一笔，10 秒的请求只按 1 秒收钱。
-						if seconds, ok := extractRequestSeconds(newBody); ok {
-							common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
-						}
-						logger.LogInfo(c, fmt.Sprintf(
-							"条件路由：提示词 %d 字符超过 %d，改派 %s → %s",
-							requestPromptRunes(body), promptRouteLimitRunes, sourceModel, secondsTarget))
-						// 规则五的第二段：豆包链路本身也不可用时继续降级到备胎。
-						// 计费原点同样是 sourceModel（客户最初请求的模型）。
-						if failRouted, _ := tryFailoverAfterDoubaoRoute(c, newBody, sourceModel); failRouted {
-							c.Next()
-							return
-						}
-						c.Next()
-						return
-					}
-				}
-			}
-		}
-
-		// ── 规则二（比例）：前三条都没命中才走这里 ──
+		// ── 规则二（比例）：前面几条都没命中才走这里 ──
 		//
 		// 目标模型按源模型取，与规则一/三同口径。
+		//
+		// 目标链路有两种形状，改写逻辑必须分开（2026-11-11）：
+		//   · wan3.0-720p-特惠（Wan3 官网 ch12）：入参契约与源链路同源，
+		//     换模型名 + 把比例落进 metadata.ratio 即可；
+		//   · wan3.0-720p-特惠-内链（心笔 ch25，480P 生成 + 720P 交付）：
+		//     兼容口只认顶层 reference_images[] / metadata.ratio / seconds，
+		//     必须复用特惠→心笔分流的准入检查与改写，否则参考图会被静默丢弃。
+		//
+		// 生产 9:16 配的是后者：直连心笔，不再经 Wan3 官网两跳。
 		ratioTarget := policy.RatioTargetModelFor(sourceModel)
 		if seedanceroute_setting.IsRatioRouteEnabledFor(sourceModel) {
 			if matchesTriggerRatio(body, policy.TriggerRatio) {
-				if newBody, routed := prepareWan3Route(c, body, policy, ratioTarget); routed {
-					if applyRewrittenBody(c, newBody, sourceModel) {
-						logger.LogInfo(c, fmt.Sprintf(
-							"条件路由：命中比例 %s，改派 %s → %s",
-							policy.TriggerRatio, sourceModel, ratioTarget))
-						c.Next()
-						return
-					}
+				var newBody map[string]interface{}
+				var routed bool
+				if isXinbiTehuiTarget(ratioTarget) {
+					newBody, _, routed = prepareTehuiXinbiRoute(c, body, ratioTarget)
+				} else {
+					newBody, routed = prepareWan3Route(c, body, policy, ratioTarget)
+				}
+				if routed && applyRewrittenBody(c, newBody, sourceModel) {
+					logger.LogInfo(c, fmt.Sprintf(
+						"条件路由：命中比例 %s，改派 %s → %s",
+						policy.TriggerRatio, sourceModel, ratioTarget))
+					c.Next()
+					return
 				}
 			}
 		}
@@ -363,18 +333,14 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 	}
 }
 
-// doubaoTargetModel 是规则一/规则四的公共目标模型（豆包按次链路）。
-//
-// 为什么用常量而不是直接写字符串：规则四会判断「目标是不是豆包链路」，
-// 只有豆包链路才吃不下超长提示词的心笔链路不需要 —— 这个判断必须
-// 与实际配置的公共目标一致，写死同一个常量才不会漂。
+// doubaoTargetModel 是规则一的目标模型（豆包按次链路）。
 const doubaoTargetModel = "seedance-2-5"
 
 // isDoubaoTarget 判断目标模型是不是豆包按次链路。
 //
-// 用途：规则四（提示词超长）只在目标是豆包时才生效。
-// 豆包的提示词上限是 20000 字符，源链路是 5000；心笔链路自己就吃 20000，
-// 超长提示词改派过去是多余的（而且会丢掉客户的其它参数）。
+// 唯一的使用方是链路后一道 Wan3PromptCompress：豆包吃 20000 字符，
+// 已经改派到豆包的长提示词不需要再压缩。规则四（超长改派豆包）删除后，
+// 条件路由本身不再调用它。
 func isDoubaoTarget(targetModel string) bool {
 	return trimSpace(targetModel) == doubaoTargetModel
 }
@@ -667,12 +633,10 @@ func trimSpace(value string) string {
 	return strings.TrimSpace(value)
 }
 
-// doubaoTargetUsable 是两条「改派到豆包」的规则（规则一 时长 / 规则四 提示词超长）
-// 共用的前置检查。
+// doubaoTargetUsable 是「规则一（时长）改派到豆包」的前置检查。
 //
-// 抽出来是为了让两条规则的准入条件**不可能走偏**：素材、分辨率、渠道可用性
-// 这三条与触发条件无关，是目标链路的固有约束。任何一条漏判，结果都是
-// 「请求被改写到一条跑不了的链路上」，比不改派更糟。
+// 素材、渠道可用性这两条与触发条件无关，是目标链路的固有约束。
+// 任何一条漏判，结果都是「请求被改写到一条跑不了的链路上」，比不改派更糟。
 func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel string) bool {
 	// 目标链路（豆包官网）只支持参考图。带参考视频/音频时不路由 ——
 	// 走源模型继续跑，而不是报错打断客户（老板 2026-10-30 定的口径）。
@@ -693,34 +657,6 @@ func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel
 	// Distribute 直接返回 503「当前分组下没有可用渠道」，客户撞错误。
 	// 预检之后这种请求会自然落回源链路（有赞），客户完全无感。
 	return channelAvailabilityProbe(c, targetModel)
-}
-
-// preparePromptRoute 组装「提示词超长」改派到豆包链路的请求体（规则四）。
-//
-// 触发原因：源链路（MegaAI 的 wan-3.0）提示词上限 5000 字符，超了上游必失败；
-// 目标链路（豆包 Seedance 2.5）能吃下更长的提示词。
-//
-// 与规则一的关键差别：**保留客户原本要的时长**。
-//   - 规则一命中后的秒数同样原样下发（2026-11-09 起不再吸附档位）；
-//   - 规则四的触发条件是提示词长度，与时长无关。客户要 10 秒就得给 10 秒，
-//     照抄旧写法会让 10 秒的请求变成 30 秒 —— 错交付 + 多收钱。
-//
-// 目标链路（豆包 2.5）接受任意正整数秒，因此不再需要四档白名单挡板：
-// 只要客户传的秒数 > 0 就原样透传。
-func preparePromptRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string) (map[string]interface{}, bool) {
-	if !doubaoTargetUsable(c, body, targetModel) {
-		return nil, false
-	}
-	seconds, ok := extractRequestSeconds(body)
-	if !ok {
-		// 没传时长时，源链路的默认值就是 5 秒（youzanwan3.defaultDuration），
-		// 与目标链路的默认档一致，可以直接用。
-		seconds = doubaoDefaultSeconds
-	}
-	if seconds <= 0 {
-		return nil, false
-	}
-	return rewriteBodyForDoubaoWithDuration(c, body, policy, targetModel, seconds)
 }
 
 // prepareWan3Route 组装「改派到 wan3.0-720p-特惠」的请求体。
@@ -1116,23 +1052,6 @@ func HasAvailableChannel(c *gin.Context, modelName string) bool {
 //
 // 任一能解析出值就返回它。**解析不出返回 ok=false** —— 调用方据此判定「不命中」，
 // 而不是当成某个默认值（不传时长时上游默认 5 秒，不是 30 秒，判定必须一致）。
-// requestPromptRunes 返回请求里提示词的字符数（rune），没有提示词时返回 0。
-//
-// 只看**顶层 prompt**：源链路（youzanwan3）读的就是 req.Prompt，
-// metadata 里放 prompt 的客户端本来就走不到那条链路，不需要猜。
-//
-// 先 TrimSpace 再算：目标链路（manwu）发给上游前会 strings.TrimSpace，
-// 首尾空白不会真的传上去。按未裁剪的长度判断，会让「5000 字符 + 几个换行」
-// 这种请求被误判成超长、白改派一趟。
-func requestPromptRunes(body map[string]interface{}) int {
-	prompt, ok := body["prompt"].(string)
-	if !ok {
-		return 0
-	}
-	return utf8.RuneCountInString(strings.TrimSpace(prompt))
-}
-
-// extractRequestSeconds 从请求里取出「生成时长」。
 func extractRequestSeconds(body map[string]interface{}) (int, bool) {
 	if seconds, ok := parseSecondsValue(body["duration"]); ok {
 		return seconds, true
