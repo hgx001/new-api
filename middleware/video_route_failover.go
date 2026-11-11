@@ -235,7 +235,9 @@ var failoverPassthroughFields = map[string]bool{
 // 源链路不可用但备胎也接不住时，客户看到的应该是源链路原本的错误
 // （比如「今日额度已用完」），而不是「路由失败」这种内部术语。
 func tryFailoverRoute(c *gin.Context, body map[string]interface{}, billingOriginModel string) (bool, string) {
-	if !seedanceroute_setting.IsFailoverRouteEnabled() {
+	// 豆包链路开关是唯一事实源：开关关闭时，规则五总开关也挡不住改派 ——
+	// 否则 seedance-2-5 会被留在已宣布关闭的豆包链路上（静默全挂）。
+	if !seedanceroute_setting.IsFailoverRouteEnabled() && !seedanceroute_setting.IsDoubaoLinkOff() {
 		return false, ""
 	}
 	modelName, _ := body["model"].(string)
@@ -471,6 +473,12 @@ func rewriteDoubaoBodyForFailover(
 // 静态判定（渠道状态）优先：渠道真被下线了，探针状态位多半还没写。
 // 动态判定（探针时间戳）兜底：渠道还活着但额度用完了。
 func sourceChainUnavailable(c *gin.Context, modelName string) (bool, string) {
+	// 豆包链路开关：运营人工宣布「豆包不可用」，先于渠道探测生效 ——
+	// 渠道可用也照样改派（开关是主动意图，不是故障推断）。
+	// 只对豆包模型生效：开关表达的是豆包通不通，不能殃及别的源链路。
+	if modelName == doubaoTargetModel && seedanceroute_setting.IsDoubaoLinkOff() {
+		return true, "豆包链路已关闭（凌晨 2 点自动恢复）"
+	}
 	// 用 channelAvailabilityProbe（而不是直接调 hasAvailableChannel），
 	// 这样单测替换一个变量就能分别控制「源链路可用」与「备胎可用」——
 	// 两者的组合是本规则的全部判定矩阵。

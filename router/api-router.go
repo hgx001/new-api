@@ -120,6 +120,11 @@ func SetApiRouter(router *gin.Engine) {
 			// 按源模型单独开关「按时长改派」（促销族里只停活动版用）。
 			videoRouteAdmin.POST("/policy/source-switch", controller.SetSourceSecondsRuleAdmin)
 
+			// 豆包链路开关（合并卡片）：一个开关 = 豆包通不通 ——
+			// 关闭同时停规则一（特惠/活动留常驻）并强制规则五（seedance-2-5 → 班车），
+			// 到下一个北京时间凌晨 2 点自动恢复。
+			videoRouteAdmin.POST("/policy/doubao-link", controller.SetDoubaoLinkAdmin)
+
 			// 规则五（故障转移）：源链路额度用完 / 渠道被关 → 改派到备胎。
 			//
 			// 与上面四个接口分开：规则五的触发源是**渠道状态**而不是请求特征，

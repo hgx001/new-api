@@ -257,6 +257,57 @@ func SetSourceSecondsRuleAdmin(c *gin.Context) {
 	common.ApiSuccess(c, doubaoRouteAdminState())
 }
 
+// doubaoLinkSwitchRequest 是豆包链路开关的请求体。
+type doubaoLinkSwitchRequest struct {
+	// Enabled true = 豆包可用（超时长请求改派豆包）；false = 豆包不可用。
+	//
+	// 用指针收：不传（nil）必须报错，不能默认成 false —— 少写一个字段
+	// 会把豆包链路静默关掉（与 sourceSwitchRequest 同款理由）。
+	Enabled *bool `json:"enabled"`
+}
+
+// SetDoubaoLinkAdmin 切换豆包链路开关 —— 运营唯一的豆包开关（一个开关 = 豆包通不通）。
+//
+//   - 关闭：规则一对所有源模型停用（特惠/活动留在常驻链路）+ 故障转移强制生效
+//     （seedance-2-5 全部改派班车），截止到下一个北京时间凌晨 2 点自动恢复 ——
+//     豆包额度按天在凌晨 2 点重置，到点开关自己弹回开启；
+//   - 开启：立即恢复，并清掉旧式人工标记（开关接管后是唯一事实源）。
+//
+// 额度探针的 auto 标记/自动暂停保留：人工开关不能覆盖真实额度状态。
+func SetDoubaoLinkAdmin(c *gin.Context) {
+	var req doubaoLinkSwitchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "enabled is required",
+		})
+		return
+	}
+
+	policy := seedanceroute_setting.WithDoubaoLinkEnabled(*req.Enabled)
+	if err := saveRoutePolicy(policy); err != nil {
+		common.SysLog("update doubao link switch failed: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to save route policy",
+		})
+		return
+	}
+
+	recordManageAudit(c, "video_route.doubao_link_switch", map[string]interface{}{
+		"enabled":               *req.Enabled,
+		"doubao_link_off_until": policy.DoubaoLinkOffUntil,
+	})
+	common.ApiSuccess(c, doubaoRouteAdminState())
+}
+
 // doubaoRouteState 是给客户端看的当前状态。
 //
 // 字段命名刻意直白：客户端要用 paused 决定按钮显示「已暂停/暂停」，
@@ -298,6 +349,12 @@ func doubaoRouteAdminState() gin.H {
 	// 按源模型的改派开关：运营要知道「现在哪个模型被单独关掉了」。
 	// 只给公共 target_model 不够 —— 两个源模型的目标可以不同。
 	state["source_switches"] = seedanceroute_setting.SourceSwitchStates()
+	// 豆包链路开关：合并卡片要显示「开/关」与「关到几点自动恢复」。
+	state["doubao_link_off"] = seedanceroute_setting.IsDoubaoLinkOff()
+	state["doubao_link_off_until"] = policy.DoubaoLinkOffUntil
+	if policy.DoubaoLinkOffUntil > 0 {
+		state["doubao_link_off_until_text"] = time.Unix(policy.DoubaoLinkOffUntil, 0).In(beijingZone).Format("2006-01-02 15:04:05")
+	}
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }

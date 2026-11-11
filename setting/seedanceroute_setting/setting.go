@@ -132,6 +132,13 @@ type Policy struct {
 	// FailoverTargetModel 是故障转移的目标模型名（备胎，如 wan3.0-班车）。空 = 规则五不启用。
 	FailoverTargetModel string `json:"failover_target_model,omitempty"`
 
+	// DoubaoLinkOffUntil 是豆包链路开关的关闭截止时间（Unix 秒）。
+	// >0 且未到点 = 运营手动关闭了豆包链路（一个开关表达「豆包通不通」）：
+	// 规则一对所有源模型停用（特惠/活动留在常驻链路）、故障转移强制判定源
+	// 链路不可用（seedance-2-5 全部改派班车）。截止时间取下一个北京时间
+	// 凌晨 2 点（豆包额度重置点），到点自动恢复为开启。0 = 开关开启。
+	DoubaoLinkOffUntil int64 `json:"doubao_link_off_until,omitempty"`
+
 	// FailoverEnabled 规则五的总开关。默认 false（不改派）。
 	//
 	// 用三态指针还是 bool：这里用 bool 即可，理由与 SecondsRuleEnabled 不同 ——
@@ -567,6 +574,12 @@ func IsFramesRouteEnabled() bool {
 func IsAnyRouteEnabled() bool {
 	mu.RLock()
 	defer mu.RUnlock()
+	// 豆包链路开关关闭本身就是路由依据（规则五必须改派 seedance-2-5 → 班车）：
+	// 它不能被其它规则的就绪状态短路掉 —— 否则「开关关了 + 规则五总开关被关」
+	// 会让中间件早退，豆包被留在已宣布关闭的链路上静默全挂。
+	if doubaoLinkOff(current, nowUnix()) {
+		return true
+	}
 	if secondsRuleActive(current, nowUnix()) ||
 		ratioRuleReady(current) ||
 		framesRuleReady(current) ||
@@ -683,6 +696,55 @@ func WithFailoverUnavailable(until int64, reason string) Policy {
 		out.FailoverUnavailableSource = ""
 	}
 	return out
+}
+
+// WithDoubaoLinkEnabled 返回「把豆包链路开关设成 enabled」的策略副本。
+//
+// 这是运营唯一的豆包开关语义（一个开关 = 豆包通不通）：
+//
+//   - 关闭（enabled=false）：DoubaoLinkOffUntil 取下一个北京时间凌晨 2 点
+//     （豆包额度重置点，与额度探针同口径）到点自动恢复；同时强制打开规则五
+//     总开关 —— 否则 seedance-2-5 会被规则五的开关闸门挡下、改派不了班车。
+//   - 开启（enabled=true）：清除截止时间。
+//
+// 两个方向都会清掉旧式**人工**标记与**人工**暂停：开关接管后它们不再是
+// 事实源，残留的远期人工标记会在凌晨 2 点把链路重新按死（自动恢复失效）。
+// 额度探针写的 auto 标记/自动暂停**保留** —— 人工意图不能覆盖真实额度状态。
+func WithDoubaoLinkEnabled(enabled bool) Policy {
+	mu.RLock()
+	out := clonePolicy(current)
+	mu.RUnlock()
+	now := nowUnix()
+	if enabled {
+		out.DoubaoLinkOffUntil = 0
+	} else {
+		out.DoubaoLinkOffUntil = NextBeijingQuotaReset(now)
+		out.FailoverEnabled = true
+	}
+	if out.FailoverUnavailableSource == PauseSourceManual {
+		out.FailoverUnavailableUntil = 0
+		out.FailoverUnavailableReason = ""
+		out.FailoverUnavailableSource = ""
+	}
+	if out.PauseSource == PauseSourceManual {
+		out.SecondsRulePausedUntil = 0
+		out.PauseSource = ""
+		out.PauseReason = ""
+	}
+	out.UpdatedAt = now
+	return out
+}
+
+// IsDoubaoLinkOff 判断豆包链路开关当前是否处于关闭状态（到点自动恢复）。
+func IsDoubaoLinkOff() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return doubaoLinkOff(current, nowUnix())
+}
+
+// doubaoLinkOff = 截止时间存在且未到点（到期即自动恢复，等价于开关打开）。
+func doubaoLinkOff(p Policy, now int64) bool {
+	return p.DoubaoLinkOffUntil > now
 }
 
 // WithManualFailoverUnavailable 返回「人工把源链路标记为不可用直到 until」的策略副本。
@@ -945,14 +1007,14 @@ func secondsRulePaused(p Policy, now int64) bool {
 	return p.SecondsRulePausedUntil > now
 }
 
-// secondsRuleActive = 配全了 且 不在暂停期。
+// secondsRuleActive = 配全了 且 不在暂停期 且 豆包链路开着。
 func secondsRuleActive(p Policy, now int64) bool {
-	return secondsRuleReady(p) && !secondsRulePaused(p, now)
+	return secondsRuleReady(p) && !secondsRulePaused(p, now) && !doubaoLinkOff(p, now)
 }
 
-// secondsRuleActiveFor = 对某个源模型配全了 且 不在暂停期。
+// secondsRuleActiveFor = 对某个源模型配全了 且 不在暂停期 且 豆包链路开着。
 func secondsRuleActiveFor(p Policy, sourceModel string, now int64) bool {
-	return secondsRuleReadyFor(p, sourceModel) && !secondsRulePaused(p, now)
+	return secondsRuleReadyFor(p, sourceModel) && !secondsRulePaused(p, now) && !doubaoLinkOff(p, now)
 }
 
 // nowUnix 是当前时间的 Unix 秒。

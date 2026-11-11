@@ -55,6 +55,14 @@ export type VideoRoutePolicy = {
   trigger_ratio: string
   frames_target_model: string
   updated_at: number
+  /**
+   * 豆包链路开关：true = 运营关闭了豆包（规则一停用 + 故障转移强制生效），
+   * 到 doubao_link_off_until（下一个北京时间凌晨 2 点，豆包额度重置点）自动恢复。
+   */
+  doubao_link_off: boolean
+  doubao_link_off_until: number
+  /** 自动恢复时间文案（北京时间，仅关闭时返回）。 */
+  doubao_link_off_until_text?: string
 }
 
 /**
@@ -96,20 +104,6 @@ export async function getVideoRouteFailover(): Promise<VideoRouteFailoverState> 
   return res.data.data
 }
 
-/**
- * 启停规则五（故障转移）。
- *
- * 开启要求源/目标模型都已配置 —— 否则改派会把请求写成一个空模型名。
- */
-export async function setVideoRouteFailoverEnabled(
-  enabled: boolean
-): Promise<VideoRouteFailoverState> {
-  const res = await api.post('/api/video-route/policy/failover/switch', {
-    enabled,
-  })
-  return res.data.data
-}
-
 /** 配置规则五的源/目标模型（一次性配置，与开关分开）。 */
 export async function setVideoRouteFailoverModels(
   sourceModel: string,
@@ -123,49 +117,9 @@ export async function setVideoRouteFailoverModels(
 }
 
 /**
- * 人工把源链路标记为不可用。
- *
- * until 省略 = 北京时间凌晨 2 点（上游日额度的真实重置点，对应「今天额度用完了」）。
- * 与额度探针的自动标记分开：人工标记不会被一次成功自动解除。
- */
-export async function markVideoRouteFailoverUnavailable(
-  until?: number,
-  reason?: string
-): Promise<VideoRouteFailoverState> {
-  const res = await api.post('/api/video-route/policy/failover/unavailable', {
-    until: until ?? 0,
-    reason: reason ?? '',
-  })
-  return res.data.data
-}
-
-/** 人工解除「源链路不可用」标记（不动开关）。 */
-export async function clearVideoRouteFailoverUnavailable(): Promise<VideoRouteFailoverState> {
-  const res = await api.post('/api/video-route/policy/failover/available', {})
-  return res.data.data
-}
-
-/**
- * 暂停「按时长改派」这条规则。
- *
- * until 省略 = 北京时间凌晨 2 点（上游日额度的真实重置点，
- * 对应「今天额度用完了」这个最常见的场景）。
- */
-export async function pauseVideoRoute(
-  until?: number
-): Promise<VideoRoutePolicy> {
-  const res = await api.post(
-    '/api/video-route/policy/pause',
-    until ? { until } : {}
-  )
-  return res.data.data
-}
-
-/**
  * 单独开关某个源模型的「按时长改派」。
  *
- * 全局暂停（pauseVideoRoute）优先级更高：豆包真没额度时，
- * 把单个模型打开也跑不通。
+ * 全局暂停优先级更高：豆包真没额度时，把单个模型打开也跑不通。
  */
 export async function setSourceSecondsRule(
   sourceModel: string,
@@ -178,7 +132,19 @@ export async function setSourceSecondsRule(
   return res.data.data
 }
 
-export async function resumeVideoRoute(): Promise<VideoRoutePolicy> {
-  const res = await api.post('/api/video-route/policy/resume', {})
+/**
+ * 切换豆包链路开关 —— 运营唯一的豆包开关（一个开关 = 豆包通不通）。
+ *
+ * 关闭：超时长请求留在常驻链路（特惠→有赞、活动→心笔）、seedance-2-5
+ * 全部改派备胎（wan3.0-班车），到下一个北京时间凌晨 2 点自动恢复；
+ * 开启：立即恢复，并清掉旧式人工标记（开关是唯一事实源）。
+ * 额度探针的自动标记保留 —— 人工开关不能覆盖真实额度状态。
+ */
+export async function setDoubaoLinkEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/doubao-link', {
+    enabled,
+  })
   return res.data.data
 }

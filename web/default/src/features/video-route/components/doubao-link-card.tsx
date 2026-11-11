@@ -21,47 +21,53 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 
 import {
+  getVideoRouteFailover,
   getVideoRoutePolicy,
-  pauseVideoRoute,
-  resumeVideoRoute,
+  setDoubaoLinkEnabled,
+  type VideoRouteFailoverState,
   type VideoRoutePolicy,
 } from '../api'
-import { buildSwitchView, LONG_OFF_SECONDS } from '../lib/switch-view'
+import { buildDoubaoLinkView } from '../lib/doubao-link-view'
 
-type RouteSwitchCardProps = {
+type DoubaoLinkCardProps = {
   /**
    * 当前渠道绑定的模型（逗号分隔）。
    *
-   * 改派只跟承载**目标模型**的渠道有关：渠道 20 上还挂着另外 7 个与豆包
-   * 无关的模型，在它们的抽屉里显示这个开关会让人以为按了会停掉整条渠道。
+   * 开关只跟承载 seedance-2-5 的渠道有关：漫屋渠道上还挂着另外 7 个与
+   * 豆包无关的模型，在它们的抽屉里显示这个开关会让人以为按了会停掉
+   * 整条渠道。
    */
   channelModels: string
 }
 
-type BusyKind = 'toggle' | 'longOff' | null
-
 /**
- * 「跨模型改派」开关。
+ * 「豆包链路」开关 —— 一个开关 = 豆包通不通。
  *
- * 主控件就是一个开关，不是三个按钮 —— 之前做成「暂停到今天结束 / 暂停到
- * 指定时间」，运营找不到「关」在哪。开关背后仍然是「暂停到某个时刻」，
- * 只是默认值取今天结束，把「什么时候自己恢复」写在状态行里，既好按，
- * 又不会关掉之后没人记得开。
+ * 合并自两张卡（跨模型改派 + 故障转移）：运营要的其实是一个事实 ——
+ * 豆包这条路通不通。开着：超时长请求改派豆包、额度用完自动降级班车；
+ * 关着：特惠/活动留在常驻链路、seedance-2-5 全部改派班车，到下一个
+ * 北京凌晨 2 点（豆包额度重置点）自动恢复。附属按钮全部去掉 ——
+ * 恢复就是把开关拨回来，一个动作。
  */
-export function RouteSwitchCard({ channelModels }: RouteSwitchCardProps) {
+export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
   const { t } = useTranslation()
   const [policy, setPolicy] = useState<VideoRoutePolicy | null>(null)
+  const [failover, setFailover] = useState<VideoRouteFailoverState | null>(null)
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState<BusyKind>(null)
+  const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      setPolicy(await getVideoRoutePolicy())
+      const [nextPolicy, nextFailover] = await Promise.all([
+        getVideoRoutePolicy(),
+        getVideoRouteFailover(),
+      ])
+      setPolicy(nextPolicy)
+      setFailover(nextFailover)
     } catch {
       // 拉不到就不显示这张卡：与其显示一个不知道状态的开关，不如不显示。
       setPolicy(null)
@@ -84,78 +90,59 @@ export function RouteSwitchCard({ channelModels }: RouteSwitchCardProps) {
       .includes(targetModel)
   }, [channelModels, targetModel])
 
-  const applyPolicy = useCallback(
-    async (
-      kind: BusyKind,
-      action: () => Promise<VideoRoutePolicy>,
-      successText: string
-    ) => {
-      setBusy(kind)
+  const handleToggle = useCallback(
+    async (nextOn: boolean) => {
+      setBusy(true)
       try {
-        setPolicy(await action())
-        toast.success(successText)
+        setPolicy(await setDoubaoLinkEnabled(nextOn))
+        // 故障转移状态跟着开关变（旧式人工标记会被清掉），顺手刷新。
+        setFailover(await getVideoRouteFailover())
+        toast.success(t(nextOn ? 'Doubao link is on' : 'Doubao link is off'))
       } catch (error) {
         toast.error(
           (error as { response?: { data?: { message?: string } } })?.response
             ?.data?.message ?? t('Failed to update routing policy')
         )
       } finally {
-        setBusy(null)
+        setBusy(false)
       }
     },
     [t]
   )
 
-  const handleToggle = useCallback(
-    (nextOn: boolean) => {
-      if (nextOn) {
-        void applyPolicy('toggle', () => resumeVideoRoute(), t('Routing is on'))
-        return
-      }
-      // 关掉 = 暂停到额度重置点（北京时间凌晨 2 点），到点自动接回。
-      void applyPolicy('toggle', () => pauseVideoRoute(), t('Routing is off'))
-    },
-    [applyPolicy, t]
-  )
-
-  const handleLongOff = useCallback(() => {
-    const until = Math.floor(Date.now() / 1000) + LONG_OFF_SECONDS
-    void applyPolicy(
-      'longOff',
-      () => pauseVideoRoute(until),
-      t('Routing is off for 30 days')
-    )
-  }, [applyPolicy, t])
-
   if (loading || !policy || !isRelevant) {
     return null
   }
 
-  const view = buildSwitchView(policy)
-  const busyNow = busy !== null
+  const view = buildDoubaoLinkView(policy, failover)
+  const toneClasses: Record<typeof view.tone, string> = {
+    on: 'border-emerald-500/40 bg-emerald-500/[0.05]',
+    off: 'border-amber-500/50 bg-amber-500/[0.07]',
+    degraded: 'border-sky-500/40 bg-sky-500/[0.05]',
+  }
+  const toneText: Record<typeof view.tone, string> = {
+    on: 'text-emerald-600',
+    off: 'text-amber-600',
+    degraded: 'text-sky-600',
+  }
 
   return (
     <div
       className={cn(
         'rounded-lg border p-3 transition-colors',
-        view.on
-          ? 'border-emerald-500/40 bg-emerald-500/[0.05]'
-          : 'border-amber-500/50 bg-amber-500/[0.07]'
+        toneClasses[view.tone]
       )}
     >
       <div className='flex items-start justify-between gap-4'>
         <div className='flex min-w-0 items-start gap-2'>
           <span
-            className={cn(
-              'mt-0.5 shrink-0',
-              view.on ? 'text-emerald-600' : 'text-amber-600'
-            )}
+            className={cn('mt-0.5 shrink-0', toneText[view.tone])}
           >
             <Route className='h-4 w-4' />
           </span>
           <div className='min-w-0'>
             <h4 className='text-foreground text-sm font-semibold'>
-              {t('Cross-model routing')}
+              {t('Doubao link')}
             </h4>
             <p className='text-muted-foreground mt-0.5 text-xs leading-relaxed'>
               {t(view.detailKey, view.detailParams)}
@@ -167,58 +154,35 @@ export function RouteSwitchCard({ channelModels }: RouteSwitchCardProps) {
           <span
             className={cn(
               'text-xs font-semibold whitespace-nowrap',
-              view.on ? 'text-emerald-600' : 'text-amber-600'
+              toneText[view.tone]
             )}
           >
             {t(view.statusKey)}
           </span>
           <Switch
             checked={view.on}
-            disabled={busyNow}
+            disabled={busy}
             onCheckedChange={handleToggle}
             // 默认的 data-checked 跟随主题 primary（亮色下是黑的），
-            // 在一个绿色卡片里看着像「没开」。这里强制绿/灰两色。
+            // 在一个彩色卡片里看着像「没开」。这里强制绿/灰两色。
             className='h-6! w-11! data-checked:bg-emerald-600! data-[size=default]:h-6! data-[size=default]:w-11!'
-            aria-label={t('Cross-model routing')}
+            aria-label={t('Doubao link')}
           />
-          {busyNow ? (
+          {busy ? (
             <Loader2 className='text-muted-foreground h-3.5 w-3.5 animate-spin' />
           ) : null}
         </div>
       </div>
 
-      {!view.on ? (
-        <div className='mt-2 flex flex-wrap items-center gap-2'>
-          <Button
-            type='button'
-            size='sm'
-            variant='outline'
-            disabled={busyNow}
-            onClick={() => handleToggle(true)}
-          >
-            {t('Turn on now')}
-          </Button>
-          {view.showLongOff ? (
-            <Button
-              type='button'
-              size='sm'
-              variant='ghost'
-              disabled={busyNow}
-              onClick={handleLongOff}
-            >
-              {busy === 'longOff' ? (
-                <Loader2 className='mr-1.5 h-3.5 w-3.5 animate-spin' />
-              ) : null}
-              {t('Keep it off for 30 days')}
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
-
       {/* 抽屉是表单，保存才生效；这个开关是即时 POST。不写清楚，
           运营按完开关会再去找保存按钮。 */}
       <p className='text-muted-foreground mt-2 text-[11px]'>
         {t('Takes effect immediately. No need to save.')}
+      </p>
+      <p className='text-muted-foreground mt-1 text-[11px]'>
+        {t(
+          'Pricing is unchanged: customers are still billed for the model they requested.'
+        )}
       </p>
     </div>
   )
