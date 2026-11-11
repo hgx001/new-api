@@ -137,6 +137,15 @@ const (
 	maxReferenceAudios = 5
 	maxTotalMedia      = 20
 
+	// minReferenceImageShortSide 是参考图短边下限（px）。
+	//
+	// 2026-11-11 真机实测（同一张图只改尺寸，2 秒任务）：
+	//	204×360 / 230×406 → MEDIA_IMAGE_INVALID（上游文案却写「图片无法读取或格式不支持」）
+	//	240×424 / 255×450 / 306×540 / 408×720 → 成功出片
+	// 上游真实下限约在短边 230~240，但规则不透明、报错还会误导成格式问题；
+	// 且这种尺寸放大到 720P 交付本身就是糊的，故本地直接按交付档 720 拦截。
+	minReferenceImageShortSide = 720
+
 	// maxReferenceVideoSeconds 是单条参考视频的时长上限（秒）。
 	//
 	// 2026-10-31 12:24 起上游开始明确拒绝超长参考素材，原文：

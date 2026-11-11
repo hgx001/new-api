@@ -23,10 +23,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func onePixelPNG(t *testing.T) string {
+// referenceImagePNG 生成一张达到本地最小尺寸（短边 720）的参考图。
+// 尺寸校验见 flattenImage：过小的图会在本地被拒，这里只关心协议字段。
+func referenceImagePNG(t *testing.T) string {
 	t.Helper()
 	var buffer bytes.Buffer
-	img := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	img := image.NewRGBA(image.Rect(0, 0, 720, 1280))
 	img.Set(0, 0, color.RGBA{R: 255, A: 255})
 	require.NoError(t, png.Encode(&buffer, img))
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buffer.Bytes())
@@ -66,7 +68,7 @@ func TestBuildRequestBodyUsesV1AssetsAndMediaArray(t *testing.T) {
 		Model:  "wan3.0-smart",
 		Prompt: "城市夜景缓慢推进",
 		Media: []relaycommon.TaskMedia{
-			{Type: "reference_image", URL: onePixelPNG(t)},
+			{Type: "reference_image", URL: referenceImagePNG(t)},
 			{Type: "reference_audio", URL: "data:audio/mpeg;base64," + base64.StdEncoding.EncodeToString([]byte("audio"))},
 		},
 		Duration:   2,
