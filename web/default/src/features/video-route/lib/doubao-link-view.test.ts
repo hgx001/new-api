@@ -141,4 +141,19 @@ describe('buildDoubaoLinkView', () => {
     assert.equal(view.tone, 'off')
     assert.equal(view.quotaDown, false)
   })
+
+  // 备胎模型没配置时，关闭开关无法兑现「seedance-2-5 改派备胎」的承诺
+  // （后端 target 为空直接放行回豆包）—— 视图必须把这件事暴露给卡片去禁用开关。
+  test('备胎未配置：fallbackReady=false，卡片据此禁用开关', () => {
+    const view = buildDoubaoLinkView(
+      policy(),
+      failover({ failover_configured: false, failover_target_model: '' })
+    )
+    assert.equal(view.fallbackReady, false)
+  })
+
+  test('备胎已配置时 fallbackReady=true；状态整体缺失时也不放行', () => {
+    assert.equal(buildDoubaoLinkView(policy(), failover()).fallbackReady, true)
+    assert.equal(buildDoubaoLinkView(policy(), null).fallbackReady, false)
+  })
 })

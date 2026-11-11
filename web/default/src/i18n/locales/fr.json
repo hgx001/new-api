@@ -5379,6 +5379,7 @@
     "Failover is on": "Activé",
     "Failover armed": "Prêt",
     "Failover active": "En cours",
+    "Reroute models are not configured ({{source}} → {{target}}); the switch stays disabled until an admin sets them": "Modèles de redirection non configurés ({{source}} → {{target}}) ; l’interrupteur reste désactivé jusqu’à ce qu’un administrateur les définisse",
     "Set the source and backup models before enabling failover ({{source}} → {{target}})": "Définissez les modèles source et de secours avant d’activer la bascule ({{source}} → {{target}})",
     "Source {{source}} is down ({{reason}}), but failover is off": "La source {{source}} est indisponible ({{reason}}), mais la bascule est désactivée",
     "When {{source}} is down, requests are routed to {{target}}": "Quand {{source}} est indisponible, les requêtes sont routées vers {{target}}",

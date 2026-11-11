@@ -5379,6 +5379,7 @@
     "Failover is on": "Bật",
     "Failover armed": "Sẵn sàng",
     "Failover active": "Đang hoạt động",
+    "Reroute models are not configured ({{source}} → {{target}}); the switch stays disabled until an admin sets them": "Chưa cấu hình mô hình chuyển hướng ({{source}} → {{target}}); công tắc vẫn bị tắt cho đến khi quản trị viên thiết lập",
     "Set the source and backup models before enabling failover ({{source}} → {{target}})": "Hãy đặt mô hình nguồn và dự phòng trước khi bật tuyến dự phòng ({{source}} → {{target}})",
     "Source {{source}} is down ({{reason}}), but failover is off": "Nguồn {{source}} không dùng được ({{reason}}), nhưng tuyến dự phòng đang tắt",
     "When {{source}} is down, requests are routed to {{target}}": "Khi {{source}} không dùng được, các yêu cầu sẽ đổi sang {{target}}",

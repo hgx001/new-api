@@ -5379,6 +5379,7 @@
     "Failover is on": "已开启",
     "Failover armed": "待命",
     "Failover active": "已生效",
+    "Reroute models are not configured ({{source}} → {{target}}); the switch stays disabled until an admin sets them": "改派模型未配置（{{source}} → {{target}}），管理员在路由策略中设置后开关才可使用",
     "Set the source and backup models before enabling failover ({{source}} → {{target}})": "请先配置源模型与备胎模型再开启故障转移（{{source}} → {{target}}）",
     "Source {{source}} is down ({{reason}}), but failover is off": "源链路 {{source}} 已不可用（{{reason}}），但故障转移处于关闭状态",
     "When {{source}} is down, requests are routed to {{target}}": "当 {{source}} 不可用时，请求改派到 {{target}}",

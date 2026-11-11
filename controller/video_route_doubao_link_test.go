@@ -1,10 +1,12 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -56,4 +58,18 @@ func TestSetDoubaoLinkAdminRejectsMissingEnabled(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 	assert.Contains(t, recorder.Body.String(), `"success":false`)
 	assert.Contains(t, recorder.Body.String(), "enabled")
+}
+
+// 自动恢复后（until 已过期）：doubao_link_off 已回到 false，恢复时间文案必须
+// 一并收起 —— api.ts 约定该字段「仅关闭时返回」，过期时间还挂着就是自相矛盾
+// 的状态（off=false 却带着"关到几点"）。
+func TestDoubaoRouteAdminStateHidesExpiredUntilText(t *testing.T) {
+	withAdminRoutePolicy(t, fmt.Sprintf(
+		`{"enabled":true,"doubao_link_off_until":%d}`, time.Now().Unix()-60))
+
+	state := doubaoRouteAdminState()
+
+	assert.Equal(t, false, state["doubao_link_off"])
+	_, present := state["doubao_link_off_until_text"]
+	assert.False(t, present, "已自动恢复的状态不该再返回恢复时间文案")
 }

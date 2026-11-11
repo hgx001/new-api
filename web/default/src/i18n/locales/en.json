@@ -5379,6 +5379,7 @@
     "Failover is on": "On",
     "Failover armed": "Armed",
     "Failover active": "Active",
+    "Reroute models are not configured ({{source}} → {{target}}); the switch stays disabled until an admin sets them": "Reroute models are not configured ({{source}} → {{target}}); the switch stays disabled until an admin sets them",
     "Set the source and backup models before enabling failover ({{source}} → {{target}})": "Set the source and backup models before enabling failover ({{source}} → {{target}})",
     "Source {{source}} is down ({{reason}}), but failover is off": "Source {{source}} is down ({{reason}}), but failover is off",
     "When {{source}} is down, requests are routed to {{target}}": "When {{source}} is down, requests are routed to {{target}}",

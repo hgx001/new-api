@@ -350,9 +350,12 @@ func doubaoRouteAdminState() gin.H {
 	// 只给公共 target_model 不够 —— 两个源模型的目标可以不同。
 	state["source_switches"] = seedanceroute_setting.SourceSwitchStates()
 	// 豆包链路开关：合并卡片要显示「开/关」与「关到几点自动恢复」。
-	state["doubao_link_off"] = seedanceroute_setting.IsDoubaoLinkOff()
+	off := seedanceroute_setting.IsDoubaoLinkOff()
+	state["doubao_link_off"] = off
 	state["doubao_link_off_until"] = policy.DoubaoLinkOffUntil
-	if policy.DoubaoLinkOffUntil > 0 {
+	// 文案只在关闭期间返回（前端契约「仅关闭时返回」）：到期自动恢复只做时间
+	// 比较、不会清零 until，过点后若还返回"关到几点"就是自相矛盾的状态。
+	if off {
 		state["doubao_link_off_until_text"] = time.Unix(policy.DoubaoLinkOffUntil, 0).In(beijingZone).Format("2006-01-02 15:04:05")
 	}
 	state["updated_at"] = policy.UpdatedAt

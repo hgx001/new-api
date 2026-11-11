@@ -95,9 +95,15 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
       setBusy(true)
       try {
         setPolicy(await setDoubaoLinkEnabled(nextOn))
-        // 故障转移状态跟着开关变（旧式人工标记会被清掉），顺手刷新。
-        setFailover(await getVideoRouteFailover())
         toast.success(t(nextOn ? 'Doubao link is on' : 'Doubao link is off'))
+        // 故障转移状态跟着开关变（旧式人工标记会被清掉），顺手刷新。
+        // 开关已生效，刷新失败只是少更新一格降级状态 —— 与主操作分开
+        // try，避免"操作成功却弹错误提示"误导运营重复操作。
+        try {
+          setFailover(await getVideoRouteFailover())
+        } catch {
+          // 保留上一次拉到的状态即可。
+        }
       } catch (error) {
         toast.error(
           (error as { response?: { data?: { message?: string } } })?.response
@@ -161,7 +167,9 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
           </span>
           <Switch
             checked={view.on}
-            disabled={busy}
+            // 备胎没配置时关闭开关，seedance-2-5 会静默放行回豆包（改派承诺
+            // 落空），此时禁用开关并给配置提示，不给"关了也没用"的机会。
+            disabled={busy || !view.fallbackReady}
             onCheckedChange={handleToggle}
             // 默认的 data-checked 跟随主题 primary（亮色下是黑的），
             // 在一个彩色卡片里看着像「没开」。这里强制绿/灰两色。
@@ -184,6 +192,19 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
           'Pricing is unchanged: customers are still billed for the model they requested.'
         )}
       </p>
+      {!view.fallbackReady ? (
+        // 陈述事实而非指向 UI 中不存在的入口：改派模型只能由管理员在路由
+        // 策略里配置，这个抽屉里没有配置界面。
+        <p className='mt-1 text-[11px] text-amber-600'>
+          {t(
+            'Reroute models are not configured ({{source}} → {{target}}); the switch stays disabled until an admin sets them',
+            {
+              source: failover?.failover_source_model || policy.source_model,
+              target: failover?.failover_target_model || '',
+            }
+          )}
+        </p>
+      ) : null}
     </div>
   )
 }

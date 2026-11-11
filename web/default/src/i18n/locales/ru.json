@@ -5379,6 +5379,7 @@
     "Failover is on": "Включено",
     "Failover armed": "Готово",
     "Failover active": "Активно",
+    "Reroute models are not configured ({{source}} → {{target}}); the switch stays disabled until an admin sets them": "Модели перенаправления не настроены ({{source}} → {{target}}); переключатель остаётся отключённым, пока администратор их не задаст",
     "Set the source and backup models before enabling failover ({{source}} → {{target}})": "Укажите источник и резервную модель, прежде чем включить аварийный переключатель ({{source}} → {{target}})",
     "Source {{source}} is down ({{reason}}), but failover is off": "Источник {{source}} недоступен ({{reason}}), но аварийный переключатель отключён",
     "When {{source}} is down, requests are routed to {{target}}": "Когда {{source}} недоступен, запросы перенаправляются на {{target}}",

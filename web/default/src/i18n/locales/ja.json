@@ -5379,6 +5379,7 @@
     "Failover is on": "有効",
     "Failover armed": "待機",
     "Failover active": "適用中",
+    "Reroute models are not configured ({{source}} → {{target}}); the switch stays disabled until an admin sets them": "振り替えモデルが未設定です（{{source}} → {{target}}）。管理者が設定するまでスイッチは無効のままです",
     "Set the source and backup models before enabling failover ({{source}} → {{target}})": "フェイルオーバーを有効にする前に、ソースモデルとバックアップモデルを設定してください（{{source}} → {{target}}）",
     "Source {{source}} is down ({{reason}}), but failover is off": "ソース {{source}} は利用不可（{{reason}}）ですが、フェイルオーバーは無効です",
     "When {{source}} is down, requests are routed to {{target}}": "{{source}} が利用不可のとき、リクエストは {{target}} へバートされます",

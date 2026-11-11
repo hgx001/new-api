@@ -40,6 +40,13 @@ export type DoubaoLinkView = {
   detailParams: Record<string, string | number>
   /** 开着但源链路被判定不可用（额度耗尽等，自动降级中）。 */
   quotaDown: boolean
+  /**
+   * 备胎链路是否已配置齐全（源/目标模型都在）。
+   *
+   * 关闭开关承诺「seedance-2-5 改派备胎」，备胎没配置时后端会直接放行
+   * 原请求（仍打已宣布关闭的豆包）—— 卡片必须据此禁用开关，否则承诺落空。
+   */
+  fallbackReady: boolean
 }
 
 /** 源模型清单：按源开关列表取，回落到单值字段。 */
@@ -59,6 +66,8 @@ export function buildDoubaoLinkView(
 ): DoubaoLinkView {
   const backup = failover?.failover_target_model ?? ''
   const sources = sourceList(policy)
+  // 备胎链路配置齐全（failover_configured = 源+目标都在）才谈得上"关闭后改派备胎"。
+  const fallbackReady = Boolean(failover?.failover_configured)
 
   // 关闭态优先：开关是运营的主动意图，先于任何自动判断展示。
   if (policy.doubao_link_off) {
@@ -77,6 +86,7 @@ export function buildDoubaoLinkView(
         sources,
       },
       quotaDown: false,
+      fallbackReady,
     }
   }
 
@@ -93,6 +103,7 @@ export function buildDoubaoLinkView(
         reason: failover.failover_unavailable_reason,
       },
       quotaDown: true,
+      fallbackReady,
     }
   }
 
@@ -108,5 +119,6 @@ export function buildDoubaoLinkView(
       backup,
     },
     quotaDown: false,
+    fallbackReady,
   }
 }
