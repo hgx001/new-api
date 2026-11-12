@@ -89,7 +89,7 @@ func RouteOriginModel(c *gin.Context) string {
 //
 //	规则五（故障转移）：seedance-2-5 源链路不可用 → 备胎（最优先，独立字段判定）
 //	规则三（首尾帧）：  源模型 + media 含 first_frame/last_frame → frames_target_model
-//	规则一（时长）：    源模型 + 时长 > 阈值（生产 20 秒）→ target_model（豆包按次）
+//	规则一（时长）：    源模型 + 时长 > 阈值（生产 20 秒）→ target_model（seedance-2-5 按次）
 //	规则二（比例）：    源模型 + 命中 trigger_ratio → ratio_target_model
 //	                    生产配 9:16 → wan3.0-720p-特惠-内链（心笔 480P 链路，ch25）
 //
@@ -99,9 +99,11 @@ func RouteOriginModel(c *gin.Context) string {
 // 「改派豆包」与「留在源链路压缩」之间漂移。删掉后长提示词**不再触发任何改派**。
 //
 // 规则三为什么排最前：源链路 youzan wan3 **已彻底不收首尾帧**（2026-10-28 上游
-// 取消 firstFrameAssetId/lastFrameAssetId），而规则一的目标（漫屋）也不支持首尾帧。
+// 取消 firstFrameAssetId/lastFrameAssetId），而规则一的改写也只搬参考图、
+// 不搬运首尾帧语义（首尾帧被降级成参考图 —— 拿到的不是客户要的首尾帧成片）。
 // 「带首尾帧」的请求只有 wan3 直连能跑 —— 这是能力约束，优先级高于时长/比例的
-// 成本优化。排在规则一之后就漏了「30 秒 + 首尾帧」这个组合（会被改派到漫屋必挂）。
+// 成本优化。排在规则一之后就漏了「30 秒 + 首尾帧」这个组合（会被规则一改写、
+// 丢掉首尾帧语义）。
 //
 // 规则一/二之间仍是**时长优先**（老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」），
 // 所以规则二实际只接「未超过时长阈值」的 9:16 请求。
@@ -119,6 +121,12 @@ func RouteOriginModel(c *gin.Context) string {
 //   - **目标模型在当前分组下没有可用渠道**（见 hasAvailableChannel）
 //   - 比例规则：目标链路的能力边界不满足（见 prepareWan3Route / tehuiXinbiCompatible）
 //   - 请求不是 JSON，或 body 解析/转换失败
+//
+// 2026-11-12 常驻迁移：seedance-2-5 的常驻渠道由豆包官网（ch20）改为视频
+// 生成车站（ch27，wan3.0-班车）。此后规则一的改派与规则五的降级都落在班车
+// 链路上；规则五保留（渠道故障/探针触发时仍可改写模型名，计费原点不变），
+// 但源模型与备胎同渠道 —— 渠道整体不可用时目标探测同样失败、不改派，
+// 行为等价于放行原请求。
 func Seedance25TeHuiRoute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		if !seedanceroute_setting.IsAnyRouteEnabled() {
@@ -230,9 +238,9 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		//
 		// 必须排在时长/比例规则之前：源链路 youzan wan3 已彻底不收首尾帧
 		// （2026-10-28 上游取消 firstFrameAssetId/lastFrameAssetId），而规则一的
-		// 目标（漫屋）同样不支持首尾帧。所以「带首尾帧」的请求只有 wan3 直连能跑，
+		// 改写同样不搬运首尾帧语义。所以「带首尾帧」的请求只有 wan3 直连能跑，
 		// 这个能力约束优先级高于时长/比例的成本优化 —— 否则 30 秒的首尾帧请求
-		// 会被规则一改派到漫屋，直接失败。
+		// 会被规则一改写、首尾帧被降级成参考图。
 		//
 		// 目标模型按**源模型**取：活动版可以单独指向自己的首尾帧目标，
 		// 母本仍走原来的 wan3.0-720p-特惠。
@@ -654,13 +662,13 @@ func trimSpace(value string) string {
 	return strings.TrimSpace(value)
 }
 
-// doubaoTargetUsable 是「规则一（时长）改派到豆包」的前置检查。
+// doubaoTargetUsable 是「规则一（时长）改派到 seedance-2-5」的前置检查。
 //
 // 素材、渠道可用性这两条与触发条件无关，是目标链路的固有约束。
 // 任何一条漏判，结果都是「请求被改写到一条跑不了的链路上」，比不改派更糟。
 func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel string) bool {
-	// 目标链路（豆包官网）只支持参考图。带参考视频/音频时不路由 ——
-	// 走源模型继续跑，而不是报错打断客户（老板 2026-10-30 定的口径）。
+	// 改写函数只搬参考图。带参考视频/音频时不路由 —— 走源模型继续跑，
+	// 而不是报错打断客户（老板 2026-10-30 定的口径）。
 	if hasUnsupportedMedia(body) {
 		return false
 	}
@@ -674,8 +682,9 @@ func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel
 	//
 	// 为什么必须有这一步：中间件改写了 body 的 model 字段，之后的重试
 	// （shouldRetryTaskRelay）只会**用同一个模型名重选渠道**，不会退回源模型。
-	// 而 seedance-2-5 在生产只有渠道 20 一个渠道 —— 豆包账号全挂时
-	// Distribute 直接返回 503「当前分组下没有可用渠道」，客户撞错误。
+	// seedance-2-5 在生产只有渠道 27 一个渠道（2026-11-12 起由豆包 ch20
+	// 迁至视频生成车站）—— 渠道不可用时 Distribute 直接返回 503
+	//「当前分组下没有可用渠道」，客户撞错误。
 	// 预检之后这种请求会自然落回源链路（有赞），客户完全无感。
 	return channelAvailabilityProbe(c, targetModel)
 }
@@ -1646,8 +1655,10 @@ func extractRatio(body map[string]interface{}) (string, bool) {
 
 // mapAdaptiveRatio 把源链路的自适应档名映射成目标链路的叫法。
 //
-// 源（有赞 Wan3）用 adaptive，目标（豆包官网）用 auto ——
-// 不映射的话，adaptive 会被当成一个不认识的字面量发给官网。
+// 源（有赞 Wan3）用 adaptive，目标（seedance-2-5 链路）用 auto ——
+// 不映射的话，adaptive 会被当成一个不认识的字面量发给目标链路。
+// 2026-11-12 起目标常驻班车：auto 由 yuanmeng 的 normalizeRatio 归一
+// 回 adaptive（档位别名），两条链路都认，此处映射保持不变。
 func mapAdaptiveRatio(ratio string) string {
 	if ratio == "adaptive" {
 		return "auto"

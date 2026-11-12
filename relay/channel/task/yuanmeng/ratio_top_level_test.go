@@ -61,3 +61,32 @@ func TestResolveRatioInvalidTopLevelStillRejected(t *testing.T) {
 	_, err := resolveRatio(relaycommon.TaskSubmitReq{Ratio: "not-a-ratio"})
 	require.Error(t, err, "非法顶层比例必须报错")
 }
+
+// 2026-11-12 seedance-2-5 常驻迁移：该模型此前常驻豆包官网链路（manwu），
+// 自适应档的档位名叫 "auto"；迁到视频生成车站（yuanmeng）后上游档位名是
+// "adaptive"。同一语义的档位别名，老客户端写法必须继续可用 —— 拒掉会让
+// 迁移当天所有选「自动」档的请求 100% 400。
+func TestResolveRatioAutoAliasMapsToAdaptive(t *testing.T) {
+	cases := []struct {
+		name string
+		req  relaycommon.TaskSubmitReq
+	}{
+		{name: "顶层 auto", req: relaycommon.TaskSubmitReq{Ratio: "auto"}},
+		{name: "顶层大小写变体", req: relaycommon.TaskSubmitReq{Ratio: "Auto"}},
+		{name: "metadata auto", req: relaycommon.TaskSubmitReq{Metadata: map[string]interface{}{"ratio": "auto"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveRatio(tc.req)
+			require.NoError(t, err)
+			require.Equal(t, "adaptive", got)
+		})
+	}
+}
+
+// 别名只认 auto 本身：带杂质的写法仍要 fail-loud，不能被归一化顺手放行。
+func TestResolveRatioAutoAliasDoesNotWiden(t *testing.T) {
+	_, err := resolveRatio(relaycommon.TaskSubmitReq{Ratio: "auto16"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unsupported ratio")
+}

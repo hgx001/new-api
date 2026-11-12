@@ -227,9 +227,17 @@ func resolveRatio(req relaycommon.TaskSubmitReq) (string, error) {
 	return result.Ratio, nil
 }
 
-// normalizeRatio 把 "16/9" / "16：9"（全角冒号）归一化成 "16:9"。
+// normalizeRatio 把 "16/9" / "16：9"（全角冒号）归一化成 "16:9"，
+// 并把豆包链路的自适应档名 "auto" 映射成上游的 "adaptive"（大小写不敏感）。
+//
+// auto→adaptive 是**档位别名**不是换档：两者语义相同（让平台自适应画幅），
+// 只是不同链路的命名 —— seedance-2-5 迁移前常驻豆包官网链路（档名 auto），
+// 2026-11-12 起常驻本站（上游档名 adaptive），老客户端写法必须继续可用。
 func normalizeRatio(raw string) string {
 	trimmed := strings.TrimSpace(raw)
+	if strings.EqualFold(trimmed, "auto") {
+		return "adaptive"
+	}
 	trimmed = strings.ReplaceAll(trimmed, "：", ":")
 	trimmed = strings.ReplaceAll(trimmed, "/", ":")
 	return trimmed

@@ -44,10 +44,10 @@
 
 路由以 `modelSpecs` 为源码真相源，新增形态沿用当前表驱动，不为每个模型新开 adaptor；未知模型拒绝，不默认落 dola。
 
-- dola 公共名是 `seedance-2.0`（点号）；豆包是 `seedance-2-0-fast` / `seedance-2-5`（连字符），转发后者时翻译成 `doubao-*` 官网真名。
+- dola 公共名是 `seedance-2.0`（点号）；豆包是 `seedance-2-0-fast`（连字符；`seedance-2-5` 已于 2026-11-12 迁出豆包链路，常驻视频生成车站），转发时翻译成 `doubao-*` 官网真名。
 - `seedance-2.5` 的 dola 30s 已按既定业务下架/退役；旧代码还存在表项不等于可售能力，不据此恢复 channels/abilities 或承诺 Worker 30s。
 - dola（`seedance-2.0`）时长为 5–15 秒区间：区间内任意整数秒原样透传、不吸附，区间外（含 30s）400 invalid_duration，缺省 15；按次价与时长无关。
-- 豆包时长原样透传、不吸附不改写：`seedance-2-5` 任意正整数秒（不设上限），`seedance-2-0-fast` 4–30 秒；未指定比例不编造，豆包不接受 resolution。
+- 豆包时长原样透传、不吸附不改写：`seedance-2-0-fast` 4–30 秒；未指定比例不编造，豆包不接受 resolution。`seedance-2-5` 自 2026-11-12 起走视频生成车站（ch27，按次 ¥3.50）：时长 2–30 整数、比例七档（`auto` 作为 `adaptive` 别名）、默认 720P。
 - `gemini-web-video` 故意不叫官方 `veo-*`，避免渠道重名；Veo 不接受自定 seconds/duration/resolution，不能静默丢弃后假装执行。
 - `Nano Banana Pro` 对应 ArcReel 抽象 `manwu-image`，内部实际站点由服务端路由；图片不接受视频参数。
 - `jimeng-video-reverse` 恰好一段公网参考视频，文本产物、prompt 可选；不接受图片/时长/比例/分辨率或 multipart 本地文件直传。
