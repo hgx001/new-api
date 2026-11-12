@@ -168,6 +168,44 @@ var upstreamModelPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bwan[\s\-_]?3(\.0)?\b`),
 }
 
+// upstreamTierWordPatterns 处理上游**档位名** prime（wan3.0-video-prime 的尾缀）。
+//
+// 2026-11-12 生产实测（logs.id=14649，渠道 17，seedance2.5-特惠）：上游 400
+// 用两种写法点名档位，而 upstreamModelLiterals 只收了完整模型名，两种都漏：
+//
+//	{"code":"PRIME_DURATION_TOO_SHORT"}          ← 错误码前缀
+//	"由于服务器保护机制，暂时不受理低于 10 秒以下的prime任务"  ← 中文里的裸词
+//
+// 为什么是「删除」而不是像别的身份词那样换成「上游」：换成中性词会得到
+// "上游_DURATION_TOO_SHORT"（错误码被改坏）和「不受理低于 10 秒以下的上游任务」
+// （读不通）。删掉档位名后 code 仍是机器可读的 DURATION_TOO_SHORT，文案也顺。
+//
+// 两条规则必须分开：\bprime\b 在 "PRIME_DURATION..." 里**匹配不到**（下划线是
+// 单词字符，e 后面不构成词边界），只靠裸词规则会漏掉整条错误码。
+//
+// ⚠️ 词边界不能去掉："primary" / "primer" / "primeval" 里 prime 只是子串，
+// 裸匹配会把它们削成 "ry" / "r" / "val"。
+//
+// ⚠️ 只对别名模型生效、且必须在 redactWithTokens **之后**跑：先让完整模型名
+// wan3.0-video-prime 被整体替换成「上游」，否则这里会把它削成
+// "wan3.0-video-"、最终留下 "上游-" 碎片。生产 abilities 表里
+// wan3.0-video-prime 也对外可见，客户直接买它时 prime 是他自己的模型名，
+// 不该被删 —— 所以绝不能放进 upstreamVendorLiterals（那份全局生效）。
+var (
+	upstreamTierCodePrefixPattern = regexp.MustCompile(`(?i)\bprime_`)
+	upstreamTierBareWordPattern   = regexp.MustCompile(`(?i)\bprime\b[ \t]*`)
+	redundantSpacesPattern        = regexp.MustCompile(`[ \t]{2,}`)
+)
+
+// redactUpstreamTierWord 把上游档位名 prime 从对客文案里摘掉。
+// 只在别名模型分支调用，调用顺序见 upstreamTierWordPatterns 的注释。
+func redactUpstreamTierWord(text string) string {
+	text = upstreamTierCodePrefixPattern.ReplaceAllString(text, "")
+	text = upstreamTierBareWordPattern.ReplaceAllString(text, "")
+	// 删掉英文里的裸词可能留下双空格（"the  task"），收敛成一个。
+	return redundantSpacesPattern.ReplaceAllString(text, " ")
+}
+
 // upstreamURLPattern 用于识别文案里的地址。
 // 上游成片直链（R2 域名 + hailuo-video 货源目录）本身就是"真实上游是谁"的证据，
 // 下游文案里要**整个摘掉**（见 RedactUpstreamAddress）。
@@ -243,7 +281,9 @@ func RedactUpstreamIdentity(content string, modelName string) string {
 		return content
 	}
 	text := RedactUpstreamVendor(content)
-	return redactWithTokens(text, upstreamModelTokens, upstreamModelPatterns)
+	text = redactWithTokens(text, upstreamModelTokens, upstreamModelPatterns)
+	// 完整模型名已整体替换，再摘掉上游报错里单独出现的档位名 prime。
+	return redactUpstreamTierWord(text)
 }
 
 // RedactUpstreamAddress 把文案里的地址整个摘掉，**不分模型**。
@@ -286,7 +326,9 @@ func RedactUpstreamText(content string, modelName string) string {
 	if !IsUpstreamAliasModel(modelName) {
 		return text
 	}
-	return redactWithTokens(text, upstreamModelTokens, upstreamModelPatterns)
+	text = redactWithTokens(text, upstreamModelTokens, upstreamModelPatterns)
+	// 完整模型名已整体替换，再摘掉上游报错里单独出现的档位名 prime。
+	return redactUpstreamTierWord(text)
 }
 
 func redactWithTokens(text string, tokens []identityToken, patterns []*regexp.Regexp) string {
