@@ -59,15 +59,16 @@ export type DoubaoLinkView = {
   ratioGateValue: string
 }
 
-/** 未勾选时展示的默认比例，与后端 WithSecondsRuleRatioGate 的默认值一致。 */
-const DEFAULT_RATIO_GATE = '9:16'
-
 /**
  * 从策略派生勾选状态。
  *
  * 配置值带首尾空格也算「已勾上」（生产上出现过带空格的模型名，
  * 配置侧一律 Trim）；但显示给运营时要用 Trim 后的值，否则标签上
  * 会莫名多出空白。
+ *
+ * 未勾选时显示的默认比例取自后端给的 seconds_rule_ratio_gate_default，
+ * 比例只有一个事实源，改默认值不用改前后端两处。末尾的 '9:16' 是
+ * 后端没给这个字段时的兜底（前后端同版本发布，正常走不到）。
  */
 function ratioGateState(
   policy: VideoRoutePolicy
@@ -75,7 +76,8 @@ function ratioGateState(
   const value = (policy.seconds_rule_ratio_gate ?? '').trim()
   return {
     ratioGateOn: value.length > 0,
-    ratioGateValue: value || DEFAULT_RATIO_GATE,
+    ratioGateValue:
+      value || policy.seconds_rule_ratio_gate_default || '9:16',
   }
 }
 

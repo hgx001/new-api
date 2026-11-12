@@ -60,6 +60,11 @@ export type VideoRoutePolicy = {
    * 与 `trigger_ratio`（规则二自己的触发比例）是两个独立字段。
    */
   seconds_rule_ratio_gate: string
+  /**
+   * 闸门为空时「勾上会要求什么比例」——由后端给出唯一事实源，
+   * 前端不硬编码比例字符串（两处各写一份必然漂）。
+   */
+  seconds_rule_ratio_gate_default: string
   updated_at: number
   /**
    * 豆包链路开关：true = 运营关闭了豆包（规则一停用 + 故障转移强制生效），

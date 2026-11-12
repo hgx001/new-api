@@ -345,6 +345,9 @@ func doubaoRouteAdminState() gin.H {
 	state["trigger_seconds"] = policy.TriggerSeconds
 	// 规则一的比例闸门：运营要能看出「超时长为什么只改派了一部分请求」。
 	state["seconds_rule_ratio_gate"] = policy.SecondsRuleRatioGate
+	// 闸门为空 = 条件没勾。后端把「勾上会要求什么比例」一起给出来，
+	// 前端就不必再硬编码一份 9:16 —— 两处各写一份必然漂。
+	state["seconds_rule_ratio_gate_default"] = seedanceroute_setting.DefaultSecondsRuleRatioGate
 	state["ratio_target_model"] = policy.RatioTargetModel
 	state["trigger_ratio"] = policy.TriggerRatio
 	state["frames_target_model"] = policy.FramesTargetModel
