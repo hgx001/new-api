@@ -82,6 +82,24 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 - **SeetaCloud 渠道（ch28，type 70，2026-11-08 改版收口，台账 `scripts/prod-ledger-seeta-v2omni-20261107.sql`、`scripts/prod-omni-price-20261108.sql`、`scripts/prod-retire-v2-20261108.sql`、`scripts/prod-omni-refvideo-billing-20261108.sql`）**：上游 = 自建 ArcReel H3 网关（`u1133789-a936-c07acd4f.westd.seetacloud.com:8443`，AutoDL ComfyUI 协议，裸 token）。**对外只留 `minimax_h3_omni`**（多模态参考 9 图+3 视频+3 音频+1080p）；`minimax_h3_v2` 已于 2026-11-08 退役下架（ch28 models / abilities / 卡片 / ModelPrice 键均已清理），只在 `workflowByModel` 保留隐藏映射供在途任务与回滚。基准价=生产 ModelPrice（omni `0.0027397260273972603`，即 ¥0.02/7.3）+ 代码 `defaultModelPrice`；倍率 480P 1.0 / 768p 2.0 / 1080p 3.0 在 `seeta/constants.go`，**改价必须两边成对改**。**2026-11-08 起 omni 参考视频按秒并入计费**：`seconds = 生成秒数 + 参考视频总秒数`（逐条解析 mvhd 四舍五入后相加，再乘档位倍率），探测在 validate 阶段完成、解析不出时长即 400 拒单（仅 MP4/MOV 可读），参考图/音频不额外收费。真机 4/4 出片（48-70s）+ 负向 3/3。**2026-11-08 输入模式收口（台账 `scripts/prod-omni-input-modes-20261108.sql`）**：上游按 payload 派生三档，纯文生＝零素材、图生/首尾帧＝只传 `metadata.first_frame`(+`last_frame`)、多参考＝带 `ref_image_N`/`ref_video_N`/`ref_audio_N`；`images` 是设定参考不是首帧。带参考视频/音频却无设定参考图、只给尾帧不给首帧，均在 `ValidateRequestAndSetAction` 本地 400（预扣费之前，不建单不扣费不 AutoBan），上游内部工作流 ID `minimax_h3_lightx2v*` 走全局脱敏。**纯文生/首尾帧本站未做端到端真机验证（用户选择先不跑）**。参考视频计费真机 1 条已验证：768p横 5s + 11s 参考 = 16 计费秒 / ¥0.64 / 1344×768 出片。契约细节见 `docs/agent-guides/channel-contracts.md` SeetaCloud 节。
 - **部署链路**：本地提交 → `git push fork main`（远端只有 `fork`，没有 `origin`）→ 服务器 `bash /home/ubuntu/deploy-new-api.sh <short-sha>`（带 SHA 断言：docker build → 换容器 → 健康检查）。**服务器连不上 github**：push 后服务器 fetch 不到会 ABORT，须本地 `git bundle create x.bundle refs/heads/main ^<服务器HEAD>` 经 ssh 管道传入、服务器 `git fetch x.bundle main:refs/remotes/bundle/main` 后再部署。⚠️ ssh 管道写文件与后台化组合会把文件截断成 0 字节——传完必须 `wc -c` 验字节数。
 
+## 新生产实例（迁移目标机，2026-11-12 起建）
+
+| 项 | 值 |
+|---|---|
+| 服务器 | `ssh ubuntu@114.132.252.150`（root 同密钥可登；广州 ap-guangzhou，腾讯云轻量 2C4G/59G/5M） |
+| SSH 密钥 | 本机 `C:\Users\hgx\.ssh\id_ed25519_nopass`（公钥 `auto-gp-wencai`，已装入 ubuntu/root 的 authorized_keys） |
+| 基座 | Ubuntu 24.04；Docker 29.9.3 + compose v5.7.1（腾讯云/daocloud 镜像源）；swap 4G（/swap.img + /swapfile，swappiness=10）；nginx 1.24.0 + certbot（证书 2027-02-10 到期自动续期） |
+| 域名 | `https://api2.heibaidao.cn`（2026-11-12 上线；A 记录在 DNSPod，域名属另一账号 UIN `100046072329`，管理需该账号密钥；轻量防火墙 22/80/443/ICMP 已放行） |
+| 定位 | 已复刻老机 new-api + sub2api 全套（迁移完成记录见方案 §12），接**新业务**；老机 119.29.253.97 保持原样不动 |
+| 迁移方案 | `docs/new-server-migration-plan.md`（唯一权威；含范围、COS 中转、渠道核对清单、验收项、§12 完成记录与遗留项） |
+| 腾讯云子账户 | 主账号 `100005629999`（APPID `1256715892`），子用户 `hgx001`（`AdministratorAccess`；密钥存新机 `/root/.cos.env` 600，不入库不入聊天） |
+| COS 桶 | `hbd-video-1256715892`（ap-guangzhou，私有，生命周期 30 天）。老机 `mps-test-1397292858` 属**另一个腾讯云账号**，其 secret 不可复用 |
+| 双机差异 | 新机 compose 固定 subnet `172.18.0.0/16`；sub2api 8080 只绑 `172.18.0.1`；options 三项已改 api2（备份 `bak_20261112_options_api2`）；new-api logs/ 属主须 1000:1001（compose 重建目录后需重新 chown） |
+
+- 迁移传输走 **COS 广州内网**中转（老机公网出口实测仅 2.6Mbps，直传不可行）；COS 中转完成后删除中转前缀。
+- 新机产物链路规划：一期 COS 直存 + 302 预签名（无损，不过 MPS 转码），二期 CDN 域名；复用 `wan3/relocate.go` 的 `cos-proxy://` 协议。
+- 双机并行期：老机的 DB/options/sub2api OAuth 账号状态变更不会自动同步新机；配置冻结或两边手动同步，sub2api 账号异常先报用户拍板。
+
 ## 按需必读索引
 
 | 任务 | 先读 |
