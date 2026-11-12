@@ -100,7 +100,7 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 
 - 迁移传输走 **COS 广州内网**中转（老机公网出口实测仅 2.6Mbps，直传不可行）；COS 中转完成后删除中转前缀。
 - 新机产物链路规划：一期 COS 直存 + 302 预签名（无损，不过 MPS 转码），二期 CDN 域名；复用 `wan3/relocate.go` 的 `cos-proxy://` 协议。
-- 双机并行期：老机的 DB/options/sub2api OAuth 账号状态变更不会自动同步新机；配置冻结或两边手动同步，sub2api 账号异常先报用户拍板。
+- 双机并行期：老机的 DB/options/sub2api OAuth 账号状态变更不会自动同步新机；配置冻结或两边手动同步，sub2api 账号异常先报用户拍板。**代码版本必须双机一致**，见「部署与计费硬约束」。
 
 ## 按需必读索引
 
@@ -111,13 +111,17 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 | 模型改名/调价、目录/能力/缓存、上下架、AutoBan恢复 | [pricing-catalog.md](docs/agent-guides/pricing-catalog.md) |
 | 支付/回调、补单、额度缓存、兑换码/订阅并发安全 | [payments.md](docs/agent-guides/payments.md) |
 | 发布护栏、安全探针、误建撤销、sub2api/OAuth | [production-operations.md](docs/agent-guides/production-operations.md) |
-| 实际发布/回滚步骤 | [deploy/README.md](deploy/README.md)（唯一权威流程） |
+| 实际发布/回滚步骤（单机执行体） | [deploy/README.md](deploy/README.md)（唯一权威流程）；双机同版本编排见本文「部署与计费硬约束」 |
 | 有赞上游余额对账、怀疑异常扣款 | `bash scripts/audit-youzan-balance.sh <人工抄的余额>`（在生产服务器执行；节点与用法见脚本头注释） |
 | 表达式/动态分层计费 | [pkg/billingexpr/expr.md](pkg/billingexpr/expr.md) |
 
 ## 部署与计费硬约束
 
-- 后端用 `deploy/deploy-backend.sh <sha>` 在生产远程构建精确提交；本地Docker不是前提。前后端发布路径独立，禁止临时脚本绕过canonical流程。
+- **双机部署、严格同版本（2026-11-12 用户拍板）**：生产是老机 `api.heibaidao.cn`（`ubuntu@119.29.253.97:877`）与新机 `api2.heibaidao.cn`（ssh 别名 `newapi`）并存。**每次发版两台都要发，且必须锚定同一个 commit SHA**；只发一台＝发版未完成，任何时刻两台版本不得分叉。前后端产物同锚定该 SHA，前端用 `DEPLOY_HOST`/`DEPLOY_PORT` 覆盖老机默认值、两台各发一次。
+  - 入口：老机 `bash /home/ubuntu/deploy-new-api.sh <sha>`（连不上 github，bundle 传 SHA 后 `wc -c` 验字节）；新机 `DEPLOY_HOST=newapi DEPLOY_PORT=22 deploy/deploy-backend.sh <sha>`（必须 Git Bash，输出重定向到文件）。执行细节见 [deploy/README.md](deploy/README.md) 与上文「新生产实例」。
+  - 验收：逐机核对部署 SHA / 前端 release `<timestamp>-<sha>` 与 `/api/status`（`success+setup`、PostgreSQL、未回落 SQLite），**两边一致才算完成**；不一致立即补齐落后的那台，不留待下次。回滚同样双机同版本，一台回滚后另一台不得留在高版本。
+  - 版本对齐 ≠ 数据对齐：两台 DB/options/COS 凭据/sub2api 账号状态不随发版同步，差异见 `docs/new-server-migration-plan.md`；不得为追版本覆盖另一台的数据。
+- 后端用 `deploy/deploy-backend.sh <sha>`（老机另有 `/home/ubuntu/deploy-new-api.sh`）在生产远程构建精确提交，**两台各执行一次**；本地Docker不是前提。前后端发布路径独立，禁止临时脚本绕过canonical流程。
 - env快照完整且含关键配置才换容器；健康检查需success+setup、数据库后端与SQL_DSN都正确，不能以回落空SQLite的success:true判健康。
 - 模型变更**先发版、再改渠道/价表数据**；生产ModelPrice覆盖代码默认，价格与档位倍率/前端单位/最终结算一起核对。
 - 下架同步channels.models与abilities，AutoBan恢复同步status与enabled；缓存/目录/卡片是不同链路，不能只改一个字段宣布完成。
