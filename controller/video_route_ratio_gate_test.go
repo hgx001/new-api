@@ -149,6 +149,20 @@ func TestDoubaoRouteAdminStateReportsSecondsRuleRatioGate(t *testing.T) {
 	require.Equal(t, "9:16", state["seconds_rule_ratio_gate"])
 }
 
+// 管理状态必须把「勾上会要求什么比例」一起下发：前端不硬编码比例，
+// 比例只有一个事实源（后端常量）。少了这个字段，前端就只能自己写死
+// 一份 9:16，改默认值要改前后端两处。
+func TestDoubaoRouteAdminStateReportsRatioGateDefault(t *testing.T) {
+	withAdminRoutePolicy(t, ratioGateAdminBaseline)
+
+	state := doubaoRouteAdminState()
+
+	require.Equal(t,
+		seedanceroute_setting.DefaultSecondsRuleRatioGate,
+		state["seconds_rule_ratio_gate_default"])
+	require.Equal(t, "9:16", state["seconds_rule_ratio_gate_default"])
+}
+
 func ratioGateStateFromBody(t *testing.T, recorder *httptest.ResponseRecorder) string {
 	t.Helper()
 	var payload struct {

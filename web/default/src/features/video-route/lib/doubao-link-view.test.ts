@@ -53,6 +53,7 @@ function policy(
     trigger_ratio: '',
     frames_target_model: '',
     seconds_rule_ratio_gate: '',
+    seconds_rule_ratio_gate_default: '9:16',
     updated_at: 0,
     doubao_link_off: false,
     doubao_link_off_until: 0,
@@ -167,6 +168,16 @@ describe('可选比例条件勾选', () => {
 
     assert.equal(view.ratioGateOn, false)
     assert.equal(view.ratioGateValue, '9:16', '未勾选时也给默认值，运营知道勾上会要求什么')
+  })
+
+  // 默认比例的**唯一事实源是后端**：前端不硬编码，改默认值不用改两处。
+  test('默认比例取自后端下发的值，不在前端写死', () => {
+    const view = buildDoubaoLinkView(
+      policy({ seconds_rule_ratio_gate_default: '4:3' }),
+      failover()
+    )
+
+    assert.equal(view.ratioGateValue, '4:3')
   })
 
   test('闸门有值 = 已勾选，如实回显配置里的比例', () => {
