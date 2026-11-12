@@ -2,6 +2,7 @@ package youzanwan3
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"image"
 	"image/color"
@@ -11,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -36,27 +38,35 @@ func referenceImagePNG(t *testing.T) string {
 
 // 2026-10-28 协议：素材走 POST /v1/assets?kind=&filename=（裸 body + 真实 MIME），
 // 建单时把回执 url 按数组顺序放进 media，不再有 conversationId / mentions / @alias。
+//
+// 2026-11-12：素材改为并发上传后，「到达顺序」不再等于「入参顺序」，
+// 回执 url 里带上 kind，断言才能锁住「第 i 个位置的素材来自第 i 个入参」。
 func TestBuildRequestBodyUsesV1AssetsAndMediaArray(t *testing.T) {
 	type upload struct {
 		kind        string
 		filename    string
 		contentType string
 	}
-	uploads := make([]upload, 0, 2)
+	var (
+		mu      sync.Mutex
+		uploads []upload
+	)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/v1/assets":
 			query := request.URL.Query()
 			_, _ = writer.Write([]byte{})
+			mu.Lock()
 			uploads = append(uploads, upload{
 				kind:        query.Get("kind"),
 				filename:    query.Get("filename"),
 				contentType: request.Header.Get("Content-Type"),
 			})
+			index := len(uploads)
+			mu.Unlock()
 			writer.Header().Set("Content-Type", "application/json")
-			index := strconv.Itoa(len(uploads))
-			_, _ = writer.Write([]byte(`{"asset":{"id":"asset-` + index + `","kind":"` +
-				query.Get("kind") + `"},"url":"https://signed.example/asset-` + index + `"}`))
+			_, _ = writer.Write([]byte(`{"asset":{"id":"asset-` + strconv.Itoa(index) + `","kind":"` +
+				query.Get("kind") + `"},"url":"https://signed.example/` + query.Get("kind") + `"}`))
 		default:
 			t.Fatalf("unexpected path: %s", request.URL.Path)
 		}
@@ -64,7 +74,7 @@ func TestBuildRequestBodyUsesV1AssetsAndMediaArray(t *testing.T) {
 	defer server.Close()
 
 	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
-	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
+	body, err := adaptor.buildRequestBody(context.Background(), relaycommon.TaskSubmitReq{
 		Model:  "wan3.0-smart",
 		Prompt: "城市夜景缓慢推进",
 		Media: []relaycommon.TaskMedia{
@@ -93,16 +103,25 @@ func TestBuildRequestBodyUsesV1AssetsAndMediaArray(t *testing.T) {
 	require.Len(t, media, 2)
 	first := media[0].(map[string]any)
 	require.Equal(t, "reference_image", first["type"])
-	require.Equal(t, "https://signed.example/asset-1", first["url"])
+	require.Equal(t, "https://signed.example/reference_image", first["url"])
 	second := media[1].(map[string]any)
 	require.Equal(t, "reference_audio", second["type"])
-	require.Equal(t, "https://signed.example/asset-2", second["url"])
+	require.Equal(t, "https://signed.example/reference_audio", second["url"])
 
+	mu.Lock()
+	defer mu.Unlock()
 	require.Len(t, uploads, 2)
-	require.Equal(t, "reference_image", uploads[0].kind)
-	require.Equal(t, "reference_audio", uploads[1].kind)
-	require.Contains(t, uploads[0].contentType, "image/")
-	require.Equal(t, "audio/mpeg", uploads[1].contentType)
+	byKind := make(map[string]upload, len(uploads))
+	for _, item := range uploads {
+		byKind[item.kind] = item
+	}
+	image, ok := byKind["reference_image"]
+	require.True(t, ok, "参考图必须走一次 /v1/assets?kind=reference_image")
+	require.Contains(t, image.contentType, "image/")
+	require.Equal(t, "asset.jpg", image.filename)
+	audio, ok := byKind["reference_audio"]
+	require.True(t, ok, "参考音频必须走一次 /v1/assets?kind=reference_audio")
+	require.Equal(t, "audio/mpeg", audio.contentType)
 }
 
 func TestBuildRequestURLAndIdempotencyKey(t *testing.T) {

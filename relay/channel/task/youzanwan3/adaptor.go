@@ -2,6 +2,7 @@ package youzanwan3
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"image"
 	"image/color"
@@ -32,9 +33,27 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 const maxAssetBytes = 100 << 20
+
+const (
+	// assetTotalBudget 是「一次提交里所有素材处理」的总预算。
+	//
+	// 2026-11-12 客户反馈（threeFatAi）：工作台的提交超时**写死 60 秒**，
+	// 而 POST /v1/videos 是同步拉取素材的 —— 21.89MB 的参考视频放在境外源站上，
+	// 我们迟迟不返回，客户先超时。更糟的是我们这边没有任何超时：
+	// 客户 60 秒断开后 goroutine 还在下载，下完照样建单扣费，客户以为失败。
+	//
+	// 所以这里钉一个**明显早于 60 秒**的预算：宁可我们主动失败并说清原因，
+	// 也不能让客户等到自己的超时，还顺带被扣一次钱。
+	assetTotalBudget = 50 * time.Second
+
+	// assetMaxConcurrency 限制同时处理的素材数。
+	// 每个素材都可能是一路 20MB+ 的下载，全并发会把内存和出口带宽一起打满。
+	assetMaxConcurrency = 3
+)
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
@@ -764,7 +783,43 @@ func getHTTPClient(proxy string) (*http.Client, error) {
 	return client, nil
 }
 
-func (a *TaskAdaptor) readAsset(source string) ([]byte, string, string, error) {
+// assetStageError 把素材处理中的「超时 / 客户端断开」翻译成合适的错误。
+//
+// 两种情形必须分开：
+//   - 预算耗尽（DeadlineExceeded）：客户还在等，要给他一条**能照做**的中文提示，
+//     并且降级成 400（素材地址问题，不该算渠道故障、不能触发 AutoBan 和换渠道重试）；
+//   - 客户端断开（Canceled）：没有人会读这条消息，原样返回即可，
+//     重点是让下载/上传立刻停下，别再建单扣费。
+func assetStageError(ctx context.Context, err error, stage string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+		return errors.Errorf("客户端已断开，素材%s中止", stage)
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		// 不写「已等待 N 秒」：真正触发的可能是父级更早的 deadline，
+		// 报一个没发生过的时长会让运维照着错的方向查。
+		return taskcommon.NewUserError(errors.Errorf(
+			"参考素材%s超时（提交预算 %d 秒内未完成）：素材源站响应过慢。"+
+				"请把素材换到国内可访问的地址后重试，或先用 /v1/uploads 上传后再提交",
+			stage, int(assetTotalBudget.Seconds())), "asset_timeout")
+	}
+	return err
+}
+
+// assetBudgetContext 给素材处理套上总预算，同时继承客户连接的取消。
+//
+// 两者缺一不可：只继承 parent 没有上限（客户不断开就永远等），
+// 只用 Background 加超时则客户断开后我们还在跑。
+func assetBudgetContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, assetTotalBudget)
+}
+
+func (a *TaskAdaptor) readAsset(ctx context.Context, source string) ([]byte, string, string, error) {
 	if strings.HasPrefix(strings.ToLower(source), "data:") {
 		data, mimeType, err := parseDataURL(source)
 		return data, mimeType, "asset", err
@@ -781,13 +836,15 @@ func (a *TaskAdaptor) readAsset(source string) ([]byte, string, string, error) {
 	if err != nil {
 		return nil, "", "", err
 	}
-	request, err := http.NewRequest(http.MethodGet, source, nil)
+	// 必须带 context：RELAY_TIMEOUT 默认是 0（永不超时），不接 context 的话
+	// 素材源站挂住，我们就会一直等到天荒地老，客户早就断开了。
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
 		return nil, "", "", err
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", assetStageError(ctx, err, "下载")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -799,7 +856,7 @@ func (a *TaskAdaptor) readAsset(source string) ([]byte, string, string, error) {
 	limited := io.LimitReader(response.Body, maxAssetBytes+1)
 	data, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", assetStageError(ctx, err, "下载")
 	}
 	if len(data) > maxAssetBytes {
 		return nil, "", "", errors.New("media file is too large")
@@ -869,12 +926,12 @@ func assetUploadKind(mediaType string) (string, string, error) {
 	}
 }
 
-func (a *TaskAdaptor) uploadAsset(mediaType, source string) (string, error) {
+func (a *TaskAdaptor) uploadAsset(ctx context.Context, mediaType, source string) (string, error) {
 	assetKind, fileKind, err := assetUploadKind(mediaType)
 	if err != nil {
 		return "", err
 	}
-	data, mimeType, sourceName, err := a.readAsset(source)
+	data, mimeType, sourceName, err := a.readAsset(ctx, source)
 	if err != nil {
 		return "", err
 	}
@@ -896,7 +953,8 @@ func (a *TaskAdaptor) uploadAsset(mediaType, source string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	request, err := http.NewRequest(
+	request, err := http.NewRequestWithContext(
+		ctx,
 		http.MethodPost,
 		strings.TrimRight(a.baseURL, "/")+"/v1/assets?"+query.Encode(),
 		bytes.NewReader(data),
@@ -909,12 +967,12 @@ func (a *TaskAdaptor) uploadAsset(mediaType, source string) (string, error) {
 	request.Header.Set("Accept", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
-		return "", err
+		return "", assetStageError(ctx, err, "上传")
 	}
 	defer response.Body.Close()
 	dataResponse, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return "", err
+		return "", assetStageError(ctx, err, "上传")
 	}
 	var parsed assetResponse
 	if err := common.Unmarshal(dataResponse, &parsed); err != nil || response.StatusCode < 200 || response.StatusCode >= 300 || parsed.Asset.ID == "" || strings.TrimSpace(parsed.URL) == "" {
@@ -930,7 +988,7 @@ func (a *TaskAdaptor) uploadAsset(mediaType, source string) (string, error) {
 	return parsed.URL, nil
 }
 
-func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, error) {
+func (a *TaskAdaptor) buildRequestBody(ctx context.Context, req relaycommon.TaskSubmitReq) ([]byte, error) {
 	upstreamModel, err := upstreamModelFor(req.Model)
 	if err != nil {
 		return nil, err
@@ -956,16 +1014,42 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 	// 2026-10-28 协议：素材先 POST /v1/assets 上传，再把回执里的签名 url 按数组顺序
 	// 放进 media，且 type 必须等于回执的 asset.kind。旧协议那套
 	// conversationId + mentions + @alias 占位符已被上游整体移除。
-	items := make([]map[string]string, 0, len(media))
-	for _, item := range media {
-		assetURL, err := a.uploadAsset(item.Type, item.URL)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, map[string]string{"type": item.Type, "url": assetURL})
+	items, err := a.uploadMedia(ctx, media)
+	if err != nil {
+		return nil, err
 	}
 	body["media"] = items
 	return common.Marshal(body)
+}
+
+// uploadMedia 并发上传素材，**结果按下标落位**，保持与入参一致的顺序。
+//
+// 为什么必须并发：一次提交可能同时带参考视频和参考图，视频动辄 20MB。
+// 串行的话后面每个素材都要排在前面那个大文件的下载+上传之后，
+// 客户 60 秒的提交窗口很容易被一个视频吃光（2026-11-12 客户反馈）。
+//
+// 为什么必须保序：上游按 media 数组顺序对应 @视频1/@图片1，
+// 顺序错乱等于给客户换了素材 —— 画面会串，而且看不出来是哪一步错的。
+func (a *TaskAdaptor) uploadMedia(ctx context.Context, media []relaycommon.TaskMedia) ([]map[string]string, error) {
+	items := make([]map[string]string, len(media))
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(assetMaxConcurrency)
+	for index := range media {
+		index := index
+		group.Go(func() error {
+			item := media[index]
+			assetURL, err := a.uploadAsset(groupCtx, item.Type, item.URL)
+			if err != nil {
+				return err
+			}
+			items[index] = map[string]string{"type": item.Type, "url": assetURL}
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
@@ -1141,7 +1225,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if info != nil && strings.TrimSpace(info.UpstreamModelName) != "" {
 		req.Model = info.UpstreamModelName
 	}
-	body, err := a.buildRequestBody(req)
+	// 素材处理挂一个总预算：既跟着客户连接走（断开即停，不再白扣费），
+	// 又保证在客户自己的 60 秒提交超时之前收场（见 assetTotalBudget）。
+	ctx, cancel := assetBudgetContext(c.Request.Context())
+	defer cancel()
+	body, err := a.buildRequestBody(ctx, req)
 	if err != nil {
 		return nil, err
 	}
