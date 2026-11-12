@@ -1,7 +1,8 @@
 # 新服务器迁移设计方案（new-api + sub2api）
 
-> 2026-11-12 起草，同日按老机实际部署逐项复核并修正（见 §11 审查记录）。
-> **2026-11-12 当日实施完成（§5 步骤 1-7、10 已完成）**：新机 new-api + sub2api 全套容器 healthy，`https://api2.heibaidao.cn` 已可用（证书 2027-02-10 到期，certbot 自动续期）。§8 验收清单已核（详情见文末 §12）。未完成：§5 步骤 8（一期 COS 转存 adaptor，待 TDD）与步骤 9（新机发布流程适配）。
+> 2026-11-12 起草，同日按老机实际部署逐项复核并修正（见 §11 审查记录）；当日晚间按新机实测再次复核回写（见 §13）。
+> **当前状态（2026-11-12 晚间复核）**：§5 步骤 1-9 的代码与流程均已落地，新机已独立发版 3 次；步骤 10 的安全收尾（关闭密码登录、root 仅密钥、轮换 root 密码）已完成。`https://api2.heibaidao.cn` 可用（证书 2027-02-10 到期，certbot 自动续期）。§8 验收清单 10 项中 **4 项实测通过**，4 项仅完成配置层/代码层/数据层确认，2 项按约束未跑真实任务（详见 §13.2）。
+> **仍未完成**：一期 COS 真机 1 条验证（需单独授权，会产生 1 条视频费用）、COS API 密钥轮换（需 CAM 新建密钥并同步 3 处）、`sub2api.conf` 8581 站点 502（老机遗留，不在范围）、双机代码同步（§13.5）。
 > 目标：老服务器（119.29.253.97，广州，到期在即）保持原样继续运行现有业务；新服务器（114.132.252.150，广州，腾讯云轻量 2C4G/59G/5M）完整复刻 new-api + sub2api 两套业务，承载**新业务**，并新增 COS/CDN 产物分发链路。
 
 ## 1. 迁移范围
@@ -77,6 +78,8 @@
 
 其他复刻细节：new-api 容器 `user: "1000:1001"`、`command: --log-dir /app/logs`、healthcheck `wget /api/status`、`depends_on postgres healthy`、`restart: always`、`TZ`、`ERROR_LOG_ENABLED`、`BATCH_UPDATE_ENABLED`、`MEMORY_CACHE_ENABLED`、`NODE_NAME` 全部照搬，仅 `NODE_NAME` 改 `new-api-node-2`。新机需确认 gid `1001` 存在（或调整挂载目录属组），否则 `data/`、`logs/` 写入失败。
 
+> 注意：以上 healthcheck / depends_on 是 **compose 文件里的声明**。实际运行容器由 `docker run` 启动，不受 compose 编排管辖，详见 §12、§13.4。
+
 ## 4. CDN / COS 分期
 
 **一期（随迁移上线）——无损转存**
@@ -84,7 +87,7 @@
 - **已建桶（2026-11-12）**：`hbd-video-1256715892`，广州 `ap-guangzhou`，ACL 私有，生命周期 30 天（规则 `expire-30d`）。
   - 本账号 APPID = **`1256715892`**（`cam:GetUserAppId` 实查，主账号 UIN `100005629999`）。
   - ⚠️ 老机 options `TencentMPSSetting` 里的桶是 `mps-test-1397292858`，**属于另一个腾讯云账号**（本账号 `head_bucket` 返回 403），其 secret 不能用于新桶；新桶单独用 `hgx001` 的密钥。
-  - 密钥已写入新机 `/root/.cos.env`（`600`，含 `COS_BUCKET`/`COS_REGION`/`COS_ENDPOINT`），不入库、不进聊天。
+  - 密钥已写入新机 `/root/.cos.env`（`600`，含 `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` / `TENCENT_APPID` / `COS_BUCKET` / `COS_REGION` / `COS_ENDPOINT`），不入库、不进聊天。
   - 已验证：新机 `cos.ap-guangzhou.myqcloud.com` 解析 `169.254.0.47`（内网），预签名 `PUT 200` / `GET 200` / `Range 206`。
 - 任务成功后：new-api 从上游拉片 → 同地域内网 PUT 到 COS → 库里写 `cos-proxy://` 占位 → 客户取片 302 COS 预签名直链。
 - **直传直存，不经 MPS 转码**——避免此前实测的 1.8 Mbps 重编码画质损失，产物与上游完全一致。
@@ -99,8 +102,8 @@
 
 ## 5. 实施步骤
 
-1. **新机基座**：swap 4G、Docker 已就绪；**待补** nginx、certbot（实测 nginx 未装，80/443 空闲）。
-2. **前置条件（已完成 2026-11-12）**：`hgx001` 的 API 密钥已创建（已关联 `AdministratorAccess`），COS 桶 `hbd-video-1256715892` 已建，密钥落在新机 `/root/.cos.env`。**该密钥曾在聊天中明文出现，迁移完成后应轮换。**
+1. **新机基座（已完成）**：swap 4G、Docker、nginx、certbot 均已就绪；`api2` 443 已签发证书并挂载，`sudo nginx -t` 通过（§13.1）。起草时记录的「nginx 未装、待补」是初始状态，已过期。
+2. **前置条件（已完成 2026-11-12）**：`hgx001` 的 API 密钥已创建（已关联 `AdministratorAccess`），COS 桶 `hbd-video-1256715892` 已建，密钥落在新机 `/root/.cos.env`。**该密钥曾在聊天中明文出现，迁移完成后应轮换。** **轮换状态（§13 复核）：仍未完成**，需 CAM 新建密钥并同步 3 处，步骤见 §13.3。
 3. **打包上传（老机）**：
    - `pg_dump -Fc` 两库（89 MB / 553 MB）
    - `docker save` 两镜像（231 MB / 135 MB）
@@ -108,11 +111,11 @@
    - 全部经 COS 内网传到中转前缀（如 `migration-20261112/`），完成后删除
 4. **新机还原**：COS 内网拉取 → `pg_restore`、`docker load`、按 §3 起容器（含固定 subnet、8080 绑定收紧）→ 重建前端软链 → `logs/` 建空目录并处理 gid 归属
 5. **配置改写**：§2 的三项 options 改为 `api2.heibaidao.cn`；`NODE_NAME` 改 `new-api-node-2`
-6. **健康验收**（§8 清单）
+6. **健康验收**（§8 清单，实测结果见 §13.2）
 7. **DNS**：DNSPod 加 `api2` A 记录 → certbot 签证书 → nginx 挂 443（配置保留老机超时参数）
-8. **一期 COS 链路**：新桶 + 密钥 → 有赞 wan3 转存 adaptor（TDD）→ 真机 1 条验证（费用另授权）
-9. **发布流程适配**：`deploy-backend.sh` 增加 `DEPLOY_*` 目标参数（`deploy-frontend.sh` 已支持），双机独立发版；新机连不上 github，沿用 bundle 经 ssh 管道直传流程，传完 `wc -c` 验字节数
-10. **收尾**：改新机 root 密码、关闭密码登录只留密钥；清理 COS 中转前缀
+8. **一期 COS 链路（代码已完成，真机未验证）**：`cos_direct.go` / `cos_presign.go` / `media_relocate.go` + 单测 + 设置项已落地，新机为修复 PUT 拒收连续发版 3 次；**真机 1 条验证未做**（需单独授权，1 条视频费用）。截至 §13 复核，库内无 `cos-proxy://` 产物、近 8 小时日志 0 条 COS 命中。
+9. **发布流程适配（已完成并在新机走通）**：新机连不上 github，采用独立脚本 `/home/ubuntu/deploy-new-api.sh` 走 bundle 直传 + 远程构建 + 健康检查；已留 3 份 `/tmp/backend-deploy-*.log`，最新一次 `FINAL_SHA: 78dc7b851` + `HEALTH_OK`。起草时设想的「给 `deploy-backend.sh` 加 `DEPLOY_*` 目标参数」按新机独立脚本方案替代，老机发布流程未改动。
+10. **收尾（已完成，2026-11-12 19:36）**：COS 中转前缀已清理；新机 root 密码已轮换（新密码存 `/root/.root-password-20261112`，权限 `600`，不进聊天），密码登录已关闭、`PermitRootLogin prohibit-password`，改前配置备份在 `/root/ssh-hardening-backup-20261112-1935/`。注意：COS API 密钥轮换属步骤 2 的遗留项，**不包含在本步骤**。
 
 ## 6. 数据一致性（双机并行期）
 
@@ -131,18 +134,20 @@
 | ch28 SeetaCloud（type 70） | `https://u1133789-a936-c07acd4f.westd.seetacloud.com:8443` | 不变 |
 | 其他文本渠道 | 各上游 | 逐条验证 base_url 可达 |
 
-## 8. 验收清单
+> §13 复核：11 个渠道的 base_url 与表中一致，ch13 / ch29 的 `172.18.0.1:8080` 已从 new-api 容器内实测可达、宿主机 8080 返回 200；其余上游按「不主动发探针」约束未逐一验证。
 
-- [ ] `/api/status`：success + setup，`SQL_DSN` 指向新库，后端 postgres
-- [ ] 管理员登录、模型目录/渠道卡片/定价可见
-- [ ] 客户令牌调用（测试令牌，非生产计费渠道）返回正常
-- [ ] sub2api 管理端可登录；ch13/ch29 从容器内经 `172.18.0.1:8080` 通
-- [ ] 任务提交 → 轮询 → 取片：`/content` 200 全量 + `Range: bytes=N-` 206
-- [ ] 长任务接口经 nginx 不 504（`proxy_read_timeout 18000s` 生效）
-- [ ] 一期 COS：新完成任务写 `cos-proxy://`、302 直链可下载、失败自动回落代理
-- [ ] `api2` HTTPS 证书有效，`nginx -t` 通过
-- [ ] 发布流程：bundle 直传 + 远程构建 + 健康检查在新机走通一次
-- [ ] 老机所有服务原样运行（对照迁移前容器/站点清单确认零改动）
+## 8. 验收清单（2026-11-12 晚间复核状态）
+
+- [x] `/api/status`：success + setup，`SQL_DSN` 指向新库，后端 postgres —— 实测 `success=true / setup=true`，DSN host=`postgres:5432`
+- [ ] 管理员登录、模型目录/渠道卡片/定价可见 —— 数据侧已核（63 用户 / 11 渠道 / 33 abilities / 107 令牌 / 42 options，`/v1/models` 正常）；**管理员登录未测**（无凭据，不擅自使用）
+- [ ] 客户令牌调用（测试令牌，非生产计费渠道）返回正常 —— 未测，会触达计费链路
+- [ ] sub2api 管理端可登录；ch13/ch29 从容器内经 `172.18.0.1:8080` 通 —— 后半段已实测通过（容器内 wget 通、宿主机 8080 返回 200）；管理端登录未测，故整项不勾
+- [ ] 任务提交 → 轮询 → 取片：`/content` 200 全量 + `Range: bytes=N-` 206 —— **按用户要求未跑视频任务**；代码侧 `f979e6796` Range 断点续传已落地
+- [ ] 长任务接口经 nginx 不 504（`proxy_read_timeout 18000s` 生效）—— 配置层已核（`100M / 600s / 18000s / 300s` 原样、`nginx -t` 通过），实际长任务未测
+- [ ] 一期 COS：新完成任务写 `cos-proxy://`、302 直链可下载、失败自动回落代理 —— 代码与 3 次发版齐，但库内无产物、日志无命中，**真机未验证**（需单独授权 1 条视频）
+- [x] `api2` HTTPS 证书有效，`nginx -t` 通过 —— Let's Encrypt 2026-11-12 → 2027-02-10，`ssl_verify=0`，公网 HTTPS 200
+- [x] 发布流程：bundle 直传 + 远程构建 + 健康检查在新机走通一次 —— 实测 3 份部署日志，最新 `FINAL_SHA: 78dc7b851` + `HEALTH_OK`
+- [x] 老机所有服务原样运行（对照迁移前容器/站点清单确认零改动）—— 13 个容器含 dcp 全套、license-server 全在
 
 ## 9. 风险与回滚
 
@@ -155,10 +160,13 @@
 | COS 转存失败 | 自动回落本机代理，任务不失败 |
 | 新机 2C4G 内存紧（老机 4C4G，swap 已用 1.6G） | 已配 4G swap、swappiness=10；new-api 容器沿用 512M 限制；不在新机跑前端构建 |
 | 2 核构建慢/OOM | 后端 `docker build` 可接受（配 swap）；前端构建不在服务器做，产物 tar 发布 |
+| SSH 加固把人锁在门外 | 改前备份、`sshd -t` 校验、reload 不断现有连接、180s 自动回滚守护、新连接验证后才取消（§13.3） |
 | 回滚 | 删 `api2` A 记录即回滚；老机全程未动 |
-| 密钥安全 | `.env`、两份 compose、密钥文件一律 scp/COS，不打印不截图；完成后轮换 root 密码、禁密码登录 |
+| 密钥安全 | `.env`、两份 compose、密钥文件一律 scp/COS，不打印不截图；root 密码已轮换、密码登录已禁；**COS API 密钥待轮换** |
 
 ## 10. 待用户确认的决策点
+
+> 状态（§13 复核）：1 已按 `api2.heibaidao.cn` 落地；2 未授权（真机验证仍未做）；3 快照已拍；4 8581 站点仍 502，当前实际走 `172.18.0.1:8080`，独立公网入口未启用。
 
 1. 新域名：`api2.heibaidao.cn`？
 2. 一期 COS 真机验证条（约 1 条视频生成费用）是否授权？
@@ -175,23 +183,86 @@
 | 4 | 「拓扑天然复刻」，未提网段 | 老机默认 bridge 是 172.17.0.1，`172.18.0.1` 属 compose 网络；新机自动分配可能变成 172.19 | compose 显式固定 subnet（已实施） |
 | 5 | 未列域名绑定配置 | options 实测含 `ServerAddress`、`AlipayNotifyURL`、`AlipayReturnURL` 三项指向 api.heibaidao.cn，另 `TencentMPSSetting` 含明文密钥 | 已改写为 api2（备份表 `bak_20261112_options_api2`） |
 
-## 12. 实施完成记录（2026-11-12）
+## 12. 实施完成记录（2026-11-12，§13 已更正）
 
 | 项 | 结果 |
 |---|---|
 | 传输 | 老机 → COS 内网（前缀 `migration-20261112/`）→ 新机，10 文件字节校验一致；src tar 首传截断（上传早于打包完成），重传修复 |
-| 容器 | new-api / postgres / redis / sub2api / sub2api-postgres / sub2api-redis 全部 healthy |
+| 容器 | 6 个容器均在运行。原写「全部 healthy」不成立：compose 第 37 行给 new-api 配了 healthcheck，但运行容器由 `docker run` 启动（无 compose 标签），`docker inspect` 返回 `NO_HEALTHCHECK`，healthcheck / depends_on 对运行容器不生效；老机同样如此（§13.4） |
 | 网络 | compose 固定 `172.18.0.0/16`；sub2api 8080 只绑 `172.18.0.1`（老机为 0.0.0.0 公网） |
 | DNS/证书 | `api2.heibaidao.cn` A 记录已建（域名属另一账号 UIN `100046072329`，用其密钥调 DNSPod API 创建）；Let's Encrypt 证书 2027-02-10 到期，certbot 自动续期；轻量防火墙经 Lighthouse API（版本 `2020-03-24`）放行 443 |
-| options | `ServerAddress`/`AlipayNotifyURL`/`AlipayReturnURL` → api2；原值备份 `bak_20261112_options_api2` |
+| options | `ServerAddress`/`AlipayNotifyURL`/`AlipayReturnURL` → api2；原值备份 `bak_20261112_options_api2`；§13 复核 options 中无残留 `api.heibaidao.cn` |
 | .env | CRLF→LF（老机容器内实测密钥不含 `\r`，转换安全）；`NODE_NAME=new-api-node-2` |
-| 验收 | `/api/status` success=True；令牌+路由管道通（`model_not_found` 分发器响应而非 401）；`/v1/models` 正常；nginx 超时契约 100M/600s/18000s/300s 原样；老机零改动 |
-| 遗留 | ① `sub2api.conf` 的 8581→127.0.0.1:8580 站点 502（老机遗留 8580 服务未迁，不在范围，sub2api 实际走 `172.18.0.1:8080`）；② new-api `logs/` 需 chown 1000:1001（compose 启动会重建目录）；③ §5 步骤 8/9 未做 |
+| 验收 | `/api/status` success=True；令牌+路由管道通（`model_not_found` 分发器响应而非 401）；`/v1/models` 正常；nginx 超时契约 100M/600s/18000s/300s 原样；老机零改动。§8 清单逐项实测结果见 §13.2 |
+| 遗留（§13 复核后） | ① `sub2api.conf` 8581 站点仍 502（老机遗留 8580 服务未迁，不在范围，sub2api 实际走 `172.18.0.1:8080`）；② `logs/` 属主实测已是 `1000:1001`，**已解决**；③ 步骤 8/9 的代码与流程已完成，仅剩 COS 真机 1 条验证；④ 新增：COS API 密钥未轮换；⑤ 新增：双机/本地代码已分叉（§13.5） |
 | 清理 | COS 中转前缀已删；老机打包目录已删；新机打包目录已删 |
+| 安全收尾（§13 补做） | 关闭密码登录、root 改为仅密钥、root 密码已轮换；改前配置备份 `/root/ssh-hardening-backup-20261112-1935/`；负向验证返回 `Permission denied (publickey)`。COS API 密钥轮换未做 |
 
 **已验证成立的关键假设**：
 
 - 老机与新机解析 `cos.ap-guangzhou.myqcloud.com` 均得到 `169.254.0.47`（腾讯云内网服务地址），两侧都走内网，COS 中转方案成立。
-- 新机 80/443 空闲、nginx 未装，直接装即可，无端口冲突。
+- 新机 80/443 空闲、nginx 未装（起草时），直接装即可，无端口冲突。
 - 老机 `.env` 仅 463 B，可直接 scp，无需走 COS。
 - `vpn-deploy` 无运行中的 systemd/docker 服务，确认可安全不迁。
+
+## 13. 复核记录（2026-11-12 晚，只读实测 + 安全收尾）
+
+**范围与约束**：连接两台服务器做只读核实；按用户要求**不提交任何视频任务、不调用视频上游、不做生成/计费探针**（仅对自家 sub2api 打过一次根路径 HTTP）；全程不打印密钥与 DSN。本轮唯一写操作是新机 SSH 安全收尾（§13.3）。
+
+### 13.1 基础实测
+
+| 项 | 结果 |
+|---|---|
+| `/api/status` | `success=true` / `setup=true`，后端 PostgreSQL，DSN host=`postgres:5432` |
+| 数据 | 63 用户 / 11 渠道 / 33 abilities / 107 令牌 / 42 options |
+| nginx | `sites-enabled` 只挂 api2 / default / sub2api（老域名 conf 未启用，无冲突）；`100M / 600s / 18000s / 300s` 超时契约原样；`sudo nginx -t` 通过 |
+| 证书 | Let's Encrypt，2026-11-12 → 2027-02-10，`ssl_verify=0`，公网 HTTPS 200 |
+| 域名绑定 | 三项 options 均指向 api2，无残留 `api.heibaidao.cn`，备份表 `bak_20261112_options_api2` 存在 |
+| 网络 / 容器 | subnet `172.18.0.0/16`；`NODE_NAME=new-api-node-2`；new-api 容器内 `wget 172.18.0.1:8080` 通、宿主机 8080 返回 200 |
+| 前端 | 软链指向 `20261112T034413Z-7a32c6e1421f` |
+| 发布 | 3 份 `/tmp/backend-deploy-*.log`，最新 `FINAL_SHA: 78dc7b851` + `HEALTH_OK`；新机源码 HEAD = `78dc7b851`（复核时与本地一致） |
+| 老机 | 13 个容器含 dcp 全套、license-server 全在，零改动 |
+
+### 13.2 §8 验收清单判定
+
+10 项中 **4 项实测通过**（1 / 8 / 9 / 10）、**4 项仅配置层或代码层确认**（2 / 4 / 6 / 7）、**2 项按约束未跑**（3 / 5）。逐项原因已写在 §8 每条之后。原文档「§8 验收清单已核」与 10 个空 checkbox 自相矛盾，本次已改为按实测勾选并逐条备注。
+
+### 13.3 本轮安全收尾（已完成 19:36）
+
+| 动作 | 结果 |
+|---|---|
+| 改前状态 | `sshd_config` 第 33 行 `PermitRootLogin yes`、第 123 行 `PasswordAuthentication yes`；drop-in `50-cloud-init.conf` 里还有一条 `PasswordAuthentication yes`（因 `Include` 在第 12 行，drop-in 优先） |
+| 备份 | `/root/ssh-hardening-backup-20261112-1935/`（`sshd_config` + `50-cloud-init.conf`） |
+| 改动 | 三处 `yes` 改为 `PasswordAuthentication no` / `PermitRootLogin prohibit-password`；`KbdInteractiveAuthentication` 原本已是 `no` |
+| 校验 | `sudo sshd -t` 通过；生效值 `passwordauthentication no` / `permitrootlogin without-password` / `pubkeyauthentication yes` |
+| 防锁死 | 先挂 180 秒自动回滚 timer，再 `systemctl reload ssh`（不重启、不断现有连接）；新连接验证成功后立即取消 timer |
+| 验证 | 密钥登录连续成功；纯密码方式连接返回 `Permission denied (publickey)`（服务端已不提供密码认证） |
+| root 密码 | 已用随机强密码轮换，**密码只写在新机 `/root/.root-password-20261112`（`600`，root:root），不进聊天**。建议取走后删除该文件 |
+
+回滚：把备份目录里两个文件拷回原路径并 `sudo systemctl reload ssh` 即可。
+
+### 13.4 「全部 healthy」更正
+
+compose 第 37 行确实给 new-api 配了 healthcheck，但实际运行容器是 `docker run` 起的（无 compose 标签），`docker inspect` 返回 `NO_HEALTHCHECK`；部署脚本 `deploy-new-api.sh` 同样走 `docker run`，所以 compose 的 healthcheck / depends_on 对运行容器都不生效。老机也是同样方式，属既有部署习惯，不是新机独有故障，但文档原写法会误导后续排障。若要让健康检查真正生效，需把容器改由 `docker compose up -d` 托管或重建容器时带上 `--health-cmd` 等参数——**本轮未改**。
+
+### 13.5 双机 / 本地代码分叉
+
+复核时：新机 `78dc7b851`，老机 `dcc5bf676`，后者是新机 HEAD 的**祖先**，新机领先老机 7 个提交（含 COS 直存、Range 断点续传、迁移文档、seedance 台账）。本地开发线随后继续推进到 `070402afc`，已领先新机。§6 警告的分叉已实际发生，方向是「本地 > 新机 > 老机」。若这些能力要覆盖老机业务，需按各自发布流程单独同步；本轮未做。
+
+### 13.6 COS API 密钥轮换（未完成，需用户提供新密钥）
+
+密钥目前被 3 处引用，轮换时必须全部同步，否则一期 COS 转存会失败并回落本机代理：
+
+1. 新机 `/root/.cos.env`：`TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` / `TENCENT_APPID`（权限 `600`）
+2. 数据库 `options.CosDirectSetting`：一期直存设置，可能内嵌 secret
+3. 数据库 `options.TencentMPSSetting`：老账号 MPS 设置（桶 `mps-test-1397292858` 属另一账号，本账号 403，不应用于新桶）
+
+新机 new-api 容器 env 中**没有** COS 相关变量，说明应用从 DB options 读取。建议轮换顺序：CAM 控制台为 `hgx001` 新建 SecretKey → 更新 `/root/.cos.env` 与 `CosDirectSetting` → 用新密钥验证预签名 `PUT 200` / `GET 200` / `Range 206` → 真机 1 条 COS 任务 → 确认无旧密钥调用后再在 CAM 禁用旧密钥。**本轮未执行**（缺新凭据，且会触及线上转存链路）。
+
+### 13.7 仍需用户拍板
+
+1. 一期 COS 真机 1 条验证 + 取片 206 端到端（需单独授权，会花 1 条视频费用）
+2. COS API 密钥轮换（需提供新 SecretId/SecretKey，或由用户在 CAM 控制台操作）
+3. 是否给老机补发领先的提交（§13.5）
+4. 是否把 sub2api 8581 站点 502 纳入修复范围
+5. 是否把运行容器改为 compose 托管以让 healthcheck 生效（§13.4）
