@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -165,6 +166,9 @@ func TestReadAssetDeadlineGivesActionableMessage(t *testing.T) {
 	require.Contains(t, userErr.Message, "下载")
 	// 文案必须告诉客户「怎么办」：换地址或先上传。
 	require.Contains(t, userErr.Message, "国内")
+	// /v1/uploads 只收图片（25MB、只验图片魔数）。文案必须把这条建议限定在
+	// 参考图上，否则视频客户会照着一个必然失败的入口去试。
+	require.Contains(t, userErr.Message, "参考图")
 }
 
 func TestUploadAssetUploadStageTimeoutIsDistinguished(t *testing.T) {
@@ -267,10 +271,11 @@ func TestAssetBudgetContextSurvivesNilParent(t *testing.T) {
 
 func TestBuildRequestBodyUploadsMediaConcurrently(t *testing.T) {
 	server := newMediaServer(t)
-	// 每个素材 120ms 下载 + 120ms 上传 = 240ms。
-	// 串行 4 个 = 960ms；并发（上限 3）= 2 轮 ≈ 480ms。
-	server.downloadDelay = func(int) time.Duration { return 120 * time.Millisecond }
-	server.uploadDelay = 120 * time.Millisecond
+	// 每个素材 160ms 下载 + 160ms 上传 = 320ms。
+	// 串行 4 个 = 1280ms；并发（上限 2，两轮）= 640ms。
+	// 阈值取中间 950ms：两边各留 300ms 余量，机器负载高时也不至于误报。
+	server.downloadDelay = func(int) time.Duration { return 160 * time.Millisecond }
+	server.uploadDelay = 160 * time.Millisecond
 	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "k"}
 
 	request := audioRequest(
@@ -283,7 +288,7 @@ func TestBuildRequestBodyUploadsMediaConcurrently(t *testing.T) {
 	elapsed := time.Since(started)
 
 	require.NoError(t, err)
-	require.Less(t, elapsed, 800*time.Millisecond, "4 个素材的耗时接近串行（≈960ms），并发没生效")
+	require.Less(t, elapsed, 950*time.Millisecond, "4 个素材的耗时接近串行（≈1280ms），并发没生效")
 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
@@ -294,7 +299,9 @@ func TestBuildRequestBodyUploadsMediaConcurrently(t *testing.T) {
 func TestBuildRequestBodyKeepsMediaOrderUnderConcurrency(t *testing.T) {
 	server := newMediaServer(t)
 	// 越靠后的素材越快完成，逼出「完成顺序 ≠ 入参顺序」。
-	delays := []time.Duration{150 * time.Millisecond, 100 * time.Millisecond, 50 * time.Millisecond}
+	// 并发上限是 2，所以第 3 个素材要等前两个里先完成那个让位：
+	// 完成顺序是 2 → 3 → 1，与入参顺序完全相反。
+	delays := []time.Duration{200 * time.Millisecond, 60 * time.Millisecond, 40 * time.Millisecond}
 	server.downloadDelay = func(index int) time.Duration {
 		if index-1 >= 0 && index-1 < len(delays) {
 			return delays[index-1]
@@ -352,4 +359,104 @@ func TestBuildRequestBodyDataURLMediaUnderConcurrency(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
 	require.Len(t, payload["media"].([]any), 2)
+}
+
+// ---- 4. 素材源站的问题一律 400，上游的问题一律 500 ----
+//
+// 这条边界不能糊：素材地址是客户填的，错了要 400（不 AutoBan、不换渠道重试）；
+// 上传到上游失败才是渠道故障，必须 500 让重试与 AutoBan 正常工作。
+// 边界糊了的后果是「一个客户填错 URL 把整条有赞渠道打到禁用」。
+
+func TestAssetSourceFailuresAreUserErrors(t *testing.T) {
+	// disableSSRF 让 httptest 的 127.0.0.1 随机端口能通过校验；
+	// 「被 SSRF 拦下」是另一条路径，单独在下面用开启保护的用例覆盖。
+	disableSSRF(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/missing", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNotFound)
+	})
+	notFound := httptest.NewServer(mux)
+	t.Cleanup(notFound.Close)
+
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{name: "源站 404", source: notFound.URL + "/missing"},
+		{name: "协议不是 http(s)", source: "ftp://example.com/a.mp4"},
+		{name: "data URL 损坏", source: "data:audio/mpeg;base64,!!!!"},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			adaptor := &TaskAdaptor{baseURL: "https://upstream.example", apiKey: "k"}
+			_, _, _, err := adaptor.readAsset(context.Background(), testCase.source)
+			require.Error(t, err)
+
+			var userErr *taskcommon.UserError
+			require.ErrorAs(t, err, &userErr,
+				"素材源站的问题必须降级成 400，否则 500 会触发 AutoBan：%v", err)
+		})
+	}
+}
+
+func TestSSRFBlockedAssetIsUserError(t *testing.T) {
+	// 与上一条相反：这里必须**开着** SSRF 保护，验证「客户把素材指向内网」
+	// 也是 400 而不是 500 —— 同样是换个地址就能修的问题。
+	fetch := system_setting.GetFetchSetting()
+	original := *fetch
+	fetch.EnableSSRFProtection = true
+	t.Cleanup(func() { *fetch = original })
+
+	adaptor := &TaskAdaptor{baseURL: "https://upstream.example", apiKey: "k"}
+	_, _, _, err := adaptor.readAsset(context.Background(), "http://10.0.0.8/secret.mp4")
+	require.Error(t, err)
+
+	var userErr *taskcommon.UserError
+	require.ErrorAs(t, err, &userErr, "内网素材地址是客户入参问题，不该让渠道背锅：%v", err)
+}
+
+func TestAssetTooLargeIsUserError(t *testing.T) {
+	disableSSRF(t)
+	// 用 Content-Length 直接判超限，不真的传 100MB。
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Length", strconv.Itoa(maxAssetBytes+1))
+		writer.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(server.Close)
+
+	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "k"}
+	_, _, _, err := adaptor.readAsset(context.Background(), server.URL+"/huge.mp4")
+	require.Error(t, err)
+
+	var userErr *taskcommon.UserError
+	require.ErrorAs(t, err, &userErr)
+	require.Contains(t, userErr.Message, "上限")
+}
+
+func TestUpstreamAssetUploadFailureStaysServerError(t *testing.T) {
+	disableSSRF(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/asset/", func(writer http.ResponseWriter, _ *http.Request) {
+		_, _ = writer.Write([]byte("asset-bytes"))
+	})
+	mux.HandleFunc("/v1/assets", func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusInternalServerError)
+		_, _ = writer.Write([]byte(`{"ok":false,"error":{"message":"upstream boom"}}`))
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "k"}
+	_, err := adaptor.uploadAsset(context.Background(), "reference_audio", server.URL+"/asset/1")
+	require.Error(t, err)
+
+	var userErr *taskcommon.UserError
+	require.False(t, errors.As(err, &userErr),
+		"上游接收素材失败是渠道故障，必须保留 500 语义（要重试、要 AutoBan），不能降级成 400")
+}
+
+func TestClientGoneIsNotDowngradedToUserError(t *testing.T) {
+	require.True(t, isClientGone(asAssetSourceError(errClientGone)))
+	require.True(t, isClientGone(asAssetSourceError(fmt.Errorf("包一层: %w", errClientGone))))
 }

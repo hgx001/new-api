@@ -51,8 +51,13 @@ const (
 	assetTotalBudget = 50 * time.Second
 
 	// assetMaxConcurrency 限制同时处理的素材数。
-	// 每个素材都可能是一路 20MB+ 的下载，全并发会把内存和出口带宽一起打满。
-	assetMaxConcurrency = 3
+	//
+	// 每个素材都可能是一路 100MB（maxAssetBytes）的下载，参考图还要在本地解成
+	// RGBA 再重编码。生产机只有 3.7GB 内存（可用约 2.2GB），3 路并发在
+	// 「一张超大图 + 一个大视频」的组合下会把峰值推到 500MB 以上，
+	// 而这条链路上还有别的请求在跑。2 路已经足够把「一个大视频堵住后面所有素材」
+	// 的问题解决掉，再往上加是拿 OOM 换几十毫秒。
+	assetMaxConcurrency = 2
 )
 
 type TaskAdaptor struct {
@@ -760,7 +765,7 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 func parseDataURL(value string) ([]byte, string, error) {
 	parts := strings.SplitN(value, ",", 2)
 	if len(parts) != 2 || !strings.HasPrefix(strings.ToLower(parts[0]), "data:") {
-		return nil, "", errors.New("invalid data URL")
+		return nil, "", errors.New("参考素材的 data URL 格式不正确")
 	}
 	meta := parts[0][5:]
 	mimeType := strings.Split(meta, ";")[0]
@@ -783,6 +788,17 @@ func getHTTPClient(proxy string) (*http.Client, error) {
 	return client, nil
 }
 
+// errClientGone 标记「客户端已断开」。
+//
+// 它不是参数错误：没有人还在读这条消息，也不该降级成给客户看的 400 文案，
+// 更不能因此让客户以为是自己填错了素材地址。用哨兵值而不是比字符串，
+// 是为了让上层（asAssetSourceError）能可靠地把它排除在「素材不可用」之外。
+var errClientGone = errors.New("client disconnected")
+
+func isClientGone(err error) bool {
+	return errors.Is(err, errClientGone)
+}
+
 // assetStageError 把素材处理中的「超时 / 客户端断开」翻译成合适的错误。
 //
 // 两种情形必须分开：
@@ -795,17 +811,46 @@ func assetStageError(ctx context.Context, err error, stage string) error {
 		return nil
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-		return errors.Errorf("客户端已断开，素材%s中止", stage)
+		return errors.Wrapf(errClientGone, "客户端已断开，素材%s中止", stage)
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		// 不写「已等待 N 秒」：真正触发的可能是父级更早的 deadline，
 		// 报一个没发生过的时长会让运维照着错的方向查。
+		//
+		// 兜底建议只能提「图片可用 /v1/uploads」：那个端点只收图片（25MB 上限、
+		// 只验图片魔数），对视频/音频说这句等于把客户引到一个必然失败的入口。
 		return taskcommon.NewUserError(errors.Errorf(
 			"参考素材%s超时（提交预算 %d 秒内未完成）：素材源站响应过慢。"+
-				"请把素材换到国内可访问的地址后重试，或先用 /v1/uploads 上传后再提交",
+				"请把素材换到国内可访问的地址后重试（参考图也可先用 /v1/uploads 上传）",
 			stage, int(assetTotalBudget.Seconds())), "asset_timeout")
 	}
 	return err
+}
+
+// asAssetSourceError 把「素材源站 / 素材本身」的所有失败统一降级成 400。
+//
+// 为什么不止降级超时：素材地址是**客户填的**，404、DNS 解析不了、文件超过
+// 100MB、指向内网，全都是「换个地址就能修」。不降级的话 relay_task 会把它包成
+// 500 build_request_failed，而 controller/relay.go 对非 LocalError 会走
+// processChannelError —— 一个客户填错 URL 就能把有赞渠道打到 AutoBan，
+// 全体客户的视频一起停。这与 seeta 链路同口径
+// （见 relay/channel/task/seeta/adaptor.go：「素材问题属于客户入参错误」）。
+//
+// 上传到上游那一段**不**走这里：那才是渠道故障，该 500、该重试、该 AutoBan。
+func asAssetSourceError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var userErr *taskcommon.UserError
+	if errors.As(err, &userErr) {
+		return err // 已经带好了 400 与可读文案
+	}
+	if isClientGone(err) {
+		return err
+	}
+	// 不额外加前缀：下面每条 readAssetBytes 的错误文案都已经写成客户能读的中文，
+	// 再包一层「参考素材不可用: 」只会让同义词重复两遍。
+	return taskcommon.NewUserError(err, "asset_unavailable")
 }
 
 // assetBudgetContext 给素材处理套上总预算，同时继承客户连接的取消。
@@ -819,18 +864,28 @@ func assetBudgetContext(parent context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(parent, assetTotalBudget)
 }
 
+// readAsset 读取素材字节。所有失败都会被 asAssetSourceError 统一降级成 400 ——
+// 这一层只负责「把字节拿回来」和「说清哪一步错了」。
 func (a *TaskAdaptor) readAsset(ctx context.Context, source string) ([]byte, string, string, error) {
+	data, mimeType, name, err := a.readAssetBytes(ctx, source)
+	if err != nil {
+		return nil, "", "", asAssetSourceError(err)
+	}
+	return data, mimeType, name, nil
+}
+
+func (a *TaskAdaptor) readAssetBytes(ctx context.Context, source string) ([]byte, string, string, error) {
 	if strings.HasPrefix(strings.ToLower(source), "data:") {
 		data, mimeType, err := parseDataURL(source)
 		return data, mimeType, "asset", err
 	}
 	parsed, err := url.Parse(source)
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, "", "", errors.New("youzan wan3 requires http(s) URL or data URL media")
+		return nil, "", "", errors.New("参考素材地址必须是 http(s) 链接或 data URL")
 	}
 	fetchSetting := system_setting.GetFetchSetting()
 	if err := common.ValidateURLWithFetchSetting(source, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
-		return nil, "", "", errors.Wrap(err, "youzan wan3 media URL blocked")
+		return nil, "", "", errors.Wrap(err, "参考素材地址不被允许（内网或受限地址）")
 	}
 	client, err := getHTTPClient(a.proxy)
 	if err != nil {
@@ -848,10 +903,10 @@ func (a *TaskAdaptor) readAsset(ctx context.Context, source string) ([]byte, str
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, "", "", errors.Errorf("download media failed: HTTP %d", response.StatusCode)
+		return nil, "", "", errors.Errorf("参考素材下载失败：源站返回 HTTP %d（地址可能已失效）", response.StatusCode)
 	}
 	if response.ContentLength > maxAssetBytes {
-		return nil, "", "", errors.New("media file is too large")
+		return nil, "", "", errors.Errorf("参考素材超过 %dMB 上限，请压缩或裁剪后重试", maxAssetBytes>>20)
 	}
 	limited := io.LimitReader(response.Body, maxAssetBytes+1)
 	data, err := io.ReadAll(limited)
@@ -859,7 +914,7 @@ func (a *TaskAdaptor) readAsset(ctx context.Context, source string) ([]byte, str
 		return nil, "", "", assetStageError(ctx, err, "下载")
 	}
 	if len(data) > maxAssetBytes {
-		return nil, "", "", errors.New("media file is too large")
+		return nil, "", "", errors.Errorf("参考素材超过 %dMB 上限，请压缩或裁剪后重试", maxAssetBytes>>20)
 	}
 	mimeType := response.Header.Get("Content-Type")
 	if index := strings.IndexByte(mimeType, ';'); index >= 0 {
@@ -1035,7 +1090,6 @@ func (a *TaskAdaptor) uploadMedia(ctx context.Context, media []relaycommon.TaskM
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(assetMaxConcurrency)
 	for index := range media {
-		index := index
 		group.Go(func() error {
 			item := media[index]
 			assetURL, err := a.uploadAsset(groupCtx, item.Type, item.URL)
