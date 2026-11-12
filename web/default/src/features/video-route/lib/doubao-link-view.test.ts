@@ -52,6 +52,7 @@ function policy(
     ratio_target_model: '',
     trigger_ratio: '',
     frames_target_model: '',
+    seconds_rule_ratio_gate: '',
     updated_at: 0,
     doubao_link_off: false,
     doubao_link_off_until: 0,
@@ -155,5 +156,52 @@ describe('buildDoubaoLinkView', () => {
   test('备胎已配置时 fallbackReady=true；状态整体缺失时也不放行', () => {
     assert.equal(buildDoubaoLinkView(policy(), failover()).fallbackReady, true)
     assert.equal(buildDoubaoLinkView(policy(), null).fallbackReady, false)
+  })
+})
+
+// 可选比例条件（2026-11-12）：后台勾选只收窄「哪些请求能改派」，
+// 与豆包链路开关本身是两件事，视图必须分别表达，不能混成一个布尔。
+describe('可选比例条件勾选', () => {
+  test('闸门为空 = 未勾选，标签仍显示默认比例 9:16', () => {
+    const view = buildDoubaoLinkView(policy(), failover())
+
+    assert.equal(view.ratioGateOn, false)
+    assert.equal(view.ratioGateValue, '9:16', '未勾选时也给默认值，运营知道勾上会要求什么')
+  })
+
+  test('闸门有值 = 已勾选，如实回显配置里的比例', () => {
+    const view = buildDoubaoLinkView(
+      policy({ seconds_rule_ratio_gate: '16:9' }),
+      failover()
+    )
+
+    assert.equal(view.ratioGateOn, true)
+    assert.equal(view.ratioGateValue, '16:9')
+  })
+
+  test('带首尾空格的闸门值不应被当成没配', () => {
+    const view = buildDoubaoLinkView(
+      policy({ seconds_rule_ratio_gate: ' 9:16 ' }),
+      failover()
+    )
+
+    assert.equal(view.ratioGateOn, true)
+    assert.equal(view.ratioGateValue, '9:16')
+  })
+
+  test('条件勾选不改变链路开关本身的开/关状态', () => {
+    const on = buildDoubaoLinkView(
+      policy({ seconds_rule_ratio_gate: '9:16' }),
+      failover()
+    )
+    const off = buildDoubaoLinkView(
+      policy({ seconds_rule_ratio_gate: '', doubao_link_off: true }),
+      failover()
+    )
+
+    assert.equal(on.on, true, '勾上条件不等于关掉豆包链路')
+    assert.equal(on.ratioGateOn, true)
+    assert.equal(off.on, false, '取消条件不等于打开豆包链路')
+    assert.equal(off.ratioGateOn, false)
   })
 })
