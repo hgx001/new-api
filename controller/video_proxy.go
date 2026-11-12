@@ -32,6 +32,7 @@ import (
 //     60 秒只拉到 19~20MB → io.Copy 报 `context deadline exceeded`；
 //   - 客户端侧同理：用户带宽 1.3Mbps 时 60 秒只能收 ~10MB，
 //     用户看到的就是「拉到 10M 就断了，一直显示生成中」。
+//
 // 后果是上游（ArcReel）已结算扣费、下游拿不到完整产物 → 用户收不到成片、new-api 无法结算。
 // 30MB 在 1Mbps 下约需 240 秒，留足余量取 600 秒；慢客户端占用连接可接受，
 // 真正的兜底在网关/nginx 层。
@@ -108,6 +109,53 @@ func videoProxyError(c *gin.Context, status int, errType, message string) {
 			"type":    errType,
 		},
 	})
+}
+
+// applyVideoProxyRangeHeaders 把客户端的 Range / If-Range 透传给回源请求。
+//
+// 成片动辄几十 MB，客户端下载中途断开后不应从 0 重来：Range 透传后上游
+// （OSS/COS/CDN）回 206，客户端按自己的偏移续传即可。客户端没带就不发，
+// 避免凭空给上游塞空头。
+func applyVideoProxyRangeHeaders(req *http.Request, clientHeader http.Header) {
+	if rng := clientHeader.Get("Range"); rng != "" {
+		req.Header.Set("Range", rng)
+	}
+	if ifRange := clientHeader.Get("If-Range"); ifRange != "" {
+		req.Header.Set("If-Range", ifRange)
+	}
+}
+
+// isVideoProxyRelayableStatus 判断回源状态能否原样转给客户端。
+//
+// 200 是完整文件；206 / 416 是断点续传的协议响应，必须透传，
+// 否则会被下面的错误分支包成 502，客户端永远无法续传。
+func isVideoProxyRelayableStatus(status int) bool {
+	switch status {
+	case http.StatusOK, http.StatusPartialContent, http.StatusRequestedRangeNotSatisfiable:
+		return true
+	default:
+		return false
+	}
+}
+
+// writeVideoProxyContent 把回源响应原样写回客户端。
+//
+// 206 / 416 是分片响应，绝不能打 public 长缓存：少量中间缓存会把半截
+// 文件当完整产物回给后续请求。只有完整 200 才允许缓存一天。
+func writeVideoProxyContent(w gin.ResponseWriter, resp *http.Response) error {
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	if resp.StatusCode == http.StatusOK {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+	} else {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, err := io.Copy(w, resp.Body)
+	return err
 }
 
 func VideoProxy(c *gin.Context) {
@@ -330,6 +378,9 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
+	// 断点续传：客户端带 Range/If-Range 时透传给上游，由上游回 206。
+	applyVideoProxyRangeHeaders(req, c.Request.Header)
+
 	fetchClient := client
 	if videoProxyRelayRedirectEnabled() {
 		fetchClient = videoProxyRedirectClient(client)
@@ -360,22 +411,14 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if !isVideoProxyRelayableStatus(resp.StatusCode) {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
 		videoProxyError(c, http.StatusBadGateway, "server_error",
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
 		return
 	}
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			c.Writer.Header().Add(key, value)
-		}
-	}
-
-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
-	c.Writer.WriteHeader(resp.StatusCode)
-	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
+	if err = writeVideoProxyContent(c.Writer, resp); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
 }
