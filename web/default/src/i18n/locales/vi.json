@@ -5470,7 +5470,14 @@
     "Client IP": "IP khách hàng",
     "Node Credential": "Thông tin xác thực nút",
     "Frozen": "Đã tạm khóa",
-    "Legacy key": "Khóa chia sẻ cũ"
+    "Legacy key": "Khóa chia sẻ cũ",
+    "Request Parameters": "Tham số yêu cầu",
+    "Seconds": "Số giây",
+    "Resolution": "Độ phân giải",
+    "Size": "Kích thước",
+    "Seed": "Seed",
+    "Media": "Phương tiện",
+    "Media Fields": "Trường phương tiện"
   },
   "Integration Tutorial": "Hướng dẫn tích hợp",
   "Claude Code Installation": "Cài đặt Claude Code",
@@ -5570,12 +5577,5 @@
   "Voided entries no longer count toward any total.": "Các khoản đã hủy không còn tính vào tổng.",
   "Unused prepayments, granted quota, discounts and refunds create this gap.": "Chênh lệch do trả trước chưa dùng, quota tặng, giảm giá, hoàn tiền và doanh thu VPN / gói đăng ký / máy chủ (sổ riêng).",
   "Cash revenue is paid top-ups. Channel figures use billed consumption. They are two separate measures.": "Doanh thu là các lần nạp đã thanh toán; kênh dùng tiêu thụ đã tính phí. Hai chỉ số riêng biệt.",
-  "Record an upstream payment. The full amount counts on the selected day.": "Ghi một khoản thanh toán cho nhà cung cấp. Toàn bộ số tiền tính vào ngày đã chọn.",
-  "Request Parameters": "Tham số yêu cầu",
-  "Seconds": "Số giây",
-  "Resolution": "Độ phân giải",
-  "Size": "Kích thước",
-  "Seed": "Seed",
-  "Media": "Phương tiện",
-  "Media Fields": "Trường phương tiện"
+  "Record an upstream payment. The full amount counts on the selected day.": "Ghi một khoản thanh toán cho nhà cung cấp. Toàn bộ số tiền tính vào ngày đã chọn."
 }

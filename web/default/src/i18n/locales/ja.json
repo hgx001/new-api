@@ -5470,7 +5470,14 @@
     "Client IP": "接続元 IP",
     "Node Credential": "ノード認証情報",
     "Frozen": "凍結済み",
-    "Legacy key": "旧共有キー"
+    "Legacy key": "旧共有キー",
+    "Request Parameters": "リクエストパラメータ",
+    "Seconds": "秒数",
+    "Resolution": "解像度",
+    "Size": "サイズ",
+    "Seed": "シード",
+    "Media": "メディア",
+    "Media Fields": "メディア項目"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",
@@ -5570,12 +5577,5 @@
   "Voided entries no longer count toward any total.": "無効化した記録は集計に含まれません。",
   "Unused prepayments, granted quota, discounts and refunds create this gap.": "未使用の前払い、付与枠、割引、返金、および VPN・サブスク・サーバー注文の収入（独立帳簿）が差額の要因です。",
   "Cash revenue is paid top-ups. Channel figures use billed consumption. They are two separate measures.": "収入は入金済みチャージ、チャネルは課金消費額です。別の指標です。",
-  "Record an upstream payment. The full amount counts on the selected day.": "上流への支払いを記録します。全額が選択日の集計に入ります。",
-  "Request Parameters": "リクエストパラメータ",
-  "Seconds": "秒数",
-  "Resolution": "解像度",
-  "Size": "サイズ",
-  "Seed": "シード",
-  "Media": "メディア",
-  "Media Fields": "メディア項目"
+  "Record an upstream payment. The full amount counts on the selected day.": "上流への支払いを記録します。全額が選択日の集計に入ります。"
 }

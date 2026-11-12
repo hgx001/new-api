@@ -5470,7 +5470,14 @@
     "Client IP": "IP du client",
     "Node Credential": "Identifiant de nœud",
     "Frozen": "Gelé",
-    "Legacy key": "Ancienne clé partagée"
+    "Legacy key": "Ancienne clé partagée",
+    "Request Parameters": "Paramètres de la requête",
+    "Seconds": "Secondes",
+    "Resolution": "Résolution",
+    "Size": "Taille",
+    "Seed": "Seed",
+    "Media": "Médias",
+    "Media Fields": "Champs de médias"
   },
   "Integration Tutorial": "Tutoriel d'intégration",
   "Claude Code Installation": "Installation de Claude Code",
@@ -5570,12 +5577,5 @@
   "Voided entries no longer count toward any total.": "Les écritures annulées ne comptent plus dans les totaux.",
   "Unused prepayments, granted quota, discounts and refunds create this gap.": "Prépaiements non consommés, quotas offerts, remises, remboursements et revenus VPN / abonnements / serveurs (comptes séparés) expliquent cet écart.",
   "Cash revenue is paid top-ups. Channel figures use billed consumption. They are two separate measures.": "Les revenus correspondent aux rechargements payés. Les canaux utilisent la consommation facturée. Ce sont deux mesures distinctes.",
-  "Record an upstream payment. The full amount counts on the selected day.": "Enregistrez un paiement fournisseur. Le montant complet compte le jour choisi.",
-  "Request Parameters": "Paramètres de la requête",
-  "Seconds": "Secondes",
-  "Resolution": "Résolution",
-  "Size": "Taille",
-  "Seed": "Seed",
-  "Media": "Médias",
-  "Media Fields": "Champs de médias"
+  "Record an upstream payment. The full amount counts on the selected day.": "Enregistrez un paiement fournisseur. Le montant complet compte le jour choisi."
 }

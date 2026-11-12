@@ -5470,7 +5470,14 @@
     "Client IP": "下单 IP",
     "Node Credential": "节点凭据",
     "Frozen": "已冻结",
-    "Legacy key": "旧版共享密钥"
+    "Legacy key": "旧版共享密钥",
+    "Request Parameters": "请求参数",
+    "Seconds": "秒数",
+    "Resolution": "分辨率",
+    "Size": "尺寸",
+    "Seed": "随机种子",
+    "Media": "素材",
+    "Media Fields": "素材字段"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",
@@ -5570,12 +5577,5 @@
   "Voided entries no longer count toward any total.": "作废后不再计入任何汇总。",
   "Unused prepayments, granted quota, discounts and refunds create this gap.": "差额来自预充值未消费、赠送额度、折扣、退款，以及 VPN / 订阅 / 服务器订单收入（独立账，未并入实收）。",
   "Cash revenue is paid top-ups. Channel figures use billed consumption. They are two separate measures.": "实收取成功充值实付，渠道数据取计费消耗额，两者是不同口径。",
-  "Record an upstream payment. The full amount counts on the selected day.": "录入一笔上游付款，金额按所选日期全额计入。",
-  "Request Parameters": "请求参数",
-  "Seconds": "秒数",
-  "Resolution": "分辨率",
-  "Size": "尺寸",
-  "Seed": "随机种子",
-  "Media": "素材",
-  "Media Fields": "素材字段"
+  "Record an upstream payment. The full amount counts on the selected day.": "录入一笔上游付款，金额按所选日期全额计入。"
 }
