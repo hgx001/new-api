@@ -95,6 +95,8 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 | 腾讯云子账户 | 主账号 `100005629999`（APPID `1256715892`），子用户 `hgx001`（`AdministratorAccess`；密钥存新机 `/root/.cos.env` 600，不入库不入聊天） |
 | COS 桶 | `hbd-video-1256715892`（ap-guangzhou，私有，生命周期 30 天）。老机 `mps-test-1397292858` 属**另一个腾讯云账号**，其 secret 不可复用 |
 | 双机差异 | 新机 compose 固定 subnet `172.18.0.0/16`；sub2api 8080 只绑 `172.18.0.1`；options 三项已改 api2（备份 `bak_20261112_options_api2`）；new-api logs/ 属主须 1000:1001（compose 重建目录后需重新 chown） |
+| 新机部署 | `DEPLOY_HOST=newapi DEPLOY_PORT=22 deploy/deploy-backend.sh <sha>`（ssh config 别名 `newapi`/`newapi-root`；ubuntu 已入 docker 组）。**PowerShell 里裸 `bash` 是 WSL，env 不继承会误打老机**——必须走 Git Bash 且重定向到文件才能拿到输出。新机可直接 fetch github（不需要 bundle）。⚠️ 新机 new-api 容器由 deploy 脚本 `docker run` 管理，勿对 `/home/ubuntu/new-api/docker-compose.yml` 跑 `compose up`，会把镜像回退到迁移时的旧版 |
+| COS 直存 | options 键 `CosDirectSetting`（2026-11-12 已下发，密钥源 `/root/.cos.env`，下发脚本 `/root/cosdirect-provision.sh`）；wan3 非超分模型成片经 `SubmitDirectRelocate` 拉片直传桶 `hbd-video-1256715892`，占位符 `cos-proxy://` 取片时按桶匹配凭据预签名 302 |
 
 - 迁移传输走 **COS 广州内网**中转（老机公网出口实测仅 2.6Mbps，直传不可行）；COS 中转完成后删除中转前缀。
 - 新机产物链路规划：一期 COS 直存 + 302 预签名（无损，不过 MPS 转码），二期 CDN 域名；复用 `wan3/relocate.go` 的 `cos-proxy://` 协议。
