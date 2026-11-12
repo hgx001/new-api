@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -150,7 +151,17 @@ func buildDirectObjectKey(outputDir, objectName string) (string, error) {
 
 // fetchAndUploadDirect 从 sourceURL 拉片并 PUT 到 COS。
 //
-// 大小保护：读满 MaxBytes+1 即判失败，防止上游异常响应灌爆内存。
+// 大小保护：读满 MaxBytes+1 即判失败，防止上游异常响应灌爆磁盘。
+//
+// 为什么先落盘再上传（2026-11-12 真机 403 教训）：
+//
+//	cos-go-sdk-v5 的 Object.Put 对非固定长度 reader（bytes.Reader/
+//	strings.Reader/os.File 之外，包括 io.LimitReader）不会设置
+//	Content-Length，Go http 只能走 Transfer-Encoding: chunked，
+//	而 **COS 拒收 chunked PUT，直接 403 AccessDenied**。
+//	先落盘成临时文件再 PutFromFile（os.File 是 LenReader），
+//	Content-Length 自动就位；顺带把超限判定提前到上传之前，
+//	超限的源片不再产生无谓的上传流量。
 func fetchAndUploadDirect(ctx context.Context, cfg cosdirect_setting.Config, sourceURL, objectKey string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
@@ -165,20 +176,32 @@ func fetchAndUploadDirect(ctx context.Context, cfg cosdirect_setting.Config, sou
 		return fmt.Errorf("upstream video status %d", resp.StatusCode)
 	}
 
-	limited := io.LimitReader(resp.Body, cfg.MaxBytes+1)
-	if err := putCOSObject(ctx, cfg, objectKey, limited); err != nil {
-		return err
+	tmp, err := os.CreateTemp("", "wan3-cos-direct-*.mp4")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
 	}
+	tmpPath := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpPath)
+	}()
 
-	// 上传管道已经把 MaxBytes+1 读进来了；多出的 1 字节说明源片超限。
-	if n, _ := io.Copy(io.Discard, resp.Body); n > 0 {
+	size, err := io.Copy(tmp, io.LimitReader(resp.Body, cfg.MaxBytes+1))
+	if err != nil {
+		return fmt.Errorf("download upstream video: %w", err)
+	}
+	if size > cfg.MaxBytes {
 		return fmt.Errorf("upstream video exceeds max size %d bytes", cfg.MaxBytes)
 	}
-	return nil
+
+	return putCOSObject(ctx, cfg, objectKey, tmpPath)
 }
 
 // putCOSObject 用官方 SDK 上传（与 cos_presign.go 同一理由：不手写 COS 签名）。
-func putCOSObject(ctx context.Context, cfg cosdirect_setting.Config, objectKey string, body io.Reader) error {
+//
+// filePath 指向已下载完的临时文件：os.File 带 known length，
+// SDK 会设置 Content-Length（见 fetchAndUploadDirect 的 403 教训）。
+func putCOSObject(ctx context.Context, cfg cosdirect_setting.Config, objectKey, filePath string) error {
 	bucketURL := cosBucketURL.Load()
 	if bucketURL == nil {
 		var err error
@@ -191,7 +214,7 @@ func putCOSObject(ctx context.Context, cfg cosdirect_setting.Config, objectKey s
 		&cos.BaseURL{BucketURL: bucketURL},
 		&http.Client{Timeout: 0}, // 超时由 ctx 控制
 	)
-	_, err := client.Object.Put(ctx, objectKey, body, nil)
+	_, err := client.Object.PutFromFile(ctx, objectKey, filePath, nil)
 	if err != nil {
 		return fmt.Errorf("put cos object %s: %w", objectKey, err)
 	}

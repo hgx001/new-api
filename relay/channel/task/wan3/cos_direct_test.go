@@ -127,6 +127,12 @@ func fakeCOS(t *testing.T, expectedKey string, body *bytes.Buffer) *url.URL {
 			http.Error(w, "method", http.StatusMethodNotAllowed)
 			return
 		}
+		// 真机教训（2026-11-12）：COS 拒收 chunked PUT（403 AccessDenied）。
+		// 上传必须带 Content-Length，否则视为协议回归。
+		if len(r.TransferEncoding) > 0 {
+			http.Error(w, "chunked upload is rejected by COS", http.StatusLengthRequired)
+			return
+		}
 		if expectedKey != "" && r.URL.Path != "/"+expectedKey {
 			http.Error(w, "path mismatch: "+r.URL.Path, http.StatusBadRequest)
 			return
@@ -209,8 +215,9 @@ func TestPollDirectRelocateOversizeFallsBack(t *testing.T) {
 	}))
 	t.Cleanup(upstream.Close)
 
-	// 上传目标也用假 endpoint：超限判定发生在「上传后还有剩余字节」，
-	// 所以 PUT 会成功，判定靠剩余字节，不能打真 COS。
+	// 超限判定发生在落盘阶段（上传之前），COS 侧应当零流量；
+	// 假 endpoint 只用于确保误打时也能被拦截，不打真 COS。
+	bodyLen.Store(0) // bodyLen 是包级变量，先清零排除前序用例的残留值
 	cosBody := &bytes.Buffer{}
 	cosURL := fakeCOS(t, "", cosBody)
 	cosBucketURL.Store(cosURL)
@@ -223,6 +230,8 @@ func TestPollDirectRelocateOversizeFallsBack(t *testing.T) {
 	assert.True(t, done)
 	assert.Equal(t, postProcessStageFailed, task.PrivateData.PostProcess.Stage)
 	assert.Equal(t, task.PrivateData.PostProcess.SourceURL, task.PrivateData.ResultURL)
+	assert.Equal(t, int64(0), bodyLen.Load(), "超限源片不应产生任何上传流量")
+	assert.Contains(t, task.PrivateData.PostProcess.Error, "exceeds max size")
 }
 
 func TestPollDirectRelocateTerminalStageIsNoop(t *testing.T) {
