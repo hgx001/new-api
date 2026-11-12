@@ -92,6 +92,7 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 | 支付/回调、补单、额度缓存、兑换码/订阅并发安全 | [payments.md](docs/agent-guides/payments.md) |
 | 发布护栏、安全探针、误建撤销、sub2api/OAuth | [production-operations.md](docs/agent-guides/production-operations.md) |
 | 实际发布/回滚步骤 | [deploy/README.md](deploy/README.md)（唯一权威流程） |
+| 有赞上游余额对账、怀疑异常扣款 | `bash scripts/audit-youzan-balance.sh <人工抄的余额>`（在生产服务器执行；节点与用法见脚本头注释） |
 | 表达式/动态分层计费 | [pkg/billingexpr/expr.md](pkg/billingexpr/expr.md) |
 
 ## 部署与计费硬约束
