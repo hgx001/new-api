@@ -34,12 +34,21 @@ const (
 // enableRoute 打开路由开关，测试结束时恢复原状。
 func enableRoute(t *testing.T, source, target string, seconds int) {
 	t.Helper()
+	enableRouteWithGate(t, source, target, seconds, "")
+}
+
+// enableRouteWithGate 额外配置规则一的比例闸门（空串 = 不限比例）。
+func enableRouteWithGate(t *testing.T, source, target string, seconds int, ratioGate string) {
+	t.Helper()
 	previous := seedanceroute_setting.Get()
 	payload := map[string]interface{}{
 		"enabled":         true,
 		"source_model":    source,
 		"target_model":    target,
 		"trigger_seconds": seconds,
+	}
+	if ratioGate != "" {
+		payload["seconds_rule_ratio_gate"] = ratioGate
 	}
 	encoded, err := common.Marshal(payload)
 	if err != nil {
@@ -1301,6 +1310,96 @@ func TestSeedanceRouteKeepsSourceAtOrBelowThreshold(t *testing.T) {
 		if seen != body {
 			t.Fatalf("%d 秒：不应改派（阈值是严格大于 20），body 被改成了 %s", requested, seen)
 		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 规则一比例闸门（2026-11-12）：只有 9:16 且超阈值才改派豆包。
+//
+// 2026-11-12 用户口径：豆包官网 9:16 出片效果最好，其它比例的长时长
+// 请求留在常驻链路（有赞原生 720P）。非 9:16 的 21~30 秒请求**不再**改派
+// （此前无条件改派）—— 这是主动收窄，不是回滚。
+// ─────────────────────────────────────────────────────────────
+
+func TestSeedanceRouteRatioGateBlocksNonNineSixteen(t *testing.T) {
+	enableRouteWithGate(t, testSourceModel, testTargetModel, 20, "9:16")
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"16:9", `{"model":"seedance2.5-特惠","seconds":25,"metadata":{"ratio":"16:9"},"prompt":"a cat"}`},
+		{"1:1", `{"model":"seedance2.5-特惠","seconds":25,"ratio":"1:1","prompt":"a cat"}`},
+		{"无比例", `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`},
+		{"adaptive 不算命中", `{"model":"seedance2.5-特惠","seconds":25,"metadata":{"ratio":"adaptive"},"prompt":"a cat"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, originModel := runRoute(t, tc.body)
+			if seen != tc.body {
+				t.Fatalf("有闸门时非 9:16 不应改派，body 被改成了 %s", seen)
+			}
+			if originModel != "" {
+				t.Fatalf("RouteOriginModel() = %q, want empty", originModel)
+			}
+		})
+	}
+}
+
+func TestSeedanceRouteRatioGatePassesNineSixteen(t *testing.T) {
+	enableRouteWithGate(t, testSourceModel, testTargetModel, 20, "9:16")
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"metadata.ratio 9:16", `{"model":"seedance2.5-特惠","seconds":25,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`},
+		{"顶层 ratio 写法归一", `{"model":"seedance2.5-特惠","seconds":25,"ratio":"9/16","prompt":"a cat"}`},
+		{"size 推断 720x1280", `{"model":"seedance2.5-特惠","seconds":25,"size":"720x1280","prompt":"a cat"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, originModel := runRoute(t, tc.body)
+			var out map[string]interface{}
+			if err := json.Unmarshal([]byte(seen), &out); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if out["model"] != testTargetModel {
+				t.Fatalf("9:16 超阈值必须改派，model = %v（body=%s）", out["model"], tc.body)
+			}
+			if originModel != testSourceModel {
+				t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
+			}
+		})
+	}
+}
+
+// 9:16 但没超阈值：两条闸门都要过，缺一不改派。
+func TestSeedanceRouteRatioGateStillRequiresThreshold(t *testing.T) {
+	enableRouteWithGate(t, testSourceModel, testTargetModel, 20, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":20,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`
+	seen, _ := runRoute(t, body)
+	if seen != body {
+		t.Fatalf("9:16 但 20 秒未超阈值不应改派，body 被改成了 %s", seen)
+	}
+}
+
+// 闸门为空 = 保持无条件改派（旧生产 JSON 没这个字段，行为不能变）。
+func TestSeedanceRouteRatioGateEmptyKeepsLegacyBehavior(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	body := `{"model":"seedance2.5-特惠","seconds":25,"metadata":{"ratio":"16:9"},"prompt":"a cat"}`
+	seen, originModel := runRoute(t, body)
+	var out map[string]interface{}
+	if err := json.Unmarshal([]byte(seen), &out); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if out["model"] != testTargetModel {
+		t.Fatalf("空闸门时任何比例超阈值都要改派，model = %v", out["model"])
+	}
+	if originModel != testSourceModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
 	}
 }
 

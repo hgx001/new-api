@@ -343,6 +343,8 @@ func doubaoRouteAdminState() gin.H {
 	state["source_model"] = policy.SourceModel
 	state["target_model"] = policy.TargetModel
 	state["trigger_seconds"] = policy.TriggerSeconds
+	// 规则一的比例闸门：运营要能看出「超时长为什么只改派了一部分请求」。
+	state["seconds_rule_ratio_gate"] = policy.SecondsRuleRatioGate
 	state["ratio_target_model"] = policy.RatioTargetModel
 	state["trigger_ratio"] = policy.TriggerRatio
 	state["frames_target_model"] = policy.FramesTargetModel

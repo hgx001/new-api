@@ -97,6 +97,16 @@ type Policy struct {
 	// 不再吸附到豆包的旧四档（用户口径：传多少秒就多少秒）。
 	TriggerSeconds int `json:"trigger_seconds"`
 
+	// SecondsRuleRatioGate 规则一的比例闸门（如 "9:16"）。空 = 不限比例。
+	//
+	// 非空时规则一必须「时长超阈值 **且** 比例命中闸门」才改派豆包；
+	// 请求没写比例视为不命中（留在常驻链路）。
+	//
+	// 与 TriggerRatio（规则二的触发比例）**分开存**：规则二在生产是关的，
+	// 但两条规则的语义独立 —— 共用一个字段会让「开规则二」顺带改掉规则一的
+	// 改派范围，属于隐式耦合。
+	SecondsRuleRatioGate string `json:"seconds_rule_ratio_gate,omitempty"`
+
 	// RatioTargetModel 规则二的目标模型名。空 = 规则二不启用。
 	RatioTargetModel string `json:"ratio_target_model,omitempty"`
 	// TriggerRatio 规则二的触发比例（如 "9:16"）。空 = 规则二不启用。

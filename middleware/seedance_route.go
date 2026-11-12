@@ -267,7 +267,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 两者的计费口径不同，所以仍按源模型分别取目标，不能共用一个字段。
 		secondsTarget := policy.TargetModelFor(sourceModel)
 		if seedanceroute_setting.IsSecondsRuleEnabledFor(sourceModel) {
-			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.ExceedsTriggerSeconds(seconds) {
+			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.ExceedsTriggerSeconds(seconds) &&
+				secondsRatioGatePasses(body, policy.SecondsRuleRatioGate) {
 				if newBody, routed := prepareSecondsRoute(c, body, policy, secondsTarget, seconds); routed {
 					if applyRewrittenBody(c, newBody, sourceModel) {
 						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
@@ -1296,6 +1297,19 @@ func matchesTriggerRatio(body map[string]interface{}, trigger string) bool {
 		return false
 	}
 	return got == want
+}
+
+// secondsRatioGatePasses 规则一的比例闸门。
+//
+// gate 为空 = 不限比例（2026-11-12 之前的生产 JSON 没有该字段，
+// 必须保持「任何比例超阈值都改派」的旧行为）。非空时只有比例命中
+// 才放行 —— 没写比例的请求也**不放行**：客户没要求 9:16，
+// 就不该替他改派到只对 9:16 效果好的链路上。
+func secondsRatioGatePasses(body map[string]interface{}, gate string) bool {
+	if strings.TrimSpace(gate) == "" {
+		return true
+	}
+	return matchesTriggerRatio(body, gate)
 }
 
 // resolveRequestRatio 从请求里推断比例。
