@@ -45,9 +45,8 @@ import (
 // ¥0.20/秒 × 30 = ¥6.00，而不是 seedance-2-5 的按次对外价（价目表现行值）。
 // 差额是内部调度收益，不体现在客户账单上。
 //
-// ⚠️ 但光有模型名不够：源模型按秒计价，而目标 adaptor（2026-11-12 起为
-// relay/channel/task/yuanmeng 班车，按次计费返回 nil 倍率）没有 seconds
-// 就会把 30 秒算成 1 秒。所以规则一命中时
+// ⚠️ 但光有模型名不够：源模型按秒计价，而目标 adaptor（按次计费返回 nil 倍率）
+// 没有 seconds 就会把 30 秒算成 1 秒。所以规则一命中时
 // 还要把秒数记进 ContextKeyRouteBillingSeconds（见 relay_task.go 第 5.5 步）。
 //
 // properties.origin_model_name 记「实际执行的模型」是自洽且诚实的：
@@ -68,10 +67,11 @@ const promptRouteLimitRunes = 5000
 // doubaoSecondsFor 校验客户请求的时长是否可以原样发给规则一的目标链路。
 //
 // 2026-11-09 用户口径：new-api 传多少秒就下发多少秒，**禁止吸附/回落改写**。
-// 函数名里的 doubao 是历史（2026-11-12 前目标是豆包官网）；现在目标
-// seedance-2-5 常驻班车 ch27（yuanmeng，时长 2–30 秒）。规则一命中区间是
-// 严格大于阈值（生产 20 秒），21–30 秒与班车区间重合；超出 30 秒的请求
-// 由目标链路自己拒绝（fail-loud），不在这里静默改值。
+// 函数名里的 doubao 是历史；目标 seedance-2-5 的常驻渠道 2026-11-12 起是
+// 豆包官网 ch20（漫屋ArcReel），此前一天曾临时迁到视频生成车站 ch27（yuanmeng，
+// 时长 2–30 秒）。豆包 2.5 支持**任意正整数秒**（见 manwu 的
+// resolveDoubaoDuration），规则一命中区间是严格大于阈值（生产 20 秒）。
+// 超出目标链路自身能力范围的请求由它自己拒绝（fail-loud），不在这里静默改值。
 //
 // 返回 false 仅表示「秒数非法（<=0）」，不再有最大档限制 —— 以前 21–29 秒
 // 向上吸附到 30、>30 秒放弃改派的行为都已删除。
@@ -175,18 +175,19 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 必须在 IsSourceModel 的早退**之前**判。
 		//
 		// ⚠️ 但只判这一次**不够**：规则一的目标模型恰恰就是 seedance-2-5，
-		// 也就是说规则五的源模型是规则一的**目标**。源链路（当前即班车 ch27）
+		// 也就是说规则五的源模型是规则一的**目标**。源链路（当前即豆包 ch20）
 		// 不可用时，规则一把 30 秒请求改派过去必然失败 —— 客户白等一轮 +
 		// 白烧一次预扣。所以规则一改派成功后**必须再判一次规则五**（见
 		// tryFailoverAfterDoubaoRoute），源与备胎**不同渠道**时把请求继续
 		// 改派到备胎，形成完整降级链：
 		//
-		//	促销族 → seedance-2-5（班车 ch27）→ 备胎（wan3.0-班车）
+		//	促销族 → seedance-2-5（豆包 ch20）→ 备胎（wan3.0-班车，ch27）
 		//
-		// 2026-11-12 迁移后源与备胎在当前配置下同渠道，第二段会被
-		// failoverSharedChannelChain 拦住（改名无路由收益，停在规则一结果上）；
-		// 保留第二段是因为 failover_target_model 可配置 —— 备胎一旦分到
-		// 另一批渠道，降级仍然成立。
+		// 2026-11-12 21:50 把 seedance-2-5 常驻渠道回迁豆包 ch20 后，源与备胎
+		// 重新落在**不同渠道**，第二段降级链恢复为真实生效（此前常驻临时
+		// 迁到 ch27 时同渠道，会被 failoverSharedChannelChain 拦住）。
+		// 该函数本身是数据驱动的（按渠道集合判定，不写死渠道号），
+		// 备胎再分到哪批渠道都能正确判断。
 		//
 		// 计费原点：顶层这一段，客户请求的就是 seedance-2-5，
 		// 所以计费口径 = seedance-2-5（¥3.50/次，按次不叠时长倍率）。
@@ -269,14 +270,15 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 成本动机：源链路按秒计价（¥0.20/秒），目标 seedance-2-5 按次计费 ——
 		// 21 秒以后源链路成本已超过目标的按次成本，非等到 30 秒整才改派纯属亏钱。
 		// ⚠️ 20 秒这个阈值是 2026-10-30 按豆包官网成本口径拍板的；2026-11-12
-		// 常驻迁移到班车 ch27 后未按新上游成本重算（要调只改
-		// seedanceroute_setting 的 trigger_seconds，不用改代码）。
+		// 常驻渠道在「班车 ch27 ↔ 豆包 ch20」之间来回搬过一趟，阈值始终没按
+		// 搬运后的上游成本重算（要调只改 seedanceroute_setting 的
+		// trigger_seconds，不用改代码）。
 		//
 		// 目标模型按**源模型**取：两个源模型的**兜底目标都是 seedance-2-5**，
 		// 但它们是两条不同的商品：
 		//   - 母本 seedance2.5-特惠（按秒 ¥0.20/秒）：常驻渠道 17 有赞，
-		//     超过阈值改派 seedance-2-5（按次 ¥3.50 对外；2026-11-12 起上游为
-		//     班车 ch27，成本以渠道台账为准）；
+		//     超过阈值改派 seedance-2-5（按次 ¥3.50 对外；当前上游为豆包
+		//     官网 ch20，成本以渠道台账为准）；
 		//   - 活动版 seedance2.5-活动（按次 ¥4.50/次）：常驻渠道 17 有赞
 		//     （2026-11-11 从心笔切回原生 720P），超过阈值也改派 seedance-2-5 ——
 		//     把长时长的量导到按次目标上，既省源链路的按秒成本，也与母本
@@ -392,15 +394,23 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 
 // doubaoTargetModel 是规则一的目标模型。
 //
-// 2026-11-12 起 seedance-2-5 常驻班车 ch27（yuanmeng，按次计费），
-// 此前是豆包官网 —— doubao 这个名字是历史遗留。
+// 常驻渠道搬过两趟：豆包官网 ch20 → 视频生成车站 ch27（2026-11-12 白天）
+// → 豆包官网 ch20（2026-11-12 21:50 回迁）。当前是豆包官网 ch20 ——
+// doubao 这个名字是历史遗留，但当前口径与名字是对得上的。
 const doubaoTargetModel = "seedance-2-5"
 
 // isDoubaoTarget 判断目标模型是不是规则一的目标（seedance-2-5）。
 //
-// 唯一的使用方是链路后一道 Wan3PromptCompress：目标链路（班车 yuangmeng）
-// 的提示词上限是 20000 **字节**，压缩器按这个字节预算决定压不压
+// 唯一的使用方是链路后一道 Wan3PromptCompress：它按**字节预算**决定压不压
 // （预算内放行，超预算压缩 —— 否则建单时被上游 400）。
+//
+// 字节预算取 failoverMaxPromptLength（20000），比豆包官网的 20000 **字符**
+// 上限更严格 —— 中文每字 3 字节，约 6667 字才到预算，超出就压缩。
+// 方向是偏保守的：宁可多压一次（压到 ≤5000 字符必然安全），
+// 也不放行注定被上游 400 的提示词。
+//
+// 故障转移改派到班车（wan3.0-班车）时 body.model 已经不是本模型，
+// 走的是 wan3 的 5000 字符分支，两条链路上限各自生效。
 // 规则四（超长改派豆包）删除后，条件路由本身不再调用它。
 func isDoubaoTarget(targetModel string) bool {
 	return trimSpace(targetModel) == doubaoTargetModel
@@ -513,9 +523,9 @@ func applyRewrittenBody(c *gin.Context, body map[string]interface{}, originModel
 //
 // 目标模型按源模型取（可能与公共 TargetModel 不同）：
 //   - seedance-2-5 目标（母本 seedance2.5-特惠、活动版 seedance2.5-活动，
-//     2026-11-12 起常驻班车 ch27）：素材/分辨率要转换，比例要改名 ——
+//     当前常驻豆包官网 ch20）：素材/分辨率要转换，比例要改名 ——
 //     改写产物仍是扁平别名形态（input_reference / 顶层 ratio / 秒数），
-//     yuanmeng 的 buildMedia / resolveRatio 兼容这批别名，可直接下发；
+//     manwu 的 buildMedia / resolveRatio 兼容这批别名，可直接下发；
 //   - 心笔按次链路（wan3.0-720p-按次）：本改派只转参考图；带首尾帧/
 //     参考视频/参考音频/seed 的请求留在源链路，时长 2–30 秒（默认 30）、只交付 720P。
 //
@@ -737,8 +747,8 @@ func doubaoTargetUsable(c *gin.Context, body map[string]interface{}, targetModel
 	//
 	// 为什么必须有这一步：中间件改写了 body 的 model 字段，之后的重试
 	// （shouldRetryTaskRelay）只会**用同一个模型名重选渠道**，不会退回源模型。
-	// seedance-2-5 在生产只有渠道 27 一个渠道（2026-11-12 起由豆包 ch20
-	// 迁至视频生成车站）—— 渠道不可用时 Distribute 直接返回 503
+	// seedance-2-5 在生产当前只有豆包官网 ch20 一个渠道（2026-11-12 白天曾临时
+	// 迁到视频生成车站 ch27，当晚 21:50 已回迁）—— 渠道不可用时 Distribute 直接返回 503
 	//「当前分组下没有可用渠道」，客户撞错误。
 	// 预检之后这种请求会自然落回源链路（有赞），客户完全无感。
 	return channelAvailabilityProbe(c, targetModel)
@@ -1370,14 +1380,12 @@ func hasUnsupportedMediaEntries(value interface{}) bool {
 //     转换后**必须断言图数一致**，不一致就放弃路由。
 //  2. 比例：源链路的自适应档叫 adaptive，目标链路叫 auto。
 //  3. 分辨率：源链路支持 resolution（顶层或 metadata.resolution，取值 480P/720P/1080P），
-//     目标链路**三档全支持**（480P/720P/1080P；2026-11-09 豆包官网确认，
-//     2026-11-12 迁移后的班车 ch27 同口径）——
+//     目标链路**三档全支持**（480P/720P/1080P；2026-11-09 豆包官网确认）——
 //     - 顶层 resolution 可以直接透传；
 //     - 顶层 size 不能透传：漫屋把 size 当**比例**读
 //     （firstNonEmpty(Size, Ratio, AspectRatio)），"1080P" 不在
 //     allowedDoubaoRatios 里 → 400。所以 size 里表达的分辨率要**抬到顶层 resolution**；
-//     - metadata.resolution / metadata.size 同理：必须抬到顶层
-//     （目标链路 2026-11-12 起为班车 ch27，480P/720P/1080P 三档同口径）；
+//     - metadata.resolution / metadata.size 同理：必须抬到顶层；
 func rewriteBodyForDoubaoWithDuration(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, seconds int) (map[string]interface{}, bool) {
 	out := make(map[string]interface{}, len(body)+2)
 	for key, value := range body {
@@ -1818,8 +1826,9 @@ func extractRatio(body map[string]interface{}) (string, bool) {
 //
 // 源（有赞 Wan3）用 adaptive，目标（seedance-2-5 链路）用 auto ——
 // 不映射的话，adaptive 会被当成一个不认识的字面量发给目标链路。
-// 2026-11-12 起目标常驻班车：auto 由 yuanmeng 的 normalizeRatio 归一
-// 回 adaptive（档位别名），两条链路都认，此处映射保持不变。
+// 目标常驻在班车 ch27 的那段时间，两条链路都认这两个名字
+// （班车把 auto 归一回 adaptive），映射方向不冲突；当前常驻豆包官网 ch20，
+// 豆包原生的档位名就是 auto，此处映射正是它需要的。
 func mapAdaptiveRatio(ratio string) string {
 	if ratio == "adaptive" {
 		return "auto"
