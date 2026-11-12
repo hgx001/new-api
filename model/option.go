@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/promptcompress_setting"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
+	"github.com/QuantumNous/new-api/setting/cosdirect_setting"
 	"github.com/QuantumNous/new-api/setting/tencentmps_setting"
 	"github.com/QuantumNous/new-api/setting/youzanwan3_setting"
 	"gorm.io/gorm"
@@ -156,6 +157,7 @@ func InitOptionMap() {
 	common.OptionMap[seedanceroute_setting.OptionKey] = seedanceroute_setting.MarshalJSONString()
 	common.OptionMap[promptcompress_setting.OptionKey] = promptcompress_setting.MarshalJSONString()
 	common.OptionMap[tencentmps_setting.OptionKey] = tencentmps_setting.MarshalJSONString()
+	common.OptionMap[cosdirect_setting.OptionKey] = cosdirect_setting.MarshalJSONString()
 	common.OptionMap["CacheRatio"] = ratio_setting.CacheRatio2JSONString()
 	common.OptionMap["CreateCacheRatio"] = ratio_setting.CreateCacheRatio2JSONString()
 	common.OptionMap["GroupRatio"] = ratio_setting.GroupRatio2JSONString()
@@ -581,6 +583,10 @@ func updateOptionMap(key string, value string) (err error) {
 		// 腾讯云 MPS（成片增强）的接入配置：密钥、COS 桶、输出目录。
 		// 含明文密钥，只在 option 表里下发，不要出现在前端或日志中。
 		err = tencentmps_setting.UpdateFromJSONString(value)
+	case cosdirect_setting.OptionKey:
+		// COS 直存（拉片内网直传，无损不过 MPS）的接入配置：密钥、桶、输出目录。
+		// 含明文密钥，只在 option 表里下发，不要出现在前端或日志中。
+		err = cosdirect_setting.UpdateFromJSONString(value)
 	case "CacheRatio":
 		err = ratio_setting.UpdateCacheRatioByJSONString(value)
 	case "CreateCacheRatio":

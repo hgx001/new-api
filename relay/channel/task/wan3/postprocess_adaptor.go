@@ -21,27 +21,35 @@ import (
 // 模型名白名单仍留在各渠道自己的适配器里判，避免跨渠道串味。
 // ─────────────────────────────────────────────────────────────────────────────
 
-// AfterUpstreamSuccess 在上游第一跳成功后接管，提交成片提升任务。
+// AfterUpstreamSuccess 在上游第一跳成功后接管后处理。
 //
-// 返回 handled=true 表示「已接管，本次不置 SUCCESS」——
-// service 层会保持任务为「处理中」，等 PollPostProcess 收敛。
+// 分派规则：
+//   · wan3.0-720p-特惠 → MPS 超分链路（承诺的是画质提升，直存不改变分辨率，
+//     不能抢走这条语义；MPS 未配置时回落 480P 原片，维持改造前行为）；
+//   · 其余模型 → COS 直存转存（配置了才接管，保证成片长期可取；
+//     未配置时行为与改造前完全一致——上游原片直接交付）。
 func (a *TaskAdaptor) AfterUpstreamSuccess(ctx context.Context, task *model.Task, upstreamURL string) (bool, error) {
-	// 只有 wan3.0-720p-特惠 需要成片提升；其它模型名直接放行。
-	if task == nil || !needsSuperResolution(task.Properties.OriginModelName) {
+	if task == nil {
 		return false, nil
 	}
-	return SubmitSuperResolution(ctx, task, upstreamURL)
+	if needsSuperResolution(task.Properties.OriginModelName) {
+		return SubmitSuperResolution(ctx, task, upstreamURL)
+	}
+	return SubmitDirectRelocate(ctx, task, upstreamURL)
 }
 
-// PollPostProcess 轮询成片提升任务。
+// PollPostProcess 按 PostProcess.Provider 分派到对应链路。
 //
-// 返回 done=true 表示提升已到终态（成功出 720P，或失败回落 480P），
-// 此时 service 层可以把任务置为 SUCCESS。
+// 分派依据是 Provider 而不是模型名：直存任务与 MPS 任务的 Provider 不同，
+// 且 Provider 缺失的历史数据仍按模型名回落到超分链路（兼容在途任务）。
 func (a *TaskAdaptor) PollPostProcess(ctx context.Context, task *model.Task) (bool, error) {
 	if task == nil || task.PrivateData.PostProcess == nil {
 		return true, nil
 	}
-	// 只有 wan3.0-720p-特惠 才走这条路；模型名对不上（历史数据/改配置）就放行。
+	if task.PrivateData.PostProcess.Provider == cosDirectProvider {
+		return PollDirectRelocate(ctx, task)
+	}
+	// 只有 wan3.0-720p-特惠 才走超分这条路；模型名对不上（历史数据/改配置）就放行。
 	if !needsSuperResolution(task.Properties.OriginModelName) {
 		return true, nil
 	}

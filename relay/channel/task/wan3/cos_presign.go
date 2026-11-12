@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/QuantumNous/new-api/setting/cosdirect_setting"
 	"github.com/QuantumNous/new-api/setting/tencentmps_setting"
 
 	"github.com/tencentyun/cos-go-sdk-v5"
@@ -36,16 +37,28 @@ const cosPresignTTL = 2 * time.Hour
 
 // PresignCOSURL 为 COS 对象生成一个临时下载直链。
 //
+// 凭据按桶匹配：桶属于 cosdirect_setting（直存链路）时用直存密钥；
+// 其余桶走 tencentmps_setting（MPS 超分/转存链路）。两套链路分属
+// 不同腾讯云账号，用错凭据必然 403。
+//
 // 返回错误时调用方应回落到「本站代理下载」或直接报错 ——
 // 绝不返回空字符串让客户端去请求一个空地址。
 func PresignCOSURL(ctx context.Context, bucket, region, objectPath string) (string, error) {
-	cfg := tencentmps_setting.Get()
-	if cfg.SecretId == "" || cfg.SecretKey == "" {
-		return "", fmt.Errorf("tencent mps credentials are not configured")
-	}
 	key := strings.TrimPrefix(objectPath, "/")
 	if key == "" {
 		return "", fmt.Errorf("empty cos object path")
+	}
+
+	secretId, secretKey := "", ""
+	if direct := cosdirect_setting.Get(); direct.Enabled &&
+		direct.Bucket == bucket && direct.Region == region {
+		secretId, secretKey = direct.SecretId, direct.SecretKey
+	} else {
+		cfg := tencentmps_setting.Get()
+		secretId, secretKey = cfg.SecretId, cfg.SecretKey
+	}
+	if secretId == "" || secretKey == "" {
+		return "", fmt.Errorf("cos credentials for bucket %s are not configured", bucket)
 	}
 
 	bucketURL, err := cos.NewBucketURL(bucket, region, true)
@@ -59,7 +72,7 @@ func PresignCOSURL(ctx context.Context, bucket, region, objectPath string) (stri
 	)
 
 	// GetPresignedURL 直接接受 ak/sk，不需要额外装配 credential。
-	signedURL, err := client.Object.GetPresignedURL(ctx, http.MethodGet, key, cfg.SecretId, cfg.SecretKey, cosPresignTTL, nil)
+	signedURL, err := client.Object.GetPresignedURL(ctx, http.MethodGet, key, secretId, secretKey, cosPresignTTL, nil)
 	if err != nil {
 		return "", fmt.Errorf("presign cos url failed: %w", err)
 	}
