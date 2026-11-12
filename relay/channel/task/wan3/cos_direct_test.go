@@ -133,6 +133,12 @@ func fakeCOS(t *testing.T, expectedKey string, body *bytes.Buffer) *url.URL {
 			http.Error(w, "chunked upload is rejected by COS", http.StatusLengthRequired)
 			return
 		}
+		// 真机教训（2026-11-12）：client 不带 AuthorizationTransport 时请求匿名，
+		// COS 对匿名 PUT 一律 403 AccessDenied。签名头缺失即回归。
+		if r.Header.Get("Authorization") == "" {
+			http.Error(w, "anonymous PUT is rejected by COS", http.StatusForbidden)
+			return
+		}
 		if expectedKey != "" && r.URL.Path != "/"+expectedKey {
 			http.Error(w, "path mismatch: "+r.URL.Path, http.StatusBadRequest)
 			return

@@ -201,6 +201,10 @@ func fetchAndUploadDirect(ctx context.Context, cfg cosdirect_setting.Config, sou
 //
 // filePath 指向已下载完的临时文件：os.File 带 known length，
 // SDK 会设置 Content-Length（见 fetchAndUploadDirect 的 403 教训）。
+//
+// 凭据必须走 AuthorizationTransport（SDK 的签名注入点）。2026-11-12 真机
+// 二次教训：NewClient 不带 Transport 时请求是**匿名的**，COS 对匿名 PUT
+// 一律 403 AccessDenied——单测里 httptest 不校验签名，掩盖了这个问题。
 func putCOSObject(ctx context.Context, cfg cosdirect_setting.Config, objectKey, filePath string) error {
 	bucketURL := cosBucketURL.Load()
 	if bucketURL == nil {
@@ -212,7 +216,13 @@ func putCOSObject(ctx context.Context, cfg cosdirect_setting.Config, objectKey, 
 	}
 	client := cos.NewClient(
 		&cos.BaseURL{BucketURL: bucketURL},
-		&http.Client{Timeout: 0}, // 超时由 ctx 控制
+		&http.Client{
+			Transport: &cos.AuthorizationTransport{
+				SecretID:  cfg.SecretId,
+				SecretKey: cfg.SecretKey,
+			},
+			Timeout: 0, // 超时由 ctx 控制
+		},
 	)
 	_, err := client.Object.PutFromFile(ctx, objectKey, filePath, nil)
 	if err != nil {
