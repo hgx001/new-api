@@ -92,7 +92,7 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 | 域名 | `https://api2.heibaidao.cn`（2026-11-12 上线；A 记录在 DNSPod，域名属另一账号 UIN `100046072329`，管理需该账号密钥；轻量防火墙 22/80/443/ICMP 已放行） |
 | 定位 | 已复刻老机 new-api + sub2api 全套（迁移完成记录见方案 §12），接**新业务**；老机 119.29.253.97 保持原样不动 |
 | 迁移方案 | `docs/new-server-migration-plan.md`（唯一权威；含范围、COS 中转、渠道核对清单、验收项、§12 完成记录与遗留项） |
-| 腾讯云子账户 | 主账号 `100005629999`（APPID `1256715892`），子用户 `hgx001`（`AdministratorAccess`；密钥存新机 `/root/.cos.env` 600，不入库不入聊天） |
+| 腾讯云子账户 | 主账号 `100005629999`（APPID `1256715892`），子用户 `hgx001`（`AdministratorAccess`；密钥源 `/root/.cos.env` 600，另经 `/root/cosdirect-provision.sh` 明文下发一份到 `options.CosDirectSetting`，两处同源须成对轮换；`TencentMPSSetting` 属另一账号密钥，轮换时勿改；不打印不入聊天） |
 | COS 桶 | `hbd-video-1256715892`（ap-guangzhou，私有，生命周期 30 天）。老机 `mps-test-1397292858` 属**另一个腾讯云账号**，其 secret 不可复用 |
 | 双机差异 | 新机 compose 固定 subnet `172.18.0.0/16`；sub2api 8080 只绑 `172.18.0.1`；options 三项已改 api2（备份 `bak_20261112_options_api2`）；new-api logs/ 属主须 1000:1001（compose 重建目录后需重新 chown） |
 | 新机部署 | `DEPLOY_HOST=newapi DEPLOY_PORT=22 deploy/deploy-backend.sh <sha>`（ssh config 别名 `newapi`/`newapi-root`；ubuntu 已入 docker 组）。**PowerShell 里裸 `bash` 是 WSL，env 不继承会误打老机**——必须走 Git Bash 且重定向到文件才能拿到输出。新机可直接 fetch github（不需要 bundle）。⚠️ 新机 new-api 容器由 deploy 脚本 `docker run` 管理，勿对 `/home/ubuntu/new-api/docker-compose.yml` 跑 `compose up`，会把镜像回退到迁移时的旧版 |

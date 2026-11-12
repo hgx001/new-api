@@ -2,7 +2,7 @@
 
 > 2026-11-12 起草，同日按老机实际部署逐项复核并修正（见 §11 审查记录）；当日晚间按新机实测再次复核回写（见 §13）。
 > **当前状态（2026-11-12 晚间复核）**：§5 步骤 1-9 的代码与流程均已落地，新机已独立发版 3 次；步骤 10 的安全收尾（关闭密码登录、root 仅密钥、轮换 root 密码）已完成。`https://api2.heibaidao.cn` 可用（证书 2027-02-10 到期，certbot 自动续期）。§8 验收清单 10 项中 **4 项实测通过**，4 项仅完成配置层/代码层/数据层确认，2 项按约束未跑真实任务（详见 §13.2）。
-> **仍未完成**：一期 COS 真机 1 条验证（需单独授权，会产生 1 条视频费用）、COS API 密钥轮换（需 CAM 新建密钥并同步 3 处）、`sub2api.conf` 8581 站点 502（老机遗留，不在范围）、双机代码同步（§13.5）。
+> **仍未完成**：一期 COS 真机 1 条验证（需单独授权，会产生 1 条视频费用）、COS API 密钥轮换（凭据索引见 AGENTS.md 新机速查表，需 CAM 新建密钥并同步 2 处）、`sub2api.conf` 8581 站点 502（老机遗留，不在范围）、双机代码同步（§13.5）。
 > 目标：老服务器（119.29.253.97，广州，到期在即）保持原样继续运行现有业务；新服务器（114.132.252.150，广州，腾讯云轻量 2C4G/59G/5M）完整复刻 new-api + sub2api 两套业务，承载**新业务**，并新增 COS/CDN 产物分发链路。
 
 ## 1. 迁移范围
@@ -103,7 +103,7 @@
 ## 5. 实施步骤
 
 1. **新机基座（已完成）**：swap 4G、Docker、nginx、certbot 均已就绪；`api2` 443 已签发证书并挂载，`sudo nginx -t` 通过（§13.1）。起草时记录的「nginx 未装、待补」是初始状态，已过期。
-2. **前置条件（已完成 2026-11-12）**：`hgx001` 的 API 密钥已创建（已关联 `AdministratorAccess`），COS 桶 `hbd-video-1256715892` 已建，密钥落在新机 `/root/.cos.env`。**该密钥曾在聊天中明文出现，迁移完成后应轮换。** **轮换状态（§13 复核）：仍未完成**，需 CAM 新建密钥并同步 3 处，步骤见 §13.3。
+2. **前置条件（已完成 2026-11-12）**：`hgx001` 的 API 密钥已创建（已关联 `AdministratorAccess`），COS 桶 `hbd-video-1256715892` 已建，密钥落在新机 `/root/.cos.env`。**该密钥曾在聊天中明文出现，迁移完成后应轮换。** **轮换状态（§13 复核）：仍未完成**。凭据位置索引见 `AGENTS.md` 「新生产实例」速查表（第 95/99 行）：密钥源 `/root/.cos.env`、下发脚本 `/root/cosdirect-provision.sh`，仓库与聊天里不存明文。轮换只需同步 2 处，步骤见 §13.6。
 3. **打包上传（老机）**：
    - `pg_dump -Fc` 两库（89 MB / 553 MB）
    - `docker save` 两镜像（231 MB / 135 MB）
@@ -249,20 +249,25 @@ compose 第 37 行确实给 new-api 配了 healthcheck，但实际运行容器�
 
 复核时：新机 `78dc7b851`，老机 `dcc5bf676`，后者是新机 HEAD 的**祖先**，新机领先老机 7 个提交（含 COS 直存、Range 断点续传、迁移文档、seedance 台账）。本地开发线随后继续推进到 `070402afc`，已领先新机。§6 警告的分叉已实际发生，方向是「本地 > 新机 > 老机」。若这些能力要覆盖老机业务，需按各自发布流程单独同步；本轮未做。
 
-### 13.6 COS API 密钥轮换（未完成，需用户提供新密钥）
+### 13.6 COS API 密钥轮换（未完成，凭据已定位且验证有效）
 
-密钥目前被 3 处引用，轮换时必须全部同步，否则一期 COS 转存会失败并回落本机代理：
+**凭据位置**：`AGENTS.md` 「新生产实例」速查表第 95/99 行记录了密钥源与下发脚本，仓库内**没有明文 key**（按全局约束也不应写入）。§13 二次核实：现有密钥在新机 `/root/.cos.env`（`600`，含 `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` / `TENCENT_APPID` 与 `COS_BUCKET` / `COS_REGION` / `COS_ENDPOINT`），已用服务器上现成的 `qcloud_cos` SDK 做只读 `ListObjects` 验证**有效**（桶内有 1 个历史测试对象，非视频产物）。
 
-1. 新机 `/root/.cos.env`：`TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` / `TENCENT_APPID`（权限 `600`）
-2. 数据库 `options.CosDirectSetting`：一期直存设置，可能内嵌 secret
-3. 数据库 `options.TencentMPSSetting`：老账号 MPS 设置（桶 `mps-test-1397292858` 属另一账号，本账号 403，不应用于新桶）
+**实际引用只有 2 处**（此前记「3 处」有误）：
 
-新机 new-api 容器 env 中**没有** COS 相关变量，说明应用从 DB options 读取。建议轮换顺序：CAM 控制台为 `hgx001` 新建 SecretKey → 更新 `/root/.cos.env` 与 `CosDirectSetting` → 用新密钥验证预签名 `PUT 200` / `GET 200` / `Range 206` → 真机 1 条 COS 任务 → 确认无旧密钥调用后再在 CAM 禁用旧密钥。**本轮未执行**（缺新凭据，且会触及线上转存链路）。
+1. `/root/.cos.env`：密钥源
+2. `options.CosDirectSetting`：字段 `secret_id` / `secret_key` / `bucket` / `region` / `enabled` 等；实测与 `/root/.cos.env` **是同一把密钥**（SecretId 长度与指纹一致）
+
+`options.TencentMPSSetting` 虽也有 `secret_id` / `secret_key`，但实测与 `/root/.cos.env` **不是同一把**（老 MPS 账号、桶 `mps-test-1397292858` 属另一腾讯云账号）。轮换 `hgx001` 密钥时**不要改它**，否则会破坏老配置。新机 new-api 容器 env 中没有 COS 变量，应用只读 DB options。
+
+**现成下发脚本** `/root/cosdirect-provision.sh`：从 `/root/.cos.env` 读密钥 → 幂等 `INSERT ... ON CONFLICT` 写入 `CosDirectSetting` → 回读只打印 `enabled` / `bucket` / `region` 与密钥长度，不回显值。轮换时只需改 cos.env 再跑一次 `sudo bash /root/cosdirect-provision.sh`，无需手写 SQL。
+
+**建议顺序**：CAM 为 `hgx001` 新建 SecretKey（该子用户有 `AdministratorAccess`，可用现有密钥调 CAM API；机器上无 `tccli` / `tencentcloud` SDK，需手写 TC3 签名或到控制台操作）→ 更新 `/root/.cos.env` → 跑下发脚本 → 验证预签名 `PUT 200` / `GET 200` / `Range 206` → 真机 1 条 COS 任务 → 确认无旧密钥调用后再在 CAM 禁用旧密钥。**本轮未执行**：禁用旧密钥不可逆，需用户明确授权，且会触及线上转存链路。
 
 ### 13.7 仍需用户拍板
 
 1. 一期 COS 真机 1 条验证 + 取片 206 端到端（需单独授权，会花 1 条视频费用）
-2. COS API 密钥轮换（需提供新 SecretId/SecretKey，或由用户在 CAM 控制台操作）
+2. COS API 密钥轮换（凭据已定位且验证有效；需授权「创建新密钥 + 禁用旧密钥」这一不可逆动作，可由你在 CAM 控制台操作，或授权我用现有 `AdministratorAccess` 密钥调 CAM API 完成）
 3. 是否给老机补发领先的提交（§13.5）
 4. 是否把 sub2api 8581 站点 502 纳入修复范围
 5. 是否把运行容器改为 compose 托管以让 healthcheck 生效（§13.4）
