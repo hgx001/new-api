@@ -2,7 +2,7 @@
 
 > 2026-11-12 起草，同日按老机实际部署逐项复核并修正（见 §11 审查记录）；当日晚间按新机实测再次复核回写（见 §13）。
 > **当前状态（2026-11-12 晚间复核）**：§5 步骤 1-9 的代码与流程均已落地，新机已独立发版 3 次；步骤 10 的安全收尾（关闭密码登录、root 仅密钥、轮换 root 密码）已完成。`https://api2.heibaidao.cn` 可用（证书 2027-02-10 到期，certbot 自动续期）。§8 验收清单 10 项中 **4 项实测通过**，4 项仅完成配置层/代码层/数据层确认，2 项按约束未跑真实任务（详见 §13.2）。
-> **仍未完成**：一期 COS 真机 1 条验证（需单独授权，会产生 1 条视频费用）、COS API 密钥轮换（凭据索引见 AGENTS.md 新机速查表，需 CAM 新建密钥并同步 2 处）、`sub2api.conf` 8581 站点 502（老机遗留，不在范围）、双机代码同步（§13.5）。
+> **仍未完成**：一期 COS 真机 1 条验证（需单独授权，会产生 1 条视频费用）、`sub2api.conf` 8581 站点 502（老机遗留，不在范围）、双机代码同步（§13.5）。COS API 密钥轮换已于 2026-11-12 20:22 完成（§13.6）。
 > 目标：老服务器（119.29.253.97，广州，到期在即）保持原样继续运行现有业务；新服务器（114.132.252.150，广州，腾讯云轻量 2C4G/59G/5M）完整复刻 new-api + sub2api 两套业务，承载**新业务**，并新增 COS/CDN 产物分发链路。
 
 ## 1. 迁移范围
@@ -103,7 +103,7 @@
 ## 5. 实施步骤
 
 1. **新机基座（已完成）**：swap 4G、Docker、nginx、certbot 均已就绪；`api2` 443 已签发证书并挂载，`sudo nginx -t` 通过（§13.1）。起草时记录的「nginx 未装、待补」是初始状态，已过期。
-2. **前置条件（已完成 2026-11-12）**：`hgx001` 的 API 密钥已创建（已关联 `AdministratorAccess`），COS 桶 `hbd-video-1256715892` 已建，密钥落在新机 `/root/.cos.env`。**该密钥曾在聊天中明文出现，迁移完成后应轮换。** **轮换状态（§13 复核）：仍未完成**。凭据位置索引见 `AGENTS.md` 「新生产实例」速查表（第 95/99 行）：密钥源 `/root/.cos.env`、下发脚本 `/root/cosdirect-provision.sh`，仓库与聊天里不存明文。轮换只需同步 2 处，步骤见 §13.6。
+2. **前置条件（已完成 2026-11-12）**：`hgx001` 的 API 密钥已创建（已关联 `AdministratorAccess`），COS 桶 `hbd-video-1256715892` 已建，密钥落在新机 `/root/.cos.env`。**该密钥曾在聊天中明文出现，已于 2026-11-12 20:22 轮换、旧密钥置 `Inactive`（§13.6）。** **轮换状态：已完成（2026-11-12 20:22，见 §13.6）**，旧密钥已置 `Inactive`，新密钥已生效。凭据位置索引见 `AGENTS.md` 「新生产实例」速查表（第 95/99 行）：密钥源 `/root/.cos.env`、下发脚本 `/root/cosdirect-provision.sh`，仓库与聊天里不存明文；轮换只需同步 2 处。
 3. **打包上传（老机）**：
    - `pg_dump -Fc` 两库（89 MB / 553 MB）
    - `docker save` 两镜像（231 MB / 135 MB）
@@ -115,7 +115,7 @@
 7. **DNS**：DNSPod 加 `api2` A 记录 → certbot 签证书 → nginx 挂 443（配置保留老机超时参数）
 8. **一期 COS 链路（代码已完成，真机未验证）**：`cos_direct.go` / `cos_presign.go` / `media_relocate.go` + 单测 + 设置项已落地，新机为修复 PUT 拒收连续发版 3 次；**真机 1 条验证未做**（需单独授权，1 条视频费用）。截至 §13 复核，库内无 `cos-proxy://` 产物、近 8 小时日志 0 条 COS 命中。
 9. **发布流程适配（已完成并在新机走通）**：新机连不上 github，采用独立脚本 `/home/ubuntu/deploy-new-api.sh` 走 bundle 直传 + 远程构建 + 健康检查；已留 3 份 `/tmp/backend-deploy-*.log`，最新一次 `FINAL_SHA: 78dc7b851` + `HEALTH_OK`。起草时设想的「给 `deploy-backend.sh` 加 `DEPLOY_*` 目标参数」按新机独立脚本方案替代，老机发布流程未改动。
-10. **收尾（已完成，2026-11-12 19:36）**：COS 中转前缀已清理；新机 root 密码已轮换（新密码存 `/root/.root-password-20261112`，权限 `600`，不进聊天），密码登录已关闭、`PermitRootLogin prohibit-password`，改前配置备份在 `/root/ssh-hardening-backup-20261112-1935/`。注意：COS API 密钥轮换属步骤 2 的遗留项，**不包含在本步骤**。
+10. **收尾（已完成，2026-11-12 19:36）**：COS 中转前缀已清理；新机 root 密码已轮换（新密码存 `/root/.root-password-20261112`，权限 `600`，不进聊天），密码登录已关闭、`PermitRootLogin prohibit-password`，改前配置备份在 `/root/ssh-hardening-backup-20261112-1935/`。注意：COS API 密钥轮换在同日晚些时候（20:22）单独完成，见 §13.6。
 
 ## 6. 数据一致性（双机并行期）
 
@@ -162,7 +162,7 @@
 | 2 核构建慢/OOM | 后端 `docker build` 可接受（配 swap）；前端构建不在服务器做，产物 tar 发布 |
 | SSH 加固把人锁在门外 | 改前备份、`sshd -t` 校验、reload 不断现有连接、180s 自动回滚守护、新连接验证后才取消（§13.3） |
 | 回滚 | 删 `api2` A 记录即回滚；老机全程未动 |
-| 密钥安全 | `.env`、两份 compose、密钥文件一律 scp/COS，不打印不截图；root 密码已轮换、密码登录已禁；**COS API 密钥待轮换** |
+| 密钥安全 | `.env`、两份 compose、密钥文件一律 scp/COS，不打印不截图；root 密码已轮换、密码登录已禁、COS API 密钥已轮换（旧密钥 `Inactive`，§13.6） |
 
 ## 10. 待用户确认的决策点
 
@@ -194,9 +194,9 @@
 | options | `ServerAddress`/`AlipayNotifyURL`/`AlipayReturnURL` → api2；原值备份 `bak_20261112_options_api2`；§13 复核 options 中无残留 `api.heibaidao.cn` |
 | .env | CRLF→LF（老机容器内实测密钥不含 `\r`，转换安全）；`NODE_NAME=new-api-node-2` |
 | 验收 | `/api/status` success=True；令牌+路由管道通（`model_not_found` 分发器响应而非 401）；`/v1/models` 正常；nginx 超时契约 100M/600s/18000s/300s 原样；老机零改动。§8 清单逐项实测结果见 §13.2 |
-| 遗留（§13 复核后） | ① `sub2api.conf` 8581 站点仍 502（老机遗留 8580 服务未迁，不在范围，sub2api 实际走 `172.18.0.1:8080`）；② `logs/` 属主实测已是 `1000:1001`，**已解决**；③ 步骤 8/9 的代码与流程已完成，仅剩 COS 真机 1 条验证；④ 新增：COS API 密钥未轮换；⑤ 新增：双机/本地代码已分叉（§13.5） |
+| 遗留（§13 复核后） | ① `sub2api.conf` 8581 站点仍 502（老机遗留 8580 服务未迁，不在范围，sub2api 实际走 `172.18.0.1:8080`）；② `logs/` 属主实测已是 `1000:1001`，**已解决**；③ 步骤 8/9 的代码与流程已完成，仅剩 COS 真机 1 条验证；④ COS API 密钥已于 20:22 轮换完成（§13.6）；⑤ 新增：双机/本地代码已分叉（§13.5） |
 | 清理 | COS 中转前缀已删；老机打包目录已删；新机打包目录已删 |
-| 安全收尾（§13 补做） | 关闭密码登录、root 改为仅密钥、root 密码已轮换；改前配置备份 `/root/ssh-hardening-backup-20261112-1935/`；负向验证返回 `Permission denied (publickey)`。COS API 密钥轮换未做 |
+| 安全收尾（§13 补做） | 关闭密码登录、root 改为仅密钥、root 密码已轮换；改前配置备份 `/root/ssh-hardening-backup-20261112-1935/`；负向验证返回 `Permission denied (publickey)`。COS API 密钥已于 20:22 轮换完成，旧密钥置 `Inactive`（§13.6） |
 
 **已验证成立的关键假设**：
 
@@ -205,9 +205,9 @@
 - 老机 `.env` 仅 463 B，可直接 scp，无需走 COS。
 - `vpn-deploy` 无运行中的 systemd/docker 服务，确认可安全不迁。
 
-## 13. 复核记录（2026-11-12 晚，只读实测 + 安全收尾）
+## 13. 复核记录（2026-11-12 晚，只读实测 + 安全收尾 + 密钥轮换）
 
-**范围与约束**：连接两台服务器做只读核实；按用户要求**不提交任何视频任务、不调用视频上游、不做生成/计费探针**（仅对自家 sub2api 打过一次根路径 HTTP）；全程不打印密钥与 DSN。本轮唯一写操作是新机 SSH 安全收尾（§13.3）。
+**范围与约束**：连接两台服务器做只读核实；按用户要求**不提交任何视频任务、不调用视频上游、不做生成/计费探针**（仅对自家 sub2api 打过一次根路径 HTTP）；全程不打印密钥与 DSN。写操作仅两处：新机 SSH 安全收尾（§13.3）与 COS API 密钥轮换（§13.6）。COS 轮换阶段只做了对象存储权限探针（PUT/GET/Range 后立即删除），**未提交任何视频任务**。
 
 ### 13.1 基础实测
 
@@ -249,25 +249,29 @@ compose 第 37 行确实给 new-api 配了 healthcheck，但实际运行容器�
 
 复核时：新机 `78dc7b851`，老机 `dcc5bf676`，后者是新机 HEAD 的**祖先**，新机领先老机 7 个提交（含 COS 直存、Range 断点续传、迁移文档、seedance 台账）。本地开发线随后继续推进到 `070402afc`，已领先新机。§6 警告的分叉已实际发生，方向是「本地 > 新机 > 老机」。若这些能力要覆盖老机业务，需按各自发布流程单独同步；本轮未做。
 
-### 13.6 COS API 密钥轮换（未完成，凭据已定位且验证有效）
+### 13.6 COS API 密钥轮换（已完成 2026-11-12 20:22）
 
-**凭据位置**：`AGENTS.md` 「新生产实例」速查表第 95/99 行记录了密钥源与下发脚本，仓库内**没有明文 key**（按全局约束也不应写入）。§13 二次核实：现有密钥在新机 `/root/.cos.env`（`600`，含 `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` / `TENCENT_APPID` 与 `COS_BUCKET` / `COS_REGION` / `COS_ENDPOINT`），已用服务器上现成的 `qcloud_cos` SDK 做只读 `ListObjects` 验证**有效**（桶内有 1 个历史测试对象，非视频产物）。
+**凭据位置**：`AGENTS.md` 「新生产实例」速查表第 95/99 行记录密钥源与下发脚本，仓库内**没有明文 key**（按全局约束也不应写入）。密钥源 `/root/.cos.env`（`600`），另经 `/root/cosdirect-provision.sh` 明文下发一份到 `options.CosDirectSetting`，**两处同源、须成对轮换**。
 
-**实际引用只有 2 处**（此前记「3 处」有误）：
+`options.TencentMPSSetting` 虽也有 `secret_id` / `secret_key`，但实测与 `/root/.cos.env` **不是同一把**（老 MPS 账号、桶 `mps-test-1397292858` 属另一腾讯云账号），轮换时不得改动；已用指纹前后比对确认 `MPS_UNTOUCHED`。老机没有 `/root/.cos.env`、也没有 `CosDirectSetting`，只有另一账号的 `TencentMPSSetting`，故本次禁用对老业务零影响（已实测健康、无 `AccessDenied`）。
 
-1. `/root/.cos.env`：密钥源
-2. `options.CosDirectSetting`：字段 `secret_id` / `secret_key` / `bucket` / `region` / `enabled` 等；实测与 `/root/.cos.env` **是同一把密钥**（SecretId 长度与指纹一致）
+**实施步骤**（用户授权「全套轮换」后执行）：
 
-`options.TencentMPSSetting` 虽也有 `secret_id` / `secret_key`，但实测与 `/root/.cos.env` **不是同一把**（老 MPS 账号、桶 `mps-test-1397292858` 属另一腾讯云账号）。轮换 `hgx001` 密钥时**不要改它**，否则会破坏老配置。新机 new-api 容器 env 中没有 COS 变量，应用只读 DB options。
+1. 服务器上无 `tccli` / `tencentcloud` SDK，故用 Python 标准库手写 TC3-HMAC-SHA256 签名调 CAM API；脚本 `/root/cos-key-rotation-20261112/cam_rotate.py`（`700`），全程不打印密钥值。
+2. `ListAccessKeys` 盘点：轮换前 `hgx001` 只有 1 个 `Active` 密钥（即 cos.env 那把）。备份 `cos.env` 与 DB 原值到 `/root/cos-key-rotation-20261112/`（全 `600`）。
+3. `CreateAccessKey`（`Description=rotated-20261112-agent`）→ 新密钥立即落盘备份 → 原子替换 `/root/.cos.env` 两行 → 跑 `sudo bash /root/cosdirect-provision.sh` 同步 `CosDirectSetting`。
+4. 验证：新密钥 `ListObjects` 通过；`PUT` / `GET` / `Range` 探针通过（14 B 全量、4 B 分段，探针对象随即删除）；cos.env 与 DB 密钥指纹一致；`TencentMPSSetting` 未变；应用 `/api/status` 正常。
+5. 应用配置由 `model.SyncOptions(common.SyncFrequency)` 定时从 DB 重载，默认 60s。切换发生在 20:22:02，日志确认 20:22:46 / 20:23:46 两次同步完成，**进程内存已换成新密钥**后才执行下一步。
+6. `UpdateAccessKey` 把旧密钥置 `Inactive`（而非删除，**可逆**）。回归：旧密钥 `ListObjects` 返回 `CosServiceError`（已拒绝）；新密钥仍通过 `ListObjects` 与 PUT/GET/Range；应用健康、公网 HTTPS 200、近 10 分钟无 COS 鉴权错误。
 
-**现成下发脚本** `/root/cosdirect-provision.sh`：从 `/root/.cos.env` 读密钥 → 幂等 `INSERT ... ON CONFLICT` 写入 `CosDirectSetting` → 回读只打印 `enabled` / `bucket` / `region` 与密钥长度，不回显值。轮换时只需改 cos.env 再跑一次 `sudo bash /root/cosdirect-provision.sh`，无需手写 SQL。
+**回滚**：`sudo python3 /root/cos-key-rotation-20261112/cam_rotate.py enable-old` 可重新激活旧密钥；如需整体回退，用同目录 `cos.env.before` / `cosdirect.before.json` 恢复两处配置并重跑下发脚本。该目录含旧密钥与当前新密钥的 600 权限副本，**确认稳定后建议清理 `new_key.env`**。
 
-**建议顺序**：CAM 为 `hgx001` 新建 SecretKey（该子用户有 `AdministratorAccess`，可用现有密钥调 CAM API；机器上无 `tccli` / `tencentcloud` SDK，需手写 TC3 签名或到控制台操作）→ 更新 `/root/.cos.env` → 跑下发脚本 → 验证预签名 `PUT 200` / `GET 200` / `Range 206` → 真机 1 条 COS 任务 → 确认无旧密钥调用后再在 CAM 禁用旧密钥。**本轮未执行**：禁用旧密钥不可逆，需用户明确授权，且会触及线上转存链路。
+> 说明：本次只完成密钥轮换，一期 COS 链路的**真机 1 条视频验证**仍需单独授权（§13.7）。`UpdateAccessKey` 置 `Inactive` 本身可逆，且 COS 转存设计为失败自动回落本机代理，不会让任务失败。
 
 ### 13.7 仍需用户拍板
 
-1. 一期 COS 真机 1 条验证 + 取片 206 端到端（需单独授权，会花 1 条视频费用）
-2. COS API 密钥轮换（凭据已定位且验证有效；需授权「创建新密钥 + 禁用旧密钥」这一不可逆动作，可由你在 CAM 控制台操作，或授权我用现有 `AdministratorAccess` 密钥调 CAM API 完成）
-3. 是否给老机补发领先的提交（§13.5）
-4. 是否把 sub2api 8581 站点 502 纳入修复范围
-5. 是否把运行容器改为 compose 托管以让 healthcheck 生效（§13.4）
+1. 一期 COS 真机 1 条验证 + 取片 206 端到端（需单独授权，会花 1 条视频费用）——密钥轮换已完成，此项仍待授权
+2. 是否给老机补发领先的提交（§13.5）
+3. 是否把 sub2api 8581 站点 502 纳入修复范围
+4. 是否把运行容器改为 compose 托管以让 healthcheck 生效（§13.4）
+5. 确认轮换稳定后清理 `/root/cos-key-rotation-20261112/new_key.env`（当前有效密钥的副本），并取走 `/root/.root-password-20261112` 后删除该文件
