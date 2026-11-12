@@ -179,6 +179,36 @@ SecondsRuleRatioGate string `json:"seconds_rule_ratio_gate,omitempty"`
 > 改派，后者决定**这条路通不通**（关闭会停规则一并强制故障转移，
 > 到北京时间凌晨 2 点自动恢复）。两者互不覆盖。
 
+### 3.3.0.2 目标模型的常驻渠道（2026-11-12 变更史）
+
+`seedance-2-5` 是规则一的**目标模型**，它本身挂在哪个渠道上，决定了改派
+之后的请求实际落到哪条链路。当天来回迁过两次：
+
+| 时段 | 常驻渠道 | 上游 | 状态 |
+|---|---|---|---|
+| 迁移前 | ch20 漫屋ArcReel（type 66） | 豆包官网 `https://arcreel.heibaidao.cn` | 原始状态 |
+| 21:00 前 | ch27 视频生成车站（type 69） | `https://yuanmengstudio.com` | 「全部走班车」 |
+| 21:50 后 | **ch20 漫屋ArcReel（type 66）** | 豆包官网 | **当前状态**（「恢复回去 改为豆包的」）|
+
+**当前结论：`seedance-2-5` 常驻 ch20（豆包官网）**，与本文档 2.1 节
+「上游 = 豆包官网浏览器自动化」的原始设计一致。
+
+变更只动两处（`channels.models` 与 `abilities` 必须成对改），**不动**
+路由配置（`options.Seedance25TeHuiRoute30s` 的 `target_model` 始终是
+`seedance-2-5`）与 `ModelPrice`。台账脚本：
+
+- `scripts/prod-seedance25-banche-20261112.sql`（迁班车，历史台账，勿重跑）
+- `scripts/prod-seedance25-restore-doubao-20261112.sql`（回迁豆包，当前状态）
+
+**回迁带来的一个行为变化**：故障转移（规则五）的源是 `seedance-2-5`、
+备胎是 `wan3.0-班车`。迁班车期间两者同在 ch27，
+`failoverSharedChannelChain` 会显式放弃改写（改名无路由收益）；
+回迁后源在 ch20、备胎在 ch27，**规则五重新变成一条真正可用的降级链**：
+
+```
+促销族 → seedance-2-5（豆包 ch20）→ 备胎 wan3.0-班车（车站 ch27）
+```
+
 ### 3.3.1 素材门槛：带参考视频/音频 → **不路由**（老板 2026-10-30 拍板）
 
 豆包链路**只支持参考图**（漫屋 adaptor 里 `audio` 零结果，参考视频也只有反解场景用）。

@@ -1,7 +1,8 @@
 -- 2026-11-12 seedance-2-5 常驻搬迁台账：豆包官网 ch20 → 视频生成车站 ch27（wan3.0-班车）
 --
--- ⚠️ 2026-11-12 已在生产执行一次并验证（探针 ROUTE_OK）。**勿重跑**：
---    重跑会用迁移后状态覆盖 _bak_ 备份表，丢掉回滚基线。
+-- ⚠️ 2026-11-12 已在生产执行一次并验证（探针 ROUTE_OK）。可以安全重跑
+--    （备份表 IF NOT EXISTS 保留迁移前基线，channels/abilities 各步幂等），
+--    但**没有重跑的必要**：迁移后状态即目标状态，重跑等于空转。
 --
 -- 用户拍板（同日）：「全部走班车 这个模型不路由」+「客户价维持 ¥3.5/次不变」。
 -- 只改常驻两处（channels.models 与 abilities 必须成对改），不新增/不修改任何
@@ -14,16 +15,19 @@
 -- 无需重启。验证用文末 SELECT（应只剩 ch27 一行）+ 免费 400 探针（见文件尾注）。
 --
 -- 回滚：从两张 _bak_ 表还原 channels.models 与 abilities 行即可（表结构快照）。
+--
+-- ⚠️ 2026-11-12 21:50 本次搬迁**已被回迁**（老板拍板「恢复回去 改为豆包的」）：
+--    seedance-2-5 常驻渠道改回豆包官网 ch20，回迁台账见
+--    scripts/prod-seedance25-restore-doubao-20261112.sql。
+--    本脚本保留在仓库里作为历史台账；**不要重跑**（会与回迁后的状态打架）。
 
 BEGIN;
 
--- ── 0. 备份（先 DROP，防止复跑到空表把真实备份冲掉）─────────────────────
-DROP TABLE IF EXISTS _bak_seed25_banche_abilities_20261112;
-CREATE TABLE _bak_seed25_banche_abilities_20261112 AS
+-- ── 0. 备份（IF NOT EXISTS：重跑时保留**迁移前**基线，绝不覆盖/清掉回滚依据）──
+CREATE TABLE IF NOT EXISTS _bak_seed25_banche_abilities_20261112 AS
 SELECT * FROM abilities WHERE model IN ('seedance-2-5', 'wan3.0-班车');
 
-DROP TABLE IF EXISTS _bak_seed25_banche_channels_20261112;
-CREATE TABLE _bak_seed25_banche_channels_20261112 AS
+CREATE TABLE IF NOT EXISTS _bak_seed25_banche_channels_20261112 AS
 SELECT * FROM channels WHERE id IN (20, 27);
 
 -- ── 1. ch20（漫屋ArcReel/豆包）models 移除 seedance-2-5 ─────────────────
@@ -36,10 +40,12 @@ SET models = (
 WHERE id = 20 AND models LIKE '%seedance-2-5%';
 
 -- ── 2. ch27（视频生成车站）models 加入 seedance-2-5（幂等）───────────────
+-- 守卫按 ",seedance-2-5," 两侧逗号匹配：只写右侧逗号会把
+-- "seedance-2-5-turbo" 这类前缀同名模型误判为已存在。
 UPDATE channels
 SET models = models || ',seedance-2-5'
 WHERE id = 27
-  AND position(',seedance-2-5' IN ',' || models || ',') = 0;
+  AND position(',seedance-2-5,' IN ',' || models || ',') = 0;
 
 -- ── 3. abilities：删 ch20 行、插 ch27 行（主键 group+model+channel_id）──
 DELETE FROM abilities
