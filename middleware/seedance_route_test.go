@@ -70,6 +70,12 @@ type routeRecorder struct {
 	// billingSeconds 是中间件记下的「源模型口径计费秒数」（未记录时为 0）。
 	billingSeconds float64
 	hasBillingSec  bool
+	// billingSizeRatio 是中间件记下的「源模型口径 size 倍率」（未记录时为 0）。
+	//
+	// 规则六（短时长 → 标准版）需要它：目标 wan3.0-video 三档同价、adaptor 给 1.0，
+	// 而源模型 seedance2.5-特惠 的 1080P 是 1.5 倍。不覆盖就会少收。
+	billingSizeRatio float64
+	hasBillingSize   bool
 }
 
 // newRouteEngine 建一个挂上条件路由中间件的引擎。
@@ -93,6 +99,7 @@ func newRouteEngine(rec *routeRecorder) *gin.Engine {
 		rec.body = string(raw)
 		rec.originModel = RouteOriginModel(c)
 		rec.billingSeconds, rec.hasBillingSec = common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSeconds)
+		rec.billingSizeRatio, rec.hasBillingSize = common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSizeRatio)
 		c.String(200, "ok")
 	})
 	return engine

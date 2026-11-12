@@ -22,13 +22,18 @@ import (
 // 「关到几点自动恢复」是对运营的承诺，不能让人猜。
 
 func TestDoubaoRouteAdminStateReportsDoubaoLinkSwitch(t *testing.T) {
-	// 远期截止时间（2026-11-12 之后）→ 开关处于关闭状态。
-	withAdminRoutePolicy(t, `{"enabled":true,"doubao_link_off_until":1794477600}`)
+	// 远期截止时间（当前时间 + 24 小时）→ 开关处于关闭状态。
+	//
+	// ⚠️ 不能写死时间戳：这条用例原来写死 1794477600（2026-11-12 18:00），
+	// 到点之后开关按设计自动恢复成「开」，测试就变成**永久红** ——
+	// 与代码无关的失败会掩盖真正的回归。用相对时间才能永远表达「还没到点」。
+	offUntil := time.Now().Add(24 * time.Hour).Unix()
+	withAdminRoutePolicy(t, fmt.Sprintf(`{"enabled":true,"doubao_link_off_until":%d}`, offUntil))
 
 	state := doubaoRouteAdminState()
 
 	assert.Equal(t, true, state["doubao_link_off"])
-	assert.Equal(t, int64(1794477600), state["doubao_link_off_until"])
+	assert.Equal(t, offUntil, state["doubao_link_off_until"])
 	assert.NotEmpty(t, state["doubao_link_off_until_text"], "关闭时必须给出自动恢复时间文案")
 }
 

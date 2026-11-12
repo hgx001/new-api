@@ -254,6 +254,13 @@ func tryFailoverRoute(c *gin.Context, body map[string]interface{}, billingOrigin
 	if !unavailable {
 		return false, ""
 	}
+	// 源与备胎解析到同一批渠道 → 放弃改写，放行原请求。
+	if failoverSharedChannelChain(c, modelName, target) {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过故障转移：源 %s 与备胎 %s 解析到同一批渠道，改名无路由收益",
+			modelName, target))
+		return false, reason
+	}
 
 	newBody, ok := prepareFailoverRoute(c, body, target)
 	if !ok {
@@ -268,30 +275,31 @@ func tryFailoverRoute(c *gin.Context, body map[string]interface{}, billingOrigin
 	return true, reason
 }
 
-// tryFailoverAfterDoubaoRoute 在「已经改派到豆包链路」之后再判一次故障转移。
+// tryFailoverAfterDoubaoRoute 在「已经改派到规则一的目标链路」之后再判一次故障转移。
 //
 // 为什么需要这一段（规则五与规则一是**串联**的）：
 //
-//	规则一把促销族请求改派到 seedance-2-5（常驻已迁班车，此前为豆包官网）。
-//	而 seedance-2-5 **恰好就是规则五的源模型** —— 豆包额度按天计，
-//	额度用完时规则一把请求导过去必然失败（客户白等一轮 + 白烧一次预扣）。
+//	规则一把促销族请求改派到 seedance-2-5（2026-11-12 起常驻班车 ch27，
+//	此前为豆包官网）。而 seedance-2-5 **恰好就是规则五的源模型** ——
+//	源链路不可用（渠道被关 / 额度探针标记）时，规则一把请求导过去必然失败
+//	（客户白等一轮 + 白烧一次预扣）。
 //
 //	所以降级链必须是完整的一条：
 //
-//		促销族 → 豆包 → 班车
+//		促销族 → seedance-2-5（班车 ch27）→ 备胎（wan3.0-班车）
 //
-//	只做第一段（顶层 tryFailoverRoute）的话，豆包额度用完时
-//	「整个 30 秒档位全挂」；做了第二段，豆包额度用完时请求继续降级到班车，
-//	客户只是等得久一点，但**能出片**。
+//	⚠️ 2026-11-12 迁移后源与备胎在当前配置下同渠道，第二段会被
+//	failoverSharedChannelChain 放弃（改名无路由收益）；保留本段是因为
+//	failover_target_model 可配置 —— 备胎分到不同渠道时降级仍然成立。
 //
 // 与顶层 tryFailoverRoute 的两处关键差异：
 //
-//  1. **入参形态不同**：这里的 body 已经是「豆包形态」（rewriteBodyForDoubao
+//  1. **入参形态不同**：这里的 body 已经是「扁平别名形态」（rewriteBodyForDoubao
 //     的产物：input_reference 装着图片、ratio 是豆包档位、seconds 是字符串、
 //     metadata/resolution/size 已被摘掉）。不能拿原始请求的解析口径去读它。
 //  2. **计费原点不同**：billingOriginModel 必须是**客户最初请求的促销族模型**，
-//     不能是豆包。客户买的是 seedance2.5-特惠（¥0.20/秒），
-//     降级到班车后仍按 seedance2.5-特惠 计费 —— 改派只是内部调度。
+//     不能是规则一的目标模型。客户买的是 seedance2.5-特惠（¥0.20/秒），
+//     降级后仍按 seedance2.5-特惠 计费 —— 改派只是内部调度。
 func tryFailoverAfterDoubaoRoute(
 	c *gin.Context,
 	doubaoBody map[string]interface{},
@@ -305,7 +313,7 @@ func tryFailoverAfterDoubaoRoute(
 		return false, ""
 	}
 	// 按**计费原点**（客户最初请求的促销族模型）判是否允许这第二段降级。
-	// 活动版可以单独关闭（只走「有赞常驻 → 豆包兜底」，不落班车），
+	// 活动版可以单独关闭（只走「有赞常驻 → seedance-2-5 兜底」，不再往下落），
 	// 母本默认开启 —— 公共 failover 配置不能按源模型区分，所以用覆盖开关。
 	if !seedanceroute_setting.IsFailoverAfterDoubaoEnabledFor(billingOriginModel) {
 		logger.LogInfo(c, fmt.Sprintf(
@@ -321,6 +329,13 @@ func tryFailoverAfterDoubaoRoute(
 	unavailable, reason := sourceChainUnavailable(c, modelName)
 	if !unavailable {
 		return false, ""
+	}
+	// 源与备胎解析到同一批渠道 → 放弃第二段降级，停在规则一的改写结果上。
+	if failoverSharedChannelChain(c, modelName, target) {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过故障转移：源 %s 与备胎 %s 解析到同一批渠道，改名无路由收益（计费仍按 %s）",
+			modelName, target, billingOriginModel))
+		return false, reason
 	}
 
 	newBody, ok := prepareDoubaoBodyFailover(c, doubaoBody, target)
@@ -502,6 +517,35 @@ func sourceChainUnavailable(c *gin.Context, modelName string) (bool, string) {
 		return true, reason
 	}
 	return false, ""
+}
+
+// failoverSharedChannelChain 判断源模型与备胎模型是否解析到同一批渠道。
+//
+// 2026-11-12 起 seedance-2-5 常驻班车 ch27，与备胎 wan3.0-班车 同渠道 ——
+// 此时改写 body 没有任何路由收益：改派后重试只会用同一个模型名重选渠道，
+// 落的还是 ch27；却要按「豆包契约 → 班车契约」重建一遍 body，
+// 丢掉源链路生效的 media[]/mode 等字段 —— 改派变成纯损失。
+// 所以同渠道时直接放弃改写，等价放行原请求（计费原点逻辑不受影响）。
+//
+// 任一侧集合为空（没有渠道 / 无法判定）都返回 false：
+// 没渠道的组合本来就会在备胎探测那一步被拦，这里只拦「换汤不换药」，
+// 不能因为查不到集合就把本该降级的请求也放回去。
+func failoverSharedChannelChain(c *gin.Context, sourceModel, targetModel string) bool {
+	sourceIDs := channelIDsProbe(c, sourceModel)
+	targetIDs := channelIDsProbe(c, targetModel)
+	if len(sourceIDs) == 0 || len(targetIDs) == 0 || len(sourceIDs) != len(targetIDs) {
+		return false
+	}
+	inSource := make(map[int]struct{}, len(sourceIDs))
+	for _, id := range sourceIDs {
+		inSource[id] = struct{}{}
+	}
+	for _, id := range targetIDs {
+		if _, ok := inSource[id]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // prepareFailoverRoute 组装改派到备胎模型的请求体。

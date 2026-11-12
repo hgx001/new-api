@@ -41,11 +41,13 @@ import (
 //
 //	relay/helper/price.go  ratio_setting.GetModelPrice(info.BillingModelName(), true)
 //
-// 所以 30 秒改派到豆包后，客户付的仍是 seedance2.5-特惠 的 ¥0.20/秒 × 30 = ¥6.00，
-// 而不是豆包的按次 ¥3.50。差额是内部调度收益，不体现在客户账单上。
+// 所以 30 秒改派到目标模型 seedance-2-5 后，客户付的仍是 seedance2.5-特惠 的
+// ¥0.20/秒 × 30 = ¥6.00，而不是 seedance-2-5 的按次对外价（价目表现行值）。
+// 差额是内部调度收益，不体现在客户账单上。
 //
-// ⚠️ 但光有模型名不够：源模型按秒计价，而目标 adaptor（manwu）对按次模型
-// 返回 nil 倍率，没有 seconds 就会把 30 秒算成 1 秒。所以规则一命中时
+// ⚠️ 但光有模型名不够：源模型按秒计价，而目标 adaptor（2026-11-12 起为
+// relay/channel/task/yuanmeng 班车，按次计费返回 nil 倍率）没有 seconds
+// 就会把 30 秒算成 1 秒。所以规则一命中时
 // 还要把秒数记进 ContextKeyRouteBillingSeconds（见 relay_task.go 第 5.5 步）。
 //
 // properties.origin_model_name 记「实际执行的模型」是自洽且诚实的：
@@ -63,11 +65,13 @@ const routeOriginModelKey = string(constant.ContextKeyRouteOriginModel)
 // 5000 个汉字按字节是 15000，用 len() 会把刚好合规的中文提示词误判成超长。
 const promptRouteLimitRunes = 5000
 
-// doubaoSecondsFor 校验客户请求的时长是否可以原样发给豆包链路。
+// doubaoSecondsFor 校验客户请求的时长是否可以原样发给规则一的目标链路。
 //
 // 2026-11-09 用户口径：new-api 传多少秒就下发多少秒，**禁止吸附/回落改写**。
-// 豆包 Seedance 2.5 支持任意正整数秒（官网时长控件是 4–30s 连续滑条，
-// 非档位值由 Worker 构造同构 option 直写；控件失败会显式报错，不会静默改值）。
+// 函数名里的 doubao 是历史（2026-11-12 前目标是豆包官网）；现在目标
+// seedance-2-5 常驻班车 ch27（yuanmeng，时长 2–30 秒）。规则一命中区间是
+// 严格大于阈值（生产 20 秒），21–30 秒与班车区间重合；超出 30 秒的请求
+// 由目标链路自己拒绝（fail-loud），不在这里静默改值。
 //
 // 返回 false 仅表示「秒数非法（<=0）」，不再有最大档限制 —— 以前 21–29 秒
 // 向上吸附到 30、>30 秒放弃改派的行为都已删除。
@@ -117,16 +121,17 @@ func RouteOriginModel(c *gin.Context) string {
 //   - 开关关闭（默认）或规则都没配全
 //   - 模型名不匹配
 //   - 时长规则：时长不大于触发阈值（含不传时长）
-//   - 时长规则：带了参考视频 / 参考音频（豆包链路不支持，见 hasUnsupportedMedia）
+//   - 时长规则：带了参考视频 / 参考音频（规则一的改写只搬参考图 —— 改派会
+//     静默丢音视频，见 hasUnsupportedMedia；历史上的豆包官网链路同样不收）
 //   - **目标模型在当前分组下没有可用渠道**（见 hasAvailableChannel）
 //   - 比例规则：目标链路的能力边界不满足（见 prepareWan3Route / tehuiXinbiCompatible）
 //   - 请求不是 JSON，或 body 解析/转换失败
 //
 // 2026-11-12 常驻迁移：seedance-2-5 的常驻渠道由豆包官网（ch20）改为视频
 // 生成车站（ch27，wan3.0-班车）。此后规则一的改派与规则五的降级都落在班车
-// 链路上；规则五保留（渠道故障/探针触发时仍可改写模型名，计费原点不变），
-// 但源模型与备胎同渠道 —— 渠道整体不可用时目标探测同样失败、不改派，
-// 行为等价于放行原请求。
+// 链路上；规则五保留，但源模型与备胎当前解析到同一批渠道 —— 此时改名没有
+// 路由收益，failoverSharedChannelChain 会显式放弃改写、放行原请求
+// （含额度探针触发的形态，计费原点逻辑不受影响）。
 func Seedance25TeHuiRoute() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		if !seedanceroute_setting.IsAnyRouteEnabled() {
@@ -170,17 +175,18 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 必须在 IsSourceModel 的早退**之前**判。
 		//
 		// ⚠️ 但只判这一次**不够**：规则一的目标模型恰恰就是 seedance-2-5，
-		// 也就是说规则五的源模型是规则一的**目标**。豆包额度用完时，规则一
-		// 把 30 秒请求改派到豆包 → 豆包必然失败 → 客户白等一轮 + 白烧一次预扣。
+		// 也就是说规则五的源模型是规则一的**目标**。源链路（当前即班车 ch27）
+		// 不可用时，规则一把 30 秒请求改派过去必然失败 —— 客户白等一轮 +
+		// 白烧一次预扣。所以规则一改派成功后**必须再判一次规则五**（见
+		// tryFailoverAfterDoubaoRoute），源与备胎**不同渠道**时把请求继续
+		// 改派到备胎，形成完整降级链：
 		//
-		// 所以规则一改派成功后**必须再判一次规则五**（见
-		// tryFailoverAfterDoubaoRoute）。那个函数会在「豆包链路也不可用」
-		// 时把请求继续改派到备胎（班车），形成一条完整的降级链：
+		//	促销族 → seedance-2-5（班车 ch27）→ 备胎（wan3.0-班车）
 		//
-		//	促销族 → 豆包 → 班车
-		//
-		// 这条链是必须的：豆包额度是**按天**计的，用完之后不降级就是
-		// 「整个 30 秒档位全挂」，而不是「慢一点但能出片」。
+		// 2026-11-12 迁移后源与备胎在当前配置下同渠道，第二段会被
+		// failoverSharedChannelChain 拦住（改名无路由收益，停在规则一结果上）；
+		// 保留第二段是因为 failover_target_model 可配置 —— 备胎一旦分到
+		// 另一批渠道，降级仍然成立。
 		//
 		// 计费原点：顶层这一段，客户请求的就是 seedance-2-5，
 		// 所以计费口径 = seedance-2-5（¥3.50/次，按次不叠时长倍率）。
@@ -260,17 +266,21 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// ── 规则一（时长）──
 		//
 		// 阈值是**严格大于** TriggerSeconds（生产配 20 秒），不再要求恰好等于 30 秒。
-		// 原因：豆包按次成本固定（¥2.00/次），源链路按秒计价（¥0.20/秒），
-		// 21 秒以后源链路成本已经超过豆包，非等到 30 秒整才改派纯属亏钱。
+		// 成本动机：源链路按秒计价（¥0.20/秒），目标 seedance-2-5 按次计费 ——
+		// 21 秒以后源链路成本已超过目标的按次成本，非等到 30 秒整才改派纯属亏钱。
+		// ⚠️ 20 秒这个阈值是 2026-10-30 按豆包官网成本口径拍板的；2026-11-12
+		// 常驻迁移到班车 ch27 后未按新上游成本重算（要调只改
+		// seedanceroute_setting 的 trigger_seconds，不用改代码）。
 		//
-		// 目标模型按**源模型**取：两个源模型的**兜底目标都是豆包**，但它们是
-		// 两条不同的商品：
+		// 目标模型按**源模型**取：两个源模型的**兜底目标都是 seedance-2-5**，
+		// 但它们是两条不同的商品：
 		//   - 母本 seedance2.5-特惠（按秒 ¥0.20/秒）：常驻渠道 17 有赞，
-		//     超过阈值改派豆包（按次 ¥3.50 对外，成本 ¥2.00）；
+		//     超过阈值改派 seedance-2-5（按次 ¥3.50 对外；2026-11-12 起上游为
+		//     班车 ch27，成本以渠道台账为准）；
 		//   - 活动版 seedance2.5-活动（按次 ¥4.50/次）：常驻渠道 17 有赞
-		//     （2026-11-11 从心笔切回原生 720P），超过阈值也改派豆包 ——
-		//     豆包账号每天刷新额度，用不完就亏本，把长时长的量导过去既能赚毛利
-		//     又能消耗额度。
+		//     （2026-11-11 从心笔切回原生 720P），超过阈值也改派 seedance-2-5 ——
+		//     把长时长的量导到按次目标上，既省源链路的按秒成本，也与母本
+		//     共用同一条目标链路。
 		//
 		// 两者的计费口径不同，所以仍按源模型分别取目标，不能共用一个字段。
 		secondsTarget := policy.TargetModelFor(sourceModel)
@@ -290,16 +300,53 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						logger.LogInfo(c, fmt.Sprintf(
 							"条件路由：命中时长 %d 秒（超过阈值 %d 秒），改派 %s → %s",
 							seconds, policy.TriggerSeconds, sourceModel, secondsTarget))
-						// 规则五的第二段：豆包链路本身也不可用（额度用完 / 渠道被关）
-						// 时继续降级到备胎（班车）。
+						// 规则五的第二段：目标链路本身也不可用（渠道被关 /
+						// 额度探针标记）且源与备胎不同渠道时，继续降级到备胎。
+						// 迁移后源备同渠道时这一段被 failoverSharedChannelChain
+						// 拦住，请求停在规则一的改写结果上。
 						//
 						// ⚠️ 计费原点必须是 **sourceModel**（客户最初请求的促销族模型），
 						// 不能是 secondsTarget —— 客户买的是 seedance2.5-特惠，
-						// 降级到班车后仍按它计费（¥0.20/秒），不是按豆包的 ¥3.50/次。
+						// 降级后仍按它计费（¥0.20/秒），不是按目标模型的按次价。
 						if failRouted, _ := tryFailoverAfterDoubaoRoute(c, newBody, sourceModel); failRouted {
 							c.Next()
 							return
 						}
+						c.Next()
+						return
+					}
+				}
+			}
+		}
+
+		// ── 规则六（短时长分流）：排在规则二之前 ──
+		//
+		// 2026-11-13 老板定：请求时长 ≤ 阈值（默认 10 秒）→ 改派到有赞**标准版**
+		// wan3.0-video。源模型 seedance2.5-特惠 常驻有赞 prime（满血档），
+		// 标准版是同渠道的另一档 —— 短任务分流过去，把 prime 的算力留给长任务。
+		//
+		// 为什么排在规则二（比例）之前：老板口径是「短任务优先」——
+		// 9:16 的短任务也走标准版，不再落到比例目标链路。
+		//
+		// 为什么排在规则三（首尾帧）之后：首尾帧是**能力约束**（有赞上游
+		// 2026-10-28 起取消 first_frame/last_frame 入参），标准版同样不收。
+		// 带首尾帧的请求只有规则三的目标链路能跑，优先级高于分流优化。
+		//
+		// 与规则一的时长区间不重叠（≤10 与 >阈值 20），两条规则不会互相抢单；
+		// 万一将来把阈值调成重叠，规则一在前 —— 长时长优先仍然是既有口径。
+		shortTarget := policy.ShortTargetModelFor(sourceModel)
+		if seedanceroute_setting.IsShortRouteEnabledFor(sourceModel) {
+			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.WithinShortTrigger(seconds) {
+				if newBody, sizeRatio, routed := prepareShortRoute(c, body, shortTarget, sourceModel); routed {
+					if applyRewrittenBody(c, newBody, sourceModel) {
+						// 计费按**源模型**（seedance2.5-特惠）算，秒数与 size 倍率都按它的口径记：
+						// 目标标准版三档同价、adaptor 给的 size 恒为 1.0 ——
+						// 不补倍率就会把 1080P 按 ¥0.20/秒 收（应收 ¥0.30），少收 33%。
+						common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
+						common.SetContextKey(c, constant.ContextKeyRouteBillingSizeRatio, sizeRatio)
+						logger.LogInfo(c, fmt.Sprintf(
+							"条件路由：命中短时长 %d 秒（≤ %d 秒），改派 %s → %s",
+							seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, shortTarget))
 						c.Next()
 						return
 					}
@@ -343,14 +390,18 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 	}
 }
 
-// doubaoTargetModel 是规则一的目标模型（豆包按次链路）。
+// doubaoTargetModel 是规则一的目标模型。
+//
+// 2026-11-12 起 seedance-2-5 常驻班车 ch27（yuanmeng，按次计费），
+// 此前是豆包官网 —— doubao 这个名字是历史遗留。
 const doubaoTargetModel = "seedance-2-5"
 
-// isDoubaoTarget 判断目标模型是不是豆包按次链路。
+// isDoubaoTarget 判断目标模型是不是规则一的目标（seedance-2-5）。
 //
-// 唯一的使用方是链路后一道 Wan3PromptCompress：豆包吃 20000 字符，
-// 已经改派到豆包的长提示词不需要再压缩。规则四（超长改派豆包）删除后，
-// 条件路由本身不再调用它。
+// 唯一的使用方是链路后一道 Wan3PromptCompress：目标链路（班车 yuangmeng）
+// 的提示词上限是 20000 **字节**，压缩器按这个字节预算决定压不压
+// （预算内放行，超预算压缩 —— 否则建单时被上游 400）。
+// 规则四（超长改派豆包）删除后，条件路由本身不再调用它。
 func isDoubaoTarget(targetModel string) bool {
 	return trimSpace(targetModel) == doubaoTargetModel
 }
@@ -392,12 +443,12 @@ const (
 // 为什么「显式传其它时长」要放弃：
 //
 //	2026-11-11 起活动版支持 2-30 秒逐秒可选，传 10 秒是**合法请求**，
-//	不该被改派到豆包（规则一只收 30 秒长片），也不该被归一成 30 秒
+//	不该被改派到规则一目标（seedance-2-5，只收 >阈值 的长片），也不该被归一成 30 秒
 //	（那是静默改档：客户要 10 秒的片、拿到 30 秒的片，或按 30 秒的价收钱）。
 //	放行原请求让它走源链路（有赞支持 2-30 秒逐秒），价格仍是 ¥4.5/条。
 //
-// ⚠️ 归一时**必须写回请求体**：改派后目标链路是 wan3（缺省 5 秒）或豆包
-// （时长原样下发，不改写）。不写回 seconds，客户会「按 30 秒的价拿到 5 秒的片」。
+// ⚠️ 归一时**必须写回请求体**：改派后目标链路是 wan3（缺省 5 秒）或
+// seedance-2-5（时长原样下发，不改写）。不写回 seconds，客户会「按 30 秒的价拿到 5 秒的片」。
 func normalizeFixedTierSeconds(body map[string]interface{}) (map[string]interface{}, bool) {
 	seconds, hasSeconds := extractRequestSeconds(body)
 	if hasSeconds && (seconds < perCallMinSeconds || seconds > perCallMaxSeconds) {
@@ -461,14 +512,18 @@ func applyRewrittenBody(c *gin.Context, body map[string]interface{}, originModel
 // prepareSecondsRoute 组装「规则一（时长）」的改派请求体。
 //
 // 目标模型按源模型取（可能与公共 TargetModel 不同）：
-//   - 豆包链路（母本 seedance2.5-特惠、活动版 seedance2.5-活动）：素材/分辨率要转换，比例要改名；
+//   - seedance-2-5 目标（母本 seedance2.5-特惠、活动版 seedance2.5-活动，
+//     2026-11-12 起常驻班车 ch27）：素材/分辨率要转换，比例要改名 ——
+//     改写产物仍是扁平别名形态（input_reference / 顶层 ratio / 秒数），
+//     yuanmeng 的 buildMedia / resolveRatio 兼容这批别名，可直接下发；
 //   - 心笔按次链路（wan3.0-720p-按次）：本改派只转参考图；带首尾帧/
 //     参考视频/参考音频/seed 的请求留在源链路，时长 2–30 秒（默认 30）、只交付 720P。
 //
 // ⚠️ 2026-11-03 活动版曾把常驻链路换到心笔，2026-11-11 又切回有赞原生 720P
 // （老板口径：有赞原生 720P 效果更好）。现在母本与活动版**同渠道常驻**，
-// 只剩「>阈值改派豆包」一条差异；但两条链路的入参契约不同，仍必须分开处理 ——
-// 用同一套改写逻辑会让其中一条必然失败（历史上踩过：豆包链路不认 metadata.media → 丢图）。
+// 只剩「>阈值改派 seedance-2-5」一条差异；但两条链路的入参契约不同，
+// 仍必须分开处理 —— 用同一套改写逻辑会让其中一条必然失败
+// （历史上踩过：豆包官网链路不认 metadata.media → 丢图）。
 func prepareSecondsRoute(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, requestedSeconds int) (map[string]interface{}, bool) {
 	if isXinbiPerCallTarget(targetModel) {
 		// 心笔按次档 2026-11-11 起支持 2–30 秒，生成时长必须与客户请求一致。
@@ -536,7 +591,7 @@ func prepareXinbiPerCallRoute(c *gin.Context, body map[string]interface{}, targe
 
 	// 目标模型没有可用渠道 → 不路由。
 	//
-	// 与豆包规则同一理由：中间件改写 body 之后，重试只会用同一个模型名
+	// 与规则一（时长）同一理由：中间件改写 body 之后，重试只会用同一个模型名
 	// 重选渠道，不会退回源模型。渠道挂掉时预检能让请求自然落回源链路。
 	if !channelAvailabilityProbe(c, targetModel) {
 		return nil, false
@@ -727,6 +782,87 @@ func prepareWan3Route(c *gin.Context, body map[string]interface{}, policy seedan
 	}
 
 	return rewriteBodyForWan3(body, policy, targetModel), true
+}
+
+// prepareShortRoute 组装「规则六（短时长 → 有赞标准版）」的改派请求体。
+//
+// 返回的第二个值是「按源模型口径的 size 倍率」，由调用方记进 context。
+// 第三个返回值 false = 放弃路由（放行原请求）。
+//
+// 与规则二/三的关键差别：目标是**同一渠道的另一个档**（youzanwan3 的
+// wan3.0-video），adaptor 与入参契约完全一致 —— 所以只换 model 字段，
+// 素材 / 比例 / seed 全部原样保留，不需要任何格式转换。
+func prepareShortRoute(c *gin.Context, body map[string]interface{}, targetModel, sourceModel string) (map[string]interface{}, float64, bool) {
+	// 首尾帧：标准版与源链路同源，上游 2026-10-28 起已取消 first_frame/last_frame。
+	// 带首尾帧的请求必须留在规则三的链路上 —— 分流过去只会把首尾帧
+	// 降级成参考图，客户拿到的不是他要的首尾帧成片。
+	if hasFrameMedia(body) {
+		return nil, 0, false
+	}
+
+	// 目标模型没有可用渠道 → 不路由。
+	//
+	// 与规则一同一理由：改写 body 之后重试只会用同一个模型名重选渠道，
+	// 不会退回源模型。预检能让请求自然落回源链路，客户完全无感。
+	if !channelAvailabilityProbe(c, targetModel) {
+		return nil, 0, false
+	}
+
+	resolution := shortRouteResolution(body)
+	return rewriteBodyForShortRoute(body, targetModel, resolution),
+		youzanwan3.RouteBillingSizeRatio(sourceModel, resolution), true
+}
+
+// shortRouteResolution 返回「源链路实际生效的分辨率档」，供改派时显式钉住。
+//
+// 为什么必须钉：源链路是 prime，只提供 720P / 1080P —— 客户传 480P 或什么都不传，
+// 它都按 **720P** 执行；而标准版 wan3.0-video 的缺省档是 **480P**。
+// 不显式写就会静默降档：客户付 720P 的钱，拿到 480P 的片。
+//
+// 1080P 原样保留（标准版支持这一档），倍率由源模型口径补上
+// （见 youzanwan3.RouteBillingSizeRatio）。
+func shortRouteResolution(body map[string]interface{}) string {
+	tier := sourceResolutionTier(body)
+	if tier == "" || tier == "480P" {
+		return "720P"
+	}
+	return tier
+}
+
+// sourceResolutionTier 按**源链路（youzanwan3）的读取顺序**解析分辨率档位：
+// 顶层 resolution → metadata.resolution → 顶层 size。
+//
+// 为什么不能直接用 doubaoResolutionTier：它的顺序是
+// 顶层 resolution → 顶层 size → metadata.resolution，
+// 在「顶层 size 与 metadata.resolution 同时存在且不一致」时会取错档 ——
+// 而我们要报的是「源链路会跑哪一档」，口径必须与 adaptor 逐字一致。
+func sourceResolutionTier(body map[string]interface{}) string {
+	if tier := explicitResolutionTier(body["resolution"]); tier != "" {
+		return tier
+	}
+	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
+		if tier := explicitResolutionTier(metadata["resolution"]); tier != "" {
+			return tier
+		}
+	}
+	return explicitResolutionTier(body["size"])
+}
+
+// rewriteBodyForShortRoute 只换 model 并把分辨率钉成源链路的实际档位。
+//
+// 其余字段（prompt / seconds / metadata / media / seed …）全部原样保留：
+// 源与目标是同一个 adaptor，读参数的方式一模一样，多改一处就多一处丢参风险。
+func rewriteBodyForShortRoute(body map[string]interface{}, target, resolution string) map[string]interface{} {
+	out := make(map[string]interface{}, len(body)+1)
+	for key, value := range body {
+		if key == "model" {
+			continue
+		}
+		out[key] = value
+	}
+	out["model"] = target
+	out["resolution"] = resolution
+	return out
 }
 
 // prepareFramesRoute 组装「带首尾帧 → wan3 直连」的请求体。
@@ -1058,6 +1194,27 @@ func hasAvailableChannel(c *gin.Context, modelName string) bool {
 	return channel != nil
 }
 
+// channelIDsProbe 返回「模型在当前分组下可被路由到的渠道 ID 集合」。
+//
+// 与 channelAvailabilityProbe 同族、同理由：声明成变量只为测试可替换
+// （真实实现读渠道缓存/数据库，单测没有这些环境）。
+// 生产代码路径永远走默认值 channelIDsForModel。
+var channelIDsProbe = channelIDsForModel
+
+// channelIDsForModel 是 channelIDsProbe 的默认实现：分组口径与
+// hasAvailableChannel 完全一致（ContextKeyUsingGroup，缺省 default），
+// 保证「有没有渠道」与「有哪些渠道」两个探针不会互相矛盾。
+func channelIDsForModel(c *gin.Context, modelName string) []int {
+	if strings.TrimSpace(modelName) == "" {
+		return nil
+	}
+	group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	if group == "" {
+		group = "default"
+	}
+	return model.GetChannelIDsForModel(group, modelName, c.Request.URL.Path)
+}
+
 // HasAvailableChannel 是 hasAvailableChannel 的对外版本，供管理后台
 // 展示「源链路当前还有没有渠道」。
 //
@@ -1180,7 +1337,9 @@ func hasUnsupportedMedia(body map[string]interface{}) bool {
 	return false
 }
 
-// hasUnsupportedMediaEntries 判断 media 数组里是否含豆包链路不承载的视频/音频。
+// hasUnsupportedMediaEntries 判断 media 数组里是否含规则一改写**不搬运**的
+// 视频/音频（参考视频/参考音频）：改派只转参考图，带音视频的请求放行原链路
+// 才不会静默丢素材（历史上的豆包官网链路同样不收）。
 func hasUnsupportedMediaEntries(value interface{}) bool {
 	media, ok := value.([]interface{})
 	if !ok {
@@ -1211,12 +1370,14 @@ func hasUnsupportedMediaEntries(value interface{}) bool {
 //     转换后**必须断言图数一致**，不一致就放弃路由。
 //  2. 比例：源链路的自适应档叫 adaptive，目标链路叫 auto。
 //  3. 分辨率：源链路支持 resolution（顶层或 metadata.resolution，取值 480P/720P/1080P），
-//     目标链路（豆包官网）**三档全支持**（2026-11-09 确认）——
+//     目标链路**三档全支持**（480P/720P/1080P；2026-11-09 豆包官网确认，
+//     2026-11-12 迁移后的班车 ch27 同口径）——
 //     - 顶层 resolution 可以直接透传；
 //     - 顶层 size 不能透传：漫屋把 size 当**比例**读
 //     （firstNonEmpty(Size, Ratio, AspectRatio)），"1080P" 不在
 //     allowedDoubaoRatios 里 → 400。所以 size 里表达的分辨率要**抬到顶层 resolution**；
-//     - metadata.resolution / metadata.size 同理：漫屋不读 metadata，必须抬到顶层。
+//     - metadata.resolution / metadata.size 同理：必须抬到顶层
+//     （目标链路 2026-11-12 起为班车 ch27，480P/720P/1080P 三档同口径）；
 func rewriteBodyForDoubaoWithDuration(c *gin.Context, body map[string]interface{}, policy seedanceroute_setting.Policy, targetModel string, seconds int) (map[string]interface{}, bool) {
 	out := make(map[string]interface{}, len(body)+2)
 	for key, value := range body {

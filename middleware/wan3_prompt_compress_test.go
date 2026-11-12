@@ -291,6 +291,62 @@ func TestPromptCompressSkipsWhenDoubaoAlreadyRouted(t *testing.T) {
 	}
 }
 
+// 规则一改派到 seedance-2-5（2026-11-12 起常驻班车 ch27 = yuanmeng）后，
+// 超 20000 **字节** 的提示词必须压缩。
+//
+// 旧口径「豆包吃 20000 字符 → 无条件放行」随迁移失效：yuanmeng 用 len(prompt)
+// 校验 20000 字节硬上限（中文每字 3 字节 ≈ 6667 字），放行等于把注定 400
+// 的请求送给上游 —— 客户白等一轮，规则一的降级承诺也落空。
+func TestPromptCompressRunsWhenSeedance25RoutedPromptExceedsByteBudget(t *testing.T) {
+	setupPromptCompress(t, nil)
+	compressed := strings.Repeat("压", 3000)
+	stubCompressSteps(t, compressStep{out: compressed})
+
+	// 6668 字 × 3 字节 = 20004 字节 > 20000；字符数 6668 在可压缩区间（5000, 12500]。
+	prompt := strings.Repeat("字", failoverMaxPromptLength/3+1)
+	if len(prompt) <= failoverMaxPromptLength {
+		t.Fatalf("测试数据没超字节预算：%d 字节", len(prompt))
+	}
+	body := buildCompressBody(t, testTargetModel, prompt, nil)
+	result := runCompress(t, testSourceModel, "/v1/video/generations", body)
+
+	if result.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", result.status)
+	}
+	out := decodeCompressBody(t, result.body)
+	if out["prompt"] != compressed {
+		t.Fatalf("超 20000 字节的提示词未被压缩（放行上游必 400）：prompt=%v", truncateForLog(fmt.Sprint(out["prompt"]), 40))
+	}
+	if out["model"] != testTargetModel {
+		t.Fatalf("model = %v, want %s（压缩不能改模型）", out["model"], testTargetModel)
+	}
+}
+
+// 反向：字节预算内（哪怕字符数已超 5000）照样放行 —— 班车收得下，
+// 压了等于白白改写客户文案。
+func TestPromptCompressKeepsSeedance25RoutedPromptWithinByteBudget(t *testing.T) {
+	setupPromptCompress(t, nil)
+	calls := stubCompressSteps(t)
+
+	// 6000 字 × 3 字节 = 18000 字节 ≤ 20000，字符数 6000 已超 5000。
+	prompt := strings.Repeat("字", promptRouteLimitRunes+1000)
+	if len(prompt) > failoverMaxPromptLength {
+		t.Fatalf("测试数据超了字节预算：%d 字节", len(prompt))
+	}
+	body := buildCompressBody(t, testTargetModel, prompt, nil)
+	result := runCompress(t, testSourceModel, "/v1/video/generations", body)
+
+	if result.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", result.status)
+	}
+	if *calls != 0 {
+		t.Fatalf("字节预算内的提示词不该调压缩模型，实际调了 %d 次", *calls)
+	}
+	if got := decodeCompressBody(t, result.body)["prompt"]; got != prompt {
+		t.Fatalf("prompt 被改了（%d → %d 字符）", countRunes(prompt), countRunes(got.(string)))
+	}
+}
+
 // 被规则三改派到 wan3.0-720p-特惠的请求仍要压缩：
 // 那条链路同样 5000 上限，客户买的是特惠，得替他兜住。
 func TestPromptCompressRunsAfterFramesReroute(t *testing.T) {

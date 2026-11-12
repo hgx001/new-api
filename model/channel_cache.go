@@ -230,6 +230,63 @@ func filterChannelsByRequestPath(channels []int, requestPath string) []int {
 	return filtered
 }
 
+// GetChannelIDsForModel 返回该模型在指定分组、指定 requestPath 下可被路由到的
+// 全部渠道 ID（去重、升序）。没有可用渠道或无法判定时返回 nil。
+//
+// 与 GetRandomSatisfiedChannel 的候选集同源（缓存模式读 group2model2channels，
+// 非缓存模式查 abilities 最高优先级，均复用 requestPath 过滤），
+// 但返回**整个集合**而不是随机挑一个 —— 调用方要比较「两个模型是否解析到
+// 同一批渠道」，随机单点会让判定变成掷硬币。
+func GetChannelIDsForModel(group string, model string, requestPath string) []int {
+	if !common.MemoryCacheEnabled {
+		if DB == nil {
+			// 数据库未初始化（单测环境）：无法判定，返回 nil 让调用方按「未知」处理。
+			return nil
+		}
+		channelQuery, err := getChannelQuery(group, model, 0)
+		if err != nil {
+			return nil
+		}
+		var abilities []Ability
+		if err := channelQuery.Find(&abilities).Error; err != nil {
+			return nil
+		}
+		abilities = filterAbilitiesByRequestPath(abilities, requestPath)
+		ids := make([]int, 0, len(abilities))
+		for _, ability := range abilities {
+			ids = append(ids, ability.ChannelId)
+		}
+		return sortedUniqueInts(ids)
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	channels := filterChannelsByRequestPath(group2model2channels[group][model], requestPath)
+	if len(channels) == 0 {
+		channels = filterChannelsByRequestPath(
+			group2model2channels[group][ratio_setting.FormatMatchingModelName(model)], requestPath)
+	}
+	return sortedUniqueInts(channels)
+}
+
+// sortedUniqueInts 去重并升序，作为渠道 ID 集合比较的规范形态。
+func sortedUniqueInts(values []int) []int {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(values))
+	unique := make([]int, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	sort.Ints(unique)
+	return unique
+}
+
 func CacheGetChannel(id int) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetChannelById(id, true)

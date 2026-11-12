@@ -205,6 +205,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 30 秒的请求会只按 1 秒收钱（¥0.20 而不是 ¥6.00）。
 	applyRouteBillingSeconds(c, info)
 
+	// 5.6 改派过：用「源模型口径的 size 倍率」覆盖目标 adaptor 给的倍率
+	//
+	// 与 5.5 是同一个问题的两面：计费按源模型算（seedance2.5-特惠 的 1080P
+	// 是 1.5 倍），而规则六的改派目标 wan3.0-video 三档同价、adaptor 给 1.0。
+	// 不覆盖就会按 ¥0.20/秒 收 1080P（应收 ¥0.30），少收 33%。
+	applyRouteBillingSizeRatio(c, info)
+
 	// 6. 将 OtherRatios 应用到基础额度
 	//
 	// 必须先把所有倍率乘完再取整，不能边遍历边 int()：OtherRatios 是 map，
@@ -1034,6 +1041,37 @@ func applyRouteBillingSeconds(c *gin.Context, info *relaycommon.RelayInfo) {
 		return
 	}
 	info.PriceData.AddOtherRatio("seconds", seconds)
+}
+
+// applyRouteBillingSizeRatio 用「源模型口径的 size 倍率」覆盖目标 adaptor 给的倍率。
+//
+// 为什么需要（规则六：短时长 → 有赞标准版，2026-11-13）：
+//
+//	计费按**源模型**（seedance2.5-特惠）算 —— 720P ¥0.20/秒、1080P ¥0.30/秒（1.5 倍）；
+//	而改派目标 wan3.0-video 三档同价，它的 adaptor 会给 size = 1.0。
+//	不覆盖就会按 ¥0.20/秒 收 1080P（应收 ¥0.30），**少收 33% 且没有任何报错**。
+//
+// 为什么是**覆盖**而不是相乘：adaptor 给的 1.0 是「目标模型的档位差价」，
+// 与源模型的档位差价是同一维度的东西，不是两个可叠加的倍率。
+// 相乘在 1.0 上看似无害，但目标 adaptor 一旦给出非 1 的倍率，
+// 两套定价会被叠成四不像 —— 覆盖是唯一自洽的语义。
+//
+// 只在中间件**真的记了**倍率时生效（规则六专用）；规则一/二/三改派时
+// context 里没有这个键，行为与改动前逐字节一致。
+func applyRouteBillingSizeRatio(c *gin.Context, info *relaycommon.RelayInfo) {
+	if info == nil || info.RouteOriginModel == "" {
+		return
+	}
+	// 按次档：一口价，不接收任何倍率（与 applyRouteBillingSeconds 同口径）。
+	// 覆盖成 1.5 会把 ¥4.5/次 乘歪。
+	if isPerCallBilling(info) {
+		return
+	}
+	ratio, ok := common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSizeRatio)
+	if !ok || ratio <= 0 {
+		return
+	}
+	info.PriceData.AddOtherRatio("size", ratio)
 }
 
 // applyTaskOtherRatios 把时长/分辨率等附加倍率乘到任务预扣额度上。

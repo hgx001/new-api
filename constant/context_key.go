@@ -40,6 +40,18 @@ const (
 	// 只在「目标 adaptor 没给出 seconds」时生效，不覆盖 adaptor 自己的判断。
 	ContextKeyRouteBillingSeconds ContextKey = "route_billing_seconds"
 
+	// ContextKeyRouteBillingSizeRatio 是条件路由改派时「源模型口径的 size 倍率」。
+	//
+	// 与 ContextKeyRouteBillingSeconds 是同一个问题的两面：计费按源模型
+	// （seedance2.5-特惠）算 —— 720P ¥0.20/秒、1080P ¥0.30/秒（1.5 倍）；
+	// 而规则六的改派目标 wan3.0-video 三档同价，它的 adaptor 会给 size = 1.0。
+	//
+	// 不覆盖就会按 ¥0.20/秒 收 1080P（应收 ¥0.30），**少收 33% 且没有任何报错**。
+	//
+	// 语义是**覆盖**而不是相乘：adaptor 给的 1.0 是「目标模型的档位差价」，
+	// 与源模型的档位差价是同一维度，不是两个可叠加的倍率。
+	ContextKeyRouteBillingSizeRatio ContextKey = "route_billing_size_ratio"
+
 	// ContextKeyPromptCompressFrom / To 是提示词压缩的「原长度 → 压缩后长度」。
 	//
 	// 为什么要记下来：压缩改写了客户的创作描述，而任务照样成功、账单照收 ——

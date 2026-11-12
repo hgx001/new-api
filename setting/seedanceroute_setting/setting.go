@@ -119,6 +119,36 @@ type Policy struct {
 	// 首尾帧是能力约束不是调度偏好，不存在「阈值」可调。
 	FramesTargetModel string `json:"frames_target_model,omitempty"`
 
+	// ─────────────────── 规则六：短时长分流（short）───────────────────
+	//
+	// 2026-11-13 老板定：源模型 + 请求时长 **≤ 阈值**（默认 10 秒）
+	// → 改派到有赞标准版 wan3.0-video。
+	//
+	// 与规则一**方向相反**：规则一是「太长 → 换到按次链路」，规则六是
+	// 「太短 → 换到同渠道的标准档」。两者时长区间不重叠（≤10 与 >20），
+	// 判定顺序不影响结果；但规则六必须排在规则二（比例）**之前** ——
+	// 老板口径是「短任务优先」，9:16 的短任务也走标准版。
+	//
+	// 为什么是同一渠道的另一个档：源模型 seedance2.5-特惠 常驻有赞 **prime**
+	// （满血档），标准版 wan3.0-video 是同一渠道的另一档（三档同价 ¥0.23/秒）。
+	// 短任务分流过去，把 prime 的算力留给长任务；两条链路的 adaptor 是同一个
+	// （relay/channel/task/youzanwan3），入参契约完全一致，改派只换 model 字段。
+	//
+	// ShortTargetModel 是规则六的目标模型名。空 = 规则六不启用（默认）。
+	//
+	// ⚠️ 与 TargetModel 一样 omitempty：旧的生产 option JSON 里没有它，
+	// 解析后为空 → 规则六不生效 → 行为与改造前逐字节一致。
+	ShortTargetModel string `json:"short_target_model,omitempty"`
+
+	// ShortTriggerSeconds 是规则六的时长阈值（秒），**≤ 该值命中**。
+	//
+	// 0（或没配）= 用 DefaultShortTriggerSeconds（10 秒）。
+	//
+	// 为什么缺省不设成「不启用」：只配目标模型就开始分流，符合「加个条件，
+	// 小于等于 10 秒走标准版」的原始诉求；要求必须同时配阈值，会让
+	// 「配了目标却没生效」变成一个没有任何报错的静默故障。
+	ShortTriggerSeconds int `json:"short_trigger_seconds,omitempty"`
+
 	// ─────────────────── 规则五：故障转移（failover）───────────────────
 	//
 	// 前三条规则的触发源都是**请求特征**（时长 / 比例 / 首尾帧），
@@ -240,6 +270,8 @@ type SourceOverride struct {
 	RatioTargetModel string `json:"ratio_target_model,omitempty"`
 	// FramesTargetModel 覆盖规则三（首尾帧）的目标模型。
 	FramesTargetModel string `json:"frames_target_model,omitempty"`
+	// ShortTargetModel 覆盖规则六（短时长分流）的目标模型。
+	ShortTargetModel string `json:"short_target_model,omitempty"`
 
 	// SecondsRuleEnabled 是该源模型专属的「按时长改派」开关（2026-11-03 起）。
 	//
@@ -288,6 +320,18 @@ type SourceOverride struct {
 	// 不要再落到班车。公共 failover 配置一改就是所有源模型一起改
 	// （母本的豆包→班车降级链必须保留），所以必须按源模型独立开关。
 	FailoverAfterDoubaoEnabled *bool `json:"failover_after_doubao_enabled,omitempty"`
+
+	// ShortRuleEnabled 是该源模型专属的「短时长分流」开关（2026-11-13 起）。
+	//
+	// 语义与另外三个开关一致（三态指针）：
+	//   - nil（配置里没写这个字段）= **默认开启**，行为与加这个字段之前逐字节一致；
+	//   - 显式 false = 该源模型的规则六不分流，请求留在自己的常驻链路；
+	//   - 显式 true = 明确开启（用于把别人关掉的开关改回来）。
+	//
+	// 为什么需要按源模型分：促销族两个成员的计费口径不同（母本按秒、活动版按次），
+	// 短任务分流对母本是调度优化、对活动版可能改变一口价的成本结构 ——
+	// 老板需要能**只停一个**。公共 short_target_model 一改就是所有源模型一起改。
+	ShortRuleEnabled *bool `json:"short_rule_enabled,omitempty"`
 }
 
 // overrideFor 返回「这个源模型的专属覆盖」以及是否存在。
@@ -342,6 +386,53 @@ func (p Policy) failoverAfterDoubaoEnabledFor(sourceModel string) bool {
 	return *override.FailoverAfterDoubaoEnabled
 }
 
+// shortRuleEnabledFor 判断该源模型的「短时长分流」是否被单独关掉。
+//
+// 默认（没配覆盖、或覆盖里没写这个字段）= 开启，与另外三个开关同口径。
+func (p Policy) shortRuleEnabledFor(sourceModel string) bool {
+	override, ok := p.overrideFor(sourceModel)
+	if !ok || override.ShortRuleEnabled == nil {
+		return true
+	}
+	return *override.ShortRuleEnabled
+}
+
+// DefaultShortTriggerSeconds 是规则六的默认时长阈值（秒）。
+//
+// 10 秒来自老板 2026-11-13 的原话「小于等于 10 秒以下的任务就去这个标准模型」。
+// 导出是为了让前端/文档引用同一个事实源 —— 前端写死一个 10、后端写死另一个，
+// 改阈值时必有一边漏改。
+const DefaultShortTriggerSeconds = 10
+
+// shortTriggerSeconds 返回规则六实际生效的阈值（配置值优先，0 用默认）。
+func (p Policy) shortTriggerSeconds() int {
+	if p.ShortTriggerSeconds > 0 {
+		return p.ShortTriggerSeconds
+	}
+	return DefaultShortTriggerSeconds
+}
+
+// ShortTriggerSecondsOrDefault 返回规则六实际生效的阈值（配置值优先，0 → 默认 10）。
+//
+// 供中间件打日志用：日志里写「≤ 10 秒」才有排查价值，写「≤ 0 秒」只会误导。
+func (p Policy) ShortTriggerSecondsOrDefault() int {
+	return p.shortTriggerSeconds()
+}
+
+// WithinShortTrigger 判断请求时长是否落在规则六的分流区间内。
+//
+// 语义是**小于等于**（闭区间）：阈值 10 时，10 秒命中、11 秒不命中。
+// 与规则一的 ExceedsTriggerSeconds（严格大于）正好互补，两条规则不会打架。
+//
+// 时长 <= 0 一律不命中：0 秒不是「很短的任务」，而是客户没填或填错了 ——
+// 拿它去触发改派等于替客户猜意图。
+func (p Policy) WithinShortTrigger(seconds int) bool {
+	if seconds <= 0 {
+		return false
+	}
+	return seconds <= p.shortTriggerSeconds()
+}
+
 // targetFor 返回「这个源模型实际生效的目标模型名」。
 //
 // 三级回落：源模型专属覆盖 → 公共字段 → 空串。
@@ -368,16 +459,19 @@ func (p Policy) targetFor(sourceModel, field string) string {
 		return override.RatioTargetModel
 	case fieldFrames:
 		return override.FramesTargetModel
+	case fieldShort:
+		return override.ShortTargetModel
 	}
 	return ""
 }
 
-// 三条规则的字段名。用常量而不是裸字符串，避免调用点写错字段名后
+// 四条规则的字段名。用常量而不是裸字符串，避免调用点写错字段名后
 // 静默取到空值（那会让规则「配了却不生效」，且没有任何报错）。
 const (
 	fieldTarget = "target_model"
 	fieldRatio  = "ratio_target_model"
 	fieldFrames = "frames_target_model"
+	fieldShort  = "short_target_model"
 )
 
 // trimModelName 去掉首尾空格，与 IsSourceModel 的口径保持一致。
@@ -532,10 +626,32 @@ func UpdateFromJSONString(jsonStr string) error {
 			parsed.Enabled = false
 		}
 	}
+	// 规则六的阈值归一：配了目标模型就落一个明确的阈值，别把「没配」留在字段里。
+	//
+	// 为什么要写进字段而不是只在读取时兜底：后台与 option JSON 都直接展示这个字段，
+	// 留着 0 会让运营看到「阈值 0 秒」—— 那与「默认 10 秒」是两种完全不同的语义，
+	// 而且改一次别的东西再把配置写回时，0 会被原样持久化，越看越像关着。
+	// 只在**配了目标模型**时归一：没配规则六的策略不该凭空长出一个 10。
+	if parsed.hasShortTarget() && parsed.ShortTriggerSeconds <= 0 {
+		parsed.ShortTriggerSeconds = DefaultShortTriggerSeconds
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	current = parsed
 	return nil
+}
+
+// hasShortTarget 判断策略里是否配了规则六的目标模型（公共字段或任一源模型覆盖）。
+func (p Policy) hasShortTarget() bool {
+	if trimModelName(p.ShortTargetModel) != "" {
+		return true
+	}
+	for _, source := range p.allSourceModels() {
+		if trimModelName(p.ShortTargetModelFor(source)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // anyRuleReady 判断「至少有一条规则对至少一个源模型配全」。
@@ -548,7 +664,10 @@ func (p Policy) anyRuleReady() bool {
 		return true
 	}
 	for _, source := range p.allSourceModels() {
-		if secondsRuleConfiguredFor(p, source) || ratioRuleConfiguredFor(p, source) || framesRuleReadyFor(p, source) {
+		if secondsRuleConfiguredFor(p, source) ||
+			ratioRuleConfiguredFor(p, source) ||
+			framesRuleReadyFor(p, source) ||
+			shortRuleConfiguredFor(p, source) {
 			return true
 		}
 	}
@@ -629,7 +748,8 @@ func IsAnyRouteEnabled() bool {
 	for _, source := range current.allSourceModels() {
 		if secondsRuleActiveFor(current, source, nowUnix()) ||
 			ratioRuleReadyFor(current, source) ||
-			framesRuleReadyFor(current, source) {
+			framesRuleReadyFor(current, source) ||
+			shortRuleReadyFor(current, source) {
 			return true
 		}
 	}
@@ -1050,6 +1170,46 @@ func (p Policy) FramesTargetModelFor(sourceModel string) string {
 	return p.FramesTargetModel
 }
 
+// ShortTargetModelFor 返回「规则六（短时长分流）对某个源模型生效的目标模型名」。
+// 优先级同 TargetModelFor。
+func (p Policy) ShortTargetModelFor(sourceModel string) string {
+	if override := p.targetFor(sourceModel, fieldShort); override != "" {
+		return override
+	}
+	return p.ShortTargetModel
+}
+
+// IsShortRouteEnabledFor 判断「规则六（短时长分流）对某个源模型是否生效」。
+//
+// 与 IsSecondsRuleEnabledFor 同一口径：目标模型按源模型取，叠加该源模型的
+// 专属开关（source_overrides[模型].short_rule_enabled）。
+//
+// 不受 SecondsRulePausedUntil 影响 —— 暂停的是「改派到豆包」那一条，
+// 与「短任务换到同渠道标准档」是两件独立的事。
+func IsShortRouteEnabledFor(sourceModel string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return shortRuleReadyFor(current, sourceModel)
+}
+
+// shortRuleReadyFor 判断「规则六对某个具体源模型是否配全**且未被单独关掉**」。
+func shortRuleReadyFor(p Policy, sourceModel string) bool {
+	return shortRuleConfiguredFor(p, sourceModel) && p.shortRuleEnabledFor(sourceModel)
+}
+
+// shortRuleConfiguredFor 判断「规则六对某个源模型是否配全」（不看开关）。
+//
+// 与 ratioRuleConfiguredFor 的分工完全对齐：configured 那一份供 anyRuleReady
+// 判断「整份策略算不算数」，叠加开关的 ready 那一份决定「要不要真的改派」。
+//
+// 少一个条件：规则六**没有独立的触发值必填**（阈值缺省 10 秒），
+// 所以只要目标模型名非空就算配全。
+func shortRuleConfiguredFor(p Policy, sourceModel string) bool {
+	return p.Enabled &&
+		p.hasSourceModel() &&
+		p.ShortTargetModelFor(sourceModel) != ""
+}
+
 // secondsRulePaused 判断当前是否处于规则一的暂停期。
 //
 // 用 `>` 而不是 `>=`：截止时间那一秒**已经恢复**。
@@ -1142,6 +1302,10 @@ func clonePolicy(p Policy) Policy {
 			if value.FailoverAfterDoubaoEnabled != nil {
 				enabled := *value.FailoverAfterDoubaoEnabled
 				value.FailoverAfterDoubaoEnabled = &enabled
+			}
+			if value.ShortRuleEnabled != nil {
+				enabled := *value.ShortRuleEnabled
+				value.ShortRuleEnabled = &enabled
 			}
 			out.SourceOverrides[key] = value
 		}

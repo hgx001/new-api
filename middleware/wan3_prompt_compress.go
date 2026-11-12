@@ -94,22 +94,33 @@ func Wan3PromptCompress() gin.HandlerFunc {
 			return
 		}
 
-		// ② 豆包已经接走了 → 不压。
-		//
-		// 规则一成功改派时 body.model 已经是 seedance-2-5；没改派则仍是
-		// 特惠/活动（或被规则二/三改到别的目标模型）。所以「body 里还是不是豆包」
-		// 就是「豆包有没有接走」的现成信号，不需要再查渠道。
-		if isDoubaoTarget(effective) {
-			c.Next()
-			return
-		}
-
-		// ③ 不超就不管（> 不是 >=：恰好 5000 上游是收的）。
 		prompt, isString := body["prompt"].(string)
 		if !isString {
 			c.Next()
 			return
 		}
+
+		// ② 目标是 seedance-2-5 → 按**字节预算**决定压不压。
+		//
+		// 2026-11-12 起 seedance-2-5 常驻班车 ch27（relay/channel/task/yuanmeng），
+		// 不再直连豆包官网 —— 旧口径「豆包吃 20000 字符 → 无条件放行」随之失效：
+		// yuanmeng 用 len(prompt) 校验 20000 **字节**硬上限（中文每字 3 字节
+		// ≈ 6667 字），放行超字节的提示词等于把注定 400 的请求送给上游。
+		//
+		//	字节预算内 → 放行不压（班车收得下，压了等于白改客户文案）；
+		//	超字节     → 落到 ③④ 走压缩。压后 ≤5000 字符
+		//	             （validateCompressedPrompt 锁死）≤20000 字节，必落回预算内。
+		//
+		// 预算常量复用 failoverMaxPromptLength —— 与 yuanmeng adaptor 上限同源，
+		// 两处不能各自漂移。
+		if isDoubaoTarget(effective) {
+			if len(prompt) <= failoverMaxPromptLength {
+				c.Next()
+				return
+			}
+		}
+
+		// ③ 不超就不管（> 不是 >=：恰好 5000 上游是收的）。
 		length := countRunes(prompt)
 		if length <= promptRouteLimitRunes {
 			c.Next()

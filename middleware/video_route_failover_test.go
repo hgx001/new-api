@@ -66,6 +66,20 @@ func stubChannelAvailableByModel(t *testing.T, available map[string]bool) {
 	t.Cleanup(func() { channelAvailabilityProbe = previous })
 }
 
+// stubChannelIDsByModel 按模型名返回「当前分组下可用的渠道 ID 集合」。
+//
+// 同渠道判定（failoverSharedChannelChain）需要知道源与备胎各自落在哪些渠道，
+// 与 stubChannelAvailableByModel 同理由：真实实现读渠道缓存/数据库，
+// 单测里替换变量才能确定性地构造「同渠道 / 不同渠道」两种世界。
+func stubChannelIDsByModel(t *testing.T, ids map[string][]int) {
+	t.Helper()
+	previous := channelIDsProbe
+	channelIDsProbe = func(_ *gin.Context, modelName string) []int {
+		return ids[modelName]
+	}
+	t.Cleanup(func() { channelIDsProbe = previous })
+}
+
 // runFailover 跑一遍路由，返回下游看到的请求体与 RouteOriginModel。
 func runFailover(t *testing.T, body string) (string, string) {
 	t.Helper()
@@ -227,6 +241,76 @@ func TestFailoverDoesNotRouteAfterQuotaMarkerExpires(t *testing.T) {
 	seen, _ := runFailover(t, body)
 	if seen != body {
 		t.Fatalf("标记过期后不该改派:\n got %s\nwant %s", seen, body)
+	}
+}
+
+// ───────────────────────── 同渠道判定（2026-11-12 迁移后）─────────
+
+// 源模型与备胎解析到同一批渠道时**放弃改写**，请求体一个字节都不能动。
+//
+// 2026-11-12 起 seedance-2-5 常驻班车 ch27，与备胎 wan3.0-班车 同渠道 ——
+// 此时把 model 改名没有任何路由收益（重试只会用同一个模型名重选渠道，
+// 落的还是 ch27），却会按「豆包契约 → 班车契约」重建 body：
+// 丢掉 media[]/mode、翻译比例……改派变成纯损失。所以直接放行原请求。
+func TestFailoverSkipsRewriteWhenSourceAndBackupShareChannel(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	// 渠道还活着（额度探针标记不可用的形态），源与备胎都解析到 ch27。
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: true,
+		failoverBackupModel: true,
+	})
+	stubChannelIDsByModel(t, map[string][]int{
+		failoverSourceModel: {27},
+		failoverBackupModel: {27},
+	})
+
+	until := timeNowUnix() + 3600
+	marked := seedanceroute_setting.WithFailoverUnavailable(until, seedanceroute_setting.ReasonQuotaExhausted)
+	encoded, err := common.Marshal(marked)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+
+	body := `{"model":"seedance-2-5","seconds":10,"prompt":"a cat",` +
+		`"media":[{"type":"reference_image","url":"http://a/1.png"}],"mode":"reference"}`
+	seen, originModel := runFailover(t, body)
+	if seen != body {
+		t.Fatalf("源备同渠道时不该改写（改名无路由收益，还会丢素材字段）:\n got %s\nwant %s", seen, body)
+	}
+	if originModel != "" {
+		t.Fatalf("放弃改写时不该写 RouteOriginModel，却写了 %q", originModel)
+	}
+}
+
+// 反向：源与备胎解析到**不同**渠道时照常改派（防止判定把正常降级也拦死）。
+func TestFailoverRoutesWhenSourceAndBackupUseDifferentChannels(t *testing.T) {
+	enableFailover(t, failoverSourceModel, failoverBackupModel)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: true,
+		failoverBackupModel: true,
+	})
+	stubChannelIDsByModel(t, map[string][]int{
+		failoverSourceModel: {27},
+		failoverBackupModel: {30},
+	})
+
+	until := timeNowUnix() + 3600
+	marked := seedanceroute_setting.WithFailoverUnavailable(until, seedanceroute_setting.ReasonQuotaExhausted)
+	encoded, err := common.Marshal(marked)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+
+	seen, originModel := runFailover(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat"}`)
+	assertModelRouted(t, seen, failoverBackupModel)
+	if originModel != failoverSourceModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, failoverSourceModel)
 	}
 }
 
@@ -523,6 +607,65 @@ func TestFailoverDegradesDoubaoRoutedRequestToBackup(t *testing.T) {
 	if originModel != testSourceModel {
 		t.Fatalf("RouteOriginModel() = %q, want %q（计费原点必须是客户原始请求的模型）",
 			originModel, testSourceModel)
+	}
+}
+
+// 规则一改派后，源（seedance-2-5）与备胎同渠道 → 第二段降级也放弃改写，
+// 请求停在规则一的改写结果上（豆包形态），计费原点仍是促销族。
+//
+// 与 TestFailoverDegradesDoubaoRoutedRequestToBackup 是同一矩阵的另一格：
+// 迁移后源与备胎都在 ch27，「降级到班车」只是换个模型名落回同一条渠道，
+// 中间却要把已归一的 body 再按豆包口径重建一遍 —— 纯损失，必须停住。
+func TestFailoverAfterDoubaoSkipsWhenSourceAndBackupShareChannel(t *testing.T) {
+	previous := seedanceroute_setting.Get()
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+
+	payload := map[string]interface{}{
+		"enabled":               true,
+		"source_model":          testSourceModel,
+		"target_model":          failoverSourceModel,
+		"trigger_seconds":       20,
+		"failover_enabled":      true,
+		"failover_source_model": failoverSourceModel,
+		"failover_target_model": failoverBackupModel,
+	}
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel: true,
+		failoverBackupModel: true,
+	})
+	stubChannelIDsByModel(t, map[string][]int{
+		failoverSourceModel: {27},
+		failoverBackupModel: {27},
+	})
+
+	until := timeNowUnix() + 3600
+	marked := seedanceroute_setting.WithFailoverUnavailable(until, seedanceroute_setting.ReasonQuotaExhausted)
+	markedEncoded, err := common.Marshal(marked)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(markedEncoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+
+	seen, originModel := runFailover(t, `{"model":"seedance2.5-特惠","seconds":30,"prompt":"a cat"}`)
+
+	// 停在规则一的目标模型上，不再降到备胎。
+	assertModelRouted(t, seen, failoverSourceModel)
+	// 计费原点在规则一改写时就已锁定为促销族，放弃第二段降级不改变它。
+	if originModel != testSourceModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", originModel, testSourceModel)
 	}
 }
 
