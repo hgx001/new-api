@@ -54,6 +54,12 @@ export type VideoRoutePolicy = {
   ratio_target_model: string
   trigger_ratio: string
   frames_target_model: string
+  /**
+   * 规则一的可选比例条件（后台勾选）。
+   * 非空 = 只有该比例的请求才改派目标链路；空 = 不限比例。
+   * 与 `trigger_ratio`（规则二自己的触发比例）是两个独立字段。
+   */
+  seconds_rule_ratio_gate: string
   updated_at: number
   /**
    * 豆包链路开关：true = 运营关闭了豆包（规则一停用 + 故障转移强制生效），
@@ -144,6 +150,28 @@ export async function setDoubaoLinkEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/doubao-link', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换规则一的「可选比例条件」（后台勾选）。
+ *
+ * 勾上 = 只有指定比例（后端默认 9:16）且时长超阈值的请求才改派目标链路；
+ * 取消 = 清空闸门，任何比例超阈值都改派。
+ *
+ * 刻意不传 ratio：运营看到的是一个勾选框，比例由后端给默认值，
+ * 前端再写一份 "9:16" 就是两个事实源，迟早会漂。需要换比例时
+ * 由管理员改配置，不在抽屉里开放输入框。
+ *
+ * 与豆包链路开关分开：这个条件决定「哪些请求有资格改派」，
+ * 开关决定「目标链路通不通」，两者互不覆盖。
+ */
+export async function setSecondsRuleRatioGate(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/ratio-gate', {
     enabled,
   })
   return res.data.data

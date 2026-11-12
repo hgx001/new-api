@@ -21,6 +21,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +30,7 @@ import {
   getVideoRouteFailover,
   getVideoRoutePolicy,
   setDoubaoLinkEnabled,
+  setSecondsRuleRatioGate,
   type VideoRouteFailoverState,
   type VideoRoutePolicy,
 } from '../api'
@@ -116,6 +119,34 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
     [t]
   )
 
+  /**
+   * 切换规则一的「可选比例条件」。
+   *
+   * 与 handleToggle 分开：那个开关表达「豆包通不通」（关闭带凌晨 2 点
+   * 自动恢复、还要强制故障转移），这个勾选只收窄「哪些请求有资格改派」。
+   * 共用一个处理函数会让「关一下开关」顺带把条件抹掉。
+   */
+  const handleRatioGateToggle = useCallback(
+    async (nextOn: boolean) => {
+      setBusy(true)
+      try {
+        // 接口返回完整策略快照，直接替换本地状态，勾选框立即反映新值。
+        setPolicy(await setSecondsRuleRatioGate(nextOn))
+        toast.success(
+          t(nextOn ? 'Ratio condition enabled' : 'Ratio condition disabled')
+        )
+      } catch (error) {
+        toast.error(
+          (error as { response?: { data?: { message?: string } } })?.response
+            ?.data?.message ?? t('Failed to update routing policy')
+        )
+      } finally {
+        setBusy(false)
+      }
+    },
+    [t]
+  )
+
   if (loading || !policy || !isRelevant) {
     return null
   }
@@ -192,6 +223,34 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
           'Pricing is unchanged: customers are still billed for the model they requested.'
         )}
       </p>
+
+      {/* 可选比例条件：勾上才要求满足该比例，不勾则不限比例。
+          与上面的链路开关是两个独立动作，所以单独一行、单独一个接口。 */}
+      <div className='border-border/50 mt-3 flex items-start gap-2 border-t pt-3'>
+        <Checkbox
+          id='seconds-rule-ratio-gate'
+          checked={view.ratioGateOn}
+          disabled={busy}
+          onCheckedChange={(value) => void handleRatioGateToggle(value === true)}
+          className='mt-0.5'
+        />
+        <div className='min-w-0'>
+          <Label
+            htmlFor='seconds-rule-ratio-gate'
+            className='text-foreground cursor-pointer text-xs font-semibold'
+          >
+            {t('Only route {{ratio}} requests to the reroute target', {
+              ratio: view.ratioGateValue,
+            })}
+          </Label>
+          <p className='text-muted-foreground mt-0.5 text-[11px] leading-relaxed'>
+            {t(
+              'When checked, only requests specifying {{ratio}} are rerouted; unchecked reroutes every request over the duration threshold.',
+              { ratio: view.ratioGateValue }
+            )}
+          </p>
+        </div>
+      </div>
       {!view.fallbackReady ? (
         // 陈述事实而非指向 UI 中不存在的入口：改派模型只能由管理员在路由
         // 策略里配置，这个抽屉里没有配置界面。

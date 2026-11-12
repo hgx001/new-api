@@ -47,6 +47,36 @@ export type DoubaoLinkView = {
    * 原请求（仍打已宣布关闭的豆包）—— 卡片必须据此禁用开关，否则承诺落空。
    */
   fallbackReady: boolean
+  /**
+   * 规则一「可选比例条件」是否勾上。
+   *
+   * 与 `on` 是两件事：这里表达「哪些请求有资格改派」，
+   * `on` 表达「目标链路通不通」。勾上条件不等于关掉链路，
+   * 取消条件也不等于打开链路 —— 混成一个布尔会让运营误判影响面。
+   */
+  ratioGateOn: boolean
+  /** 勾选框标签里显示的比例；未勾选时给默认值，让运营知道勾上会要求什么。 */
+  ratioGateValue: string
+}
+
+/** 未勾选时展示的默认比例，与后端 WithSecondsRuleRatioGate 的默认值一致。 */
+const DEFAULT_RATIO_GATE = '9:16'
+
+/**
+ * 从策略派生勾选状态。
+ *
+ * 配置值带首尾空格也算「已勾上」（生产上出现过带空格的模型名，
+ * 配置侧一律 Trim）；但显示给运营时要用 Trim 后的值，否则标签上
+ * 会莫名多出空白。
+ */
+function ratioGateState(
+  policy: VideoRoutePolicy
+): Pick<DoubaoLinkView, 'ratioGateOn' | 'ratioGateValue'> {
+  const value = (policy.seconds_rule_ratio_gate ?? '').trim()
+  return {
+    ratioGateOn: value.length > 0,
+    ratioGateValue: value || DEFAULT_RATIO_GATE,
+  }
 }
 
 /** 源模型清单：按源开关列表取，回落到单值字段。 */
@@ -87,6 +117,7 @@ export function buildDoubaoLinkView(
       },
       quotaDown: false,
       fallbackReady,
+      ...ratioGateState(policy),
     }
   }
 
@@ -104,6 +135,7 @@ export function buildDoubaoLinkView(
       },
       quotaDown: true,
       fallbackReady,
+      ...ratioGateState(policy),
     }
   }
 
@@ -120,5 +152,6 @@ export function buildDoubaoLinkView(
     },
     quotaDown: false,
     fallbackReady,
+    ...ratioGateState(policy),
   }
 }

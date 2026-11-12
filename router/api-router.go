@@ -125,6 +125,11 @@ func SetApiRouter(router *gin.Engine) {
 			// 到下一个北京时间凌晨 2 点自动恢复。
 			videoRouteAdmin.POST("/policy/doubao-link", controller.SetDoubaoLinkAdmin)
 
+			// 规则一的可选比例条件（后台勾选）：勾上 = 只有指定比例的请求
+			// 才改派目标链路；取消 = 不限比例。与豆包链路开关是两个独立动作，
+			// 前者决定「哪些请求有资格」，后者决定「这条路通不通」。
+			videoRouteAdmin.POST("/policy/ratio-gate", controller.SetSecondsRuleRatioGateAdmin)
+
 			// 规则五（故障转移）：源链路额度用完 / 渠道被关 → 改派到备胎。
 			//
 			// 与上面四个接口分开：规则五的触发源是**渠道状态**而不是请求特征，
