@@ -9,31 +9,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// h3-image 两档计费（2026-11-13 用户定稿）：
+// h3-image 两档计费（2026-11-13 用户定稿，同日追加 3840×2160）：
 //   - 普通尺寸 ¥0.05/张（基础 ModelPrice 不变）
-//   - 只有**显式**传 size=4k 或 4096x4096 才按 4K 档 ¥0.10/张
-//   - 其余一律普通档，包括 3840x2160、2048x2048、2k / 1k token
+//   - 只有**显式**传 size=4k、4096x4096 或 3840x2160 才按 4K 档 ¥0.10/张
+//   - 其余一律普通档，包括 4096x2160、2160x3840、2k / 1k token
 //
 // 最危险的不是「漏收」，是「收了 4K 的钱却出 2K 的图」：GPU 网关的
-// resolve_size() 不认识 "4k" token，会静默退回默认 2048x2048。所以命中
-// 4K 档时必须在转发前把 size 归一化成 4096x4096（网关认裸数字尺寸）。
+// resolve_size() 不认识 "4k" token，也不认中文乘号 "×"，会静默退回默认
+// 2048x2048。所以命中 4K 档时必须在转发前把 size 归一化成网关认识的
+// ASCII 裸数字尺寸。
 
 func TestIsH3Image4KSize(t *testing.T) {
 	for _, size := range []string{
-		"4k", "4K", " 4k ", "4096x4096", "4096X4096", "4096×4096", " 4096×4096 ",
+		"4k", "4K", " 4k ",
+		"4096x4096", "4096X4096", "4096×4096",
+		"3840x2160", "3840X2160", "3840×2160", " 3840×2160 ",
 	} {
 		assert.Truef(t, isH3Image4KSize(size), "size=%q 应命中 4K 档", size)
 	}
 	for _, size := range []string{
-		"", "1k", "2k", "1024x1024", "2048x2048", "3840x2160",
-		"16:9", "4096x2160", "4k-ultra", "4096x4097",
+		"", "1k", "2k", "1024x1024", "2048x2048",
+		"16:9", "4096x2160", "2160x3840", "4k-ultra", "4096x4097",
 	} {
 		assert.Falsef(t, isH3Image4KSize(size), "size=%q 不该命中 4K 档（仅显式 4K 参数）", size)
 	}
 }
 
+// "4k" 是 token，网关不认，统一换成 4096x4096。
 func TestPrepareH3ImageSizeNormalizes4KToken(t *testing.T) {
-	for _, size := range []string{"4k", "4K", "4096×4096", "4096X4096"} {
+	for _, size := range []string{"4k", "4K", " 4k "} {
 		got, is4K := prepareH3ImageSize("h3-image", size)
 		assert.True(t, is4K, "size=%q 应命中 4K 档", size)
 		assert.Equal(t, "4096x4096", got,
@@ -41,8 +45,25 @@ func TestPrepareH3ImageSizeNormalizes4KToken(t *testing.T) {
 	}
 }
 
+// 显式像素尺寸必须保住宽高比：3840x2160 是 16:9，硬改成 4096x4096 会压变形。
+func TestPrepareH3ImageSizeKeepsExplicit4KPixels(t *testing.T) {
+	cases := map[string]string{
+		"3840x2160":   "3840x2160",
+		"3840X2160":   "3840x2160",
+		"3840×2160":   "3840x2160",
+		" 3840×2160 ": "3840x2160",
+		"4096x4096":   "4096x4096",
+		"4096×4096":   "4096x4096",
+	}
+	for in, want := range cases {
+		got, is4K := prepareH3ImageSize("h3-image", in)
+		assert.Truef(t, is4K, "size=%q 应命中 4K 档", in)
+		assert.Equalf(t, want, got, "size=%q 归一化后应保留宽高比", in)
+	}
+}
+
 func TestPrepareH3ImageSizeLeavesNormalRequestsAlone(t *testing.T) {
-	for _, size := range []string{"", "1024x1024", "2048x2048", "3840x2160", "1:1"} {
+	for _, size := range []string{"", "1024x1024", "2048x2048", "1:1", "2160x3840"} {
 		got, is4K := prepareH3ImageSize("h3-image", size)
 		assert.False(t, is4K, "size=%q 不该命中 4K 档", size)
 		assert.Equal(t, size, got, "普通档 size 必须原样透传")
@@ -60,9 +81,9 @@ func TestPrepareH3ImageSizeDoesNotTouchOtherModels(t *testing.T) {
 		assert.False(t, is4K, "model=%q 不该命中 h3-image 的 4K 档", model)
 		assert.Equal(t, "4k", got, "model=%q 的 size 不能被改写", model)
 	}
-	got, is4K := prepareH3ImageSize("gpt-image-2.5-官方", "4096x4096")
+	got, is4K := prepareH3ImageSize("gpt-image-2.5-官方", "3840x2160")
 	assert.False(t, is4K)
-	assert.Equal(t, "4096x4096", got)
+	assert.Equal(t, "3840x2160", got)
 }
 
 func TestApplyH3Image4KBilling(t *testing.T) {
