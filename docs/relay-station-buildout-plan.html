@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中转站从 0 到 1 搭建方案 · 阶段计划与客户配合清单</title>
+<style>
+  :root{
+    --ink:#0b1220;
+    --body:#334155;
+    --muted:#64748b;
+    --line:#e6e9f0;
+    --bg:#f5f7fb;
+    --card:#ffffff;
+    --brand:#1d3a6e;
+    --brand-2:#2563eb;
+    --amber:#b45309;
+    --amber-bg:#fffaf0;
+    --green:#0f766e;
+    --red:#b91c1c;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--body);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:15px;
+    line-height:1.75;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--brand-2);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* ---------- 顶部 ---------- */
+  .hero{
+    background:linear-gradient(135deg,#132a52 0%,#1d3a6e 55%,#25508f 100%);
+    color:#fff;
+    padding:56px 24px 44px;
+  }
+  .hero-inner{max-width:1080px;margin:0 auto}
+  .kicker{
+    display:inline-block;
+    font-size:12px;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+    color:#a9c3ea;
+    border:1px solid rgba(255,255,255,.28);
+    border-radius:999px;
+    padding:4px 12px;
+    margin-bottom:18px;
+  }
+  .hero h1{
+    margin:0 0 12px;
+    font-size:34px;
+    line-height:1.3;
+    font-weight:700;
+    letter-spacing:-.01em;
+  }
+  .hero p.lead{
+    margin:0;
+    max-width:720px;
+    color:#d3e0f4;
+    font-size:15.5px;
+  }
+  .hero-meta{
+    margin-top:26px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px 28px;
+    font-size:13px;
+    color:#a9c3ea;
+  }
+  .hero-meta b{color:#fff;font-weight:600}
+
+  /* ---------- 导航 ---------- */
+  nav{
+    position:sticky;top:0;z-index:20;
+    background:rgba(255,255,255,.92);
+    backdrop-filter:saturate(180%) blur(10px);
+    border-bottom:1px solid var(--line);
+  }
+  .nav-inner{
+    max-width:1080px;margin:0 auto;padding:10px 24px;
+    display:flex;gap:6px;overflow-x:auto;
+  }
+  .nav-inner a{
+    flex:0 0 auto;
+    font-size:13px;
+    color:var(--muted);
+    padding:6px 11px;
+    border-radius:8px;
+    white-space:nowrap;
+  }
+  .nav-inner a:hover{background:#eef2f9;color:var(--brand);text-decoration:none}
+
+  main{max-width:1080px;margin:0 auto;padding:34px 24px 72px}
+
+  /* ---------- 卡片 / 标题 ---------- */
+  section{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:30px 32px;
+    margin-bottom:22px;
+    box-shadow:0 1px 2px rgba(16,24,40,.04);
+  }
+  h2{
+    margin:0 0 6px;
+    font-size:21px;
+    color:var(--ink);
+    font-weight:700;
+    letter-spacing:-.01em;
+  }
+  h2 .num{
+    display:inline-block;
+    min-width:26px;
+    color:var(--brand-2);
+    font-variant-numeric:tabular-nums;
+  }
+  .sub{margin:0 0 22px;color:var(--muted);font-size:13.5px}
+  h3{margin:26px 0 10px;font-size:15.5px;color:var(--ink);font-weight:600}
+  h3:first-of-type{margin-top:6px}
+  p{margin:0 0 12px}
+  ul{margin:0 0 12px;padding-left:20px}
+  li{margin:5px 0}
+  li::marker{color:#94a3b8}
+
+  /* ---------- 概览指标 ---------- */
+  .kpis{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(200px,1fr));
+    gap:14px;
+    margin-bottom:6px;
+  }
+  .kpi{
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:16px 18px;
+    background:#fbfcfe;
+  }
+  .kpi .k-label{font-size:12px;color:var(--muted);letter-spacing:.04em}
+  .kpi .k-value{font-size:23px;color:var(--ink);font-weight:700;margin:4px 0 2px;letter-spacing:-.02em}
+  .kpi .k-note{font-size:12.5px;color:var(--muted)}
+
+  .callout{
+    border-left:3px solid var(--brand-2);
+    background:#f4f8ff;
+    padding:14px 18px;
+    border-radius:0 10px 10px 0;
+    font-size:14px;
+    margin:18px 0 4px;
+  }
+  .callout b{color:var(--ink)}
+
+  /* ---------- 甘特图 ---------- */
+  .gantt{
+    border:1px solid var(--line);
+    border-radius:12px;
+    overflow:hidden;
+    margin-top:8px;
+  }
+  .gantt-scroll{overflow-x:auto}
+  .gantt-inner{min-width:760px}
+  .g-head,.g-row{
+    display:grid;
+    grid-template-columns:196px 1fr;
+    align-items:center;
+  }
+  .g-head{background:#f1f5fb;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted)}
+  .g-head .g-label{padding:9px 14px;font-weight:600}
+  .g-weeks{
+    display:grid;
+    grid-template-columns:repeat(12,1fr);
+    text-align:center;
+    font-variant-numeric:tabular-nums;
+  }
+  .g-weeks span{padding:9px 0;border-left:1px solid var(--line)}
+  .g-row{border-bottom:1px solid var(--line)}
+  .g-row:last-child{border-bottom:none}
+  .g-name{padding:11px 14px;font-size:13.5px;color:var(--ink)}
+  .g-name em{display:block;font-style:normal;font-size:11.5px;color:var(--muted)}
+  .g-track{
+    position:relative;height:38px;
+    background-image:repeating-linear-gradient(to right,var(--line) 0 1px,transparent 1px calc(100%/12));
+    background-size:100% 100%;
+  }
+  .bar{
+    position:absolute;top:9px;height:20px;border-radius:6px;
+    display:flex;align-items:center;
+    padding:0 9px;
+    font-size:11.5px;color:#fff;white-space:nowrap;
+    box-shadow:0 1px 2px rgba(16,24,40,.14);
+  }
+  .b0{background:#64748b}
+  .b1{background:#b45309}
+  .b2{background:#0f766e}
+  .b3{background:#2563eb}
+  .b4{background:#7c3aed}
+  .b5{background:#be123c}
+  .b6{background:#0369a1}
+  .b7{background:#475569}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:14px;font-size:12.5px;color:var(--muted)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:middle}
+
+  /* ---------- 阶段卡 ---------- */
+  .phase{
+    border:1px solid var(--line);
+    border-radius:12px;
+    padding:20px 22px;
+    margin:16px 0;
+    background:#fff;
+  }
+  .phase-head{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .badge{
+    flex:0 0 auto;
+    background:#eef4ff;color:var(--brand-2);
+    font-size:12px;font-weight:700;
+    padding:3px 9px;border-radius:7px;
+    letter-spacing:.03em;
+  }
+  .phase-head h4{margin:0;font-size:16px;color:var(--ink);font-weight:700}
+  .dur{margin-left:auto;font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .phase p.goal{margin:0 0 14px;color:var(--body);font-size:14px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  @media(max-width:820px){.cols{grid-template-columns:1fr}}
+  .cols h5{margin:0 0 6px;font-size:12px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;font-weight:600}
+  .cols ul{margin:0;padding-left:18px;font-size:13.8px}
+  .coop{
+    margin-top:14px;
+    background:var(--amber-bg);
+    border:1px solid #f6e2bd;
+    border-radius:10px;
+    padding:13px 16px;
+  }
+  .coop h5{margin:0 0 6px;font-size:12px;letter-spacing:.08em;color:var(--amber);text-transform:uppercase;font-weight:700}
+  .coop ul{margin:0;padding-left:18px;font-size:13.8px;color:#4a3a22}
+  .deliv{margin-top:12px;font-size:13px;color:var(--muted)}
+  .deliv b{color:var(--body);font-weight:600}
+
+  /* ---------- 表格 ---------- */
+  .table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+  table{border-collapse:collapse;width:100%;min-width:640px;font-size:13.5px}
+  thead th{
+    background:#f1f5fb;color:var(--ink);
+    text-align:left;font-weight:600;
+    padding:11px 14px;border-bottom:1px solid var(--line);
+    white-space:nowrap;
+  }
+  tbody td{padding:11px 14px;border-bottom:1px solid #eef1f6;vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:nth-child(even){background:#fbfcfe}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .tag{
+    display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:999px;
+    border:1px solid var(--line);color:var(--muted);background:#fff;white-space:nowrap;
+  }
+  .tag.hi{color:var(--red);border-color:#f3cccc;background:#fff5f5}
+  .tag.mid{color:var(--amber);border-color:#f6e2bd;background:#fffaf0}
+  .tag.low{color:var(--green);border-color:#c8e6e1;background:#f2fbf9}
+
+  footer{
+    max-width:1080px;margin:0 auto;padding:0 24px 60px;
+    color:var(--muted);font-size:12.5px;
+  }
+  .print-btn{
+    position:fixed;right:22px;bottom:22px;z-index:30;
+    background:var(--brand);color:#fff;border:none;border-radius:999px;
+    padding:11px 18px;font-size:13px;cursor:pointer;
+    box-shadow:0 6px 18px rgba(29,58,110,.28);
+  }
+  .print-btn:hover{background:#16305c}
+
+  @media print{
+    body{background:#fff;font-size:11.5pt}
+    nav,.print-btn{display:none}
+    .hero{background:#1d3a6e !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    section{box-shadow:none;border:1px solid #ddd;break-inside:avoid;page-break-inside:avoid;margin-bottom:14px}
+    .phase{break-inside:avoid;page-break-inside:avoid}
+    .bar,.tag,.coop{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    a{color:var(--body)}
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="hero-inner">
+    <span class="kicker">Relay Station · Build-out Plan</span>
+    <h1>中转站从 0 到 1 搭建方案</h1>
+    <p class="lead">面向 API 聚合网关（文本 / 图像 / 视频）的分阶段实施计划：主体资质、域名备案、服务器、支付接入、上游对接、号池搭建、试运行与验收，逐阶段列清我方交付物与需要客户配合的事项。</p>
+    <div class="hero-meta">
+      <span>版本 <b>v1.0</b></span>
+      <span>编制日期 <b>2026-10-28</b></span>
+      <span>总周期 <b>约 10 周</b>（备案为外部依赖）</span>
+      <span>适用 <b>境内主体 + 自建网关 + 多上游聚合</b></span>
+    </div>
+  </div>
+</div>
+
+<nav>
+  <div class="nav-inner">
+    <a href="#overview">总览</a>
+    <a href="#timeline">时间计划</a>
+    <a href="#phases">阶段详情</a>
+    <a href="#coop">客户配合清单</a>
+    <a href="#pool">号池方案</a>
+    <a href="#risk">风险与应对</a>
+    <a href="#accept">验收标准</a>
+  </div>
+</nav>
+
+<main>
+
+  <!-- ============ 总览 ============ -->
+  <section id="overview">
+    <h2><span class="num">01</span>方案总览</h2>
+    <p class="sub">先看四个关键数字，再决定要不要往下推。</p>
+
+    <div class="kpis">
+      <div class="kpi">
+        <div class="k-label">总周期</div>
+        <div class="k-value">8–10 周</div>
+        <div class="k-note">备案顺利、上游不排队的前提下</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">关键路径</div>
+        <div class="k-value">备案 + 支付</div>
+        <div class="k-note">外部审核，最不可控，必须第 1 周启动</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">并行主线</div>
+        <div class="k-value">2 条</div>
+        <div class="k-note">备案收款 + 上游供货，缺一不可</div>
+      </div>
+      <div class="kpi">
+        <div class="k-label">最大工作量</div>
+        <div class="k-value">上游对接</div>
+        <div class="k-note">占整体 40% 以上，逐模型验收</div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <b>两条主线决定成败：</b>「备案 + 支付」决定<strong>能不能合法收款</strong>；「上游对接 + 号池」决定<strong>有没有货可卖</strong>。两条线互不阻塞，必须并行推进——先做完一条再做另一条，周期会翻倍。
+    </div>
+
+    <h3>适用范围与前提</h3>
+    <ul>
+      <li>本计划默认<strong>境内公司或个体工商户主体</strong>、服务器放在境内、对外经营收款。</li>
+      <li>若为纯海外主体、仅自用不对外收款，第 1、2 阶段可大幅简化（免备案、可用境外服务器），整体周期可压到 2–3 周。</li>
+      <li>若涉及「官网逆向 / 账号池」类上游，需额外评估合规与封号风险，见第 7 节。</li>
+    </ul>
+  </section>
+
+  <!-- ============ 时间计划 ============ -->
+  <section id="timeline">
+    <h2><span class="num">02</span>时间计划表</h2>
+    <p class="sub">按周排布。橙色为外部审核依赖，紫色为工作量最大的上游对接。</p>
+
+    <div class="gantt">
+      <div class="gantt-scroll">
+        <div class="gantt-inner">
+          <div class="g-head">
+            <div class="g-label">阶段</div>
+            <div class="g-weeks">
+              <span>W1</span><span>W2</span><span>W3</span><span>W4</span><span>W5</span><span>W6</span>
+              <span>W7</span><span>W8</span><span>W9</span><span>W10</span><span>W11</span><span>W12</span>
+            </div>
+          </div>
+
+          <div class="g-row">
+            <div class="g-name">P0 需求与合规评估<em>定范围、定边界</em></div>
+            <div class="g-track"><div class="bar b0" style="left:0%;width:8.33%">P0</div></div>
+          </div>
+
+          <div class="g-row">
+            <div class="g-name">P1 主体 / 域名 / 备案<em>外部审核，关键路径</em></div>
+            <div class="g-track"><div class="bar b1" style="left:0%;width:33.33%">备案受理 → 管局审核</div></div>
+          </div>
+
+          <div class="g-row">
+            <div class="g-name">P2 服务器与基础环境<em>与 P1 并行</em></div>
+            <div class="g-track"><div class="bar b2" style="left:8.33%;width:16.67%">环境就绪</div></div>
+          </div>
+
+          <div class="g-row">
+            <div class="g-name">P3 网关部署与品牌<em>能开站、能收款</em></div>
+            <div class="g-track"><div class="bar b3" style="left:16.67%;width:25%">部署 + 品牌 + 计费</div></div>
+          </div>
+
+          <div class="g-row">
+            <div class="g-name">P4 上游对接<em>工作量最大</em></div>
+            <div class="g-track"><div class="bar b4" style="left:25%;width:41.67%">官方直连 + 二级供应商 + 逐模型验收</div></div>
+          </div>
+
+          <div class="g-row">
+            <div class="g-name">P5 号池搭建<em>视模式而定</em></div>
+            <div class="g-track"><div class="bar b5" style="left:33.33%;width:33.33%">Key 池 / 账号池</div></div>
+          </div>
+
+          <div class="g-row">
+            <div class="g-name">P6 试运行与验收<em>灰度 → 对账</em></div>
+            <div class="g-track"><div class="bar b6" style="left:58.33%;width:25%">灰度 + 对账 + 演练</div></div>
+          </div>
+
+          <div class="g-row">
+            <div class="g-name">P7 上线运营<em>持续</em></div>
+            <div class="g-track"><div class="bar b7" style="left:75%;width:25%">监控 · 配置调整 · 上下架</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><i class="b1"></i>外部审核（不可控）</span>
+      <span><i class="b4"></i>核心工作量</span>
+      <span><i class="b6"></i>验证与交付</span>
+    </div>
+
+    <div class="callout" style="margin-top:20px">
+      <b>压缩空间：</b>若客户已有营业执照且域名已实名，P1 可缩短到 2 周内；若上游只接 1–2 家、不做官网号池，整体可压到 <b>6 周</b>。反过来，备案被驳回一次，通常要重排 1–2 周。
+    </div>
+  </section>
+
+  <!-- ============ 阶段详情 ============ -->
+  <section id="phases">
+    <h2><span class="num">03</span>各阶段要做什么</h2>
+    <p class="sub">每个阶段都写清了「我们做什么」和「需要你配合什么」——后者是进度最大变量。</p>
+
+    <!-- P0 -->
+    <div class="phase">
+      <div class="phase-head">
+        <span class="badge">P0</span>
+        <h4>需求与合规评估</h4>
+        <span class="dur">第 1 周 · 2–3 天</span>
+      </div>
+      <p class="goal">把「做什么、能做什么、边界在哪」定死，避免后面返工。</p>
+      <div class="cols">
+        <div>
+          <h5>我方工作</h5>
+          <ul>
+            <li>确认业务形态：面向 B 端还是 C 端、是否代充、按次还是包月</li>
+            <li>梳理模型清单与优先级（文本 / 图片 / 视频），预估调用量</li>
+            <li>合规评估：上游转售条款、经营性网站备案要求、是否需要增值电信业务许可</li>
+            <li>输出《需求与合规确认单》，作为后续验收依据</li>
+          </ul>
+        </div>
+        <div>
+          <h5>交付物</h5>
+          <ul>
+            <li>需求确认单（含模型清单与优先级）</li>
+            <li>合规风险清单与红线说明</li>
+            <li>排期初稿</li>
+          </ul>
+        </div>
+      </div>
+      <div class="coop">
+        <h5>需要客户配合</h5>
+        <ul>
+          <li>明确目标客户群与月调用量预估（决定服务器规格与上游预充值额度）</li>
+          <li>确认是否已有公司 / 个体工商户主体</li>
+          <li>确认可接受的风险边界：是否接受官网逆向类上游、是否接受多上游冗余</li>
+        </ul>
+      </div>
+      <div class="deliv"><b>阻塞风险：</b>需求反复变更会直接推迟 P4 排期，建议本阶段一次性确认，后续变更走书面确认。</div>
+    </div>
+
+    <!-- P1 -->
+    <div class="phase">
+      <div class="phase-head">
+        <span class="badge">P1</span>
+        <h4>主体资质 · 域名 · 备案 · 支付申请</h4>
+        <span class="dur">第 1–4 周 · 关键路径</span>
+      </div>
+      <p class="goal">拿到能合法开站、能合法收款的「身份」。这一段是外部审核，最不可控。</p>
+      <div class="cols">
+        <div>
+          <h5>我方工作</h5>
+          <ul>
+            <li>营业执照办理指导（新办约 3–7 个工作日）</li>
+            <li>域名注册与实名认证（1–3 天），.com / .cn 按品牌定</li>
+            <li>ICP 备案：接入商初审 1–2 天 → 管局审核 7–20 个工作日</li>
+            <li>公安联网备案：网站开通后 30 日内完成</li>
+            <li>支付申请：微信支付商户号、支付宝（电脑 / 手机网站支付），约 1–2 周</li>
+          </ul>
+        </div>
+        <div>
+          <h5>关键要求</h5>
+          <ul>
+            <li>备案服务器必须在<strong>境内</strong>，备案期间域名不能解析到境外</li>
+            <li>网站名称不得含「中国 / 国家 / 官方 / 政务」等敏感词</li>
+            <li>主体信息、域名持有人、备案手机号三者必须一致</li>
+            <li>个人主体基本无法申请商户支付，建议直接用企业或个体户</li>
+          </ul>
+        </div>
+      </div>
+      <div class="coop">
+        <h5>需要客户配合</h5>
+        <ul>
+          <li>营业执照扫描件、法人身份证正反面、对公账户信息</li>
+          <li>域名持有人实名信息（个人身份证或企业营业执照）</li>
+          <li>备案手机号与邮箱，需能接收并即时回复核验短信 / 邮件</li>
+          <li>网站名称与一句话简介（备案填写用）</li>
+        </ul>
+      </div>
+      <div class="deliv"><b>交付物：</b>ICP 备案号、公安备案号、支付商户号、可用的对公收款通道。<b>阻塞风险：</b>资料不齐或名称被驳回，每次重报 +1–2 周。</div>
+    </div>
+
+    <!-- P2 -->
+    <div class="phase">
+      <div class="phase-head">
+        <span class="badge">P2</span>
+        <h4>服务器与基础环境</h4>
+        <span class="dur">第 2–3 周 · 与 P1 并行</span>
+      </div>
+      <p class="goal">把地基打好：能跑网关、能存产物、能扛住视频流量。</p>
+      <div class="cols">
+        <div>
+          <h5>我方工作</h5>
+          <ul>
+            <li>云服务器选型（境内，4 核 8G 起；视频业务重点看带宽与流量包）</li>
+            <li>系统初始化、容器运行时、PostgreSQL、Redis</li>
+            <li>对象存储 + CDN（视频产物托管，避免占服务器带宽）</li>
+            <li>域名解析、HTTPS 证书（自动续期）、反向代理</li>
+            <li>数据库每日备份、可用性与错误率监控告警</li>
+          </ul>
+        </div>
+        <div>
+          <h5>交付物</h5>
+          <ul>
+            <li>可访问的服务器环境与运维账号</li>
+            <li>备份策略与监控看板</li>
+            <li>环境说明文档（含回滚方式）</li>
+          </ul>
+        </div>
+      </div>
+      <div class="coop">
+        <h5>需要客户配合</h5>
+        <ul>
+          <li><strong>用客户自己的云账号实名购买</strong>（账号归属清晰，避免后期迁移与纠纷）</li>
+          <li>确认服务器地域与规格档位（影响备案与访问速度）</li>
+          <li>提供账号的运维子账号权限（不要给主账号密码）</li>
+        </ul>
+      </div>
+      <div class="deliv"><b>提示：</b>视频类业务的资源瓶颈是<strong>出流量</strong>，不是 CPU。选型时先算清单条视频的下载流量。</div>
+    </div>
+
+    <!-- P3 -->
+    <div class="phase">
+      <div class="phase-head">
+        <span class="badge">P3</span>
+        <h4>网关部署与品牌化</h4>
+        <span class="dur">第 3–5 周</span>
+      </div>
+      <p class="goal">把「能开站、能注册、能充值、能计费」这条最小闭环跑通。</p>
+      <div class="cols">
+        <div>
+          <h5>我方工作</h5>
+          <ul>
+            <li>部署 API 网关（new-api 类）：用户体系、令牌、分组、模型目录</li>
+            <li>计费配置：分辨率 / 时长分档、按次与按秒口径分开核</li>
+            <li>前台品牌化：站点名、Logo、接入教程页、客服入口、页脚主体信息</li>
+            <li>充值体系：在线支付、兑换码、邀请返利（可选）</li>
+            <li>风控：限流、IP 白名单、防刷、调用日志审计</li>
+          </ul>
+        </div>
+        <div>
+          <h5>交付物</h5>
+          <ul>
+            <li>可对外访问的站点与后台</li>
+            <li>面向下游的接入教程（接口、错误码、限流、退款规则）</li>
+            <li>计费口径说明</li>
+          </ul>
+        </div>
+      </div>
+      <div class="coop">
+        <h5>需要客户配合</h5>
+        <ul>
+          <li>品牌素材：站点名、Logo、主色、客服联系方式</li>
+          <li>上架模型范围与默认规格档位确认</li>
+          <li>客服话术与退款政策口径（避免下游争议时无据可依）</li>
+        </ul>
+      </div>
+      <div class="deliv"><b>注意：</b>前端展示价必须由后端价表驱动，不能前端写死，否则改价必然对不上账。</div>
+    </div>
+
+    <!-- P4 -->
+    <div class="phase">
+      <div class="phase-head">
+        <span class="badge">P4</span>
+        <h4>上游对接</h4>
+        <span class="dur">第 4–8 周 · 工作量最大</span>
+      </div>
+      <p class="goal">把「货」接进来，并逐模型核清上游口径，做到账实一致。</p>
+      <div class="cols">
+        <div>
+          <h5>我方工作</h5>
+          <ul>
+            <li><strong>官方直连</strong>：OpenAI / Anthropic / Gemini / 豆包 / 通义 / 万相 / 可灵 等，企业认证 + 预充值</li>
+            <li><strong>二级供应商</strong>：对接、试用、约定对账口径与结算周期</li>
+            <li><strong>协议适配</strong>：OpenAI 兼容接口、异步任务（提交 / 轮询 / 取片）、参考图与参考视频、回调</li>
+            <li><strong>逐模型验收</strong>：每个上架模型跑 1 条真实任务，记录上游用量、计费口径、失败退款路径</li>
+            <li>渠道冗余：同模型配 2 家以上上游，失败自动切换</li>
+          </ul>
+        </div>
+        <div>
+          <h5>交付物</h5>
+          <ul>
+            <li>已上架模型清单（含规格与口径）</li>
+            <li>逐模型用量台账</li>
+            <li>渠道健康检查与自动切换策略</li>
+          </ul>
+        </div>
+      </div>
+      <div class="coop">
+        <h5>需要客户配合</h5>
+        <ul>
+          <li>上游账号的企业实名 / 认证资料（部分平台必须企业主体）</li>
+          <li>上游账号预充值（按量小额高频充，不要一次压大额）</li>
+          <li>确认模型优先级：先上哪几个、哪些可以晚点</li>
+          <li>是否接受「同一模型多家上游」的冗余方案</li>
+        </ul>
+      </div>
+      <div class="deliv"><b>三个高频坑：</b>① 按次与按秒口径不一致，导致账实不符；② 客户端取消但上游已出片，退款争议；③ 上游限流 / 封号无冗余，服务直接中断。</div>
+    </div>
+
+    <!-- P5 -->
+    <div class="phase">
+      <div class="phase-head">
+        <span class="badge">P5</span>
+        <h4>号池搭建</h4>
+        <span class="dur">第 5–8 周 · 视模式而定</span>
+      </div>
+      <p class="goal">把「多账号 / 多密钥」管起来，做到额度可控、失败可切、用量可查。</p>
+      <div class="cols">
+        <div>
+          <h5>A · API Key 池（推荐起步）</h5>
+          <ul>
+            <li>多供应商密钥分组，按权重 / 优先级轮询</li>
+            <li>失败自动切换与熔断，避免单点打满</li>
+            <li>额度监控与低余额告警</li>
+            <li>按渠道归集用量，便于核对与容量规划</li>
+          </ul>
+        </div>
+        <div>
+          <h5>B · 官网账号池（仅在有独占能力时）</h5>
+          <ul>
+            <li>账号采购与养号、单号日限额</li>
+            <li>独立代理 IP、浏览器指纹隔离</li>
+            <li>调度器派单、失败重试、封号补号</li>
+            <li>产物回传与托管</li>
+          </ul>
+        </div>
+      </div>
+      <div class="coop">
+        <h5>需要客户配合</h5>
+        <ul>
+          <li>号池账号数量与补号储备（视平台而定）</li>
+          <li>代理 IP 资源（住宅 IP 与机房 IP 的可用性差异很大）</li>
+          <li><strong>书面确认是否接受官网逆向类上游的合规风险</strong>——封号与平台条款风险由业务方承担</li>
+        </ul>
+      </div>
+      <div class="deliv"><b>现实提醒：</b>官网账号池的隐性投入很高（养号、封号、改版适配），如果没有「只有官网才有」的独占模型，优先用 API Key 池。</div>
+    </div>
+
+    <!-- P6 -->
+    <div class="phase">
+      <div class="phase-head">
+        <span class="badge">P6</span>
+        <h4>试运行与验收</h4>
+        <span class="dur">第 8–10 周</span>
+      </div>
+      <p class="goal">先小范围跑通，账对得上，再放量。</p>
+      <div class="cols">
+        <div>
+          <h5>我方工作</h5>
+          <ul>
+            <li>灰度：内部账号 → 5–10 个种子客户 → 全量开放</li>
+            <li>对账：上游用量记录 vs 本站流水，逐笔差异排查</li>
+            <li>压测与故障演练：渠道下线、上游 429、缓存故障</li>
+            <li>交付文档：接入教程、错误码、退款规则、SLA、应急联系人</li>
+          </ul>
+        </div>
+        <div>
+          <h5>交付物</h5>
+          <ul>
+            <li>试运行报告（含对账差异与处理）</li>
+            <li>运维手册与应急预案</li>
+            <li>正式验收单</li>
+          </ul>
+        </div>
+      </div>
+      <div class="coop">
+        <h5>需要客户配合</h5>
+        <ul>
+          <li>种子客户名单（真实使用场景比自测更有价值）</li>
+          <li>确认验收标准并签字</li>
+          <li>指定 1 名运营对接人与 1 名决策人（避免多头指挥）</li>
+        </ul>
+      </div>
+      <div class="deliv"><b>放量门槛建议：</b>对账差异 ≤ 0.5%，单渠道故障切换成功率 ≥ 99%，才进入全量。</div>
+    </div>
+
+    <!-- P7 -->
+    <div class="phase">
+      <div class="phase-head">
+        <span class="badge">P7</span>
+        <h4>上线运营</h4>
+        <span class="dur">第 10 周起 · 持续</span>
+      </div>
+      <p class="goal">从「搭好」变成「跑得稳、算得清」。</p>
+      <div class="cols">
+        <div>
+          <h5>我方工作</h5>
+          <ul>
+            <li>可用性、错误率、额度水位日常巡检</li>
+            <li>用量与结算周报，模型上下架与配置调整</li>
+            <li>上游改版 / 政策变更的跟进适配</li>
+            <li>安全巡检：越权、伪造请求头、异常刷量</li>
+          </ul>
+        </div>
+        <div>
+          <h5>客户配合</h5>
+          <ul>
+            <li>指定运营对接人，保持决策响应时效</li>
+            <li>上下架与配置调整类决策需提前 1–2 天确认</li>
+            <li>按月核对上游用量与本站流水</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 客户配合清单 ============ -->
+  <section id="coop">
+    <h2><span class="num">04</span>客户配合清单（汇总）</h2>
+    <p class="sub">这张表是进度最大变量。任一项延迟，对应阶段就会顺延。</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>阶段</th>
+            <th>需要客户提供</th>
+            <th>形式</th>
+            <th>建议截止</th>
+            <th>卡住的环节</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>P0</td>
+            <td>业务形态、目标客户、月流水预估</td>
+            <td>会议确认</td>
+            <td>第 1 周</td>
+            <td>服务器规格、上游账号准备</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>营业执照、法人身份证、对公账户</td>
+            <td>扫描件 / 照片</td>
+            <td>第 1 周</td>
+            <td>备案、支付申请</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>域名持有人实名信息、备案手机号与邮箱</td>
+            <td>在线核验</td>
+            <td>第 1 周</td>
+            <td>域名实名、管局核验</td>
+          </tr>
+          <tr>
+            <td>P1</td>
+            <td>网站名称与一句话简介</td>
+            <td>文本</td>
+            <td>第 1 周</td>
+            <td>备案填写</td>
+          </tr>
+          <tr>
+            <td>P2</td>
+            <td>客户实名云账号、运维子账号授权</td>
+            <td>账号授权</td>
+            <td>第 2 周</td>
+            <td>服务器开通</td>
+          </tr>
+          <tr>
+            <td>P3</td>
+            <td>品牌素材（名称 / Logo / 客服方式）</td>
+            <td>素材包</td>
+            <td>第 3 周</td>
+            <td>站点上线</td>
+          </tr>
+          <tr>
+            <td>P3</td>
+            <td>上架范围与退款政策确认</td>
+            <td>表格签字</td>
+            <td>第 4 周</td>
+            <td>计费配置、客服口径</td>
+          </tr>
+          <tr>
+            <td>P4</td>
+            <td>上游企业认证资料、预充值</td>
+            <td>账号 + 充值</td>
+            <td>第 4 周</td>
+            <td>模型上架</td>
+          </tr>
+          <tr>
+            <td>P4</td>
+            <td>模型优先级清单（先上哪几个）</td>
+            <td>文本</td>
+            <td>第 4 周</td>
+            <td>排期</td>
+          </tr>
+          <tr>
+            <td>P5</td>
+            <td>号池账号数量、代理 IP 资源</td>
+            <td>资源 / 账号</td>
+            <td>第 5 周</td>
+            <td>号池投产</td>
+          </tr>
+          <tr>
+            <td>P6</td>
+            <td>种子客户名单、验收标准确认</td>
+            <td>名单 / 签字</td>
+            <td>第 8 周</td>
+            <td>灰度与验收</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 号池 ============ -->
+  <section id="pool">
+    <h2><span class="num">05</span>号池方案对比</h2>
+    <p class="sub">不是所有中转站都需要账号池。先判断有没有「非它不可」的独占能力。</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th>API Key 池</th>
+            <th>官网账号池</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>计费方式</td><td>按量结算，口径透明可核</td><td>账号 + 代理 IP + 补号，隐性投入高</td></tr>
+          <tr><td>稳定性</td><td><span class="tag low">高</span> 官方接口有 SLA</td><td><span class="tag hi">中低</span> 封号、平台改版</td></tr>
+          <tr><td>合规风险</td><td><span class="tag low">低</span> 取决于上游授权条款</td><td><span class="tag hi">较高</span> 通常违反平台条款</td></tr>
+          <tr><td>运维投入</td><td>低（配置 + 监控）</td><td>高（养号、指纹、代理、调度）</td></tr>
+          <tr><td>适用场景</td><td>文本、标准图像、官方开放的视频模型</td><td>只有官网才有的能力（部分视频 / 图片模型）</td></tr>
+          <tr><td>起步建议</td><td><strong>默认选它</strong></td><td>确有独占能力且客户书面确认风险后再上</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>号池必须做到的四个指标</h3>
+    <ul>
+      <li><strong>单号日限额</strong>：防止单个账号被打爆导致批量封禁</li>
+      <li><strong>成功率</strong>：低于 90% 说明账号质量或 IP 质量有问题</li>
+      <li><strong>平均耗时</strong>：决定下游体验与超时退款率</li>
+      <li><strong>补号量</strong>：每月封号数量，必须纳入容量规划</li>
+    </ul>
+  </section>
+
+  <!-- ============ 风险 ============ -->
+  <section id="risk">
+    <h2><span class="num">06</span>风险与应对</h2>
+    <p class="sub">这些是同类项目里真实踩过的坑，提前说清楚比事后解释便宜。</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>风险</th>
+            <th>影响</th>
+            <th>等级</th>
+            <th>应对</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>备案驳回或延期</td>
+            <td>上线推迟 1–4 周</td>
+            <td><span class="tag hi">高</span></td>
+            <td>第 1 周就启动；网站名称避敏感词；主体 / 域名 / 手机号三者一致</td>
+          </tr>
+          <tr>
+            <td>支付资质不足</td>
+            <td>无法在线收款</td>
+            <td><span class="tag hi">高</span></td>
+            <td>优先企业主体；过渡期用兑换码或对公转账</td>
+          </tr>
+          <tr>
+            <td>上游限流 / 封号</td>
+            <td>服务中断、客户流失</td>
+            <td><span class="tag hi">高</span></td>
+            <td>同模型 2 家以上上游 + 自动切换 + 余额告警</td>
+          </tr>
+          <tr>
+            <td>计费口径错配</td>
+            <td>账实不符、结算偏差</td>
+            <td><span class="tag hi">高</span></td>
+            <td>逐模型用量台账，按次与按秒分开核，配置变更前后回归测试</td>
+          </tr>
+          <tr>
+            <td>客户端取消但上游已出片</td>
+            <td>客户投诉、退款争议</td>
+            <td><span class="tag mid">中</span></td>
+            <td>契约写明「任务提交成功后不可取消」，产物保留可取</td>
+          </tr>
+          <tr>
+            <td>上游跑路 / 停服</td>
+            <td>预充值损失</td>
+            <td><span class="tag mid">中</span></td>
+            <td>小额高频充值，不压大额预付；关键模型保留官方直连</td>
+          </tr>
+          <tr>
+            <td>内容合规</td>
+            <td>下架、处罚</td>
+            <td><span class="tag mid">中</span></td>
+            <td>关键词过滤、实名注册、日志留存不少于 6 个月</td>
+          </tr>
+          <tr>
+            <td>账号池被封</td>
+            <td>沉没投入 + 交付中断</td>
+            <td><span class="tag mid">中</span></td>
+            <td>备用号储备、封号率纳入容量规划、必要时切 API 通道</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 验收 ============ -->
+  <section id="accept">
+    <h2><span class="num">07</span>验收标准</h2>
+    <p class="sub">满足以下全部条件，才算「可上线」。</p>
+
+    <div class="cols" style="gap:26px">
+      <div>
+        <h3>功能与计费</h3>
+        <ul>
+          <li>每个上架模型都有 1 条成功真实任务，并记录上游用量</li>
+          <li>本站计费结果与配置口径一致，误差为 0</li>
+          <li>任务失败自动全额退款，退款日志可查</li>
+          <li>支付回调幂等：重复回调不重复入账</li>
+          <li>余额查询接口返回实时值，且不产生计费日志</li>
+        </ul>
+      </div>
+      <div>
+        <h3>安全与稳定性</h3>
+        <ul>
+          <li>令牌只能访问授权模型，越权调用被拒</li>
+          <li>伪造请求头无法绕过 IP 白名单</li>
+          <li>单渠道下线后自动切换成功率 ≥ 99%</li>
+          <li>数据库每日备份，可完成一次恢复演练</li>
+          <li>接入文档、错误码、退款规则齐备</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:20px">
+      <b>双方分工速查：</b>客户负责<strong>资质、账号、决策</strong>（主体资料、云账号、上游账号与充值、上架范围与风险确认）；我方负责<strong>技术、对接、运维</strong>（备案代办、环境、网关、上游适配、号池、对账）。第三方（云厂商、支付机构、上游平台）的审核时效不受双方控制，排期时已按最坏情况预留缓冲。
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  本方案为实施计划参考，具体周期以实际主体资质、上游政策与调用量为准。文档中的时间区间基于同类项目经验估算，签约前可要求逐项细化。
+</footer>
+
+<button class="print-btn" onclick="window.print()">打印 / 存为 PDF</button>
+
+</body>
+</html>
