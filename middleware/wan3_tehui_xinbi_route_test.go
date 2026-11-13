@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel/task/xinbiapi"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -189,6 +190,51 @@ func TestWan3TehuiXinbiRoute_RewritesRatioAndImages(t *testing.T) {
 	require.True(t, ok, "参考图必须收到顶层 images（reference_images 会被 TaskSubmitReq 静默丢弃）")
 	require.Len(t, images, 1)
 	assert.Equal(t, "https://a.example/1.png", images[0])
+}
+
+// 回归锁定（2026-11-13 arcreel 形状）：Wan3/ArcReel 客户把 base64 参考图
+// 编码在 metadata.input.media 里 —— collectReferenceImages 对心笔目标放行
+// data: URI（心笔兼容口收 data: URL，平台侧解码入库），图必须抬到顶层
+// images，metadata.input 剥净（adaptor 对 req.Images 与 metadata 素材并行
+// 收集，留着会同图投两次）。
+func TestWan3TehuiXinbiRoute_DataURLInWan3InputMedia(t *testing.T) {
+	rec := runTehuiXinbi(t, `{"model":"`+tehuiModel+`","prompt":"x","seconds":"5",
+		"metadata":{"input":{"media":[
+			{"type":"reference_image","url":"data:image/jpeg;base64,AAAA"},
+			{"type":"reference_image","url":"data:image/jpeg;base64,BBBB"}]}}}`)
+
+	body := decodeBody(t, rec.body)
+	images, ok := body["images"].([]interface{})
+	require.True(t, ok, "data URI 参考图必须收到顶层 images，不能拦回 Wan3 原链路")
+	assert.Equal(t, []interface{}{"data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB"}, images)
+
+	metadata, _ := body["metadata"].(map[string]interface{})
+	require.NotNil(t, metadata)
+	assert.NotContains(t, metadata, "input",
+		"metadata.input 必须剥净：xinbi adaptor 会并行收集，同图投两次")
+
+	assert.Equal(t, tehuiModel, rec.originModel, "计费原点必须仍是特惠")
+}
+
+// 解码层契约回归（2026-11-13 事故 task_ZzT4…，特惠按秒版）：
+// 改写产物先过 relay/common.TaskSubmitReq 解码 —— 顶层 reference_images
+// 会被 Go json 静默丢弃（该结构没有此字段、自定义 UnmarshalJSON 也不处理），
+// adaptor 一个图都收不到，任务照跑照扣费、成片没有参考图。
+// 本测试锁住「改写产物 → TaskSubmitReq 真实解码 → 图必须到达」这一段。
+func TestWan3TehuiXinbiRoute_RewriteSurvivesTaskSubmitReqDecode(t *testing.T) {
+	rec := runTehuiXinbi(t, `{"model":"`+tehuiModel+`","prompt":"x","seconds":"5",
+		"metadata":{"input":{"media":[{"type":"reference_image","url":"data:image/jpeg;base64,AAAA"}]}}}`)
+
+	var req relaycommon.TaskSubmitReq
+	if err := common.Unmarshal([]byte(rec.body), &req); err != nil {
+		t.Fatalf("改写产物无法按 TaskSubmitReq 解码：%v", err)
+	}
+	require.Len(t, req.Images, 1, "参考图在 TaskSubmitReq 解码后丢失（2026-11-13 事故回归）")
+	assert.Equal(t, "data:image/jpeg;base64,AAAA", req.Images[0])
+	assert.Empty(t, req.Media, "顶层 media 不应残留（xinbi adaptor 会同图投两次）")
+	assert.Equal(t, "x", req.Prompt)
+	assert.Equal(t, "5", req.Seconds)
+	assert.Equal(t, xinbiapi.ModelNameTehuiRoute, req.Model, "目标模型也要过解码层不丢")
 }
 
 // 分辨率：特惠只有一个交付档位（720P），客户端传 480P/1080P 本来就不会改变产物 ——

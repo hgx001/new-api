@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -1550,6 +1551,59 @@ func TestRatioRuleXinbiSkipsNonTriggerRatio(t *testing.T) {
 
 	assert.Equal(t, body, seen, "非触发比例不该改派")
 	assert.Empty(t, originModel)
+}
+
+// 回归锁定（2026-11-13 arcreel 形状，规则二版）：9:16 单把 base64 参考图
+// 编码在 metadata.input.media（Wan3 体）时也必须放行并改派 ——
+// collectReferenceImages 对心笔目标放行 data: URI，对漫屋/豆包目标仍拒。
+// 规则六已有同款用例（TestShortRouteAcceptsDataURLInWan3InputMedia），
+// 这里锁规则二（PerCall 改写），防止两条心笔路径只修一条。
+func TestRatioRuleXinbiAcceptsDataURLInWan3InputMedia(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+
+	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat",
+		"metadata":{"ratio":"9:16","input":{"media":[
+			{"type":"reference_image","url":"data:image/jpeg;base64,AAAA"},
+			{"type":"reference_image","url":"data:image/jpeg;base64,BBBB"}]}}}`
+	seen, originModel := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	require.Equal(t, testXinbiRatioTargetModel, out["model"], "data URI 参考图不该拦 9:16 改派")
+	assert.Equal(t, testSourceModel, originModel, "计费原点仍是客户请求的模型")
+	images, ok := out["images"].([]interface{})
+	require.True(t, ok, "参考图必须落到顶层 images[]（TaskSubmitReq 能解析；reference_images 会被静默丢弃）")
+	assert.Equal(t, []interface{}{"data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB"}, images)
+	metadata, ok := out["metadata"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "9:16", metadata["ratio"], "metadata.ratio 必须保留（心笔只认这里）")
+	_, hasInput := metadata["input"]
+	assert.False(t, hasInput, "metadata.input 必须剥净：xinbi adaptor 对 req.Images 与 metadata 素材并行收集，留着会同图投两次")
+}
+
+// 解码层契约回归（2026-11-13 事故 task_ZzT4…，规则二版）：
+// 规则二的改写产物同样先过 relay/common.TaskSubmitReq 解码 —— 顶层
+// reference_images 会被 Go json 静默丢弃。规则六已有同款用例
+// （TestShortRouteRewriteSurvivesTaskSubmitReqDecode），这里锁规则二路径：
+// 以后任何把参考图挪到 TaskSubmitReq 不认识位置的改动都会在这里炸。
+func TestRatioRuleXinbiRewriteSurvivesTaskSubmitReqDecode(t *testing.T) {
+	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat",
+		"metadata":{"ratio":"9:16","media":[{"type":"reference_image","url":"https://example.com/a.png"}]}}`)
+
+	var req relaycommon.TaskSubmitReq
+	if err := common.Unmarshal([]byte(seen), &req); err != nil {
+		t.Fatalf("改写产物无法按 TaskSubmitReq 解码：%v", err)
+	}
+	if len(req.Images) != 1 || req.Images[0] != "https://example.com/a.png" {
+		t.Fatalf("参考图在 TaskSubmitReq 解码后丢失（2026-11-13 事故回归），实际 %v", req.Images)
+	}
+	if len(req.Media) != 0 {
+		t.Fatalf("顶层 media 不应残留（xinbi adaptor 对 media 与 images 并行收集，会同图投两次），实际 %v", req.Media)
+	}
+	if req.Prompt != "a cat" || req.Seconds != "10" {
+		t.Fatalf("prompt/seconds 也必须过解码层不丢，实际 prompt=%q seconds=%q", req.Prompt, req.Seconds)
+	}
 }
 
 // ─────────────────────────────────────────────────────────────

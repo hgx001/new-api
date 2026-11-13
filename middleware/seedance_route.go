@@ -724,11 +724,13 @@ func rewriteBodyForXinbiPerCall(body map[string]interface{}, targetModel string)
 	metadata := map[string]interface{}{}
 	if existing, ok := body["metadata"].(map[string]interface{}); ok {
 		for key, value := range existing {
-			// ⚠️ **media 必须丢掉**：源链路把素材放在 metadata.media，
-			// 心笔的兼容口不认这个字段（上游 parameterSchema 是
-			// additionalProperties:false，带上去会被拒）。
-			// 参考图已经收进顶层 reference_images[] 了，留着是重复投递。
-			if key == "media" {
+			// ⚠️ **media / input 必须丢掉**：源链路把素材放在 metadata.media
+			// 与 metadata.input.media（Wan3/ArcReel 形状），心笔的兼容口不认
+			// 这些字段（上游 parameterSchema 是 additionalProperties:false，
+			// 带上去会被拒）。参考图已经收进顶层 images[] 了，adaptor 对
+			// req.Images 与 metadata 素材是并行收集 —— 留着就是同图投两次。
+			// （规则六/特惠按秒的改写是整块重建 metadata，只有这里漏了。）
+			if key == "media" || key == "input" {
 				continue
 			}
 			metadata[key] = value
