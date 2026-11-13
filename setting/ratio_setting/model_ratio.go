@@ -415,7 +415,18 @@ var defaultModelPrice = map[string]float64{
 	// （quota_type=1 按次固定价），张数走 OtherRatios{"n":N} 倍率。
 	// ⚠️ 不能不配价 —— 不配价时 ModelPriceHelperPerCall 的「查不到价」
 	// 分支会静默免单（¥0），比报错更难发现。
-	"gpt-image-2.5-官方":      0.15 / USD2RMB,  // 官方渠道 GPT Image 2.5，按张 ¥0.15/张
+	"gpt-image-2.5-官方": 0.15 / USD2RMB, // 官方渠道 GPT Image 2.5，按张 ¥0.15/张
+	// h3-image（2026-11-13 上架）：GPU 服务器的 MiniMax H3-Image 文生图，
+	// 走 OpenAI 兼容**同步**端点 POST /v1/images/generations，按张 ¥0.05/张，
+	// 与尺寸无关。上游兼容 id 仍是 qwen_image_21（网关 2026-11-12 起内部
+	// 工作流换成 H3-Image、对外 id 不变，new-api/站端/客户零改动），由渠道
+	// model_mapping 转发；**公开名不得出现 qwen**（用户 2026-11-13 明确）。
+	//
+	// 计费走 ModelPrice（quota_type=1 按次固定价），张数由
+	// relay/image_handler.go 的 OtherRatios{"n":N} 乘上去：n=2 扣 ¥0.10。
+	// ⚠️ 不能不配价 —— 不配价时 ModelPriceHelperPerCall 的「查不到价」
+	// 分支会静默免单（¥0），比报错更难发现。
+	"h3-image":              0.05 / USD2RMB,  // GPU H3-Image，按张 ¥0.05/张
 	"jimeng-video-reverse":  1.0 / USD2RMB,   // 漫屋 ArcReel 即梦视频反解，按次 ¥1.0/次（占位价，待商务核定）
 	"MiniMax-H3":            0.5 / USD2RMB,   // MiniMax 官方 v2 视频，**按秒**（基础档 768P ¥0.5/秒；2K 走 size 倍率 1.625）
 	"MiniMax-H3-Max":        0.365 / USD2RMB, // MiniMax 官方 v2 高速档，**按秒**（基础档 480P ¥0.365/秒；768P 倍率 1.6）

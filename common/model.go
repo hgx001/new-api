@@ -20,6 +20,10 @@ var (
 		"gemini-3-pro-image-preview",
 		"gemini-3.1-flash-image-preview",
 		"doubao-seedream-5-0-260128",
+		// h3-image（2026-11-13）：GPU MiniMax H3-Image，同步 /v1/images/generations。
+		// 不加这一项，GetEndpointTypesByChannelType 只给出 OpenAI 聊天端点，
+		// 模型广场会把图片模型显示成聊天模型。
+		"h3-image",
 	}
 	OpenAITextModels = []string{
 		"gpt-",

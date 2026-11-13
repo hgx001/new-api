@@ -394,6 +394,13 @@ func isAllowedPricingModel(name string) bool {
 	if name == "gpt-image-2.5-官方" {
 		return true
 	}
+	// h3-image（2026-11-13 上架）：GPU 服务器 MiniMax H3-Image 文生图，
+	// 同步 POST /v1/images/generations，按张 ¥0.05/张。对外只放行这个
+	// 公开名；上游兼容 id qwen_image_21 只存在于渠道 model_mapping，
+	// **不上广场**（客户侧不能出现 qwen 字样）。
+	if name == "h3-image" {
+		return true
+	}
 	if name == "doubao-seedream-5-0-260128" {
 		return true
 	}
