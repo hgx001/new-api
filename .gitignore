@@ -61,3 +61,14 @@ node_modules/
 # Python 字节码：deploy/vpn-node-agent 的单测会在原地生成
 __pycache__/
 *.pyc
+
+# 本地排查取证：临时目录、媒体产物与部署日志（含 MB 级图片/视频，无代码引用）
+.deploy-run.log
+.tmp-seeta/
+.tmp_img/
+tmpimg/
+
+# 含明文云 API 凭据的本地脚本/台账：只允许留在本机，禁止入库。
+# 如需归档，先把 secret_id / secret_key 换成环境变量或占位符再提交。
+scripts/probe_tencent_bill.go
+scripts/prod-set-tencent-mps-20261029.sql
