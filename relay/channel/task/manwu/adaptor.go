@@ -186,8 +186,10 @@ const (
 	//   那是豆包官网档位（4–30 秒任意秒），这里是 CapCut 官网档位
 	//   （4–15 秒、只卖 480p、参考图 ≤9）。两者同名族但**不互为别名**，
 	//   归一表分开登记，路由不互相命中。
+	ModelCapcut25     = "cp-seedance-2.5"
 	ModelCapcut20     = "cp-seedance-2.0"
 	ModelCapcut20Fast = "cp-seedance-2.0fast"
+	ModelCapcut20Mini = "cp-seedance-2.0mini"
 	ModelImage        = "Nano Banana Pro"
 	ModelVideo        = "gemini-web-video"
 	ModelReverse      = "jimeng-video-reverse"
@@ -252,8 +254,10 @@ const picsartUpstreamModel = "wan-3.0-video"
 // ⚠️ 对外公开名带 `cp-` 前缀（cp-seedance-2.0 / cp-seedance-2.0fast），
 // 发往 ArcReel/Worker 的一律是这两个真名。
 const (
+	capcutUpstreamModel25     = "seedance_2.5"
 	capcutUpstreamModel20     = "seedance_2.0"
 	capcutUpstreamModel20Fast = "seedance_2.0_fast"
+	capcutUpstreamModel20Mini = "seedance_2.0_mini"
 )
 
 // 任务形态：决定校验分支与建单载荷。
@@ -383,8 +387,10 @@ var modelSpecs = map[string]modelSpec{
 	// 公开名 → 官网档位真名的翻译在这一层做，ArcReel/Worker 两侧白名单仍是真名。
 	//
 	// 计价：2.0 **按次**（EstimateBilling 返回 nil）、2.0 Fast **按秒**（返回 seconds 倍率）。
+	ModelCapcut25:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
 	ModelCapcut20:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
 	ModelCapcut20Fast: {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
+	ModelCapcut20Mini: {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -856,6 +862,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
 		norm.Duration = duration
+		resolution, resErr := normalizeCapcutResolution(req.Resolution)
+		if resErr != nil {
+			return service.TaskErrorWrapperLocal(resErr, "invalid_resolution", http.StatusBadRequest)
+		}
+		norm.Resolution = resolution
 		if norm.ReferenceCount > capcutMaxReferenceImages {
 			return service.TaskErrorWrapperLocal(
 				fmt.Errorf("%s accepts at most %d reference images, got %d", norm.Model, capcutMaxReferenceImages, norm.ReferenceCount),
@@ -1044,12 +1055,24 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	if req.Kind == kindDoubaoVideo && req.Model == ModelDoubao20Fast && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
 	}
-	// CapCut 2.0 Fast **按秒**（¥X/秒 × 实际秒数）；2.0 **按次**（返回 nil）。
+	// CapCut 四档模型**统一按秒**：ModelPrice 配 480p 基准单价（元/秒），
+	// EstimateBilling 给 seconds 倍率；720p 再乘一个 size 倍率。
 	//
-	// ⚠️ 两个模型**必须分开**：按次模型返回 seconds 倍率会被 relay_task.go 再乘一遍
-	//（¥3/次 × 15 秒 = ¥45，账实不符）—— 这是既有按次模型都返回 nil 的原因。
-	if req.Kind == kindCapcutVideo && req.Model == ModelCapcut20Fast && req.Duration > 0 {
-		return map[string]float64{"seconds": float64(req.Duration)}
+	// ⚠️ 四档**全部**要给 seconds —— 漏了任何一档就会按「1 秒」收费，
+	//   15 秒的片子只收 1 秒的钱。反过来，任何「按次」模型都不能给 seconds
+	//   （会被 relay_task.go 再乘一遍，账实不符）。
+	if req.Kind == kindCapcutVideo {
+		ratios := map[string]float64{}
+		if req.Duration > 0 {
+			ratios["seconds"] = float64(req.Duration)
+		}
+		if ratio := capcutResolutionRatio(req.Model, req.Resolution); ratio != 1 {
+			ratios["size"] = ratio
+		}
+		if len(ratios) == 0 {
+			return nil
+		}
+		return ratios
 	}
 	// Picsart 特惠档：480P 是基准价（返回 nil = 不乘，¥1.50），720P 乘 1.333… → ¥2.00。
 	// 改价时 ModelPrice 与本倍率必须一起改（见 picsart720PSizeRatio 注释）。
@@ -1452,11 +1475,12 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 			return fmt.Errorf("%s is fixed at 720p", modelName)
 		}
 	case kindCapcutVideo:
-		// CapCut 只卖 480p：720p/1080p/4K 在官网带 "Pro" 徽标（未开通不能选）。
-		// 显式拒绝而不是静默降到 480p —— 用户会为一个没生效的档位付费。
+		// CapCut 只卖 480p / 720p（两档都已定价）。
+		// 1080p / 4K 官网虽有，但**未定价** → 显式拒绝而不是静默降到 720p，
+		// 用户会为一个没生效的档位付费。
 		resolution := strings.TrimSpace(req.Resolution)
-		if resolution != "" && !strings.EqualFold(resolution, "480p") {
-			return fmt.Errorf("%s supports only 480p resolution, got %q", modelName, resolution)
+		if _, err := normalizeCapcutResolution(resolution); err != nil {
+			return fmt.Errorf("%s supports only 480p/720p resolution, got %q", modelName, resolution)
 		}
 	case kindVeoVideo:
 		if hasValue(req.Seconds) {
@@ -1542,18 +1566,70 @@ const (
 	// capcutMinDuration / capcutMaxDuration：面板时长滑杆区间（4–15s）。
 	capcutMinDuration = 4
 	capcutMaxDuration = 15
+	// capcutMaxDuration25：Seedance 2.5 的滑杆上界（真机 max=30000ms）。
+	capcutMaxDuration25 = 30
 	// capcutDefaultDuration：面板出厂默认 5 秒。
 	capcutDefaultDuration = 5
+	// capcutDefaultResolution：480p 是价格基准档。
+	capcutDefaultResolution = "480p"
 	// capcutMaxReferenceImages：参考图上限 9 张（官网素材口 accept 含 video/audio，
 	// 但交付链只处理图片；超出显式拒绝，不静默截断）。
 	capcutMaxReferenceImages = 9
 )
 
-// validateCapcutDuration 校验 CapCut 时长：4–15 秒区间内任意整数秒。
+// capcut720PRatios：720p 相对 480p 基准价的倍率（2026-11-13 定价口径）。
+//
+// ModelPrice 只能配一个数（480p 基准），720p 由 EstimateBilling 的 size 倍率乘回。
+// ⚠️ 改价时 ModelPrice 与本表必须同时改，否则两档价会错位。
+var capcut720PRatios = map[string]float64{
+	ModelCapcut20Mini: 1.5,
+	ModelCapcut20Fast: 1.5,
+	ModelCapcut20:     2.0,
+	ModelCapcut25:     2.0,
+}
+
+// capcutMaxDurationFor 返回该模型的滑杆上界（2.5 = 30 秒，其余 15 秒）。
+func capcutMaxDurationFor(model string) int {
+	if model == ModelCapcut25 {
+		return capcutMaxDuration25
+	}
+	return capcutMaxDuration
+}
+
+// capcutResolutionRatio 返回分辨率倍率（480p = 1）。
+func capcutResolutionRatio(model, resolution string) float64 {
+	if strings.ToLower(strings.TrimSpace(resolution)) != "720p" {
+		return 1
+	}
+	if ratio, ok := capcut720PRatios[model]; ok {
+		return ratio
+	}
+	return 1
+}
+
+// normalizeCapcutResolution 归一分辨率：480p / 720p，空 = 默认 480p。
+//
+// 1080p / 4K 官网虽然有（且 2.0 / 2.5 可选），但**没有定价** → 显式 400，
+// 不能静默降级（客户按 1080p 下单却收到 480p = 错交付）。
+func normalizeCapcutResolution(raw string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return capcutDefaultResolution, nil
+	case "480p":
+		return "480p", nil
+	case "720p":
+		return "720p", nil
+	default:
+		return "", fmt.Errorf("resolution must be 480p or 720p, got %s", raw)
+	}
+}
+
+// validateCapcutDuration 校验 CapCut 时长：4–15 秒（2.5 到 30 秒）区间内任意整数秒。
 func validateCapcutDuration(field string, value int, model string) (int, error) {
-	if value < capcutMinDuration || value > capcutMaxDuration {
+	maxDuration := capcutMaxDurationFor(model)
+	if value < capcutMinDuration || value > maxDuration {
 		return 0, fmt.Errorf("%s must be between %d and %d for %s, got %d",
-			field, capcutMinDuration, capcutMaxDuration, model, value)
+			field, capcutMinDuration, maxDuration, model, value)
 	}
 	return value, nil
 }
