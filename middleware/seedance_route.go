@@ -636,8 +636,11 @@ func prepareXinbiPerCallRoute(c *gin.Context, body map[string]interface{}, targe
 		return nil, false
 	}
 
-	images, hasUnsupported := collectReferenceImages(body)
+	images, hasUnsupported := collectReferenceImages(body, true)
 	if hasUnsupported {
+		// hasUnsupportedMedia 已在更早拦掉参考视频/音频，能到这里说明
+		// metadata.input.media 里的素材形式连 data URI 都不算（如本地路径）。
+		logger.LogInfo(c, "条件路由跳过心笔按次：metadata.input.media 里有不可搬运的素材形式")
 		return nil, false
 	}
 	// 参考图数量上限：心笔上游 mediaConstraints 限 10 张（2026-11-11 实测），
@@ -694,7 +697,7 @@ func rewriteBodyForXinbiPerCall(body map[string]interface{}, targetModel string)
 	out["model"] = targetModel
 
 	// 参考图：统一收到顶层 reference_images[]。
-	images, _ := collectReferenceImages(body)
+	images, _ := collectReferenceImages(body, true)
 	if len(images) > 0 {
 		out["reference_images"] = images
 	}
@@ -1373,7 +1376,8 @@ func rewriteBodyForDoubaoWithDuration(c *gin.Context, body map[string]interface{
 		out["resolution"] = strings.ToLower(tier)
 	}
 
-	images, hasUnsupported := collectReferenceImages(body)
+	// allowDataURL=false：漫屋只收公网 http(s) URL，data URI 参考图改派过去必 400。
+	images, hasUnsupported := collectReferenceImages(body, false)
 	if hasUnsupported {
 		// 素材没法安全转成漫屋的 input_reference（参考视频/音频，或只能内联的
 		// data URI 参考图）：明确放弃改派，让原请求继续走能处理它的源链路。
@@ -1659,12 +1663,21 @@ func doubaoResolutionTier(body map[string]interface{}) string {
 // collectReferenceImages 收集请求里的参考图 URL 列表。
 //
 // 素材来源优先级与源链路（youzanwan3 的 buildMedia）**保持一致**：
-// 顶层 media > metadata.media > 顶层 images / image / input_reference。
+// 顶层 media > metadata.media > metadata.input.media > 顶层 images / image / input_reference。
 // 优先级错了就会**丢图**：源链路认顶层 media 时我们只读 metadata.media，
 // 转换出来的图数就少了（2026-10-22 丢图事故同型）。
 //
-// 第二个返回值 true 表示遇到了目标链路不支持的素材（参考视频/音频）。
-func collectReferenceImages(body map[string]interface{}) ([]string, bool) {
+// 第二个返回值 true 表示遇到了目标链路不支持的素材（参考视频/音频，
+// 或 allowDataURL=false 时的 data URI 参考图）。
+//
+// allowDataURL 按**目标链路的真实契约**传，不能一刀切：
+//   - 心笔兼容口（xinbiapi）明确收 https 直链「或 data: URL」（平台代取入库
+//     对后者做 base64 解码），所以规则六/规则二/特惠分流传 true ——
+//     arcreel 客户端把 base64 参考图编码在 metadata.input.media（Wan3 形状）
+//     里，2026-11-13 曾因这里一刀切拒绝，短请求全部被拦回原链路、
+//     撞上有赞 prime 的 <10 秒保护（PRIME_DURATION_TOO_SHORT）；
+//   - 漫屋/豆包链路只收公网 http(s) URL，改派它们的路径传 false。
+func collectReferenceImages(body map[string]interface{}, allowDataURL bool) ([]string, bool) {
 	var images []string
 
 	// 1) 顶层 media（源链路优先级最高）
@@ -1718,9 +1731,9 @@ func collectReferenceImages(body map[string]interface{}) ([]string, bool) {
 	// 不读这里就会静默丢图（2026-11-09 gen-7cdab0938eba1d6229b01a5e：26 秒带 7 张图，
 	// 远端 job refs=0，成片没有任何参考图）。
 	//
-	// 只接受 http(s)：data URI / 本地路径不能直传漫屋（其上游契约只收公网 URL）。
-	// 遇到 data URI 返回 hasUnsupported，调用方放弃改派、把请求留在能处理 data URI
-	// 的源链路上 —— 宁可少赚差价，也不能交付错片。
+	// URL 形式按 allowDataURL 区分：漫屋/豆包（false）只收 http(s) 直链，
+	// data URI / 本地路径返回 hasUnsupported 让调用方放弃改派；心笔（true）
+	// 连 data: 内联一起收（它对 data URI 做平台侧解码入库）。
 	if input, ok := metadata["input"].(map[string]interface{}); ok {
 		if media, ok := input["media"].([]interface{}); ok {
 			for _, item := range media {
@@ -1733,7 +1746,7 @@ func collectReferenceImages(body map[string]interface{}) ([]string, bool) {
 				case "reference_image", "first_frame", "last_frame":
 					urls := appendImageURL(nil, entry["url"])
 					for _, url := range urls {
-						if !isHTTPURL(url) {
+						if !allowDataURL && !isHTTPURL(url) {
 							return nil, true
 						}
 					}

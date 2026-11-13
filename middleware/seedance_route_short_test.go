@@ -196,6 +196,59 @@ func TestShortRouteSkipsSeed(t *testing.T) {
 	}
 }
 
+// 回归 2026-11-13 老机生产（arcreel，2 秒单 ×5 全失败）：arcreel 把 base64
+// 参考图编码在 metadata.input.media（Wan3 形状）里。collectReferenceImages
+// 曾经对这个位置一刀切拒绝 data URI（那是漫屋/豆包改派的契约：只收公网 URL），
+// 结果短请求全部被拦回有赞原链路，撞上 prime 的 <10 秒保护
+// （PRIME_DURATION_TOO_SHORT）。心笔兼容口本来就收 data: URL
+// （xinbiapi adaptor：https 直链「或 data: URL」），所以规则六必须放行。
+func TestShortRouteAcceptsDataURLInWan3InputMedia(t *testing.T) {
+	enableShortRoute(t, testShortTargetModel, 10)
+
+	body := `{"model":"seedance2.5-特惠","seconds":2,"prompt":"a cat",
+		"metadata":{"input":{"media":[
+			{"type":"reference_image","url":"data:image/jpeg;base64,AAAA"},
+			{"type":"reference_image","url":"data:image/jpeg;base64,BBBB"}]}}}`
+	rec := runRouteFull(t, body)
+	out := decodeBody(t, rec.body)
+
+	if out["model"] != testShortTargetModel {
+		t.Fatalf("metadata.input.media 里的 data URI 参考图不该拦短请求，实际 model=%v", out["model"])
+	}
+	images, _ := out["reference_images"].([]interface{})
+	if len(images) != 2 || images[0] != "data:image/jpeg;base64,AAAA" || images[1] != "data:image/jpeg;base64,BBBB" {
+		t.Fatalf("data URI 参考图必须原样收到顶层 reference_images，实际 %v", out["reference_images"])
+	}
+	metadata, _ := out["metadata"].(map[string]interface{})
+	if len(metadata) > 0 {
+		if _, hasInput := metadata["input"]; hasInput {
+			t.Fatalf("metadata.input 必须剥掉（心笔 adaptor 会并行收 metadata.input.media，同图投两次），实际 %v", metadata)
+		}
+		if _, hasMedia := metadata["media"]; hasMedia {
+			t.Fatalf("metadata.media 必须剥掉，实际 %v", metadata)
+		}
+	}
+	if rec.originModel != testSourceModel {
+		t.Fatalf("计费原点必须是源模型 %s，实际 %s", testSourceModel, rec.originModel)
+	}
+}
+
+// data URI 放行只对 data: 前缀成立：本地路径等其它形式仍然拒绝改派，
+// 心笔 adaptor 对非 https、非 data 的值无法入库。
+func TestShortRouteStillSkipsNonURLPathInWan3InputMedia(t *testing.T) {
+	enableShortRoute(t, testShortTargetModel, 10)
+
+	body := `{"model":"seedance2.5-特惠","seconds":2,"prompt":"a cat",
+		"metadata":{"input":{"media":[{"type":"reference_image","url":"/local/a.png"}]}}}`
+	seen, origin := runRoute(t, body)
+	if decodeBody(t, seen)["model"] != testSourceModel {
+		t.Fatalf("本地路径参考图必须留在源链路，实际 model=%v", decodeBody(t, seen)["model"])
+	}
+	if origin != "" {
+		t.Fatalf("originModel = %q, want empty (not routed)", origin)
+	}
+}
+
 // 比例不在心笔枚举内（如 21:9）→ 留在源链路。
 //
 // 分流过去必被上游 400；宁可让它在源链路失败，也不换一条必然失败的链路。

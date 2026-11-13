@@ -153,9 +153,14 @@ func tehuiXinbiCompatible(c *gin.Context, body map[string]interface{}, targetMod
 		return false
 	}
 
-	images, hasUnsupported := collectReferenceImages(body)
+	// allowDataURL=true：心笔兼容口收 https 直链「或 data: URL」，
+	// arcreel 把 base64 参考图编码在 metadata.input.media 里也能分流
+	// （2026-11-13 前一刀切拒绝，短请求全被拦回有赞撞 <10 秒保护）。
+	images, hasUnsupported := collectReferenceImages(body, true)
 	if hasUnsupported {
-		logger.LogInfo(c, "条件路由跳过特惠分流：metadata.media 里有非图片素材")
+		// hasUnsupportedMedia 已拦掉参考视频/音频，这里兜底的是 metadata.input.media
+		// 里连 data URI 都不是的素材形式（如本地路径）。
+		logger.LogInfo(c, "条件路由跳过特惠分流：metadata.input.media 里有不可搬运的素材形式")
 		return false
 	}
 	if len(images) > xinbiMaxReferenceImages {
@@ -273,7 +278,7 @@ func rewriteBodyForXinbiPerSecond(body map[string]interface{}, target string, se
 	out["model"] = target
 	out["seconds"] = strconv.Itoa(seconds)
 
-	images, _ := collectReferenceImages(body)
+	images, _ := collectReferenceImages(body, true)
 	if len(images) > 0 {
 		out["reference_images"] = images
 	}
@@ -282,7 +287,9 @@ func rewriteBodyForXinbiPerSecond(body map[string]interface{}, target string, se
 	if existing, ok := body["metadata"].(map[string]interface{}); ok {
 		for key, value := range existing {
 			switch key {
-			case "media", "resolution", "size", "duration", "seconds", "ratio", "aspect_ratio":
+			case "media", "input", "resolution", "size", "duration", "seconds", "ratio", "aspect_ratio":
+				// input 与 media 同理：metadataReferenceMedia 会并行收
+				// metadata.input.media，不剥掉就是同图投两次（图已抬到顶层）。
 				continue
 			}
 			metadata[key] = value
