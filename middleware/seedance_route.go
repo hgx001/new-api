@@ -323,34 +323,50 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 
 		// ── 规则六（短时长分流）：排在规则二之前 ──
 		//
-		// 2026-11-13 老板定：请求时长 ≤ 阈值（默认 10 秒）→ 改派到有赞**标准版**
-		// wan3.0-video。源模型 seedance2.5-特惠 常驻有赞 prime（满血档），
-		// 标准版是同渠道的另一档 —— 短任务分流过去，把 prime 的算力留给长任务。
+		// 2026-11-13 老板定：请求时长 ≤ 阈值（默认 10 秒）→ 改派到**心笔内链**
+		// （wan3.0-720p-特惠-内链，ch25：480P 生成 + 超分交付 720P）。
+		//
+		// 为什么目标从有赞标准版换成心笔：上游 prime「暂时不受理低于 10 秒」
+		// 的任务（PRIME_DURATION_TOO_SHORT），客户 threeFatAi 一天连续 5 次失败，
+		// 每次都是「预扣 → 上游拒绝 → 退款」。心笔内链 480P 生成、统一超分到
+		// 720P 交付，与源链路承诺的交付档一致。
 		//
 		// 为什么排在规则二（比例）之前：老板口径是「短任务优先」——
-		// 9:16 的短任务也走标准版，不再落到比例目标链路。
+		// 9:16 的短任务也走内链，不再落到比例目标链路。
 		//
-		// 为什么排在规则三（首尾帧）之后：首尾帧是**能力约束**（有赞上游
-		// 2026-10-28 起取消 first_frame/last_frame 入参），标准版同样不收。
-		// 带首尾帧的请求只有规则三的目标链路能跑，优先级高于分流优化。
+		// 为什么排在规则三（首尾帧）之后：首尾帧是**能力约束**，心笔兼容口
+		// 只收参考图。带首尾帧的请求只有规则三的目标链路能跑，优先级高于分流优化。
 		//
 		// 与规则一的时长区间不重叠（≤10 与 >阈值 20），两条规则不会互相抢单；
 		// 万一将来把阈值调成重叠，规则一在前 —— 长时长优先仍然是既有口径。
 		shortTarget := policy.ShortTargetModelFor(sourceModel)
 		if seedanceroute_setting.IsShortRouteEnabledFor(sourceModel) {
 			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.WithinShortTrigger(seconds) {
-				if newBody, sizeRatio, routed := prepareShortRoute(c, body, shortTarget, sourceModel); routed {
-					if applyRewrittenBody(c, newBody, sourceModel) {
-						// 计费按**源模型**（seedance2.5-特惠）算，秒数与 size 倍率都按它的口径记：
-						// 目标标准版三档同价、adaptor 给的 size 恒为 1.0 ——
-						// 不补倍率就会把 1080P 按 ¥0.20/秒 收（应收 ¥0.30），少收 33%。
-						common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
-						common.SetContextKey(c, constant.ContextKeyRouteBillingSizeRatio, sizeRatio)
-						logger.LogInfo(c, fmt.Sprintf(
-							"条件路由：命中短时长 %d 秒（≤ %d 秒），改派 %s → %s",
-							seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, shortTarget))
-						c.Next()
-						return
+				// 目标只支持心笔内链。改派跨 adaptor（youzanwan3 → xinbiapi），
+				// 入参契约完全不同，必须走 prepareTehuiXinbiRoute 的准入与改写；
+				// 配置成别的模型名时宁可不用这条规则，也不能按有赞契约改写。
+				if !isXinbiTehuiTarget(shortTarget) {
+					logger.LogInfo(c, "条件路由跳过短时长分流：short_target_model 不是心笔内链，规则六不生效")
+				} else {
+					if tier := sourceResolutionTier(body); tier == "1080P" {
+						// 不挡，但要留痕：心笔内链只交付 720P，且按 720P 计价。
+						// 降档交付是可观测的，不是静默的（与规则三同口径）。
+						logger.LogInfo(c, "条件路由：短时长请求指定 1080P，心笔内链只交付 720P（按 720P 计价）")
+					}
+					if newBody, routed := prepareTehuiXinbiRouteWithSeconds(c, body, shortTarget, seconds); routed {
+						if applyRewrittenBody(c, newBody, sourceModel) {
+							// 计费按**源模型**（seedance2.5-特惠）的按秒价算。
+							// 心笔 adaptor 会自己给 seconds（读改写后的顶层 seconds），
+							// 这里再记一份是兜底：GetTaskRequest 万一失败，它的
+							// EstimateBilling 会退到缺省 5 秒，applyRouteBillingSeconds
+							// 能用这份把秒数补回来。size 倍率**不记** —— 交付恒 720P。
+							common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(clampTehuiXinbiSeconds(seconds)))
+							logger.LogInfo(c, fmt.Sprintf(
+								"条件路由：命中短时长 %d 秒（≤ %d 秒），改派 %s → %s（480P 生成 + 超分 720P）",
+								seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, shortTarget))
+							c.Next()
+							return
+						}
 					}
 				}
 			}
@@ -794,49 +810,18 @@ func prepareWan3Route(c *gin.Context, body map[string]interface{}, policy seedan
 	return rewriteBodyForWan3(body, policy, targetModel), true
 }
 
-// prepareShortRoute 组装「规则六（短时长 → 有赞标准版）」的改派请求体。
+// prepareTehuiXinbiRouteWithSeconds 与 prepareTehuiXinbiRoute 相同，但秒数由调用方给。
 //
-// 返回的第二个值是「按源模型口径的 size 倍率」，由调用方记进 context。
-// 第三个返回值 false = 放弃路由（放行原请求）。
-//
-// 与规则二/三的关键差别：目标是**同一渠道的另一个档**（youzanwan3 的
-// wan3.0-video），adaptor 与入参契约完全一致 —— 所以只换 model 字段，
-// 素材 / 比例 / seed 全部原样保留，不需要任何格式转换。
-func prepareShortRoute(c *gin.Context, body map[string]interface{}, targetModel, sourceModel string) (map[string]interface{}, float64, bool) {
-	// 首尾帧：标准版与源链路同源，上游 2026-10-28 起已取消 first_frame/last_frame。
-	// 带首尾帧的请求必须留在规则三的链路上 —— 分流过去只会把首尾帧
-	// 降级成参考图，客户拿到的不是他要的首尾帧成片。
-	if hasFrameMedia(body) {
-		return nil, 0, false
+// 为什么需要这个变体：规则六（短时长分流）在触发判定时用 extractRequestSeconds
+// 按源链路口径解析过秒数（含 metadata.seconds / metadata.duration），
+// 而 tehuiXinbiSeconds 只读顶层 duration / seconds —— 直接复用的话，
+// 「metadata.seconds=8」的请求会被改写成缺省 5 秒：客户要 8 秒拿到 5 秒，
+// 还按 8 秒收钱，是实打实的多扣。
+func prepareTehuiXinbiRouteWithSeconds(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
+	if !tehuiXinbiCompatible(c, body, targetModel) {
+		return nil, false
 	}
-
-	// 目标模型没有可用渠道 → 不路由。
-	//
-	// 与规则一同一理由：改写 body 之后重试只会用同一个模型名重选渠道，
-	// 不会退回源模型。预检能让请求自然落回源链路，客户完全无感。
-	if !channelAvailabilityProbe(c, targetModel) {
-		return nil, 0, false
-	}
-
-	resolution := shortRouteResolution(body)
-	return rewriteBodyForShortRoute(body, targetModel, resolution),
-		youzanwan3.RouteBillingSizeRatio(sourceModel, resolution), true
-}
-
-// shortRouteResolution 返回「源链路实际生效的分辨率档」，供改派时显式钉住。
-//
-// 为什么必须钉：源链路是 prime，只提供 720P / 1080P —— 客户传 480P 或什么都不传，
-// 它都按 **720P** 执行；而标准版 wan3.0-video 的缺省档是 **480P**。
-// 不显式写就会静默降档：客户付 720P 的钱，拿到 480P 的片。
-//
-// 1080P 原样保留（标准版支持这一档），倍率由源模型口径补上
-// （见 youzanwan3.RouteBillingSizeRatio）。
-func shortRouteResolution(body map[string]interface{}) string {
-	tier := sourceResolutionTier(body)
-	if tier == "" || tier == "480P" {
-		return "720P"
-	}
-	return tier
+	return rewriteBodyForXinbiPerSecond(body, targetModel, clampTehuiXinbiSeconds(seconds)), true
 }
 
 // sourceResolutionTier 按**源链路（youzanwan3）的读取顺序**解析分辨率档位：
@@ -856,23 +841,6 @@ func sourceResolutionTier(body map[string]interface{}) string {
 		}
 	}
 	return explicitResolutionTier(body["size"])
-}
-
-// rewriteBodyForShortRoute 只换 model 并把分辨率钉成源链路的实际档位。
-//
-// 其余字段（prompt / seconds / metadata / media / seed …）全部原样保留：
-// 源与目标是同一个 adaptor，读参数的方式一模一样，多改一处就多一处丢参风险。
-func rewriteBodyForShortRoute(body map[string]interface{}, target, resolution string) map[string]interface{} {
-	out := make(map[string]interface{}, len(body)+1)
-	for key, value := range body {
-		if key == "model" {
-			continue
-		}
-		out[key] = value
-	}
-	out["model"] = target
-	out["resolution"] = resolution
-	return out
 }
 
 // prepareFramesRoute 组装「带首尾帧 → wan3 直连」的请求体。

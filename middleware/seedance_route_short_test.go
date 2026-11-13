@@ -12,21 +12,25 @@ import (
 
 // 规则六（短时长分流）的中间件测试。
 //
-// 语义：源模型 + 请求时长 ≤ 阈值（默认 10 秒）→ 改派到有赞标准版 wan3.0-video。
+// 语义：源模型 + 请求时长 ≤ 阈值（默认 10 秒）→ 改派到**心笔内链**
+// （wan3.0-720p-特惠-内链，ch25）：480P 生成 + 超分交付 720P。
 //
-// 为什么要有这条规则：源模型 seedance2.5-特惠 常驻有赞 **prime** 档，
-// 标准版 wan3.0-video 是同一渠道的另一档（三档同价）。短任务分流过去，
-// 把 prime 的算力留给长任务。
+// 为什么目标从有赞标准版换成心笔（2026-11-13 老板定）：
+// 上游 prime「暂时不受理低于 10 秒」的任务（PRIME_DURATION_TOO_SHORT），
+// 客户 threeFatAi 一天连续 5 次失败。心笔内链 480P 生成、统一超分到 720P 交付，
+// 与源链路承诺的交付档一致。
 //
 // 与另外几条规则的关系（顺序即优先级）：
 //
 //	规则五（故障转移）→ 规则三（首尾帧）→ 规则一（长时长）→ **规则六（短时长）** → 规则二（比例）
 //
 // 规则六排在规则二之前是老板 2026-11-13 的口径：短任务优先分流，
-// 即使它是 9:16 也走标准版，不再落到比例目标链路。
+// 即使它是 9:16 也走内链，不再落到比例目标链路。
 
-// testShortTargetModel 是规则六的目标模型（有赞标准版）。
-const testShortTargetModel = "wan3.0-video"
+// testShortTargetModel 是规则六的目标模型（心笔 480P 内链）。
+// 必须与 isXinbiTehuiTarget 认的名字一致（xinbiTehuiTargetModel），
+// 否则走不到心笔的改写逻辑，参考图会被静默丢弃。
+const testShortTargetModel = "wan3.0-720p-特惠-内链"
 
 // enableShortRoute 只开规则六，测试结束恢复原状。
 func enableShortRoute(t *testing.T, target string, triggerSeconds int) {
@@ -80,24 +84,31 @@ func enableShortAndOtherRules(t *testing.T, secondsTarget string, seconds int, r
 	})
 }
 
-// 5 秒请求必须改派到标准版，并且：
-//   - model 换成目标
-//   - 分辨率显式钉成 720P（标准版缺省是 480P，不钉就静默降档）
-//   - 计费秒数与 size 倍率都按**源模型**口径记进 context
-func TestShortRouteRewritesToStandardWan3(t *testing.T) {
+// 短请求必须按心笔兼容口的契约改写：
+//   - model 换成内链
+//   - seconds 落成顶层字符串（心笔只认顶层 seconds）
+//   - 参考图统一收到顶层 reference_images[]
+//   - media / resolution 必须剥掉（media 留着会被 adaptor 再收一遍，同图投两次）
+//   - 计费秒数按源模型口径记；**没有 size 倍率**（心笔恒交付 720P，复合价一口）
+func TestShortRouteRewritesToXinbiContract(t *testing.T) {
 	enableShortRoute(t, testShortTargetModel, 10)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat",
+		"media":[{"type":"reference_image","url":"https://x/a.png"}]}`)
 	body := decodeBody(t, rec.body)
 
 	if body["model"] != testShortTargetModel {
-		t.Fatalf("5 秒请求没有改派到 %s，实际 model=%v", testShortTargetModel, body["model"])
+		t.Fatalf("5 秒请求没有改派到心笔内链 %s，实际 model=%v", testShortTargetModel, body["model"])
 	}
-	if body["resolution"] != "720P" {
-		t.Fatalf("分辨率应显式钉成 720P（源链路 prime 缺省档），实际 %v", body["resolution"])
+	if body["seconds"] != "5" {
+		t.Fatalf("心笔只认顶层字符串 seconds，实际 %v (%T)", body["seconds"], body["seconds"])
 	}
-	if body["seconds"] != float64(5) {
-		t.Fatalf("时长必须原样保留，实际 %v", body["seconds"])
+	images, _ := body["reference_images"].([]interface{})
+	if len(images) != 1 || images[0] != "https://x/a.png" {
+		t.Fatalf("参考图必须收到顶层 reference_images，实际 %v", body["reference_images"])
+	}
+	if _, ok := body["media"]; ok {
+		t.Fatalf("顶层 media 必须剥掉，adaptor 会再收一遍导致同图投两次")
 	}
 	if body["prompt"] != "a cat" {
 		t.Fatalf("提示词被改坏了：%v", body["prompt"])
@@ -108,8 +119,8 @@ func TestShortRouteRewritesToStandardWan3(t *testing.T) {
 	if !rec.hasBillingSec || rec.billingSeconds != 5 {
 		t.Fatalf("计费秒数应为 5，实际 has=%v value=%v", rec.hasBillingSec, rec.billingSeconds)
 	}
-	if !rec.hasBillingSize || rec.billingSizeRatio != 1.0 {
-		t.Fatalf("720P 的源模型 size 倍率应为 1.0，实际 has=%v value=%v", rec.hasBillingSize, rec.billingSizeRatio)
+	if rec.hasBillingSize {
+		t.Fatalf("心笔恒交付 720P（复合价含在单价里），不能记 size 倍率，实际 %v", rec.billingSizeRatio)
 	}
 }
 
@@ -130,8 +141,7 @@ func TestShortRouteBoundaryIsInclusive(t *testing.T) {
 
 // 没传时长 → 不改派。
 //
-// 不能拿「默认时长」去猜：源链路缺省 5 秒、目标标准版缺省也是 5 秒，
-// 但客户没说要短任务，我们不该替他做链路决策。
+// 不能拿「默认时长」去猜：客户没说要短任务，我们不该替他做链路决策。
 func TestShortRouteWithoutSecondsStaysOnSource(t *testing.T) {
 	enableShortRoute(t, testShortTargetModel, 10)
 
@@ -143,20 +153,62 @@ func TestShortRouteWithoutSecondsStaysOnSource(t *testing.T) {
 
 // 带首尾帧 → 规则六必须让路。
 //
-// 有赞上游 2026-10-28 起取消 first_frame/last_frame 入参，标准版同样不收；
-// 带首尾帧的请求只有规则三的目标链路能跑。规则三没启用时也不能被规则六
-// 悄悄改派 —— 那会把「首尾帧降级成参考图」，客户拿到不是他要的片子。
+// 心笔兼容口只收参考图；带首尾帧的请求只有规则三的目标链路能跑。
+// 规则三没启用时也不能被规则六悄悄改派 —— 那会把首尾帧降级成参考图。
 func TestShortRouteSkipsFramesMedia(t *testing.T) {
 	enableShortRoute(t, testShortTargetModel, 10)
 
 	body := `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
 	seen, _ := runRoute(t, body)
 	if decodeBody(t, seen)["model"] != testSourceModel {
-		t.Fatalf("带首尾帧的短请求不该走标准版，实际 model=%v", decodeBody(t, seen)["model"])
+		t.Fatalf("带首尾帧的短请求不该走心笔，实际 model=%v", decodeBody(t, seen)["model"])
 	}
 }
 
-// 短任务优先于比例规则：9:16 + 5 秒走标准版，不落到比例目标。
+// 带参考视频/音频 → 留在源链路。
+//
+// 心笔兼容口没有对应字段，分流过去素材会被静默丢弃 —— 客户拿到的成片
+// 没有他要参考的内容，比 400 更糟。
+func TestShortRouteSkipsReferenceVideoAndAudio(t *testing.T) {
+	enableShortRoute(t, testShortTargetModel, 10)
+
+	for name, media := range map[string]string{
+		"参考视频": `{"type":"reference_video","url":"https://x/a.mp4"}`,
+		"参考音频": `{"type":"reference_audio","url":"https://x/a.mp3"}`,
+	} {
+		body := `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat","media":[` + media + `]}`
+		seen, _ := runRoute(t, body)
+		if decodeBody(t, seen)["model"] != testSourceModel {
+			t.Fatalf("带%s的短请求必须留在源链路，实际 model=%v", name, decodeBody(t, seen)["model"])
+		}
+	}
+}
+
+// 带 seed → 留在源链路。
+//
+// 心笔上游 parameterSchema 是 additionalProperties:false，带 seed 会被 422。
+func TestShortRouteSkipsSeed(t *testing.T) {
+	enableShortRoute(t, testShortTargetModel, 10)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat","seed":42}`)
+	if decodeBody(t, seen)["model"] != testSourceModel {
+		t.Fatalf("带 seed 的短请求必须留在源链路，实际 model=%v", decodeBody(t, seen)["model"])
+	}
+}
+
+// 比例不在心笔枚举内（如 21:9）→ 留在源链路。
+//
+// 分流过去必被上游 400；宁可让它在源链路失败，也不换一条必然失败的链路。
+func TestShortRouteSkipsRatioOutsideXinbiEnum(t *testing.T) {
+	enableShortRoute(t, testShortTargetModel, 10)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"metadata":{"ratio":"21:9"},"prompt":"a cat"}`)
+	if decodeBody(t, seen)["model"] != testSourceModel {
+		t.Fatalf("21:9 必须留在源链路，实际 model=%v", decodeBody(t, seen)["model"])
+	}
+}
+
+// 短任务优先于比例规则：9:16 + 5 秒走心笔内链，不落到比例目标。
 func TestShortRouteBeatsRatioRule(t *testing.T) {
 	enableShortAndOtherRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel, testShortTargetModel)
 
@@ -179,47 +231,28 @@ func TestShortRouteDoesNotStealLongSeconds(t *testing.T) {
 	}
 }
 
-// 客户要 480P：源链路 prime 不支持 480P，实际按 720P 执行。
-// 改派后必须把这个「实际档位」钉住 —— 标准版缺省就是 480P，
-// 不钉住会静默降档（客户付 720P 的钱拿到 480P 的片）。
-func TestShortRoutePinsActualTierFor480Request(t *testing.T) {
-	enableShortRoute(t, testShortTargetModel, 10)
-
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":5,"resolution":"480P","prompt":"a cat"}`)
-	body := decodeBody(t, rec.body)
-
-	if body["model"] != testShortTargetModel {
-		t.Fatalf("480P 短请求也应改派，实际 model=%v", body["model"])
-	}
-	if body["resolution"] != "720P" {
-		t.Fatalf("480P 请求在源链路实际按 720P 跑，改派后必须钉成 720P，实际 %v", body["resolution"])
-	}
-	if !rec.hasBillingSize || rec.billingSizeRatio != 1.0 {
-		t.Fatalf("按 720P 计费，size 倍率应为 1.0，实际 has=%v value=%v", rec.hasBillingSize, rec.billingSizeRatio)
-	}
-}
-
-// 客户要 1080P：标准版支持 1080P，原样保留；但 size 倍率必须按**源模型**算。
+// 分辨率参数必须剥掉，且**不记 size 倍率**。
 //
-// 标准版三档同价（adaptor 会给 1.0），而 seedance2.5-特惠 的 1080P 是 1.5 倍。
-// 不补这个倍率就会按 ¥0.20/秒 收 1080P（应收 ¥0.30），少收 33% 且无任何报错。
-func TestShortRouteKeeps1080PWithSourceSizeRatio(t *testing.T) {
+// 心笔内链「无条件 480P 生成 + 超分交付 720P」，480P/720P/1080P 全部无效；
+// 顶层 size 会被当成比例误读，必须删。1080P 请求交付的就是 720P，
+// 按 720P 计价（不按源模型 1080P 的 1.5 倍收）—— 降档必须降价。
+func TestShortRouteStripsResolutionAndBills720P(t *testing.T) {
 	enableShortRoute(t, testShortTargetModel, 10)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":5,"resolution":"1080P","prompt":"a cat"}`)
-	body := decodeBody(t, rec.body)
+	for _, tier := range []string{"480P", "720P", "1080P"} {
+		rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":5,"resolution":"`+tier+`","prompt":"a cat"}`)
+		body := decodeBody(t, rec.body)
 
-	if body["model"] != testShortTargetModel {
-		t.Fatalf("1080P 短请求也应改派，实际 model=%v", body["model"])
-	}
-	if body["resolution"] != "1080P" {
-		t.Fatalf("客户要的 1080P 不能被降档，实际 %v", body["resolution"])
-	}
-	if !rec.hasBillingSize {
-		t.Fatalf("1080P 必须记录源模型口径的 size 倍率")
-	}
-	if rec.billingSizeRatio != 1.5 {
-		t.Fatalf("seedance2.5-特惠 的 1080P 倍率应为 1.5，实际 %v", rec.billingSizeRatio)
+		if body["model"] != testShortTargetModel {
+			t.Fatalf("%s 短请求也应改派，实际 model=%v", tier, body["model"])
+		}
+		if _, ok := body["resolution"]; ok {
+			t.Fatalf("resolution 必须剥掉（心笔顶层 size 会被当成比例误读），实际 %v", body["resolution"])
+		}
+		if rec.hasBillingSize {
+			t.Fatalf("%s 请求交付的是 720P，不能按源模型 %s 的 1.5 倍收费，实际 %v",
+				tier, tier, rec.billingSizeRatio)
+		}
 	}
 }
 
@@ -273,18 +306,25 @@ func TestShortRouteInactiveWhenUnconfigured(t *testing.T) {
 	}
 }
 
-// metadata 里的时长同样能触发（客户端常把 seconds 塞进 metadata）。
+// metadata 里的时长同样能触发（客户端常把 seconds 塞进 metadata），
+// 且改写后的秒数必须是 metadata 里那个 —— 不能悄悄变成缺省 5 秒。
 func TestShortRouteReadsSecondsFromMetadata(t *testing.T) {
 	enableShortRoute(t, testShortTargetModel, 10)
 
-	body := `{"model":"seedance2.5-特惠","metadata":{"seconds":"8"},"prompt":"a cat"}`
-	seen, _ := runRoute(t, body)
-	if decodeBody(t, seen)["model"] != testShortTargetModel {
-		t.Fatalf("metadata.seconds=8 应触发分流，实际 model=%v", decodeBody(t, seen)["model"])
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","metadata":{"seconds":"8"},"prompt":"a cat"}`)
+	body := decodeBody(t, rec.body)
+	if body["model"] != testShortTargetModel {
+		t.Fatalf("metadata.seconds=8 应触发分流，实际 model=%v", body["model"])
+	}
+	if body["seconds"] != "8" {
+		t.Fatalf("metadata.seconds=8 改写后必须还是 8 秒，实际 %v", body["seconds"])
+	}
+	if !rec.hasBillingSec || rec.billingSeconds != 8 {
+		t.Fatalf("计费秒数应为 8，实际 has=%v value=%v", rec.hasBillingSec, rec.billingSeconds)
 	}
 }
 
-// 计费倍率键必须真的落在 PriceData.OtherRatios 里（不是只存在 context）。
+// 计费倍率键必须真的落在 context 里（不是只写在注释里）。
 func TestShortRouteBillingSizeRatioKeyIsStable(t *testing.T) {
 	if constant.ContextKeyRouteBillingSizeRatio != "route_billing_size_ratio" {
 		t.Fatalf("计费 size 倍率的 context key 变了，relay_task.go 里的读取会失效：%q",

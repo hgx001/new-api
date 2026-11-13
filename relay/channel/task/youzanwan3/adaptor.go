@@ -1278,20 +1278,6 @@ func billingModelName(info *relaycommon.RelayInfo) string {
 	return ""
 }
 
-// RouteBillingSizeRatio 返回按「源模型口径」计的 size 倍率，供条件路由
-// （middleware/seedance_route.go 的规则六）在改派前记进 context。
-//
-// 为什么需要从外面问：规则六把 seedance2.5-特惠 改派到同渠道的标准版
-// wan3.0-video，而标准版三档同价 —— 它的 adaptor 给的 size 恒为 1.0，
-// 给不出「源模型 1080P 是 1.5 倍」这件事。计费按源模型算，就必须由源链路
-// 把倍率报出来，否则 1080P 会按 ¥0.20/秒 收（应收 ¥0.30），少收 33%。
-//
-// 解析口径与 EstimateBilling 完全一致（同一个 resolutionRatioForModel），
-// 所以「动态调价改了」与「这里报的倍率」永远同步，不会出现两套价格。
-func RouteBillingSizeRatio(model, resolution string) float64 {
-	return resolutionRatioForModel(model, resolution)
-}
-
 // resolutionRatioForModel 返回对应模型的分辨率倍率，未知档位回退 1。
 //
 // 优先读「上游动态调价」算出的倍率（setting/youzanwan3_setting），
