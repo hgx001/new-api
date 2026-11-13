@@ -21,7 +21,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
@@ -30,6 +32,7 @@ import {
   getVideoRouteFailover,
   getVideoRoutePolicy,
   setDoubaoLinkEnabled,
+  setDoubaoLinkMaxTasks,
   setSecondsRuleRatioGate,
   type VideoRouteFailoverState,
   type VideoRoutePolicy,
@@ -62,6 +65,9 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
   const [failover, setFailover] = useState<VideoRouteFailoverState | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  // 接单上限的输入值：与「已保存的上限」分开存 ——
+  // 输入框里改到一半还没点保存时，卡片不能显示成「已改」。
+  const [maxTasksInput, setMaxTasksInput] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -71,6 +77,11 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
       ])
       setPolicy(nextPolicy)
       setFailover(nextFailover)
+      setMaxTasksInput(
+        nextPolicy.doubao_link_max_tasks > 0
+          ? String(nextPolicy.doubao_link_max_tasks)
+          : ''
+      )
     } catch {
       // 拉不到就不显示这张卡：与其显示一个不知道状态的开关，不如不显示。
       setPolicy(null)
@@ -118,6 +129,42 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
     },
     [t]
   )
+
+  /**
+   * 保存「最多接单数」。
+   *
+   * 与 handleToggle 分开：那个开关表达「豆包通不通」，这个表达「这批额度接几单」。
+   * 共用一个处理函数会让「改额度」顺带把开关拨了。
+   *
+   * 空值 = 不限（上限 0）。清空输入框再保存即取消限额。
+   */
+  const handleMaxTasksSave = useCallback(async () => {
+    const trimmed = maxTasksInput.trim()
+    let next = 0
+    if (trimmed !== '') {
+      next = Number(trimmed)
+      if (!Number.isInteger(next) || next < 0) {
+        toast.error(
+          t('Enter a non-negative integer, or leave it empty for no limit')
+        )
+        return
+      }
+    }
+    setBusy(true)
+    try {
+      const nextPolicy = await setDoubaoLinkMaxTasks(next)
+      setPolicy(nextPolicy)
+      setMaxTasksInput(next > 0 ? String(next) : '')
+      toast.success(t('Doubao link task limit saved'))
+    } catch (error) {
+      toast.error(
+        (error as { response?: { data?: { message?: string } } })?.response
+          ?.data?.message ?? t('Failed to update routing policy')
+      )
+    } finally {
+      setBusy(false)
+    }
+  }, [maxTasksInput, t])
 
   /**
    * 切换规则一的「可选比例条件」。
@@ -172,9 +219,7 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
     >
       <div className='flex items-start justify-between gap-4'>
         <div className='flex min-w-0 items-start gap-2'>
-          <span
-            className={cn('mt-0.5 shrink-0', toneText[view.tone])}
-          >
+          <span className={cn('mt-0.5 shrink-0', toneText[view.tone])}>
             <Route className='h-4 w-4' />
           </span>
           <div className='min-w-0'>
@@ -224,6 +269,74 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
         )}
       </p>
 
+      {/* 接单上限（2026-11-13 老板定）：豆包链路上游给的是运营自己掌握的一小批
+          额度 —— 「这批只接 3 单，接满就关掉，我手动再打开时又来 3 单」。
+
+          为什么单独一行而不是并进上面的开关：开关表达「豆包通不通」，
+          这个表达「这批额度有多大」。关着的时候额度还在、只是暂时不接 ——
+          两个动作混在一起，运营会以为「关掉开关 = 额度作废」。 */}
+      <div className='border-border/50 mt-3 flex items-start gap-2 border-t pt-3'>
+        <div className='min-w-0 flex-1'>
+          <Label
+            htmlFor='doubao-link-max-tasks'
+            className='text-foreground text-xs font-semibold'
+          >
+            {t('Max tasks accepted from this link')}
+          </Label>
+          <p className='text-muted-foreground mt-0.5 text-[11px] leading-relaxed'>
+            {t(
+              'Set a quota for the doubao link: it closes itself after accepting this many tasks. Reopening the switch gives you a fresh batch. Leave empty for no limit.'
+            )}
+          </p>
+
+          <div className='mt-2 flex items-center gap-2'>
+            <Input
+              id='doubao-link-max-tasks'
+              type='number'
+              min={0}
+              step={1}
+              inputMode='numeric'
+              value={maxTasksInput}
+              disabled={busy}
+              onChange={(event) => setMaxTasksInput(event.target.value)}
+              placeholder={t('No limit')}
+              className='h-8 w-28'
+            />
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              disabled={busy}
+              onClick={() => void handleMaxTasksSave()}
+            >
+              {busy ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : null}
+              {t('Save')}
+            </Button>
+          </div>
+
+          {/* 已接/剩余：运营决定「要不要再给一批」的唯一依据。 */}
+          {view.limitConfigured ? (
+            <p className='text-muted-foreground mt-2 text-[11px]'>
+              {t('Accepted {{accepted}}/{{max}} tasks, {{remaining}} left', {
+                accepted: view.acceptedTasks,
+                max: view.maxTasks,
+                remaining: view.remaining,
+              })}
+            </p>
+          ) : null}
+
+          {/* 限额接满的提示与「人工关闭」不同：没有自动恢复时间，
+              必须由人再给一批额度。 */}
+          {view.offReason === 'limit' ? (
+            <p className='mt-1 text-[11px] text-amber-600'>
+              {t(
+                'Task limit reached: this link stopped accepting tasks. Raise the limit or reopen the switch to accept more.'
+              )}
+            </p>
+          ) : null}
+        </div>
+      </div>
+
       {/* 可选比例条件：勾上才要求满足该比例，不勾则不限比例。
           与上面的链路开关是两个独立动作，所以单独一行、单独一个接口。 */}
       <div className='border-border/50 mt-3 flex items-start gap-2 border-t pt-3'>
@@ -231,7 +344,9 @@ export function DoubaoLinkCard({ channelModels }: DoubaoLinkCardProps) {
           id='seconds-rule-ratio-gate'
           checked={view.ratioGateOn}
           disabled={busy}
-          onCheckedChange={(value) => void handleRatioGateToggle(value === true)}
+          onCheckedChange={(value) =>
+            void handleRatioGateToggle(value === true)
+          }
           className='mt-0.5'
         />
         <div className='min-w-0'>

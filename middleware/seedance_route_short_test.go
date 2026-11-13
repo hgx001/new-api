@@ -306,6 +306,80 @@ func TestShortRouteInactiveWhenUnconfigured(t *testing.T) {
 	}
 }
 
+// ── 规则六的全局链路开关（2026-11-13，与豆包链路开关同款）───────────────
+
+// disableShortLink 只把规则六的链路开关关掉，其余配置不动，测试结束恢复。
+func disableShortLink(t *testing.T) {
+	t.Helper()
+	previous := seedanceroute_setting.Get()
+	enabled := false
+	policy := previous
+	policy.ShortLinkEnabled = &enabled
+	encoded, err := common.Marshal(policy)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+}
+
+// 开关关闭 → 短请求不再改派，走原链路（模型名保持源模型）。
+//
+// 这是老板的原话语义：「关闭就不路由 走原链路」。
+func TestShortRouteLinkSwitchOffKeepsSourceChain(t *testing.T) {
+	enableShortRoute(t, testShortTargetModel, 10)
+	disableShortLink(t)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	if decodeBody(t, seen)["model"] != testSourceModel {
+		t.Fatalf("链路开关关闭后短请求必须留在源链路，实际 model=%v", decodeBody(t, seen)["model"])
+	}
+}
+
+// 开关关闭不影响其它规则：规则一（长时长）照常改派。
+func TestShortRouteLinkSwitchOffDoesNotAffectOtherRules(t *testing.T) {
+	enableShortAndOtherRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel, testShortTargetModel)
+	disableShortLink(t)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`)
+	if decodeBody(t, seen)["model"] != testTargetModel {
+		t.Fatalf("规则一不该被规则六的链路开关带走，实际 model=%v", decodeBody(t, seen)["model"])
+	}
+}
+
+// 开关重新打开 → 短请求恢复改派到心笔。
+func TestShortRouteLinkSwitchOnRestoresRouting(t *testing.T) {
+	enableShortRoute(t, testShortTargetModel, 10)
+	disableShortLink(t)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	if decodeBody(t, seen)["model"] != testSourceModel {
+		t.Fatalf("前置条件失败：开关关闭后短请求应留在源链路，实际 model=%v", decodeBody(t, seen)["model"])
+	}
+
+	// 重新打开（写回 true）。
+	policy := seedanceroute_setting.Get()
+	enabled := true
+	policy.ShortLinkEnabled = &enabled
+	encoded, err := common.Marshal(policy)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+
+	seen, _ = runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	if decodeBody(t, seen)["model"] != testShortTargetModel {
+		t.Fatalf("开关重新打开后短请求应恢复改派，实际 model=%v", decodeBody(t, seen)["model"])
+	}
+}
+
 // metadata 里的时长同样能触发（客户端常把 seconds 塞进 metadata），
 // 且改写后的秒数必须是 metadata 里那个 —— 不能悄悄变成缺省 5 秒。
 func TestShortRouteReadsSecondsFromMetadata(t *testing.T) {

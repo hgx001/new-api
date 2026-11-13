@@ -149,6 +149,22 @@ type Policy struct {
 	// 「配了目标却没生效」变成一个没有任何报错的静默故障。
 	ShortTriggerSeconds int `json:"short_trigger_seconds,omitempty"`
 
+	// ShortLinkEnabled 是规则六（短时长分流）的**全局链路开关**（2026-11-13 起）。
+	//
+	// 语义与豆包链路开关对齐（一个开关 = 心笔内链通不通）：
+	//   - 开启：规则六按配置改派（≤阈值 → short_target_model）；
+	//   - 关闭：规则六对所有源模型停用，短请求走原链路（不放行到目标）。
+	//
+	// 为什么用三态指针而不是 bool：**必须区分「没配」与「显式关闭」**。
+	// 生产 option JSON 里没有这个字段，解析后是 nil —— 若按 bool 零值 false
+	// 处理，升级当天就会静默停掉线上正在跑的分流，而且没有任何报错。
+	// 所以：nil（没写这个字段）= 默认开启；显式 false = 关闭；显式 true = 明确开启。
+	//
+	// 与 source_overrides[模型].short_rule_enabled 的关系：那是**按源模型**的
+	// 细粒度开关（只停一个成员），这个是**全局**闸门（一键全停）。
+	// 两层任何一层关掉，规则六都不生效。
+	ShortLinkEnabled *bool `json:"short_link_enabled,omitempty"`
+
 	// ─────────────────── 规则五：故障转移（failover）───────────────────
 	//
 	// 前三条规则的触发源都是**请求特征**（时长 / 比例 / 首尾帧），
@@ -178,7 +194,31 @@ type Policy struct {
 	// 规则一对所有源模型停用（特惠/活动留在常驻链路）、故障转移强制判定源
 	// 链路不可用（seedance-2-5 全部改派班车）。截止时间取下一个北京时间
 	// 凌晨 2 点（豆包额度重置点），到点自动恢复为开启。0 = 开关开启。
+	//
+	// ⚠️ 这个字段只表达**人工关闭**。「接单数达上限」是另一种关闭
+	// （没有自动恢复时间），由 DoubaoLinkMaxTasks + DoubaoLinkAcceptedTasks
+	// 推导，不要复用这个字段表达 —— 复用会让「接满 3 单」在凌晨 2 点
+	// 自动恢复，把没给的额度又发出去。
 	DoubaoLinkOffUntil int64 `json:"doubao_link_off_until,omitempty"`
+
+	// DoubaoLinkMaxTasks 是「豆包链路最多接多少单」。0 = 不限。
+	//
+	// 语义（2026-11-13 老板定）：豆包链路上游给的是运营自己掌握的一小批额度，
+	// 运营要能说「这批只接 3 单，接满就关掉，我手动再打开时又来 3 单」。
+	//
+	// ⚠️ 0 = 不限是硬要求：旧的生产 option JSON 里没有这个字段，解析后是 0，
+	// 行为必须与改造前逐字节一致 —— 不能因为加了字段就静默改变线上接单。
+	DoubaoLinkMaxTasks int `json:"doubao_link_max_tasks,omitempty"`
+
+	// DoubaoLinkAcceptedTasks 是「本轮已受理多少单」。手动重新打开时归零。
+	//
+	// 计数口径是**受理成功**的单数：必须打在「上游已受理」之后，
+	// 打在请求进来时会把校验失败、渠道不可用、被上游拒绝的请求也算进去，
+	// 额度会白扣。
+	//
+	// ⚠️ 「是否接满」是**算出来的**（本字段 >= DoubaoLinkMaxTasks），
+	// 不额外存标记 —— 存了就多一个可能与计数不一致的真相源。
+	DoubaoLinkAcceptedTasks int `json:"doubao_link_accepted_tasks,omitempty"`
 
 	// FailoverEnabled 规则五的总开关。默认 false（不改派）。
 	//
@@ -865,11 +905,16 @@ func WithFailoverUnavailable(until int64, reason string) Policy {
 //   - 关闭（enabled=false）：DoubaoLinkOffUntil 取下一个北京时间凌晨 2 点
 //     （豆包额度重置点，与额度探针同口径）到点自动恢复；同时强制打开规则五
 //     总开关 —— 否则 seedance-2-5 会被规则五的开关闸门挡下、改派不了班车。
-//   - 开启（enabled=true）：清除截止时间。
+//   - 开启（enabled=true）：清除截止时间，**并把接单计数归零** ——
+//     运营手动打开 = 「我给了一批新额度」，上一轮的额度已经发完，
+//     计数不归零的话重新打开后一单都接不到（上限 3、已接 3）。
 //
 // 两个方向都会清掉旧式**人工**标记与**人工**暂停：开关接管后它们不再是
 // 事实源，残留的远期人工标记会在凌晨 2 点把链路重新按死（自动恢复失效）。
 // 额度探针写的 auto 标记/自动暂停**保留** —— 人工意图不能覆盖真实额度状态。
+//
+// ⚠️ 接单上限（DoubaoLinkMaxTasks）**保留**：那是配置项，不是本轮的状态。
+// 清掉它等于把「这一批接 3 单」变成「不限」，运营下次打开会突然接单不限量。
 func WithDoubaoLinkEnabled(enabled bool) Policy {
 	mu.RLock()
 	out := clonePolicy(current)
@@ -877,6 +922,8 @@ func WithDoubaoLinkEnabled(enabled bool) Policy {
 	now := nowUnix()
 	if enabled {
 		out.DoubaoLinkOffUntil = 0
+		// 手动重新打开 = 新的一批额度：本轮计数归零。
+		out.DoubaoLinkAcceptedTasks = 0
 	} else {
 		out.DoubaoLinkOffUntil = NextBeijingQuotaReset(now)
 		out.FailoverEnabled = true
@@ -902,9 +949,17 @@ func IsDoubaoLinkOff() bool {
 	return doubaoLinkOff(current, nowUnix())
 }
 
-// doubaoLinkOff = 截止时间存在且未到点（到期即自动恢复，等价于开关打开）。
+// doubaoLinkOff = 「人工关闭且未到点」**或**「接单数达上限」。
+//
+// 两种关闭都让豆包链路不再接单：请求落备胎班车。
+//
+// ⚠️ 限额关闭**没有**自动恢复时间：额度是运营手动给的，
+// 必须由人再打开一次。到点自愈会把没给的额度又发出去。
 func doubaoLinkOff(p Policy, now int64) bool {
-	return p.DoubaoLinkOffUntil > now
+	if p.DoubaoLinkOffUntil > now {
+		return true
+	}
+	return doubaoLinkLimitReached(p)
 }
 
 // WithManualFailoverUnavailable 返回「人工把源链路标记为不可用直到 until」的策略副本。
@@ -1192,9 +1247,14 @@ func IsShortRouteEnabledFor(sourceModel string) bool {
 	return shortRuleReadyFor(current, sourceModel)
 }
 
-// shortRuleReadyFor 判断「规则六对某个具体源模型是否配全**且未被单独关掉**」。
+// shortRuleReadyFor 判断「规则六对某个具体源模型是否配全**且未被关掉**」。
+//
+// 两层闸门：全局链路开关（short_link_enabled）与按源模型开关
+// （source_overrides[模型].short_rule_enabled），任何一层关掉都不生效。
 func shortRuleReadyFor(p Policy, sourceModel string) bool {
-	return shortRuleConfiguredFor(p, sourceModel) && p.shortRuleEnabledFor(sourceModel)
+	return shortRuleConfiguredFor(p, sourceModel) &&
+		p.shortLinkEnabledFor() &&
+		p.shortRuleEnabledFor(sourceModel)
 }
 
 // shortRuleConfiguredFor 判断「规则六对某个源模型是否配全」（不看开关）。
@@ -1284,6 +1344,13 @@ func framesRuleReadyFor(p Policy, sourceModel string) bool {
 
 func clonePolicy(p Policy) Policy {
 	out := p
+	// ShortLinkEnabled 是全局开关指针：浅拷贝会让 Get() 返回的副本与全局状态
+	// 共享同一个 bool，调用方一改就悄悄改到了全局配置（与 SourceOverrides
+	// 里的指针同一类问题）。
+	if p.ShortLinkEnabled != nil {
+		enabled := *p.ShortLinkEnabled
+		out.ShortLinkEnabled = &enabled
+	}
 	// SourceOverrides 是 map：浅拷贝会让 Get() 返回的副本与全局状态共享底层 map，
 	// 调用方改一个键就悄悄改到了全局配置。必须深拷贝。
 	if p.SourceOverrides != nil {

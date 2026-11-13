@@ -22,9 +22,7 @@ import { describe, test } from 'node:test'
 import type { VideoRouteFailoverState, VideoRoutePolicy } from '../api'
 import { buildDoubaoLinkView } from './doubao-link-view'
 
-function policy(
-  overrides: Partial<VideoRoutePolicy> = {}
-): VideoRoutePolicy {
+function policy(overrides: Partial<VideoRoutePolicy> = {}): VideoRoutePolicy {
   return {
     paused: false,
     paused_until: 0,
@@ -52,11 +50,20 @@ function policy(
     ratio_target_model: '',
     trigger_ratio: '',
     frames_target_model: '',
+    // 规则六（短时长分流）：默认开关开启、目标为空（未配置）、阈值 10 秒。
+    short_link_enabled: true,
+    short_target_model: '',
+    short_trigger_seconds: 10,
     seconds_rule_ratio_gate: '',
     seconds_rule_ratio_gate_default: '9:16',
     updated_at: 0,
     doubao_link_off: false,
     doubao_link_off_until: 0,
+    // 接单上限（2026-11-13 老板定）：默认 0 = 不限，剩余 0，关闭原因为空。
+    doubao_link_max_tasks: 0,
+    doubao_link_accepted_tasks: 0,
+    doubao_link_remaining: 0,
+    doubao_link_off_reason: '',
     ...overrides,
   }
 }
@@ -136,7 +143,10 @@ describe('buildDoubaoLinkView', () => {
 
   test('关闭优先于探针标记：先看开关，再看额度', () => {
     const view = buildDoubaoLinkView(
-      policy({ doubao_link_off: true, doubao_link_off_until_text: '2026-11-12 02:00:00' }),
+      policy({
+        doubao_link_off: true,
+        doubao_link_off_until_text: '2026-11-12 02:00:00',
+      }),
       failover({ failover_unavailable: true })
     )
     assert.equal(view.on, false)
@@ -167,7 +177,11 @@ describe('可选比例条件勾选', () => {
     const view = buildDoubaoLinkView(policy(), failover())
 
     assert.equal(view.ratioGateOn, false)
-    assert.equal(view.ratioGateValue, '9:16', '未勾选时也给默认值，运营知道勾上会要求什么')
+    assert.equal(
+      view.ratioGateValue,
+      '9:16',
+      '未勾选时也给默认值，运营知道勾上会要求什么'
+    )
   })
 
   // 默认比例的**唯一事实源是后端**：前端不硬编码，改默认值不用改两处。

@@ -57,6 +57,40 @@ export type DoubaoLinkView = {
   ratioGateOn: boolean
   /** 勾选框标签里显示的比例；未勾选时给默认值，让运营知道勾上会要求什么。 */
   ratioGateValue: string
+
+  // ─────────────────── 豆包链路接单上限（2026-11-13） ───────────────────
+
+  /**
+   * 「最多接多少单」是否已配置。
+   *
+   * 上限 0 = 不限（默认状态）。前端据此决定**要不要显示限额控件** ——
+   * 不限时显示一个空输入框，运营会以为「限额默认是 0（不接单）」。
+   */
+  limitConfigured: boolean
+  /** 上限值。0 = 不限。 */
+  maxTasks: number
+  /** 本轮已受理多少单。 */
+  acceptedTasks: number
+  /** 还能接几单。0 = 不限。 */
+  remaining: number
+  /** 链路当前是否还在接单。false = 已关闭（人工关或接满）。 */
+  accepting: boolean
+  /** 是否已接满上限。 */
+  limitReached: boolean
+  /**
+   * 关闭原因：'manual'（人工关，有自动恢复时间）/ 'limit'（接满，等人再打开）/ ''（没关）。
+   *
+   * 两者对应的下一步动作完全不同：人工关 = 「等凌晨 2 点」，
+   * 接满 = 「再给我一批额度」。混在一起运营会误判。
+   */
+  offReason: '' | 'manual' | 'limit'
+  /**
+   * 关闭后是否有自动恢复时间。
+   *
+   * 只有人工关闭有。限额关闭**没有** —— 额度是运营手动给的，
+   * 视图说成「会自动恢复」就是在骗运营。
+   */
+  hasAutoRecover: boolean
 }
 
 /**
@@ -76,8 +110,7 @@ function ratioGateState(
   const value = (policy.seconds_rule_ratio_gate ?? '').trim()
   return {
     ratioGateOn: value.length > 0,
-    ratioGateValue:
-      value || policy.seconds_rule_ratio_gate_default || '9:16',
+    ratioGateValue: value || policy.seconds_rule_ratio_gate_default || '9:16',
   }
 }
 
@@ -92,6 +125,34 @@ function sourceList(policy: VideoRoutePolicy): string {
   return policy.source_model
 }
 
+/**
+ * 从策略派生「接单上限」相关状态。
+ *
+ * 数值全部取自后端下发（policy 里的三个字段），前端**不做算术** ——
+ * 「剩余 = 上限 - 已接」在前端算就多了一份真相源，后端改口径时前端会跟着错。
+ */
+function limitState(
+  policy: VideoRoutePolicy
+): Pick<
+  DoubaoLinkView,
+  | 'limitConfigured'
+  | 'maxTasks'
+  | 'acceptedTasks'
+  | 'remaining'
+  | 'limitReached'
+> {
+  const maxTasks = Math.max(0, policy.doubao_link_max_tasks ?? 0)
+  const acceptedTasks = Math.max(0, policy.doubao_link_accepted_tasks ?? 0)
+  const remaining = Math.max(0, policy.doubao_link_remaining ?? 0)
+  return {
+    limitConfigured: maxTasks > 0,
+    maxTasks,
+    acceptedTasks,
+    remaining,
+    limitReached: policy.doubao_link_off_reason === 'limit',
+  }
+}
+
 export function buildDoubaoLinkView(
   policy: VideoRoutePolicy,
   failover: VideoRouteFailoverState | null
@@ -100,6 +161,10 @@ export function buildDoubaoLinkView(
   const sources = sourceList(policy)
   // 备胎链路配置齐全（failover_configured = 源+目标都在）才谈得上"关闭后改派备胎"。
   const fallbackReady = Boolean(failover?.failover_configured)
+  const limit = limitState(policy)
+  const offReason = policy.doubao_link_off_reason ?? ''
+  // 有自动恢复时间 = 人工关闭。限额关闭没有恢复时间，必须等人再打开。
+  const hasAutoRecover = offReason === 'manual'
 
   // 关闭态优先：开关是运营的主动意图，先于任何自动判断展示。
   if (policy.doubao_link_off) {
@@ -120,12 +185,20 @@ export function buildDoubaoLinkView(
       quotaDown: false,
       fallbackReady,
       ...ratioGateState(policy),
+      ...limit,
+      accepting: false,
+      offReason,
+      hasAutoRecover,
     }
   }
 
   // 开着但源链路不可用（额度探针标记等）：降级展示，不误导成「关着」——
   // 开关反映的是人工意图，额度状态由自动标记另行表达。
-  if (failover && failover.failover_configured && failover.failover_unavailable) {
+  if (
+    failover &&
+    failover.failover_configured &&
+    failover.failover_unavailable
+  ) {
     return {
       on: true,
       tone: 'degraded',
@@ -138,6 +211,10 @@ export function buildDoubaoLinkView(
       quotaDown: true,
       fallbackReady,
       ...ratioGateState(policy),
+      ...limit,
+      accepting: true,
+      offReason,
+      hasAutoRecover,
     }
   }
 
@@ -155,5 +232,9 @@ export function buildDoubaoLinkView(
     quotaDown: false,
     fallbackReady,
     ...ratioGateState(policy),
+    ...limit,
+    accepting: true,
+    offReason,
+    hasAutoRecover,
   }
 }

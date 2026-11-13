@@ -125,6 +125,19 @@ func SetApiRouter(router *gin.Engine) {
 			// 到下一个北京时间凌晨 2 点自动恢复。
 			videoRouteAdmin.POST("/policy/doubao-link", controller.SetDoubaoLinkAdmin)
 
+			// 规则六（短时长分流）链路开关：一个开关 = 心笔内链通不通 ——
+			// 打开：≤阈值（默认 10 秒）的短请求改派 wan3.0-720p-特惠-内链；
+			// 关闭：规则六对所有源模型停用，短请求走原链路。
+			// 与豆包开关的差异：心笔没有按天重置的额度，纯手动开关，
+			// 无自动恢复时间、无接单计数、不强制故障转移。
+			videoRouteAdmin.POST("/policy/short-link", controller.SetShortLinkAdmin)
+
+			// 豆包链路的「最多接单数」（2026-11-13 老板定）：
+			// 豆包链路上游给的是运营自己掌握的一小批额度，设成 3 就是
+			// 「这批只接 3 单，接满自动关闭，我手动再打开时又来 3 单」。
+			// 设置上限会把接单计数清零（= 给一批新额度）。
+			videoRouteAdmin.POST("/policy/doubao-link-max-tasks", controller.SetDoubaoLinkMaxTasksAdmin)
+
 			// 规则一的可选比例条件（后台勾选）：勾上 = 只有指定比例的请求
 			// 才改派目标链路；取消 = 不限比例。与豆包链路开关是两个独立动作，
 			// 前者决定「哪些请求有资格」，后者决定「这条路通不通」。

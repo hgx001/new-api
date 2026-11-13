@@ -266,6 +266,87 @@ type doubaoLinkSwitchRequest struct {
 	Enabled *bool `json:"enabled"`
 }
 
+// doubaoLinkMaxTasksRequest 是「豆包链路接单上限」的请求体。
+type doubaoLinkMaxTasksRequest struct {
+	// MaxTasks 最多接多少单。0 = 不限。
+	//
+	// 用指针收：不传（nil）必须报错 —— 默认成 0 相当于「悄悄取消限额」，
+	// 运营以为设了 3、实际不限量。
+	MaxTasks *int `json:"max_tasks"`
+}
+
+// SetDoubaoLinkMaxTasksAdmin 设置「豆包链路最多接多少单」。
+//
+// 语义（2026-11-13 老板定）：豆包链路上游给的是运营自己掌握的一小批额度，
+// 运营说「这批只接 3 单」→ 豆包链路接满 3 单自动关闭（后续请求落备胎班车），
+// 运营手动再打开时又来 3 单。
+//
+// ⚠️ **设置上限会把接单计数清零**：运营「设成 3」= 「给一批新的 3 单额度」。
+// 不清零的话，上一轮已接 3 单、重新设成 3 单后剩余是 0 —— 一单都接不到，
+// 运营会以为设置没生效。
+//
+// 上限 0 = 不限：链路必须恢复接单（不能停在「已关闭」态）。
+func SetDoubaoLinkMaxTasksAdmin(c *gin.Context) {
+	setDoubaoLinkMaxTasksAdmin(c, saveRoutePolicy, recordManageAudit)
+}
+
+// setDoubaoLinkMaxTasksAdmin 是唯一实现。
+//
+// save / audit 显式注入而不是写死：审计日志要落库，controller 单测环境
+// 没有 DB，写死就只能测到「panic」而不是「校验失败返回 400」。
+// 与 setSecondsRuleRatioGateAdmin 同口径。
+func setDoubaoLinkMaxTasksAdmin(
+	c *gin.Context,
+	save func(seedanceroute_setting.Policy) error,
+	audit func(*gin.Context, string, map[string]interface{}),
+) {
+	var req doubaoLinkMaxTasksRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+	if req.MaxTasks == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "max_tasks is required",
+		})
+		return
+	}
+	if *req.MaxTasks < 0 {
+		// 负数会让「剩余 = 上限 - 已接」算成比上限还多，运营会以为额度变多了。
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "max_tasks must not be negative",
+		})
+		return
+	}
+
+	policy := seedanceroute_setting.WithDoubaoLinkMaxTasks(*req.MaxTasks)
+	// 新一批额度：计数归零。
+	policy.DoubaoLinkAcceptedTasks = 0
+	// 上一轮若是「限额已满」而链路处于关闭态，新额度给了必须能接单。
+	//
+	// ⚠️ 但**不清**人工关闭的截止时间：人工关闭是独立意图（今天不接豆包了），
+	// 不该被「改上限」顺带解除。限额满员导致的关闭则由计数归零自然解除
+	// （doubaoLinkOff 的判定是「计数 >= 上限」，计数归零即不再满）。
+	if err := save(policy); err != nil {
+		common.SysLog("update doubao link max tasks failed: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to save route policy",
+		})
+		return
+	}
+
+	audit(c, "video_route.doubao_link_max_tasks", map[string]interface{}{
+		"max_tasks": *req.MaxTasks,
+	})
+	common.ApiSuccess(c, doubaoRouteAdminState())
+}
+
 // SetDoubaoLinkAdmin 切换豆包链路开关 —— 运营唯一的豆包开关（一个开关 = 豆包通不通）。
 //
 //   - 关闭：规则一对所有源模型停用（特惠/活动留在常驻链路）+ 故障转移强制生效
@@ -304,6 +385,57 @@ func SetDoubaoLinkAdmin(c *gin.Context) {
 	recordManageAudit(c, "video_route.doubao_link_switch", map[string]interface{}{
 		"enabled":               *req.Enabled,
 		"doubao_link_off_until": policy.DoubaoLinkOffUntil,
+	})
+	common.ApiSuccess(c, doubaoRouteAdminState())
+}
+
+// shortLinkSwitchRequest 是规则六（短时长分流）链路开关的请求体。
+type shortLinkSwitchRequest struct {
+	// Enabled true = 短请求路由到心笔内链；false = 不路由，走原链路。
+	//
+	// 用指针收：不传（nil）必须报错，不能默认成 false —— 少写一个字段
+	// 会把心笔分流静默关掉（与 doubaoLinkSwitchRequest 同款理由）。
+	Enabled *bool `json:"enabled"`
+}
+
+// SetShortLinkAdmin 切换规则六（短时长分流）的全局链路开关 ——
+// 与豆包链路开关同款语义：一个开关 = 心笔内链通不通。
+//
+//   - 开启：≤阈值（short_trigger_seconds，默认 10 秒）的短请求改派到
+//     short_target_model（wan3.0-720p-特惠-内链）；
+//   - 关闭：规则六对所有源模型停用，短请求走原链路（源模型自己的常驻渠道）。
+//
+// 与豆包开关的差异：心笔内链没有按天重置的日额度，所以没有自动恢复时间、
+// 没有接单计数、不强制故障转移 —— 纯手动开关，开了就恢复、关了就停。
+func SetShortLinkAdmin(c *gin.Context) {
+	var req shortLinkSwitchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "enabled is required",
+		})
+		return
+	}
+
+	policy := seedanceroute_setting.WithShortLinkEnabled(*req.Enabled)
+	if err := saveRoutePolicy(policy); err != nil {
+		common.SysLog("update short link switch failed: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to save route policy",
+		})
+		return
+	}
+
+	recordManageAudit(c, "video_route.short_link_switch", map[string]interface{}{
+		"enabled": *req.Enabled,
 	})
 	common.ApiSuccess(c, doubaoRouteAdminState())
 }
@@ -351,6 +483,11 @@ func doubaoRouteAdminState() gin.H {
 	state["ratio_target_model"] = policy.RatioTargetModel
 	state["trigger_ratio"] = policy.TriggerRatio
 	state["frames_target_model"] = policy.FramesTargetModel
+	// 规则六（短时长分流）的全局链路开关：与豆包链路开关同款展示口径，
+	// 运营要能读出「开/关」「改派到谁」「阈值几秒」。
+	state["short_link_enabled"] = seedanceroute_setting.IsShortLinkEnabled()
+	state["short_target_model"] = policy.ShortTargetModel
+	state["short_trigger_seconds"] = policy.ShortTriggerSecondsOrDefault()
 	// 按源模型的改派开关：运营要知道「现在哪个模型被单独关掉了」。
 	// 只给公共 target_model 不够 —— 两个源模型的目标可以不同。
 	state["source_switches"] = seedanceroute_setting.SourceSwitchStates()
@@ -358,11 +495,28 @@ func doubaoRouteAdminState() gin.H {
 	off := seedanceroute_setting.IsDoubaoLinkOff()
 	state["doubao_link_off"] = off
 	state["doubao_link_off_until"] = policy.DoubaoLinkOffUntil
-	// 文案只在关闭期间返回（前端契约「仅关闭时返回」）：到期自动恢复只做时间
-	// 比较、不会清零 until，过点后若还返回"关到几点"就是自相矛盾的状态。
-	if off {
+	// 关闭原因：区分「人工关（有自动恢复时间）」与「限额满（要等人再打开）」。
+	offReason := seedanceroute_setting.DoubaoLinkOffReason()
+	state["doubao_link_off_reason"] = offReason
+	// 恢复文案只属于**人工关闭**。
+	//
+	// ⚠️ 限额关闭（接满 N 单）**不能**带这个文案：那批额度发完了，要等人手动再发，
+	// 没有「到点自动恢复」。挂上 1970 年的until 会让运营以为「早就该恢复了」。
+	//
+	// 用 off_reason 判断而不是自己再推一遍 —— 原因与文案必须同源，
+	// 两处各判一次迟早会漂（前一轮就漂过一次）。
+	if offReason == seedanceroute_setting.DoubaoLinkOffReasonManual {
 		state["doubao_link_off_until_text"] = time.Unix(policy.DoubaoLinkOffUntil, 0).In(beijingZone).Format("2006-01-02 15:04:05")
 	}
+	// 接单上限（2026-11-13 老板定）：运营要能读出「这批额度还剩几单」。
+	//
+	// 三个数一起给：上限、已接、剩余。少任何一个，运营都得自己做减法 ——
+	// 而「剩余」正是决定「要不要再给一批」的唯一依据。
+	state["doubao_link_max_tasks"] = seedanceroute_setting.DoubaoLinkMaxTasks()
+	state["doubao_link_accepted_tasks"] = seedanceroute_setting.DoubaoLinkAcceptedTasks()
+	state["doubao_link_remaining"] = seedanceroute_setting.DoubaoLinkRemaining()
+	// 关闭原因：区分「人工关（有自动恢复时间）」与「限额满（要等人再打开）」。
+	state["doubao_link_off_reason"] = seedanceroute_setting.DoubaoLinkOffReason()
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }

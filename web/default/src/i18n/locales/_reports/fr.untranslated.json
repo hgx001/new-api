@@ -3,5 +3,12 @@
   "Routing paused until the selected time": "Routing paused until the selected time",
   "Failed to update routing policy": "Failed to update routing policy",
   "Please pick a valid deadline": "Please pick a valid deadline",
-  "Deadline must be in the future": "Deadline must be in the future"
+  "Deadline must be in the future": "Deadline must be in the future",
+  "Only route {{ratio}} requests to the reroute target": "Only route {{ratio}} requests to the reroute target",
+  "When checked, only requests specifying {{ratio}} are rerouted; unchecked reroutes every request over the duration threshold.": "When checked, only requests specifying {{ratio}} are rerouted; unchecked reroutes every request over the duration threshold.",
+  "Requests up to {{seconds}}s route to {{target}}; switch off to keep them on the source chain": "Requests up to {{seconds}}s route to {{target}}; switch off to keep them on the source chain",
+  "Short requests (up to {{seconds}}s) stay on the source chain; turn on to reroute them to {{target}}": "Short requests (up to {{seconds}}s) stay on the source chain; turn on to reroute them to {{target}}",
+  "Set a quota for the doubao link: it closes itself after accepting this many tasks. Reopening the switch gives you a fresh batch. Leave empty for no limit.": "Set a quota for the doubao link: it closes itself after accepting this many tasks. Reopening the switch gives you a fresh batch. Leave empty for no limit.",
+  "Enter a non-negative integer, or leave it empty for no limit": "Enter a non-negative integer, or leave it empty for no limit",
+  "Task limit reached: this link stopped accepting tasks. Raise the limit or reopen the switch to accept more.": "Task limit reached: this link stopped accepting tasks. Raise the limit or reopen the switch to accept more."
 }

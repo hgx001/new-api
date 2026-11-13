@@ -627,6 +627,19 @@ func RelayTask(c *gin.Context) {
 				model.TaskLogStageSubmit, model.TaskLogLevelInfo,
 				"task submitted", buildTaskSubmitSnapshot(c, relayInfo, result.Quota))
 		}
+
+		// 豆包链路接单计数（2026-11-13 老板定）。
+		//
+		// 打在**受理成功之后**：任务已经落库 = 上游真接下了这一单 = 额度真被消耗。
+		// 打在请求进来时会把校验失败、渠道不可用、被上游拒绝的请求也算进去，
+		// 额度白扣，运营看到「才接 2 单就关了」却找不到是哪两单。
+		//
+		// 判据用 relayInfo.OriginModelName（= **实际执行**的模型）：
+		// 改派到豆包的请求，客户买的是 seedance2.5-特惠，实际跑的是 seedance-2-5 ——
+		// 只有按实际执行的模型判定，才知道这一单是否消耗了豆包额度。
+		//
+		// ⚠️ 未配上限时这一步是零开销（不计数、不写库），见 service 层的早退。
+		service.ObserveDoubaoLinkAccepted(relayInfo.OriginModelName)
 	}
 
 	if taskErr != nil {

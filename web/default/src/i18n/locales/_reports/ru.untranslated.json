@@ -28,5 +28,19 @@
   "Off until {{time}}, then back on automatically": "Off until {{time}}, then back on automatically",
   "Off until you turn it back on": "Off until you turn it back on",
   "Auto-paused: {{reason}}. Back on at {{time}}": "Auto-paused: {{reason}}. Back on at {{time}}",
-  "Auto-paused: {{reason}}": "Auto-paused: {{reason}}"
+  "Auto-paused: {{reason}}": "Auto-paused: {{reason}}",
+  "Only route {{ratio}} requests to the reroute target": "Only route {{ratio}} requests to the reroute target",
+  "When checked, only requests specifying {{ratio}} are rerouted; unchecked reroutes every request over the duration threshold.": "When checked, only requests specifying {{ratio}} are rerouted; unchecked reroutes every request over the duration threshold.",
+  "Ratio condition enabled": "Ratio condition enabled",
+  "Ratio condition disabled": "Ratio condition disabled",
+  "Short-duration split link": "Short-duration split link",
+  "Requests up to {{seconds}}s route to {{target}}; switch off to keep them on the source chain": "Requests up to {{seconds}}s route to {{target}}; switch off to keep them on the source chain",
+  "Short requests (up to {{seconds}}s) stay on the source chain; turn on to reroute them to {{target}}": "Short requests (up to {{seconds}}s) stay on the source chain; turn on to reroute them to {{target}}",
+  "Max tasks accepted from this link": "Max tasks accepted from this link",
+  "Set a quota for the doubao link: it closes itself after accepting this many tasks. Reopening the switch gives you a fresh batch. Leave empty for no limit.": "Set a quota for the doubao link: it closes itself after accepting this many tasks. Reopening the switch gives you a fresh batch. Leave empty for no limit.",
+  "Doubao link task limit saved": "Doubao link task limit saved",
+  "Enter a non-negative integer, or leave it empty for no limit": "Enter a non-negative integer, or leave it empty for no limit",
+  "No limit": "No limit",
+  "Accepted {{accepted}}/{{max}} tasks, {{remaining}} left": "Accepted {{accepted}}/{{max}} tasks, {{remaining}} left",
+  "Task limit reached: this link stopped accepting tasks. Raise the limit or reopen the switch to accept more.": "Task limit reached: this link stopped accepting tasks. Raise the limit or reopen the switch to accept more."
 }

@@ -55,6 +55,16 @@ export type VideoRoutePolicy = {
   trigger_ratio: string
   frames_target_model: string
   /**
+   * 规则六（短时长分流 → 心笔内链）的全局链路开关。
+   * true = 短请求改派 short_target_model；false = 不路由，走原链路。
+   * 与豆包链路开关同款语义，但没有自动恢复时间（心笔没有日额度）。
+   */
+  short_link_enabled: boolean
+  /** 规则六的目标模型（心笔内链）。空 = 规则六未配置。 */
+  short_target_model: string
+  /** 规则六的时长阈值（秒），≤ 该值命中。 */
+  short_trigger_seconds: number
+  /**
    * 规则一的可选比例条件（后台勾选）。
    * 非空 = 只有该比例的请求才改派目标链路；空 = 不限比例。
    * 与 `trigger_ratio`（规则二自己的触发比例）是两个独立字段。
@@ -74,6 +84,21 @@ export type VideoRoutePolicy = {
   doubao_link_off_until: number
   /** 自动恢复时间文案（北京时间，仅关闭时返回）。 */
   doubao_link_off_until_text?: string
+  /**
+   * 「最多接多少单」。0 = 不限（默认状态）。
+   *
+   * 豆包链路上游给的是运营自己掌握的一小批额度：设成 3 就是
+   * 「这批只接 3 单，接满自动关闭，我手动再打开时又来 3 单」。
+   */
+  doubao_link_max_tasks: number
+  /** 本轮已受理多少单。手动重新打开时归零。 */
+  doubao_link_accepted_tasks: number
+  /** 还能接几单。0 = 不限。由后端算，前端不做减法。 */
+  doubao_link_remaining: number
+  /**
+   * 关闭原因：'manual'（人工关，有自动恢复时间）/ 'limit'（接满，等人再打开）/ ''。
+   */
+  doubao_link_off_reason: '' | 'manual' | 'limit'
 }
 
 /**
@@ -155,6 +180,40 @@ export async function setDoubaoLinkEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/doubao-link', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 设置「豆包链路最多接多少单」。
+ *
+ * 0 = 不限（默认状态）。正数 = 这一轮总共接多少单，接满后豆包链路自动关闭，
+ * 后续请求落备胎班车。
+ *
+ * ⚠️ 设置上限会把接单计数**清零**：这是「给一批新的 N 单额度」的意思。
+ * 运营手动重新打开开关时同样归零 —— 那也是「我给了一批新额度」。
+ */
+export async function setDoubaoLinkMaxTasks(
+  maxTasks: number
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/doubao-link-max-tasks', {
+    max_tasks: maxTasks,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换规则六（短时长分流）的全局链路开关 —— 与豆包链路开关同款语义。
+ *
+ * 打开：≤阈值（默认 10 秒）的短请求改派到心笔内链（480P 生成 + 超分 720P）；
+ * 关闭：规则六对所有源模型停用，短请求走原链路。
+ * 纯手动开关：心笔没有按天重置的额度，无自动恢复时间。
+ */
+export async function setShortLinkEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/short-link', {
     enabled,
   })
   return res.data.data
