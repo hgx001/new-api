@@ -1324,7 +1324,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = taskcommon.ProgressComplete
-		taskResult.Reason = reasonCancelled
+		// 2026-11-13：管理员手动取消时填了失败说明 → ArcReel 把它放进
+		// user_message，get_job 以 "error" 返回，这里优先透传给客户；
+		// 上游没给说明（老 Worker / 未填写）时仍回落「任务已取消」。
+		taskResult.Reason = firstNonEmpty(res.Error, reasonCancelled)
 	default:
 		// "unknown" 及无法识别的状态
 		taskResult.Status = model.TaskStatusUnknown
@@ -1398,7 +1401,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		}
 	case "cancelled":
 		openAIResp.Status = dto.VideoStatusFailed
-		openAIResp.Error = &dto.OpenAIVideoError{Code: "cancelled", Message: reasonCancelled}
+		// 与 ParseTaskResult 同口径：有管理员填写的失败说明就原样交给客户，
+		// 没有则回落「任务已取消」（默认行为零变化）。
+		openAIResp.Error = &dto.OpenAIVideoError{Code: "cancelled", Message: firstNonEmpty(res.Error, reasonCancelled)}
 	case "queued":
 		openAIResp.Status = dto.VideoStatusQueued
 	case "assigned", "accepted", "submitting", "provider_running", "provider_succeeded", "url_validating":
