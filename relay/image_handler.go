@@ -33,6 +33,12 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		return types.NewError(fmt.Errorf("failed to copy request to ImageRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
 
+	// h3-image 两档计费（2026-11-13）：命中 4K 档时把 "4k" 归一化成
+	// "4096x4096"，否则 GPU 网关会静默退回 2048x2048，出现「付 4K 的钱拿 2K 的图」。
+	// 必须在 ModelMappedHelper 之前判断：之后 request.Model 会被改写成上游兼容 id。
+	normalizedSize, h3Image4K := prepareH3ImageSize(request.Model, request.Size)
+	request.Size = normalizedSize
+
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
@@ -46,7 +52,10 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	var requestBody io.Reader
 
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	// pass-through 会把客户端原始 body 原样转发，绕过上面的 size 归一化。
+	// 命中 h3-image 4K 档时强制走转换路径，保证「扣多少、出多大」一致。
+	passthroughEnabled := model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled
+	if passthroughEnabled && !h3Image4K {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -132,6 +141,9 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 			info.PriceData.AddOtherRatio("n", float64(imageN))
 		}
 	}
+
+	// 4K 档的 2 倍倍率叠加在基础价 ¥0.05 上（与 n 倍率相乘）。
+	applyH3Image4KBilling(info, h3Image4K)
 
 	if usage.(*dto.Usage).TotalTokens == 0 {
 		usage.(*dto.Usage).TotalTokens = 1
