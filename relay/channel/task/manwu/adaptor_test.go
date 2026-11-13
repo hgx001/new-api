@@ -536,10 +536,16 @@ func TestParseTaskResultStatusMapping(t *testing.T) {
 	assert.Equal(t, model.TaskStatusFailure, unavailable.Status)
 	assert.Equal(t, reasonOutputUnavailable, unavailable.Reason)
 
+	// 管理员手动取消时填了失败说明 → 透传上游 error，不再写死「任务已取消」。
 	cancelled, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"cancelled","error":"用户取消"}`))
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusFailure, cancelled.Status)
-	assert.Equal(t, reasonCancelled, cancelled.Reason)
+	assert.Equal(t, "用户取消", cancelled.Reason)
+
+	// 默认零变化：上游没给说明时仍回落「任务已取消」。
+	cancelledNoReason, err := a.ParseTaskResult([]byte(`{"jobId":"job-1","status":"cancelled"}`))
+	require.NoError(t, err)
+	assert.Equal(t, reasonCancelled, cancelledNoReason.Reason)
 
 	for _, state := range []string{"unknown", "some_future_state", ""} {
 		res, err := a.ParseTaskResult([]byte(fmt.Sprintf(`{"jobId":"job-1","status":%q}`, state)))
@@ -1652,6 +1658,42 @@ func TestConvertToOpenAIVideoKeepsDiagnosticsOutOfResponse(t *testing.T) {
 	assert.Equal(t, "failed", errObj["code"])
 	// 官网原话原样回传（用户明确要求）。
 	assert.Equal(t, "抱歉，由于模型可能带来准确性问题，我无法为你生成相应内容。", errObj["message"])
+}
+
+// 手动取消填了失败说明 → OpenAI video 查询响应把这句原样交给客户；
+// 没填说明时行为零变化，仍是「任务已取消」（2026-11-13）。
+func TestConvertToOpenAIVideoCancelledSurfacesAdminReason(t *testing.T) {
+	a := &TaskAdaptor{}
+
+	task := &model.Task{
+		TaskID:     "task_cancel_with_reason",
+		Progress:   "100%",
+		Properties: model.Properties{OriginModelName: ModelDola},
+		Data:       []byte(`{"jobId":"gen-1","status":"cancelled","error":"素材涉及版权，无法生成"}`),
+	}
+	raw, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var ov map[string]any
+	require.NoError(t, json.Unmarshal(raw, &ov))
+	assert.Equal(t, "failed", ov["status"])
+	errObj, ok := ov["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "cancelled", errObj["code"])
+	assert.Equal(t, "素材涉及版权，无法生成", errObj["message"])
+
+	// 默认零变化：上游没给说明时仍是「任务已取消」。
+	noReasonTask := &model.Task{
+		TaskID:     "task_cancel_no_reason",
+		Progress:   "100%",
+		Properties: model.Properties{OriginModelName: ModelDola},
+		Data:       []byte(`{"jobId":"gen-2","status":"cancelled"}`),
+	}
+	rawNoReason, err := a.ConvertToOpenAIVideo(noReasonTask)
+	require.NoError(t, err)
+	var ovNoReason map[string]any
+	require.NoError(t, json.Unmarshal(rawNoReason, &ovNoReason))
+	assert.Equal(t, reasonCancelled, ovNoReason["error"].(map[string]any)["message"])
 }
 
 // 上游没给原因时，兜底必须是中性文案：不能再用「内容审核不通过」谎报归因
