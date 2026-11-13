@@ -174,7 +174,7 @@ func TestWan3TehuiXinbiRoute_KeepsUnsupportedRequestsOnWan3(t *testing.T) {
 	}
 }
 
-// 比例与参考图要按心笔契约重写：ratio 进 metadata，图进 reference_images。
+// 比例与参考图要按心笔契约重写：ratio 进 metadata，图进顶层 images。
 func TestWan3TehuiXinbiRoute_RewritesRatioAndImages(t *testing.T) {
 	rec := runTehuiXinbi(t, `{"model":"`+tehuiModel+`","prompt":"x","seconds":"5",`+
 		`"metadata":{"ratio":"9:16","media":[{"type":"reference_image","url":"https://a.example/1.png"}]}}`)
@@ -185,8 +185,8 @@ func TestWan3TehuiXinbiRoute_RewritesRatioAndImages(t *testing.T) {
 	assert.Equal(t, "9:16", metadata["ratio"])
 	assert.NotContains(t, metadata, "media", "metadata.media 必须丢掉，心笔不认这个字段")
 
-	images, ok := body["reference_images"].([]interface{})
-	require.True(t, ok, "参考图必须收到顶层 reference_images")
+	images, ok := body["images"].([]interface{})
+	require.True(t, ok, "参考图必须收到顶层 images（reference_images 会被 TaskSubmitReq 静默丢弃）")
 	require.Len(t, images, 1)
 	assert.Equal(t, "https://a.example/1.png", images[0])
 }

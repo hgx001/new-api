@@ -1492,8 +1492,8 @@ func TestRatioRuleRoutesToXinbiTehuiTarget(t *testing.T) {
 	metadata, ok := out["metadata"].(map[string]interface{})
 	require.True(t, ok, "心笔只认 metadata.ratio")
 	assert.Equal(t, "9:16", metadata["ratio"])
-	images, ok := out["reference_images"].([]interface{})
-	require.True(t, ok, "参考图必须落到顶层 reference_images[]")
+	images, ok := out["images"].([]interface{})
+	require.True(t, ok, "参考图必须落到顶层 images[]（TaskSubmitReq 能解析；reference_images 会被静默丢弃）")
 	assert.Equal(t, []interface{}{"https://example.com/a.png"}, images)
 	_, hasMedia := out["media"]
 	assert.False(t, hasMedia, "顶层 media 必须摘掉，否则参考图会被重复投递")

@@ -663,16 +663,17 @@ const xinbiMaxReferenceImages = 10
 // rewriteBodyForXinbiPerCall 组装改派到心笔按次链路的请求体。
 //
 // 与豆包规则的差别：心笔兼容口**认** metadata{resolution,ratio} 与
-// duration，参考图认**顶层** reference_images[]（snake_case）。
+// duration，参考图认**顶层** images[]。
 //
-// 关键：参考图必须落到顶层 reference_images，不能留在 metadata.media ——
-// 心笔的 collectReferenceImages 只读顶层 image/images/media[image]/input_reference，
-// 留在 metadata.media 会被**静默丢弃**（客户要的图根本没进去，任务照跑照扣费）。
+// ⚠️ 参考图必须写顶层 `images`，不能写上游 API 的 `reference_images`（2026-11-13
+// 生产事故）：改写产物要先过 relay/common.TaskSubmitReq 解码，该结构没有
+// reference_images 字段、自定义 UnmarshalJSON 也不处理 —— Go json 会把这个
+// 字段静默丢弃，adaptor 一个图都收不到，上游建单 inputFiles 为空、任务照跑
+// 照扣费、成片没有参考图。TaskSubmitReq 能解析且 xinbi adaptor 无条件收集的
+// 顶层位置是 `images`（req.Images，data URI 与 https 直链都收）。
 //
-// 为什么不在这里显式写 resolution=720P：心笔 adaptor 内部固定
-// generationResolution=480P 生成 + 交付前提升到 720P，并且对外只接受 720P
-// （客户端传别的档位它自己会 400）。这里写死 720P 反而多余 —— 客户端没传时
-// 上游用 480P 生成即可，客户端传了 720P 时 adaptor 会正常透传。
+// 顶层 media / metadata.media 同理必须摘掉：xinbi adaptor 对 req.Media 与
+// metadata 里的素材是**并行收集**，图已抬到顶层 images 后再留着就是同图投两次。
 func rewriteBodyForXinbiPerCall(body map[string]interface{}, targetModel string) map[string]interface{} {
 	out := make(map[string]interface{}, len(body)+2)
 	for key, value := range body {
@@ -685,8 +686,9 @@ func rewriteBodyForXinbiPerCall(body map[string]interface{}, targetModel string)
 			// 而 size 在心笔那边是比例语义 —— 留着会被当成比例误读。
 			// 用户明确要 1080P 的已在 prepareXinbiPerCallRoute 里挡掉。
 			continue
-		case "images", "image", "input_reference":
-			// 下面统一收成 reference_images[]，不在顶层留副本。
+		case "images", "image", "input_reference", "reference_images", "media":
+			// 下面统一收成顶层 images[]，不在原位置留副本；
+			// media / reference_images 漏剥会与 images 重复投递。
 			continue
 		case "seed":
 			// 上游不认，已在 prepareXinbiPerCallRoute 里挡掉。
@@ -696,10 +698,10 @@ func rewriteBodyForXinbiPerCall(body map[string]interface{}, targetModel string)
 	}
 	out["model"] = targetModel
 
-	// 参考图：统一收到顶层 reference_images[]。
+	// 参考图：统一收到顶层 images[]（见函数头注释，不能写 reference_images）。
 	images, _ := collectReferenceImages(body, true)
 	if len(images) > 0 {
-		out["reference_images"] = images
+		out["images"] = images
 	}
 
 	// 时长：保留客户请求的秒数（2–30 区间内），没传时落默认 30 秒。

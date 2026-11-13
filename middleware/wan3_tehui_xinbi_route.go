@@ -260,7 +260,16 @@ func bodyInteger(raw interface{}) (int, bool) {
 // rewriteBodyForXinbiPerSecond 按心笔兼容口的契约重写请求体。
 //
 //	接受：model / prompt / duration(seconds) / metadata{ratio}
-//	素材：统一收到顶层 reference_images[]（图片直链）
+//	素材：统一收到顶层 images[]（图片直链或 data URI）
+//
+// ⚠️ 参考图必须写顶层 `images`，**不能**写 `reference_images`（2026-11-13 生产事故）：
+// 心笔上游 API 虽然认 snake_case 的 reference_images，但那是 adaptor → 上游
+// 那一段的事；客户端请求体先要经 relay/common.TaskSubmitReq 解码，而该结构
+// 没有 reference_images 字段、自定义 UnmarshalJSON 也不处理它 —— Go 的
+// json 解码器会把这个字段**静默丢弃**（不报错），adaptor 一个图都收不到，
+// 上游建单 inputFiles 为空、任务照跑照扣费，成片没有任何参考图。
+// TaskSubmitReq 能解析且 xinbi adaptor 会无条件收集的顶层位置是 `images`
+// （req.Images，data URI 直链都收）。
 //
 // 顶层 media / metadata.media 必须删掉：留着会被 adaptor 再收一遍，
 // 同一张参考图投递两次。resolution / size 也删掉 —— 心笔只认 metadata.ratio，
@@ -280,7 +289,7 @@ func rewriteBodyForXinbiPerSecond(body map[string]interface{}, target string, se
 
 	images, _ := collectReferenceImages(body, true)
 	if len(images) > 0 {
-		out["reference_images"] = images
+		out["images"] = images
 	}
 
 	metadata := map[string]interface{}{}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 )
 
@@ -87,7 +88,7 @@ func enableShortAndOtherRules(t *testing.T, secondsTarget string, seconds int, r
 // 短请求必须按心笔兼容口的契约改写：
 //   - model 换成内链
 //   - seconds 落成顶层字符串（心笔只认顶层 seconds）
-//   - 参考图统一收到顶层 reference_images[]
+//   - 参考图统一收到顶层 images[]（TaskSubmitReq 能解析、adaptor 无条件收集）
 //   - media / resolution 必须剥掉（media 留着会被 adaptor 再收一遍，同图投两次）
 //   - 计费秒数按源模型口径记；**没有 size 倍率**（心笔恒交付 720P，复合价一口）
 func TestShortRouteRewritesToXinbiContract(t *testing.T) {
@@ -103,9 +104,9 @@ func TestShortRouteRewritesToXinbiContract(t *testing.T) {
 	if body["seconds"] != "5" {
 		t.Fatalf("心笔只认顶层字符串 seconds，实际 %v (%T)", body["seconds"], body["seconds"])
 	}
-	images, _ := body["reference_images"].([]interface{})
+	images, _ := body["images"].([]interface{})
 	if len(images) != 1 || images[0] != "https://x/a.png" {
-		t.Fatalf("参考图必须收到顶层 reference_images，实际 %v", body["reference_images"])
+		t.Fatalf("参考图必须收到顶层 images，实际 %v", body["images"])
 	}
 	if _, ok := body["media"]; ok {
 		t.Fatalf("顶层 media 必须剥掉，adaptor 会再收一遍导致同图投两次")
@@ -215,9 +216,9 @@ func TestShortRouteAcceptsDataURLInWan3InputMedia(t *testing.T) {
 	if out["model"] != testShortTargetModel {
 		t.Fatalf("metadata.input.media 里的 data URI 参考图不该拦短请求，实际 model=%v", out["model"])
 	}
-	images, _ := out["reference_images"].([]interface{})
+	images, _ := out["images"].([]interface{})
 	if len(images) != 2 || images[0] != "data:image/jpeg;base64,AAAA" || images[1] != "data:image/jpeg;base64,BBBB" {
-		t.Fatalf("data URI 参考图必须原样收到顶层 reference_images，实际 %v", out["reference_images"])
+		t.Fatalf("data URI 参考图必须原样收到顶层 images，实际 %v", out["images"])
 	}
 	metadata, _ := out["metadata"].(map[string]interface{})
 	if len(metadata) > 0 {
@@ -461,5 +462,36 @@ func TestShortRouteBillingSizeRatioKeyIsStable(t *testing.T) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal([]byte(`{"model":"wan3.0-video"}`), &raw); err != nil {
 		t.Fatalf("unexpected: %v", err)
+	}
+}
+
+// 解码层契约回归（2026-11-13 生产事故，task_ZzT4…）：
+// 改写产物把参考图写到顶层 images 的前提是 relay/common.TaskSubmitReq 能解析它。
+// 曾经写顶层 reference_images —— 心笔上游 API 虽然认这个字段名，但客户端请求体
+// 先要经 TaskSubmitReq 解码，该结构没有这个字段、自定义 UnmarshalJSON 也不处理，
+// Go json 静默丢弃 → adaptor 一个图都收不到 → 上游建单 inputFiles 为空，
+// 任务照跑照扣费、成片没有任何参考图（¥0.27 上游成本白烧）。
+// 本测试锁住「改写产物 → TaskSubmitReq 真实解码 → 图必须到达」这一段，
+// 以后任何把参考图挪到 TaskSubmitReq 不认识的位置的改动都会在这里炸。
+func TestShortRouteRewriteSurvivesTaskSubmitReqDecode(t *testing.T) {
+	enableShortRoute(t, testShortTargetModel, 10)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":2,"prompt":"a cat",
+		"metadata":{"input":{"media":[
+			{"type":"reference_image","url":"data:image/jpeg;base64,AAAA"},
+			{"type":"reference_image","url":"data:image/jpeg;base64,BBBB"}]}}}`)
+
+	var req relaycommon.TaskSubmitReq
+	if err := common.Unmarshal([]byte(seen), &req); err != nil {
+		t.Fatalf("改写产物无法按 TaskSubmitReq 解码：%v", err)
+	}
+	if len(req.Images) != 2 || req.Images[0] != "data:image/jpeg;base64,AAAA" || req.Images[1] != "data:image/jpeg;base64,BBBB" {
+		t.Fatalf("参考图在 TaskSubmitReq 解码后丢失（2026-11-13 事故回归），实际 %v", req.Images)
+	}
+	if len(req.Media) != 0 {
+		t.Fatalf("顶层 media 不应残留（xinbi adaptor 对 media 与 images 并行收集，会同图投两次），实际 %v", req.Media)
+	}
+	if req.Prompt != "a cat" || req.Seconds != "2" {
+		t.Fatalf("prompt/seconds 也必须过解码层不丢，实际 prompt=%q seconds=%q", req.Prompt, req.Seconds)
 	}
 }
