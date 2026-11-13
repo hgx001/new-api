@@ -215,6 +215,13 @@ func TaskErrorWrapper(err error, code string, statusCode int) *dto.TaskError {
 // 复用框架既有的 408（超时不重试）语义：上游可能已受理并计费，重试会造成重复提交。
 const SubmitOutcomeUnknownStatusCode = http.StatusRequestTimeout
 
+// ClientClosedRequestStatusCode 是「客户端在响应写出前主动断开」的状态码。
+//
+// 取 nginx 的 499（非标准，但访问日志与上游反代全用这个值表达同一件事）。
+// 不用 5xx 的原因：5xx 在本项目里意味着「上游/渠道有问题」，会触发换渠道重试
+// 并计入渠道错误率（AutoBan）。客户自己挂电话，与渠道健康无关。
+const ClientClosedRequestStatusCode = 499
+
 // IsSubmitOutcomeUnknown 判断一次任务提交失败是否属于「结果未知」：
 //   - 网络超时或请求被中断：请求可能已到达上游，无法确认是否受理；
 //   - 上游明确要求先对账（有赞 WAN3_SUBMISSION_RECONCILIATION_REQUIRED 等）。

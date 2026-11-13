@@ -2,6 +2,7 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -235,27 +236,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
-		// 适配器可能已经给出「请求不合法」的**本端**错误（能力越界、入参非法）。
-		// 直接降级成 500 build_request_failed 有两个坏后果：① 归咎渠道，500 会
-		// 触发重试与 AutoBan，一个用户传错参数就能把渠道打掉；② 客户端拿到
-		// 「服务端错误」而不是可读的原因。所以 taskcommon.UserError 转成 400 透传。
-		var userErr *taskcommon.UserError
-		if errors.As(err, &userErr) {
-			return nil, service.TaskErrorWrapperLocal(userErr.Err, userErr.Code, http.StatusBadRequest)
-		}
-		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+		return nil, buildRequestErrorToTaskError(c, err)
 	}
 
 	// 9. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		// 提交超时/请求中断属于「结果未知」：上游可能已受理，重试会重复提交计费，
-		// 用 408 告诉重试策略不要换渠道重发。
-		statusCode := http.StatusInternalServerError
-		if service.IsSubmitOutcomeUnknown(err, err.Error()) {
-			statusCode = service.SubmitOutcomeUnknownStatusCode
-		}
-		return nil, service.TaskErrorWrapper(err, "do_request_failed", statusCode)
+		return nil, doRequestErrorToTaskError(c, err)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
@@ -293,6 +280,57 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+// buildRequestErrorToTaskError 把「构建请求体」阶段的失败翻译成下游错误。
+//
+// 三种情形必须分开，因为重试与渠道健康判定都读这同一个结构：
+//   - UserError（能力越界、入参非法、参考图不合格）：400 + LocalError。
+//     直接降级成 500 有两个坏后果：① 归咎渠道，500 会触发重试与 AutoBan，
+//     一个用户传错参数就能把渠道打掉；② 客户端拿到「服务端错误」而不是可读原因。
+//   - 客户端断开（context.Canceled / taskcommon.ErrClientDisconnected）：
+//     499 + LocalError。2026-11-13 threeFatAi 的生产故障就是落到了下面的 500，
+//     一个断线客户端被重试成两遍完整素材下载，还让 processChannelError 记渠道一次错。
+//   - 其余按本端 bug 处理：500，该重试、该告警。
+func buildRequestErrorToTaskError(c *gin.Context, err error) *dto.TaskError {
+	var userErr *taskcommon.UserError
+	if errors.As(err, &userErr) {
+		return service.TaskErrorWrapperLocal(userErr.Err, userErr.Code, http.StatusBadRequest)
+	}
+	if taskcommon.IsClientDisconnected(err) || requestContextCanceled(c) {
+		return service.TaskErrorWrapperLocal(err, "client_disconnected", service.ClientClosedRequestStatusCode)
+	}
+	return service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+}
+
+// doRequestErrorToTaskError 把「向上游发请求」阶段的失败翻译成下游错误。
+//
+// 客户端先断开时上游请求同样被取消，IsSubmitOutcomeUnknown 会对 context.Canceled
+// 返回 true，于是原本会走 408 非 LocalError —— 408 虽然不重试，但非 LocalError
+// 仍会进 processChannelError（记渠道一次错，可累计到 AutoBan）。断线是本端事件，
+// 必须在判断「结果未知」之前摘出来。
+func doRequestErrorToTaskError(c *gin.Context, err error) *dto.TaskError {
+	if taskcommon.IsClientDisconnected(err) || requestContextCanceled(c) {
+		return service.TaskErrorWrapperLocal(err, "client_disconnected", service.ClientClosedRequestStatusCode)
+	}
+	// 提交超时/请求中断属于「结果未知」：上游可能已受理，重试会重复提交计费，
+	// 用 408 告诉重试策略不要换渠道重发。
+	statusCode := http.StatusInternalServerError
+	if service.IsSubmitOutcomeUnknown(err, err.Error()) {
+		statusCode = service.SubmitOutcomeUnknownStatusCode
+	}
+	return service.TaskErrorWrapper(err, "do_request_failed", statusCode)
+}
+
+// requestContextCanceled 判断下游连接是否已经断开。
+//
+// net/http 在客户端关闭连接时取消 request ctx，所以即使适配器把错误包成了
+// 别的东西，这里也能兜住。只看 Canceled：DeadlineExceeded 是我们自己等太久。
+func requestContextCanceled(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	return errors.Is(c.Request.Context().Err(), context.Canceled)
 }
 
 // isPerCallBilling 判断「这个请求是不是按次计费」。

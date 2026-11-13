@@ -33,6 +33,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
+	xdraw "golang.org/x/image/draw"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -52,13 +53,29 @@ const (
 
 	// assetMaxConcurrency 限制同时处理的素材数。
 	//
-	// 每个素材都可能是一路 100MB（maxAssetBytes）的下载，参考图还要在本地解成
-	// RGBA 再重编码。生产机只有 3.7GB 内存（可用约 2.2GB），3 路并发在
-	// 「一张超大图 + 一个大视频」的组合下会把峰值推到 500MB 以上，
-	// 而这条链路上还有别的请求在跑。2 路已经足够把「一个大视频堵住后面所有素材」
-	// 的问题解决掉，再往上加是拿 OOM 换几十毫秒。
-	assetMaxConcurrency = 2
+	// 【2026-11-13 从 2 提到 6】一次提交常见 6~7 张参考图，2 路要跑 3~4 轮：
+	// 实测 4 张图 2 路并发吃掉 6.7 秒，7 张就要 11 秒以上，叠在上游 26 秒的
+	// 受理时间上正好撞穿客户 60 秒的提交超时。
+	//
+	// 上限停在 6 而不是更高：解码后是 w×h×4 字节，一张 1200 万像素的手机照
+	// 就是 48MB，6 路峰值在 300MB 量级，3.7GB 的机器还能承受（超过
+	// referenceImageMaxPixels 的图会被本地拒掉，见 flattenImage）；
+	// 再往上就是拿 OOM 换几十毫秒。
+	assetMaxConcurrency = 6
+
+	// assetVideoMaxConcurrency 单独限制参考视频的并发。
+	//
+	// 单个素材上限 100MB（maxAssetBytes），6 个视频同时下载就是 600MB 常驻内存。
+	// 视频不像图片那样有本地解码/缩放的成本，但同时挂 6 个只会有反效果：
+	// 出口带宽是共享的 5Mbps，并发下载只会让每个都更慢。
+	assetVideoMaxConcurrency = 2
 )
+
+// assetVideoSlots 是参考视频的**全局**并发闸门（跨请求共享）。
+//
+// 用包级 channel 而不是每请求一个 errgroup 限流：多个客户同时提交时，
+// 每个请求各开 2 路一样会把内存顶穿。这里限制的是整台机器的视频下载并发。
+var assetVideoSlots = make(chan struct{}, assetVideoMaxConcurrency)
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
@@ -793,10 +810,13 @@ func getHTTPClient(proxy string) (*http.Client, error) {
 // 它不是参数错误：没有人还在读这条消息，也不该降级成给客户看的 400 文案，
 // 更不能因此让客户以为是自己填错了素材地址。用哨兵值而不是比字符串，
 // 是为了让上层（asAssetSourceError）能可靠地把它排除在「素材不可用」之外。
-var errClientGone = errors.New("client disconnected")
+//
+// 哨兵本身放在 taskcommon：relay_task 要在**不知道是哪个渠道**的情况下识别
+// 断线（499 不重试、不记渠道错），import 具体渠道包会造成反向依赖。
+var errClientGone = taskcommon.ErrClientDisconnected
 
 func isClientGone(err error) bool {
-	return errors.Is(err, errClientGone)
+	return taskcommon.IsClientDisconnected(err)
 }
 
 // assetStageError 把素材处理中的「超时 / 客户端断开」翻译成合适的错误。
@@ -923,27 +943,101 @@ func (a *TaskAdaptor) readAssetBytes(ctx context.Context, source string) ([]byte
 	return data, mimeType, path.Base(parsed.Path), nil
 }
 
+// flattenImage 把参考图规整成上游能吃的 JPEG：转 sRGB 白底、长边压到 1920、质量 88。
+//
+// 【为什么必须缩放】2026-11-13 实测：4000×3000 的手机原图按 q95 全尺寸上传仍是
+// 4MB，经 5Mbps 出口要 7 秒，而且上游受理时间随素材体积上涨（4 张图那次 26 秒，
+// 没有素材只要 3.2 秒）。缩到长边 1920 + q88 后约 500KB，客户端 60 秒的提交窗口
+// 才够用。缩放**只缩不放**：放大只会凭空增体积，不会增加任何信息。
 func flattenImage(data []byte) ([]byte, string, error) {
+	// 先看头信息再解码：解码后的内存是 w×h×4 字节，一张 20000×20000 的图
+	// 直接就是 1.6GB，6 路并发会立刻 OOM。DecodeConfig 只解析头部，几乎零成本。
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, "", undecodableImageError(data)
+	}
+	if config.Width <= 0 || config.Height <= 0 {
+		return nil, "", undecodableImageError(data)
+	}
+	if int64(config.Width)*int64(config.Height) > referenceImageMaxPixels {
+		return nil, "", taskcommon.NewUserError(errors.Errorf(
+			"参考图分辨率过大：%dx%d，上限 %d 万像素，请先缩小后重试",
+			config.Width, config.Height, referenceImageMaxPixels/10000), "invalid_image")
+	}
+
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
-		return data, "image/jpeg", nil
+		// 旧逻辑在这里 return 原字节 + 假装是 image/jpeg，于是损坏的 PNG
+		// （生产实例：CRC invalid checksum）被当成 JPEG 传给上游，客户收到的是
+		// 上游的「文件内容与声明格式不符」——完全看不懂该改什么。
+		return nil, "", undecodableImageError(data)
 	}
+
+	bounds := img.Bounds()
+	target := referenceImageTargetSize(bounds)
 	// 尺寸过小直接本地拒绝：上游会回「图片无法读取或格式不支持」（实际是分辨率不够），
 	// 客户要么白等一次退款，要么反复重试同一张图。
 	// 用 UserError 是为了降级成 400：换张图就能修，不能算渠道故障（500 会重试 + AutoBan）。
-	if bounds := img.Bounds(); bounds.Dx() < minReferenceImageShortSide || bounds.Dy() < minReferenceImageShortSide {
+	if target.Dx() < minReferenceImageShortSide || target.Dy() < minReferenceImageShortSide {
+		if target.Dx() != bounds.Dx() || target.Dy() != bounds.Dy() {
+			return nil, "", taskcommon.NewUserError(errors.Errorf(
+				"参考图长宽比过窄：%dx%d 压缩到长边 %dpx 后为 %dx%d，短边至少需要 %dpx，请裁剪后重试",
+				bounds.Dx(), bounds.Dy(), referenceImageMaxSide,
+				target.Dx(), target.Dy(), minReferenceImageShortSide), "invalid_image")
+		}
 		return nil, "", taskcommon.NewUserError(errors.Errorf(
 			"参考图分辨率过低：%dx%d，短边至少需要 %dpx，请更换清晰图片后重试",
 			bounds.Dx(), bounds.Dy(), minReferenceImageShortSide), "")
 	}
-	background := image.NewRGBA(img.Bounds())
-	draw.Draw(background, background.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
-	draw.Draw(background, background.Bounds(), img, img.Bounds().Min, draw.Over)
+
+	// 统一白底：PNG 的透明区域直接转 JPEG 会变成黑块。
+	canvas := image.NewRGBA(target)
+	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
+	if target.Dx() == bounds.Dx() && target.Dy() == bounds.Dy() {
+		draw.Draw(canvas, canvas.Bounds(), img, bounds.Min, draw.Over)
+	} else {
+		// CatmullRom：参考图里常见文字与细线，最近邻会让它们锯齿化，
+		// 上游识别素材特征时明显变差。
+		xdraw.CatmullRom.Scale(canvas, canvas.Bounds(), img, bounds, draw.Over, nil)
+	}
+
 	var output bytes.Buffer
-	if err := jpeg.Encode(&output, background, &jpeg.Options{Quality: 95}); err != nil {
+	if err := jpeg.Encode(&output, canvas, &jpeg.Options{Quality: referenceImageQuality}); err != nil {
 		return nil, "", err
 	}
 	return output.Bytes(), "image/jpeg", nil
+}
+
+// referenceImageTargetSize 计算缩放后的目标尺寸：长边不超过 referenceImageMaxSide，
+// 保持长宽比，且从不放大。
+func referenceImageTargetSize(bounds image.Rectangle) image.Rectangle {
+	width, height := bounds.Dx(), bounds.Dy()
+	if width <= referenceImageMaxSide && height <= referenceImageMaxSide {
+		return image.Rect(0, 0, width, height)
+	}
+	longest := width
+	if height > width {
+		longest = height
+	}
+	scale := float64(referenceImageMaxSide) / float64(longest)
+	target := image.Rect(0, 0,
+		int(math.Round(float64(width)*scale)),
+		int(math.Round(float64(height)*scale)))
+	// 极端长宽比可能把短边算成 0，留 1px 让后面的「短边不足」判定给出可读报错。
+	if target.Dx() < 1 {
+		target.Max.X = 1
+	}
+	if target.Dy() < 1 {
+		target.Max.Y = 1
+	}
+	return target
+}
+
+// undecodableImageError 把「解不出来」翻译成客户能照做的 400。
+func undecodableImageError(data []byte) error {
+	return taskcommon.NewUserError(errors.Errorf(
+		"参考图无法解析（文件可能已损坏，或为暂不支持的格式 %s），请转成 JPG/PNG 后重试",
+		http.DetectContentType(data)), "invalid_image")
 }
 
 func fileName(kind, source, mimeType string) string {
@@ -1085,6 +1179,14 @@ func (a *TaskAdaptor) buildRequestBody(ctx context.Context, req relaycommon.Task
 //
 // 为什么必须保序：上游按 media 数组顺序对应 @视频1/@图片1，
 // 顺序错乱等于给客户换了素材 —— 画面会串，而且看不出来是哪一步错的。
+// isHeavyAsset 判断素材是否要走「大文件」闸门。
+//
+// 只看参考视频：音频实测几百 KB，图片在 flattenImage 里已经被压到 500KB 量级，
+// 都不需要单独限流。视频可以到 100MB（maxAssetBytes）。
+func isHeavyAsset(mediaType string) bool {
+	return mediaType == "reference_video"
+}
+
 func (a *TaskAdaptor) uploadMedia(ctx context.Context, media []relaycommon.TaskMedia) ([]map[string]string, error) {
 	items := make([]map[string]string, len(media))
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -1092,6 +1194,17 @@ func (a *TaskAdaptor) uploadMedia(ctx context.Context, media []relaycommon.TaskM
 	for index := range media {
 		group.Go(func() error {
 			item := media[index]
+			// 参考视频另过一道全局闸门：单个上限 100MB，图片那 6 路配额给它会 OOM。
+			// 闸门跨请求共享（见 assetVideoSlots），所以排队是正常的，不是死锁：
+			// 占着名额的 goroutine 不需要再拿第二个名额。
+			if isHeavyAsset(item.Type) {
+				select {
+				case assetVideoSlots <- struct{}{}:
+					defer func() { <-assetVideoSlots }()
+				case <-groupCtx.Done():
+					return groupCtx.Err()
+				}
+			}
 			assetURL, err := a.uploadAsset(groupCtx, item.Type, item.URL)
 			if err != nil {
 				return err

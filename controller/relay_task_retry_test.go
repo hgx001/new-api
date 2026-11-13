@@ -95,3 +95,22 @@ func TestShouldRetryTaskRelayIdempotentSubmit(t *testing.T) {
 		assert.False(t, shouldRetryTaskRelay(ctx, 17, testTaskError(504, "gateway timeout", false), 1))
 	})
 }
+
+// 客户端断线（499 + LocalError）绝不能重试。
+//
+// 2026-11-13 生产：threeFatAi 工作台 60 秒硬超时先挂电话，我们把它当成
+// 500 build_request_failed → 换渠道重发 → 同一批参考图被完整下载第二遍。
+// 12 小时里 58 条断开日志对应 14 次重试，全部是纯浪费。
+func TestShouldRetryTaskRelayNeverRetriesClientDisconnect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	clientGone := &dto.TaskError{
+		Code:       "client_disconnected",
+		Message:    "客户端已断开，素材下载中止: context canceled",
+		StatusCode: 499,
+		LocalError: true,
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	assert.False(t, shouldRetryTaskRelay(ctx, 17, clientGone, 3), "断线重试只会再跑一遍下载，客户已经收不到结果")
+}

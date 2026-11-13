@@ -41,17 +41,39 @@ type mediaServer struct {
 	uploadDelay   time.Duration
 	// hang 为 true 时下载端永久挂起，只能靠 context 结束。
 	hang atomic.Bool
+	// inflight / inflightMax 记录下载的瞬时并发，用来验证并发上限真的生效。
+	inflight    atomic.Int32
+	inflightMax atomic.Int32
+	// imageBytes 是 /image/ 路径返回的真实 JPEG：参考图要走 flattenImage，
+	// 假字节会被「无法解析」拦掉，测不出并发。
+	imageBytes []byte
 
 	mu        sync.Mutex
 	uploadSeq []string
+}
+
+func (s *mediaServer) maxInflight() int32 { return s.inflightMax.Load() }
+
+// track 在请求进出时维护并发峰值。
+func (s *mediaServer) track() func() {
+	current := s.inflight.Add(1)
+	for {
+		previous := s.inflightMax.Load()
+		if current <= previous || s.inflightMax.CompareAndSwap(previous, current) {
+			break
+		}
+	}
+	return func() { s.inflight.Add(-1) }
 }
 
 func newMediaServer(t *testing.T) *mediaServer {
 	t.Helper()
 	disableSSRF(t)
 	server := &mediaServer{downloadDelay: func(int) time.Duration { return 0 }}
+	server.imageBytes = makeJPEG(t, 800, 800)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/asset/", func(writer http.ResponseWriter, request *http.Request) {
+		defer server.track()()
 		if server.hang.Load() {
 			<-request.Context().Done()
 			return
@@ -65,6 +87,18 @@ func newMediaServer(t *testing.T) *mediaServer {
 			}
 		}
 		_, _ = writer.Write([]byte("asset-bytes-" + strconv.Itoa(index)))
+	})
+	mux.HandleFunc("/image/", func(writer http.ResponseWriter, request *http.Request) {
+		defer server.track()()
+		if delay := server.downloadDelay(0); delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-request.Context().Done():
+				return
+			}
+		}
+		writer.Header().Set("Content-Type", "image/jpeg")
+		_, _ = writer.Write(server.imageBytes)
 	})
 	mux.HandleFunc("/v1/assets", func(writer http.ResponseWriter, request *http.Request) {
 		if server.uploadDelay > 0 {
@@ -232,8 +266,16 @@ func TestAssetTotalBudgetLeavesRoomForClientTimeout(t *testing.T) {
 	// 否则客户看到的是自己的超时，而我们还在后台下载、还会建单扣费。
 	require.Less(t, assetTotalBudget, 60*time.Second)
 	require.GreaterOrEqual(t, assetTotalBudget, 20*time.Second, "预算太小会把正常的 20MB 素材误杀")
-	require.LessOrEqual(t, assetMaxConcurrency, 4, "并发太高会把内存和出口带宽一起打满")
-	require.GreaterOrEqual(t, assetMaxConcurrency, 2)
+
+	// 2026-11-13：并发 2 → 6。一次提交常见 6~7 张参考图（实测 4 张图 2 路并发
+	// 就吃掉 6.7 秒，7 张直接吃光客户的 60 秒窗口）。上限仍是 6，不是无限：
+	// 每张图解码后是 width×height×4 字节，6 路的峰值内存要压在 3.7GB 机器的余量内。
+	require.GreaterOrEqual(t, assetMaxConcurrency, 6, "6 张图的常规提交必须一轮跑完")
+	require.LessOrEqual(t, assetMaxConcurrency, 6, "再高就会把内存和出口带宽一起打满")
+
+	// 参考视频单个可达 100MB，不能和图片共用 6 路；单独压到 2 路。
+	require.LessOrEqual(t, assetVideoMaxConcurrency, 2)
+	require.GreaterOrEqual(t, assetVideoMaxConcurrency, 1)
 }
 
 func TestAssetBudgetContextActuallyAppliesDeadline(t *testing.T) {
@@ -326,6 +368,67 @@ func TestBuildRequestBodyKeepsMediaOrderUnderConcurrency(t *testing.T) {
 		require.Contains(t, entry["url"], "asset-bytes-"+strconv.Itoa(index+1),
 			"第 %d 个位置的素材串位了：%s", index, entry["url"])
 	}
+}
+
+// 6 张参考图必须一轮并发跑完。
+//
+// 实测口径（2026-11-13，生产同款源站 Cloudflare）：一张参考图约 300KB、
+// 下载 ~1.6 秒；2 路并发的 4 张图吃掉 6.7 秒，7 张就要 11 秒以上，
+// 叠加在上游 26 秒的受理时间上，正好撞穿客户 60 秒的提交超时。
+func TestUploadMediaRunsSixSmallAssetsInOneRound(t *testing.T) {
+	server := newMediaServer(t)
+	// 每个素材 150ms 下载 + 150ms 上传 = 300ms。
+	// 串行 6 个 = 1800ms；2 路 = 3 轮 900ms；6 路 = 1 轮 300ms。
+	server.downloadDelay = func(int) time.Duration { return 150 * time.Millisecond }
+	server.uploadDelay = 150 * time.Millisecond
+	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "k"}
+
+	// 用真实 JPEG：参考图要过 flattenImage，假字节会被「无法解析」拦掉。
+	images := make([]relaycommon.TaskMedia, 0, 6)
+	for index := 1; index <= 6; index++ {
+		images = append(images, relaycommon.TaskMedia{
+			Type: "reference_image",
+			URL:  fmt.Sprintf("%s/image/%d", server.URL, index),
+		})
+	}
+
+	started := time.Now()
+	body, err := adaptor.buildRequestBody(context.Background(), audioRequest(images...))
+	elapsed := time.Since(started)
+
+	require.NoError(t, err)
+	require.Less(t, elapsed, 700*time.Millisecond,
+		"6 个素材耗时 %s，接近 2 路并发的 900ms —— 并发上限没提到 6", elapsed)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Len(t, payload["media"].([]any), 6)
+	require.GreaterOrEqual(t, server.maxInflight(), int32(5),
+		"实测峰值并发只有 %d，没有真的跑满", server.maxInflight())
+}
+
+// 参考视频单独限流：单个上限 100MB，6 路同时下载会在 3.7GB 的机器上撞 OOM。
+func TestUploadMediaCapsReferenceVideosAtTwo(t *testing.T) {
+	server := newMediaServer(t)
+	server.downloadDelay = func(int) time.Duration { return 120 * time.Millisecond }
+	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "k"}
+
+	videos := []relaycommon.TaskMedia{
+		{Type: "reference_video", URL: server.assetURL(1)},
+		{Type: "reference_video", URL: server.assetURL(2)},
+		{Type: "reference_video", URL: server.assetURL(3)},
+		{Type: "reference_video", URL: server.assetURL(4)},
+	}
+
+	body, err := adaptor.buildRequestBody(context.Background(), audioRequest(videos...))
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Len(t, payload["media"].([]any), 4)
+	require.LessOrEqual(t, server.maxInflight(), int32(assetVideoMaxConcurrency),
+		"参考视频同时下载了 %d 路，超过上限 %d", server.maxInflight(), assetVideoMaxConcurrency)
+	require.GreaterOrEqual(t, server.maxInflight(), int32(2), "视频限流不该退化成串行")
 }
 
 func TestBuildRequestBodyNoMediaSkipsAssetPipeline(t *testing.T) {

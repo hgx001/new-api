@@ -146,6 +146,24 @@ const (
 	// 且这种尺寸放大到 720P 交付本身就是糊的，故本地直接按交付档 720 拦截。
 	minReferenceImageShortSide = 720
 
+	// referenceImageMaxSide 是上传前把参考图长边压到的上限（px）。
+	//
+	// 2026-11-13：上游受理时间随素材体积上涨（4 张 4MB 原图 → 26 秒，无素材 → 3.2 秒），
+	// 客户工作台的提交超时又写死 60 秒。1920 是 1080P 交付档的 1.78 倍，
+	// 缩放后画质余量足够，体积却能降一个数量级。
+	referenceImageMaxSide = 1920
+
+	// referenceImageQuality 是重编码质量。95 → 88 在参考图这种「只给模型看特征」
+	// 的场景里肉眼无差，体积再降约 40%。
+	referenceImageQuality = 88
+
+	// referenceImageMaxPixels 限制解码规模（像素）。
+	//
+	// 解码后是 w×h×4 字节：64M 像素 = 256MB，已经是单张图能承受的上限；
+	// 6 路并发再大就会把 3.7GB 的机器打到 OOM。64M 足以覆盖 48MP 手机原图
+	// （8064×6048 = 48.8M）。
+	referenceImageMaxPixels = 64 << 20
+
 	// maxReferenceVideoSeconds 是单条参考视频的时长上限（秒）。
 	//
 	// 2026-10-31 12:24 起上游开始明确拒绝超长参考素材，原文：
