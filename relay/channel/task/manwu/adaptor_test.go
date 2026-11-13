@@ -683,12 +683,15 @@ func TestModelListAndChannelName(t *testing.T) {
 		// 排序结果写死，改名时要同步。
 		"Seedream 4.5",
 		"Seedream 5.0 Flash",
-		// CapCut（剪映国际版）四个公开模型（2026-11-13 接入，同日扩到 4 档）。
+		// CapCut（剪映国际版）五个公开模型（2026-11-13 接入，同日扩到 5 档）。
 		// ⚠️ 与豆包 `seedance-2-0-fast` 形近但不同物，两者不互为别名。
 		"cp-seedance-2.0",
 		"cp-seedance-2.0fast",
 		"cp-seedance-2.0mini",
 		"cp-seedance-2.5",
+		// ⚠️ 排序：`cp-seedance-2.5` 是 `cp-seedance-2.5flash` 的**前缀**，
+		// 按字节序短名在前。加新档时要同步这里的顺序。
+		"cp-seedance-2.5flash",
 		"gemini-web-video",
 		"jimeng-video-reverse",
 		"seedance-2-0-fast",

@@ -186,13 +186,23 @@ const (
 	//   那是豆包官网档位（4–30 秒任意秒），这里是 CapCut 官网档位
 	//   （4–15 秒、只卖 480p、参考图 ≤9）。两者同名族但**不互为别名**，
 	//   归一表分开登记，路由不互相命中。
-	ModelCapcut25     = "cp-seedance-2.5"
-	ModelCapcut20     = "cp-seedance-2.0"
-	ModelCapcut20Fast = "cp-seedance-2.0fast"
-	ModelCapcut20Mini = "cp-seedance-2.0mini"
-	ModelImage        = "Nano Banana Pro"
-	ModelVideo        = "gemini-web-video"
-	ModelReverse      = "jimeng-video-reverse"
+	ModelCapcut25 = "cp-seedance-2.5"
+	// ModelCapcut25Flash 是 CapCut（剪映国际版）的 **2.5 Flash** 档（2026-11-13 加）。
+	//
+	// ⚠️ 公开名 `cp-seedance-2.5flash` **包含**子串 `cp-seedance-2.5`：
+	//   任何用 strings.Contains / 前缀匹配来判定「是不是 2.5 档」的写法都会把
+	//   本档误判成 2.5。本包内所有按档位分支的逻辑一律走**精确匹配**
+	//   （map 查表 / == 比较），见 capcutMaxDurations 与 capcut720PRatios。
+	//
+	// 与 ModelCapcut25 是**两个独立商品**：上游真名不同（seedance_2.5 vs
+	// seedance_2.5_flash）、定价不同，**不做互为别名**。
+	ModelCapcut25Flash = "cp-seedance-2.5flash"
+	ModelCapcut20      = "cp-seedance-2.0"
+	ModelCapcut20Fast  = "cp-seedance-2.0fast"
+	ModelCapcut20Mini  = "cp-seedance-2.0mini"
+	ModelImage         = "Nano Banana Pro"
+	ModelVideo         = "gemini-web-video"
+	ModelReverse       = "jimeng-video-reverse"
 	// ModelSeedream50Flash 是**豆包官网**「图像生成」入口的默认模型
 	// （2026-11-07 上架）。公开名**就是官网显示名**（用户口径：
 	// 「命名就按照官网的命名用」），不做本地化改写。
@@ -251,13 +261,16 @@ const picsartUpstreamModel = "wan-3.0-video"
 
 // CapCut 官网档位真名（模型卡的 data-model-key，2026-11-13 只读侦察实测）。
 //
-// ⚠️ 对外公开名带 `cp-` 前缀（cp-seedance-2.0 / cp-seedance-2.0fast），
-// 发往 ArcReel/Worker 的一律是这两个真名。
+// ⚠️ 对外公开名带 `cp-` 前缀（cp-seedance-2.0 / cp-seedance-2.0fast 等），
+// 发往 ArcReel/Worker 的一律是这些真名。
 const (
-	capcutUpstreamModel25     = "seedance_2.5"
-	capcutUpstreamModel20     = "seedance_2.0"
-	capcutUpstreamModel20Fast = "seedance_2.0_fast"
-	capcutUpstreamModel20Mini = "seedance_2.0_mini"
+	capcutUpstreamModel25 = "seedance_2.5"
+	// capcutUpstreamModel25Flash 是 2.5 Flash 档的官网档位真名（模型卡
+	// data-model-key）。**不是** seedance_2.5 的变体，是另一个模型。
+	capcutUpstreamModel25Flash = "seedance_2.5_flash"
+	capcutUpstreamModel20      = "seedance_2.0"
+	capcutUpstreamModel20Fast  = "seedance_2.0_fast"
+	capcutUpstreamModel20Mini  = "seedance_2.0_mini"
 )
 
 // 任务形态：决定校验分支与建单载荷。
@@ -286,8 +299,10 @@ const (
 	// kindPicsartVideo 是 Picsart 官网 Wan 3.0（免费无限档）：固定 30 秒、
 	// 分辨率 480P/720P、比例六档（含 adaptive）、参考图 ≤10、不收参考视频。
 	kindPicsartVideo = "picsart_video"
-	// kindCapcutVideo 是 CapCut（剪映国际版）Seedance 2.0 / 2.0 Fast：
-	// 时长 4–15 秒任意整数秒、分辨率只卖 480p、比例六档（**不含官网 "Fit" 自适应**）、
+	// kindCapcutVideo 是 CapCut（剪映国际版）Seedance 2.5 / 2.5 Flash /
+	// 2.0 / 2.0 Fast / 2.0 Mini 五档视频：
+	// 时长 4–30 秒（2.5 与 2.5 Flash）或 4–15 秒（其余档）、任意整数秒、
+	// 分辨率只卖 480p / 720p、比例六档（**不含官网 "Fit" 自适应**）、
 	// 参考图 ≤9 张、每次 1 张、不生成音频。
 	//
 	// ⚠️ 不复用 kindDolaVideo：dola 是 5–15 秒且按次，CapCut 区间与计价都不同。
@@ -383,14 +398,41 @@ var modelSpecs = map[string]modelSpec{
 	// （5.0 Flash / 4.5）、上游模型 id 不同。别把它们合并成一条 spec。
 	ModelSeedream50Flash: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeImage, Kind: kindSeedreamImage, UpstreamModel: doubaoSeedreamUpstreamModel},
 	ModelSeedream45:      {PlatformID: PlatformID, OutputMode: OutputModeImage, Kind: kindSeedreamImage, UpstreamModel: dolaSeedreamUpstreamModel},
-	// CapCut（剪映国际版）两个模型（2026-11-13 接入）：
+	// CapCut（剪映国际版）五个模型（2026-11-13 接入，同日扩到 5 档）：
 	// 公开名 → 官网档位真名的翻译在这一层做，ArcReel/Worker 两侧白名单仍是真名。
 	//
-	// 计价：2.0 **按次**（EstimateBilling 返回 nil）、2.0 Fast **按秒**（返回 seconds 倍率）。
-	ModelCapcut25:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
-	ModelCapcut20:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
-	ModelCapcut20Fast: {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
-	ModelCapcut20Mini: {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
+	// 计价：五档**统一按秒**（EstimateBilling 返回 seconds 倍率），720p 再乘 size 倍率。
+	ModelCapcut25:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
+	ModelCapcut25Flash: {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25Flash},
+	ModelCapcut20:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
+	ModelCapcut20Fast:  {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
+	ModelCapcut20Mini:  {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
+}
+
+// capcutOfficialToPublic 是「官网档位真名 → 对外公开名」的**反向**映射
+// （与 Worker 侧 src/platforms/capcut/params.ts 的 CAPCUT_OFFICIAL_TO_PUBLIC 同口径）。
+//
+// 正向（公开名 → 真名）在 modelSpecs 的 UpstreamModel 字段里；这张表只管反向：
+// 上游回执 / 日志里出现真名时，要能归一回公开名，不能把官网档位 id 泄给客户。
+//
+// ⚠️ 键是**真名**，值是**公开名**，一一对应、不可合并：2.5 Flash 的真名
+// seedance_2.5_flash 与 2.5 的 seedance_2.5 是两个不同模型的 id，
+// 归一时不能互相顶替。
+var capcutOfficialToPublic = map[string]string{
+	capcutUpstreamModel25:      ModelCapcut25,
+	capcutUpstreamModel25Flash: ModelCapcut25Flash,
+	capcutUpstreamModel20:      ModelCapcut20,
+	capcutUpstreamModel20Fast:  ModelCapcut20Fast,
+	capcutUpstreamModel20Mini:  ModelCapcut20Mini,
+}
+
+// capcutPublicNameFor 把官网档位真名归一回对外公开名；未知真名原样返回
+// （不编造，也不静默变成别的档位）。
+func capcutPublicNameFor(upstreamModel string) string {
+	if name, ok := capcutOfficialToPublic[upstreamModel]; ok {
+		return name
+	}
+	return upstreamModel
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -849,9 +891,10 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		norm.Duration = duration
 	case kindCapcutVideo:
-		// CapCut（剪映国际版）Seedance 2.0 / 2.0 Fast：
-		//   - 时长 4–15 秒任意整数秒（面板时长滑杆区间；自营收窄，官网 Omni reference 允许到 30s）；
-		//   - 分辨率只卖 480p（720p/1080p/4K 带 Pro 徽标 → 不卖）；
+		// CapCut（剪映国际版）Seedance 2.5 / 2.5 Flash / 2.0 / 2.0 Fast / 2.0 Mini：
+		//   - 时长 4–30 秒任意整数秒（2.5 与 2.5 Flash，官网 2.5 系列 4–30s）；
+		//     其余档 4–15 秒（面板时长滑杆区间；自营收窄，官网 Omni reference 允许到 30s）；
+		//   - 分辨率只卖 480p / 720p（1080p/4K 带 Pro 徽标 → 未定价，不卖）；
 		//   - 参考图 ≤9 张（超出显式拒绝，不静默截断）；
 		//   - 每次 1 张、不生成音频（面板那两个开关在 Worker 侧显式关闭）。
 		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
@@ -1055,10 +1098,10 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	if req.Kind == kindDoubaoVideo && req.Model == ModelDoubao20Fast && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
 	}
-	// CapCut 四档模型**统一按秒**：ModelPrice 配 480p 基准单价（元/秒），
+	// CapCut 五档模型**统一按秒**：ModelPrice 配 480p 基准单价（元/秒），
 	// EstimateBilling 给 seconds 倍率；720p 再乘一个 size 倍率。
 	//
-	// ⚠️ 四档**全部**要给 seconds —— 漏了任何一档就会按「1 秒」收费，
+	// ⚠️ 五档**全部**要给 seconds —— 漏了任何一档就会按「1 秒」收费，
 	//   15 秒的片子只收 1 秒的钱。反过来，任何「按次」模型都不能给 seconds
 	//   （会被 relay_task.go 再乘一遍，账实不符）。
 	if req.Kind == kindCapcutVideo {
@@ -1475,7 +1518,7 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 			return fmt.Errorf("%s is fixed at 720p", modelName)
 		}
 	case kindCapcutVideo:
-		// CapCut 只卖 480p / 720p（两档都已定价）。
+		// CapCut 只卖 480p / 720p（两档都已定价，五档模型一致）。
 		// 1080p / 4K 官网虽有，但**未定价** → 显式拒绝而不是静默降到 720p，
 		// 用户会为一个没生效的档位付费。
 		resolution := strings.TrimSpace(req.Resolution)
@@ -1566,7 +1609,8 @@ const (
 	// capcutMinDuration / capcutMaxDuration：面板时长滑杆区间（4–15s）。
 	capcutMinDuration = 4
 	capcutMaxDuration = 15
-	// capcutMaxDuration25：Seedance 2.5 的滑杆上界（真机 max=30000ms）。
+	// capcutMaxDuration25：Seedance 2.5 / 2.5 Flash 的滑杆上界（真机 max=30000ms，
+	// 官网 2.5 系列 4–30s）。
 	capcutMaxDuration25 = 30
 	// capcutDefaultDuration：面板出厂默认 5 秒。
 	capcutDefaultDuration = 5
@@ -1581,17 +1625,40 @@ const (
 //
 // ModelPrice 只能配一个数（480p 基准），720p 由 EstimateBilling 的 size 倍率乘回。
 // ⚠️ 改价时 ModelPrice 与本表必须同时改，否则两档价会错位。
+//
+// ⚠️ 2.5 Flash 的倍率是 **2.0**（与 2.0 档、2.5 档一致 —— 用户口径：
+// 「2.5 flash 定价和 2.0 一致，2.0 的 720p 倍率是 2」）。
 var capcut720PRatios = map[string]float64{
-	ModelCapcut20Mini: 1.5,
-	ModelCapcut20Fast: 1.5,
-	ModelCapcut20:     2.0,
-	ModelCapcut25:     2.0,
+	ModelCapcut20Mini:  1.5,
+	ModelCapcut20Fast:  1.5,
+	ModelCapcut20:      2.0,
+	ModelCapcut25:      2.0,
+	ModelCapcut25Flash: 2.0,
 }
 
-// capcutMaxDurationFor 返回该模型的滑杆上界（2.5 = 30 秒，其余 15 秒）。
+// capcutMaxDurations 是各档的滑杆上界（秒）。
+//
+// ⚠️ 刻意用**表驱动**而不是 `if model == ModelCapcut25`：
+// 公开名 `cp-seedance-2.5flash` 包含子串 `cp-seedance-2.5`，任何
+// strings.Contains / 前缀匹配的写法都会把 2.5 Flash 误判成 2.5 档
+// （时长上界、分辨率倍率都跟着错）。查表 = 精确匹配，天然免疫。
+//
+// 2.5 与 2.5 Flash 都是 30 秒（官网 2.5 系列 4–30s）；其余档 15 秒。
+var capcutMaxDurations = map[string]int{
+	ModelCapcut25:      capcutMaxDuration25,
+	ModelCapcut25Flash: capcutMaxDuration25,
+	ModelCapcut20:      capcutMaxDuration,
+	ModelCapcut20Fast:  capcutMaxDuration,
+	ModelCapcut20Mini:  capcutMaxDuration,
+}
+
+// capcutMaxDurationFor 返回该模型的滑杆上界（2.5 / 2.5 Flash = 30 秒，其余 15 秒）。
+//
+// 查表 + 默认回落：未登记的模型按最窄档（15 秒）处理 —— 宁可少卖，
+// 也不能因为一个没登记的模型名就放宽到 30 秒。
 func capcutMaxDurationFor(model string) int {
-	if model == ModelCapcut25 {
-		return capcutMaxDuration25
+	if maxDuration, ok := capcutMaxDurations[model]; ok {
+		return maxDuration
 	}
 	return capcutMaxDuration
 }
@@ -1624,7 +1691,7 @@ func normalizeCapcutResolution(raw string) (string, error) {
 	}
 }
 
-// validateCapcutDuration 校验 CapCut 时长：4–15 秒（2.5 到 30 秒）区间内任意整数秒。
+// validateCapcutDuration 校验 CapCut 时长：4–15 秒（2.5 / 2.5 Flash 到 30 秒）区间内任意整数秒。
 func validateCapcutDuration(field string, value int, model string) (int, error) {
 	maxDuration := capcutMaxDurationFor(model)
 	if value < capcutMinDuration || value > maxDuration {
