@@ -52,6 +52,7 @@
 - `Nano Banana Pro` 对应 ArcReel 抽象 `manwu-image`，内部实际站点由服务端路由；图片不接受视频参数。
 - `jimeng-video-reverse` 恰好一段公网参考视频，文本产物、prompt 可选；不接受图片/时长/比例/分辨率或 multipart 本地文件直传。
 - 万相图生/编辑分别由 `wan2.7-图生` / `wan2.7-编辑` 表项按素材形态区分，不能因同 platformId 就混用协议。详细限值查当前表和验证分支，不复制固定模型数量。
+- CapCut（剪映国际版）另算一个站：公开名 `cp-seedance-2.0`（**按次**，EstimateBilling 返回 nil）/ `cp-seedance-2.0fast`（**按秒**，返回 seconds 倍率），上游真名 `seedance_2.0` / `seedance_2.0_fast`，platformId `capcut`。时长 4–15 秒、只卖 480p、比例六档（不含官网 "Fit" 自适应）、参考图 ≤9 张。`cp-` 前缀与豆包 `seedance-2-0-fast` 区分，**不做互为别名**。
 - 拒绝无法诚实实现的显式参数，本地400；不悄悄改规格、丢图或换档交付。
 - 改公开名同步 ArcReel `_MANWU_MODEL_PATTERN` 与 Worker `heibaidaoModelCapabilities` / `modelProviderPresets`。正则不得误吃其它供应商相近名字；旧 db-* 不重新对外上架。
 

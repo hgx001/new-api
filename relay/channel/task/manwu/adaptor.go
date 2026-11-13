@@ -70,6 +70,12 @@ const (
 	// platformId=doubao + reroutedToPlatformId=picsart；本模型起改直派，
 	// 账目/白名单/重派都按 picsart 走。
 	PlatformIDPicsart = "picsart"
+	// PlatformIDCapcut 是 CapCut（剪映国际版 www.capcut.com）平台。
+	//
+	// ⚠️ CapCut 的 AI 视频在**完整编辑器**里驱动（面板 + 时间线 + 素材区），
+	// 参数口径（4–15s / 只卖 480p / 参考图 ≤9 / 不生成音频）与其它平台都不同
+	// → 独立 Kind，不复用 kindDolaVideo / kindPicsartVideo。
+	PlatformIDCapcut = "capcut"
 
 	// baseURLDefault 为渠道未配置 BaseURL 时的兜底（ArcReel 生产地址）
 	baseURLDefault = "https://arcreel.heibaidao.cn"
@@ -174,6 +180,14 @@ const (
 	ModelDola25       = "seedance-2.5"
 	ModelDoubao25     = "seedance-2-5"
 	ModelDoubao20Fast = "seedance-2-0-fast"
+	// ModelCapcut20 / ModelCapcut20Fast 是 CapCut（剪映国际版）两个对外公开模型。
+	//
+	// ⚠️ 公开名带 `cp-` 前缀是为了与豆包 `seedance-2-0-fast` **区分**：
+	//   那是豆包官网档位（4–30 秒任意秒），这里是 CapCut 官网档位
+	//   （4–15 秒、只卖 480p、参考图 ≤9）。两者同名族但**不互为别名**，
+	//   归一表分开登记，路由不互相命中。
+	ModelCapcut20     = "cp-seedance-2.0"
+	ModelCapcut20Fast = "cp-seedance-2.0fast"
 	ModelImage        = "Nano Banana Pro"
 	ModelVideo        = "gemini-web-video"
 	ModelReverse      = "jimeng-video-reverse"
@@ -233,6 +247,15 @@ const (
 // 公开名 `wan-3.0-特惠` 只在本表内存在，发往 ArcReel/Worker 的一律是它。
 const picsartUpstreamModel = "wan-3.0-video"
 
+// CapCut 官网档位真名（模型卡的 data-model-key，2026-11-13 只读侦察实测）。
+//
+// ⚠️ 对外公开名带 `cp-` 前缀（cp-seedance-2.0 / cp-seedance-2.0fast），
+// 发往 ArcReel/Worker 的一律是这两个真名。
+const (
+	capcutUpstreamModel20     = "seedance_2.0"
+	capcutUpstreamModel20Fast = "seedance_2.0_fast"
+)
+
 // 任务形态：决定校验分支与建单载荷。
 const (
 	kindDolaVideo   = "dola_video"   // Seedance 2.0：时长固定 10 秒/比例/参考图白名单
@@ -259,6 +282,12 @@ const (
 	// kindPicsartVideo 是 Picsart 官网 Wan 3.0（免费无限档）：固定 30 秒、
 	// 分辨率 480P/720P、比例六档（含 adaptive）、参考图 ≤10、不收参考视频。
 	kindPicsartVideo = "picsart_video"
+	// kindCapcutVideo 是 CapCut（剪映国际版）Seedance 2.0 / 2.0 Fast：
+	// 时长 4–15 秒任意整数秒、分辨率只卖 480p、比例六档（**不含官网 "Fit" 自适应**）、
+	// 参考图 ≤9 张、每次 1 张、不生成音频。
+	//
+	// ⚠️ 不复用 kindDolaVideo：dola 是 5–15 秒且按次，CapCut 区间与计价都不同。
+	kindCapcutVideo = "capcut_video"
 )
 
 // 万相 wan2.7 免灵感值参数口径（与 Worker 侧 TONGYIWAN_UNLIMITED_VIDEO_PROFILE 同源：
@@ -350,6 +379,12 @@ var modelSpecs = map[string]modelSpec{
 	// （5.0 Flash / 4.5）、上游模型 id 不同。别把它们合并成一条 spec。
 	ModelSeedream50Flash: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeImage, Kind: kindSeedreamImage, UpstreamModel: doubaoSeedreamUpstreamModel},
 	ModelSeedream45:      {PlatformID: PlatformID, OutputMode: OutputModeImage, Kind: kindSeedreamImage, UpstreamModel: dolaSeedreamUpstreamModel},
+	// CapCut（剪映国际版）两个模型（2026-11-13 接入）：
+	// 公开名 → 官网档位真名的翻译在这一层做，ArcReel/Worker 两侧白名单仍是真名。
+	//
+	// 计价：2.0 **按次**（EstimateBilling 返回 nil）、2.0 Fast **按秒**（返回 seconds 倍率）。
+	ModelCapcut20:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
+	ModelCapcut20Fast: {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
 }
 
 // SpecFor 返回模型路由；未知模型返回 false。调用方必须先拒绝，不能默认落到 dola
@@ -807,6 +842,26 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
 		norm.Duration = duration
+	case kindCapcutVideo:
+		// CapCut（剪映国际版）Seedance 2.0 / 2.0 Fast：
+		//   - 时长 4–15 秒任意整数秒（面板时长滑杆区间；自营收窄，官网 Omni reference 允许到 30s）；
+		//   - 分辨率只卖 480p（720p/1080p/4K 带 Pro 徽标 → 不卖）；
+		//   - 参考图 ≤9 张（超出显式拒绝，不静默截断）；
+		//   - 每次 1 张、不生成音频（面板那两个开关在 Worker 侧显式关闭）。
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		duration, err := resolveCapcutDuration(req, norm.Model)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		norm.Duration = duration
+		if norm.ReferenceCount > capcutMaxReferenceImages {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("%s accepts at most %d reference images, got %d", norm.Model, capcutMaxReferenceImages, norm.ReferenceCount),
+				"invalid_request", http.StatusBadRequest,
+			)
+		}
 	case kindVeoVideo:
 		// Veo 官网只有宽高比控件（2026-09-22 真机验证）：模型/时长/分辨率没有可实现
 		// 的控件，Worker 侧会 fail-fast 拒单。这里提前 400，别让用户白付一次预扣。
@@ -989,6 +1044,13 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	if req.Kind == kindDoubaoVideo && req.Model == ModelDoubao20Fast && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
 	}
+	// CapCut 2.0 Fast **按秒**（¥X/秒 × 实际秒数）；2.0 **按次**（返回 nil）。
+	//
+	// ⚠️ 两个模型**必须分开**：按次模型返回 seconds 倍率会被 relay_task.go 再乘一遍
+	//（¥3/次 × 15 秒 = ¥45，账实不符）—— 这是既有按次模型都返回 nil 的原因。
+	if req.Kind == kindCapcutVideo && req.Model == ModelCapcut20Fast && req.Duration > 0 {
+		return map[string]float64{"seconds": float64(req.Duration)}
+	}
 	// Picsart 特惠档：480P 是基准价（返回 nil = 不乘，¥1.50），720P 乘 1.333… → ¥2.00。
 	// 改价时 ModelPrice 与本倍率必须一起改（见 picsart720PSizeRatio 注释）。
 	if req.Kind == kindPicsartVideo && req.Resolution == "720P" {
@@ -1094,6 +1156,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// 保持官网 adaptive 默认档，不硬塞 16:9）。
 		body.VideoParams = &videoParams{
 			Model:      firstNonEmpty(spec.UpstreamModel, picsartUpstreamModel),
+			Ratio:      req.Ratio,
+			Duration:   &req.Duration,
+			Resolution: req.Resolution,
+		}
+		body.Inputs = toInputs(InputTypeImage, req.Images)
+	case kindCapcutVideo:
+		// CapCut（剪映国际版）：model 传官网档位真名（公开名 cp-* 在本表内翻译，
+		// ArcReel/Worker 两侧白名单按真名归一）；ratio/duration/resolution 透传。
+		body.VideoParams = &videoParams{
+			Model:      firstNonEmpty(spec.UpstreamModel, req.Model),
 			Ratio:      req.Ratio,
 			Duration:   &req.Duration,
 			Resolution: req.Resolution,
@@ -1374,6 +1446,13 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 		if resolution != "" && !strings.EqualFold(resolution, "720p") {
 			return fmt.Errorf("%s is fixed at 720p", modelName)
 		}
+	case kindCapcutVideo:
+		// CapCut 只卖 480p：720p/1080p/4K 在官网带 "Pro" 徽标（未开通不能选）。
+		// 显式拒绝而不是静默降到 480p —— 用户会为一个没生效的档位付费。
+		resolution := strings.TrimSpace(req.Resolution)
+		if resolution != "" && !strings.EqualFold(resolution, "480p") {
+			return fmt.Errorf("%s supports only 480p resolution, got %q", modelName, resolution)
+		}
 	case kindVeoVideo:
 		if hasValue(req.Seconds) {
 			return fmt.Errorf("%s is fixed-duration web Veo: seconds/duration is not supported", modelName)
@@ -1448,6 +1527,54 @@ func resolveDuration(req clientRequest, model string) (int, error) {
 	}
 
 	return defaultDuration, nil
+}
+
+// CapCut（剪映国际版）口径常量（2026-11-13 接入）。
+//
+// ⚠️ 真相源在 Worker 侧 cron_video_brach/src/platforms/capcut/params.ts，
+//   两端同口径；改口径必须三仓（new-api / ArcReel / Worker）同批改。
+const (
+	// capcutMinDuration / capcutMaxDuration：面板时长滑杆区间（4–15s）。
+	capcutMinDuration = 4
+	capcutMaxDuration = 15
+	// capcutDefaultDuration：面板出厂默认 5 秒。
+	capcutDefaultDuration = 5
+	// capcutMaxReferenceImages：参考图上限 9 张（官网素材口 accept 含 video/audio，
+	// 但交付链只处理图片；超出显式拒绝，不静默截断）。
+	capcutMaxReferenceImages = 9
+)
+
+// validateCapcutDuration 校验 CapCut 时长：4–15 秒区间内任意整数秒。
+func validateCapcutDuration(field string, value int, model string) (int, error) {
+	if value < capcutMinDuration || value > capcutMaxDuration {
+		return 0, fmt.Errorf("%s must be between %d and %d for %s, got %d",
+			field, capcutMinDuration, capcutMaxDuration, model, value)
+	}
+	return value, nil
+}
+
+// resolveCapcutDuration 解析 CapCut 时长：seconds → duration → 缺省 5。
+//
+// ⚠️ 区间内**原样透传**（不吸附、不回落）：官网滑杆是连续值，
+//   回落成 5 秒等于把用户买的长片变成短片（账实不符）。
+func resolveCapcutDuration(req clientRequest, model string) (int, error) {
+	seconds, found, err := parseFlexibleInt(req.Seconds)
+	if err != nil {
+		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
+	}
+	if found {
+		return validateCapcutDuration("seconds", seconds, model)
+	}
+
+	duration, found, err := parseFlexibleInt(req.Duration)
+	if err != nil {
+		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
+	}
+	if found {
+		return validateCapcutDuration("duration", duration, model)
+	}
+
+	return capcutDefaultDuration, nil
 }
 
 // resolveWanDuration 解析万相（图生/编辑）时长：seconds → duration → 缺省 5。
