@@ -137,15 +137,15 @@ func TestCapcutDurationLowerBoundaryMatrix(t *testing.T) {
 func TestCapcutReferenceImageCountBoundary(t *testing.T) {
 	for _, m := range capcutMatrix {
 		t.Run(m.publicModel, func(t *testing.T) {
-			imgs := make([]string, 0, 10)
-			for i := 0; i < 10; i++ {
+			imgs := make([]string, 0, capcutMaxReferenceImages+1)
+			for i := 0; i <= capcutMaxReferenceImages; i++ {
 				imgs = append(imgs, fmt.Sprintf(`"https://example.com/%s/%d.png"`, m.publicModel, i))
 			}
-			// 9 张：通过，且参考图数量原样下发
-			body9 := fmt.Sprintf(
+			// 上限张数（30）：通过，且参考图数量原样下发
+			bodyOK := fmt.Sprintf(
 				`{"model":%q,"prompt":"hi","seconds":5,"resolution":"480p","images":[%s]}`,
-				m.publicModel, strings.Join(imgs[:9], ","))
-			c, info, a := postVideoCtx(t, body9)
+				m.publicModel, strings.Join(imgs[:capcutMaxReferenceImages], ","))
+			c, info, a := postVideoCtx(t, bodyOK)
 			require.Nil(t, a.ValidateRequestAndSetAction(c, info))
 			reader, err := a.BuildRequestBody(c, info)
 			require.NoError(t, err)
@@ -155,15 +155,16 @@ func TestCapcutReferenceImageCountBoundary(t *testing.T) {
 			require.NoError(t, json.Unmarshal(data, &payload))
 			inputs, ok := payload["inputs"].([]any)
 			require.True(t, ok, "inputs 必须下发")
-			assert.Len(t, inputs, 9, "%s 9 张参考图必须原样下发", m.publicModel)
+			assert.Len(t, inputs, capcutMaxReferenceImages,
+				"%s %d 张参考图必须原样下发", m.publicModel, capcutMaxReferenceImages)
 
-			// 10 张：显式失败
-			body10 := fmt.Sprintf(
+			// 上限+1（31）：显式失败
+			bodyOver := fmt.Sprintf(
 				`{"model":%q,"prompt":"hi","seconds":5,"resolution":"480p","images":[%s]}`,
 				m.publicModel, strings.Join(imgs, ","))
-			c2, info2, a2 := postVideoCtx(t, body10)
+			c2, info2, a2 := postVideoCtx(t, bodyOver)
 			err2 := a2.ValidateRequestAndSetAction(c2, info2)
-			require.NotNil(t, err2, "%s 10 张参考图必须显式失败", m.publicModel)
+			require.NotNil(t, err2, "%s %d 张参考图必须显式失败", m.publicModel, capcutMaxReferenceImages+1)
 		})
 	}
 }

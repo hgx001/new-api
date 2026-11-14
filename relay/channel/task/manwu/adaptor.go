@@ -588,6 +588,32 @@ type clientRequest struct {
 	InputImagesCamelCase     json.RawMessage `json:"inputImages"`
 	Videos                   json.RawMessage `json:"videos"`
 	Video                    json.RawMessage `json:"video"`
+	// ── 参考音频（2026-11-14，CapCut 用户口径）──
+	//
+	// CapCut 官网素材口 accept 含 audio（"image/*,video/*,audio/*,.mp3,.wav"），
+	// 多模态参考模式下官网能接音视频参考 —— 但**我们的交付链只处理图片**。
+	//
+	// 用户口径（2026-11-14 明确）：
+	//   - new-api 侧**要写支持图片和音频，不支持视频**；
+	//   - 收到音频参数后**静默丢掉**：参数要被接受（不能 400），
+	//     但**不能下发给下游**（ArcReel / Worker 感知不到音频存在）。
+	//
+	// ⚠️ 为什么「静默丢」是安全的：音频参考在 CapCut 这条链路里只是**辅助参考**，
+	//   官网在多模态参考模式下本来就不生成音频（面板「生成音频」开关我们显式关闭），
+	//   且**按秒计价与素材无关** → 丢音频不会让交付物偏离客户预期、账单也不变。
+	//   但静默丢必须配上可追溯日志（见 capcut 素材审计日志）：
+	//   没有日志的静默丢与「丢图事故」同型 —— 客户以为传了、我们以为没传，事后无法对账。
+	//
+	// ⚠️ 为什么「视频」要显式拒而音频不拒：视频参考会影响成片的**内容**
+	//（动作/主体迁移），悄悄丢掉 = 客户按带视频下单却拿到纯文生视频（错交付 + 错账）。
+	Audios                   json.RawMessage `json:"audios"`
+	Audio                    json.RawMessage `json:"audio"`
+	// Media 是结构化素材数组（与有赞 / 万相链路的 media 形状一致）：
+	//   [{"type": "reference_image" | "reference_video" | "reference_audio", "url": "..."}]
+	// ⚠️ CapCut 的参考图**不走**这个字段（走顶层别名那 14 个），
+	// 但**参考视频 / 参考音频**在 media 里也必须被识别 ——
+	// 客户端把音视频塞进 media 是最常见的形态。
+	Media                    json.RawMessage `json:"media"`
 	N                        json.RawMessage `json:"n"`
 	Count                    json.RawMessage `json:"count"`
 	IdempotencyKey           string          `json:"idempotency_key"`
@@ -828,7 +854,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		norm.Ratio = ratio
 	}
 
-	images, referenceSource, err := resolveReferenceImages(req)
+	// 参考图上限**按 kind 分档**：CapCut 是 30 张（用户口径 2026-11-14），
+	// 其余链路沿用全局 10 张。不分档的话 11 张以上的 CapCut 请求会在**这里**
+	// 被拒 —— 走不到 CapCut 分支，报错文案也指向错误的理由。
+	referenceImageLimit := maxReferenceImages
+	if spec.Kind == kindCapcutVideo {
+		referenceImageLimit = capcutMaxReferenceImages
+	}
+	images, referenceSource, err := resolveReferenceImagesWithLimit(req, referenceImageLimit)
 	if err != nil {
 		return rejectReferenceRequest(c, req.Model, err)
 	}
@@ -895,7 +928,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		//   - 时长 4–30 秒任意整数秒（2.5 与 2.5 Flash，官网 2.5 系列 4–30s）；
 		//     其余档 4–15 秒（面板时长滑杆区间；自营收窄，官网 Omni reference 允许到 30s）；
 		//   - 分辨率只卖 480p / 720p（1080p/4K 带 Pro 徽标 → 未定价，不卖）；
-		//   - 参考图 ≤9 张（超出显式拒绝，不静默截断）；
+		//   - 参考图 ≤30 张（用户口径 2026-11-14，超出显式拒绝，不静默截断）；
+		//   - 参考音频：接受但**静默丢弃**（不下发给下游）；
+		//   - 参考视频：显式 400（静默丢 = 错交付）；
 		//   - 每次 1 张、不生成音频（面板那两个开关在 Worker 侧显式关闭）。
 		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -910,12 +945,36 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(resErr, "invalid_resolution", http.StatusBadRequest)
 		}
 		norm.Resolution = resolution
+		// 参考素材归一：图片透传、音频静默丢、视频显式拒。
+		//
+		// ⚠️ 这一步**必须**在参考图上限复核之前 —— 因为 media 数组里的
+		// 图片也要计入张数，而 media 里的音视频必须在建单前就被拒掉。
+		mediaImages, audit, matErr := resolveCapcutReferenceMaterials(req, norm.Model)
+		if matErr != nil {
+			// 参考视频 → 显式 400；图片超限 → 400。
+			logger.LogInfo(c, audit.auditLog(norm.Model))
+			return service.TaskErrorWrapperLocal(matErr, "invalid_input_reference", http.StatusBadRequest)
+		}
+		// 参考图合并：顶层别名（公共段已解析）+ media 数组里的图片。
+		if len(mediaImages) > 0 {
+			norm.Images = append(norm.Images, mediaImages...)
+			norm.ReferenceCount = len(norm.Images)
+			if norm.ReferenceSource == "" {
+				norm.ReferenceSource = "media"
+			} else {
+				norm.ReferenceSource = norm.ReferenceSource + "+media"
+			}
+		}
+		audit.ImageCount = norm.ReferenceCount
 		if norm.ReferenceCount > capcutMaxReferenceImages {
 			return service.TaskErrorWrapperLocal(
 				fmt.Errorf("%s accepts at most %d reference images, got %d", norm.Model, capcutMaxReferenceImages, norm.ReferenceCount),
 				"invalid_request", http.StatusBadRequest,
 			)
 		}
+		// 参考素材处置**留痕**（2026-11-14）：音频是「静默丢」的 ——
+		// 静默丢只有配上可追溯日志才是「有意丢弃」，否则与丢图事故同型。
+		logger.LogInfo(c, audit.auditLog(norm.Model))
 		// CapCut 归一结果**逐项落日志**（2026-11-14 参数链路核对）：
 		// new-api 不留存原始请求体（logs.other 只有 request_path/model_price），
 		// 排查「订单要 5 秒 720p 却出了 5 秒 480p」这类问题时，
@@ -1657,9 +1716,15 @@ const (
 	capcutDefaultDuration = 5
 	// capcutDefaultResolution：480p 是价格基准档。
 	capcutDefaultResolution = "480p"
-	// capcutMaxReferenceImages：参考图上限 9 张（官网素材口 accept 含 video/audio，
-	// 但交付链只处理图片；超出显式拒绝，不静默截断）。
-	capcutMaxReferenceImages = 9
+	// capcutMaxReferenceImages：参考图上限 **30 张**（2026-11-14 用户口径：
+	// 「≤30张参考图、≤5音频、≤5视频」）。
+	//
+	// ⚠️ 从 9 放宽到 30 是**用户口径**，不是官网真机标定值 ——
+	// 官网改版后参考素材的 DOM 标记变了（`data-reference-media-tag` 不再出现），
+	// 零成本标定暂时做不出来。收紧口径随时可以改回，但**放宽必须显式**。
+	//
+	// 超出显式拒绝，不静默截断（截断 = 客户按 30 张下单，成片里少了一张约束）。
+	capcutMaxReferenceImages = 30
 )
 
 // capcut720PRatios：720p 相对 480p 基准价的倍率（2026-11-13 定价口径）。
@@ -1764,6 +1829,232 @@ func resolveCapcutDuration(req clientRequest, model string) (int, error) {
 	}
 
 	return capcutDefaultDuration, nil
+}
+
+// ── CapCut 参考素材：图片透传 / 音频静默丢 / 视频显式拒 ────────────────
+//
+// 真相源与口径：
+//   - 官网素材口 accept = "image/*,video/*,audio/*,.tif,.tiff,.mp3,.wav"，
+//     多模态参考模式（面板第二个 tab）下官网能接音视频参考；
+//   - 但**我们的交付链只处理图片**（Worker 侧只有图片会进 CapCut 素材槽，
+//     音频在 new-api 侧就被静默丢掉，不会下发到 Worker）。
+//
+// 用户口径（2026-11-14）：new-api 侧**写支持图片和音频、不支持视频**；
+// 收到音频参数**静默丢掉**（接受但不下发，下游不能知道音频存在）。
+
+// capcutMediaEntry 是 media 数组里的一个素材条目。
+type capcutMediaEntry struct {
+	Type string
+	URL  string
+}
+
+// capcutMediaTypes 是 media 数组里本链路关心的 type 取值。
+const (
+	capcutMediaTypeImage = "reference_image"
+	capcutMediaTypeVideo = "reference_video"
+	capcutMediaTypeAudio = "reference_audio"
+)
+
+// parseCapcutMediaEntries 解析 media 数组（只取本链路关心的三种 type）。
+//
+// 形态兼容：
+//   - [{"type": "reference_audio", "url": "..."}]
+//   - [{"type": "reference_audio", "path": "..."}]（无 url）
+//   - [{"type": "reference_audio", "file": {"url": "..."}}]
+//
+// ⚠️ 不认识的 type **静默跳过**（不报错）：media 里可能塞 first_frame /
+// last_frame 这类我们不处理的类型，为它们报错会误伤客户的合法请求。
+func parseCapcutMediaEntries(raw json.RawMessage) ([]capcutMediaEntry, error) {
+	if !hasValue(raw) {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(trimmed, "[") {
+		// media 必须是数组；给别的形态（对象/字符串）不报错也不处理 ——
+		// 解析失败当成「没传」，避免为形态问题拒掉客户请求。
+		return nil, nil
+	}
+	var elements []map[string]any
+	if err := common.Unmarshal(raw, &elements); err != nil {
+		return nil, nil
+	}
+	entries := make([]capcutMediaEntry, 0, len(elements))
+	for _, element := range elements {
+		if element == nil {
+			continue
+		}
+		mediaType, _ := element["type"].(string)
+		mediaType = strings.TrimSpace(mediaType)
+		switch mediaType {
+		case capcutMediaTypeImage, capcutMediaTypeVideo, capcutMediaTypeAudio:
+		default:
+			continue
+		}
+		url := ""
+		if v, ok := element["url"].(string); ok {
+			url = strings.TrimSpace(v)
+		}
+		if url == "" {
+			if file, ok := element["file"].(map[string]any); ok {
+				if v, ok := file["url"].(string); ok {
+					url = strings.TrimSpace(v)
+				}
+			}
+		}
+		if url == "" {
+			continue
+		}
+		entries = append(entries, capcutMediaEntry{Type: mediaType, URL: url})
+	}
+	return entries, nil
+}
+
+// parseCapcutMetadataMediaEntries 解析 **metadata 里**的 media 数组。
+//
+// 有赞 / 万相链路的素材有三处落点（middleware/seedance_route.go 的
+// hasUnsupportedMedia 就是按这三处扫的）：
+//   - metadata.media
+//   - metadata.input.media（ArcReel 的 Wan3 形状）
+//
+// ⚠️ 顶层 metadata.media 与 metadata.input.media 都要扫 —— 只扫一处的话，
+// 客户端把参考视频塞进另一个形状就绕过了「显式拒绝」，变成静默丢。
+func parseCapcutMetadataMediaEntries(metadata map[string]any) []capcutMediaEntry {
+	if len(metadata) == 0 {
+		return nil
+	}
+	entries := make([]capcutMediaEntry, 0)
+	collect := func(raw any) {
+		if raw == nil {
+			return
+		}
+		encoded, err := json.Marshal(raw)
+		if err != nil {
+			return
+		}
+		parsed, err := parseCapcutMediaEntries(encoded)
+		if err != nil {
+			return
+		}
+		entries = append(entries, parsed...)
+	}
+	collect(metadata["media"])
+	if input, ok := metadata["input"].(map[string]any); ok {
+		collect(input["media"])
+	}
+	return entries
+}
+
+// capcutReferenceAudit 汇总一次请求里的参考素材处置结果，用于**留痕**。
+//
+// ⚠️ 为什么要留痕：音频是「静默丢」的 —— 静默丢只有配上可追溯日志才是
+// 「有意丢弃」，否则与 2026-10-22 丢图事故同型（客户以为传了、我们以为没传，
+// 两边对不上账，事后谁也说不清）。排查时第一手证据就是这行日志。
+type capcutReferenceAudit struct {
+	ImageCount int
+	AudioCount int
+	VideoCount int
+	// AudioDropped / VideoRejected 记录来源字段，方便定位是哪个形态传进来的。
+	AudioSources []string
+}
+
+// auditLog 渲染成一行日志。
+func (a capcutReferenceAudit) auditLog(model string) string {
+	return fmt.Sprintf(
+		"manwu capcut 参考素材审计：model=%s 参考图=%d 音频=%d(已静默丢弃,来源=%s) 视频=%d",
+		model, a.ImageCount, a.AudioCount,
+		firstNonEmpty(strings.Join(a.AudioSources, ","), "<none>"),
+		a.VideoCount,
+	)
+}
+
+// resolveCapcutReferenceMaterials 归一 CapCut 请求里的参考素材。
+//
+// 返回值：
+//   - images：**只含图片**的 URL 列表（要下发到建单载荷）；
+//   - audit：处置审计（用于日志）。
+//   - err：只有「参考视频」才返回错误（显式 400）。
+//
+// 三条处置规则（用户口径 2026-11-14）：
+//
+//	图片 → 透传（上限 30 张，超出显式 400）；
+//	音频 → **静默丢弃**（接受、不报错、不下发）；
+//	视频 → **显式 400**（静默丢会让客户按带视频下单却拿到纯图生成的片）。
+func resolveCapcutReferenceMaterials(req clientRequest, model string) ([]string, capcutReferenceAudit, error) {
+	audit := capcutReferenceAudit{}
+
+	// ① 图片：走顶层那 14 个别名（resolveReferenceImages 已在公共段解析过，
+	//    这里只做上限复核 —— 公共段用的是全局 10 张上限，CapCut 要 30 张）。
+	//
+	// ⚠️ 注意：公共段 resolveReferenceImages 的全局上限是 maxReferenceImages=10，
+	//    **大于 10 张的 CapCut 请求会在公共段就被拒**（早于 CapCut 分支）。
+	//    所以 CapCut 的 30 张上限要在这里**提前**生效 —— 见调用点顺序。
+	//
+	// ② media 数组里的图片：也认（客户端常把全部素材塞进 media）。
+	mediaEntries, err := parseCapcutMediaEntries(req.Media)
+	if err != nil {
+		return nil, audit, err
+	}
+	// ②' metadata.media / metadata.input.media —— 素材的另两处落点。
+	mediaEntries = append(mediaEntries, parseCapcutMetadataMediaEntries(req.Metadata)...)
+
+	// ③ 顶层音频字段（audios / audio）。
+	audioURLs, _ := parseStringList(req.Audios)
+	if single := strings.TrimSpace(string(req.Audio)); single != "" {
+		parsed, _ := parseStringList(req.Audio)
+		audioURLs = append(audioURLs, parsed...)
+	}
+
+	// ④ 视频：顶层 videos / video + media 里的 reference_video。
+	videoURLs, _ := parseStringList(req.Videos)
+	if single := strings.TrimSpace(string(req.Video)); single != "" {
+		parsed, _ := parseStringList(req.Video)
+		videoURLs = append(videoURLs, parsed...)
+	}
+
+	// media 里的三类分别归类。
+	mediaImages := make([]string, 0, len(mediaEntries))
+	for _, entry := range mediaEntries {
+		switch entry.Type {
+		case capcutMediaTypeImage:
+			mediaImages = append(mediaImages, entry.URL)
+		case capcutMediaTypeAudio:
+			audit.AudioCount++
+			audit.AudioSources = append(audit.AudioSources, "media")
+		case capcutMediaTypeVideo:
+			audit.VideoCount++
+		}
+	}
+	// 顶层音频计账。
+	for range audioURLs {
+		audit.AudioCount++
+	}
+	if len(audioURLs) > 0 {
+		audit.AudioSources = append(audit.AudioSources, "audios/audio")
+	}
+	// 顶层视频计账。
+	for range videoURLs {
+		audit.VideoCount++
+	}
+
+	// ⑤ 参考视频：显式拒绝（在建单之前，别让客户白等一轮 + 白烧一次预扣）。
+	if audit.VideoCount > 0 {
+		return nil, audit, fmt.Errorf(
+			"%s does not accept reference video; it supports reference images and reference audio only",
+			model,
+		)
+	}
+
+	// ⑥ 图片上限复核（CapCut 口径 30 张）。
+	audit.ImageCount = len(mediaImages)
+	if audit.ImageCount > capcutMaxReferenceImages {
+		return nil, audit, fmt.Errorf(
+			"%s accepts at most %d reference images, got %d",
+			model, capcutMaxReferenceImages, audit.ImageCount,
+		)
+	}
+
+	// ⑦ 音频静默丢弃 —— 到这里 audioURLs / media 里的音频**不会**进 images。
+	return mediaImages, audit, nil
 }
 
 // resolveWanDuration 解析万相（图生/编辑）时长：seconds → duration → 缺省 5。
@@ -2168,6 +2459,19 @@ func rejectReferenceRequest(c *gin.Context, model string, err error) *dto.TaskEr
 //
 // 返回值里的 source 是命中的字段名，用于日志与规范化请求（可观测性）。
 func resolveReferenceImages(req clientRequest) ([]string, string, error) {
+	return resolveReferenceImagesWithLimit(req, maxReferenceImages)
+}
+
+// resolveReferenceImagesWithLimit 是 resolveReferenceImages 的**可配上限**版本。
+//
+// 为什么需要它（2026-11-14）：CapCut 的参考图上限是 **30 张**（用户口径），
+// 而公共上限 maxReferenceImages 只有 10 张 —— 不区分的话，11 张以上的 CapCut
+// 请求会在**公共段**就被拒，根本走不到 CapCut 自己的分支做口径判断，
+// 报错文案还会指向错误的理由（"at most 10 reference images"）。
+//
+// ⚠️ 上限**按 kind 分档**，不是按模型名 —— 同一 kind 的五个档位口径必须一致，
+// 改口径时三仓（new-api / ArcReel / Worker）同批改。
+func resolveReferenceImagesWithLimit(req clientRequest, limit int) ([]string, string, error) {
 	for _, field := range referenceImageFields {
 		raw := field.Raw(req)
 		if !hasValue(raw) {
@@ -2181,9 +2485,9 @@ func resolveReferenceImages(req clientRequest) ([]string, string, error) {
 		if len(images) == 0 {
 			continue
 		}
-		if len(images) > maxReferenceImages {
+		if len(images) > limit {
 			return nil, field.Name, newReferenceRejection(referenceReasonTooMany,
-				fmt.Errorf("manwu accepts at most %d reference images, got %d", maxReferenceImages, len(images)))
+				fmt.Errorf("manwu accepts at most %d reference images, got %d", limit, len(images)))
 		}
 		for _, image := range images {
 			if err := assertHTTPURL(image, "reference image"); err != nil {

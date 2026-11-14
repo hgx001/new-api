@@ -2,6 +2,7 @@ package manwu
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -237,10 +238,26 @@ func TestCapcutAccepts720p(t *testing.T) {
 }
 
 // 参考图第 10 张显式拒绝（不静默截断到 9 张）。
-func TestCapcutRejectsTenReferenceImages(t *testing.T) {
-	body := `{"model":"cp-seedance-2.0","prompt":"hi","input_reference":["https://a/1.jpg","https://a/2.jpg","https://a/3.jpg","https://a/4.jpg","https://a/5.jpg","https://a/6.jpg","https://a/7.jpg","https://a/8.jpg","https://a/9.jpg","https://a/10.jpg"]}`
-	c, info, a := postVideoCtx(t, body)
-	err := a.ValidateRequestAndSetAction(c, info)
+// 参考图上限 30 张（2026-11-14 用户口径，从 9 放宽到 30）。
+// 30 张通过，31 张显式拒绝 —— 静默截断会让客户按 30 张下单却少了一张约束。
+func TestCapcutReferenceImagesLimitIs30(t *testing.T) {
+	build := func(n int) string {
+		items := make([]string, 0, n)
+		for i := 0; i < n; i++ {
+			items = append(items, fmt.Sprintf(`"https://a/%d.jpg"`, i))
+		}
+		return fmt.Sprintf(
+			`{"model":"cp-seedance-2.0","prompt":"hi","input_reference":[%s]}`,
+			strings.Join(items, ","))
+	}
+
+	// 30 张：通过
+	c, info, a := postVideoCtx(t, build(30))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	// 31 张：显式拒绝
+	c2, info2, a2 := postVideoCtx(t, build(31))
+	err := a2.ValidateRequestAndSetAction(c2, info2)
 	require.NotNil(t, err)
 }
 
