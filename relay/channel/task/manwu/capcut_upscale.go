@@ -38,9 +38,10 @@ package manwu
 
 import (
 	"context"
-	"io"
-	"net/http"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -189,9 +190,6 @@ func (a *TaskAdaptor) resolveCapcutMediaURL(ctx context.Context, raw string) str
 	if a.apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	}
-	// 只取响应头：Range 让上游别把整片推过来（不支持 Range 的服务端也只会
-	// 多传一点，我们下面用 LimitReader 兜住）。
-	req.Header.Set("Range", "bytes=0-0")
 	client := &http.Client{
 		Timeout: capcutMediaResolveTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -208,8 +206,24 @@ func (a *TaskAdaptor) resolveCapcutMediaURL(ctx context.Context, raw string) str
 
 	loc := strings.TrimSpace(resp.Header.Get("Location"))
 	if loc == "" {
+		// ⚠️ 这里**不能**只认 302。
+		//
+		// ArcReel 的产物有三种落法（2026-11-14 实测）：
+		//   302 + Location → 产物还在 arcmedia CDN 未内联，跳转到公网地址；
+		//   200 + 正文     → 产物已被内联到 arcreel，arcreel 直接把 mp4 吐出来
+		//                    （带鉴权才能取，无鉴权 401）；
+		//   206 + 正文     → 同上，只是上游按 Range 只给了一段。
+		//
+		// 之前只取 Location，于是 200/206 这两种落法被判成「拿不到地址」，
+		// 超分静默跳过、客户拿到 480P 却按 720P 计费。
+		//
+		// 正确做法：能从**路径规律**推出 arcmedia 公网地址就用它 ——
+		// MPS 拉不了带自定义头的地址，而 arcmedia（腾讯 COS）是公开的。
+		if public := deriveArcmediaPublicURLFunc(raw); public != "" {
+			return public
+		}
 		logger.LogError(ctx, fmt.Sprintf(
-			"解析 CapCut 成片公开地址失败：上游返回 %d，但没有 Location（带鉴权=%v）",
+			"解析 CapCut 成片公开地址失败：上游返回 %d，但没有 Location，也推不出公开地址（带鉴权=%v）",
 			resp.StatusCode, a.apiKey != ""))
 		return ""
 	}
@@ -218,6 +232,65 @@ func (a *TaskAdaptor) resolveCapcutMediaURL(ctx context.Context, raw string) str
 		loc = resp.Request.URL.ResolveReference(parsed).String()
 	}
 	return loc
+}
+
+// deriveArcmediaPublicURLFunc 是「推导 arcmedia 公网地址」的注入点。
+//
+// 抽成变量是为了单测能替换它（单测里 httptest 监听的是 IP，
+// 而 arcmedia 域名推导依赖真实域名形态）。
+// 生产路径永远用 deriveArcmediaPublicURL。
+var deriveArcmediaPublicURLFunc = deriveArcmediaPublicURL
+
+// deriveArcmediaPublicURL 按路径规律推出 arcmedia 上的公网成片地址。
+//
+// ArcReel 的托管产物在两个域名下有两种路径形态（2026-11-14 实测）：
+//
+//	arcreel   /api/v1/remote-generation/jobs/{jobId}/outputs/{file}
+//	arcmedia  /projects/remote_outputs/{jobId}/{file}
+//
+// arcreel 那个地址需要渠道密钥（无鉴权 401），arcmedia 那个是腾讯 COS
+// 直链、公开可取。超分服务（MPS）从公网拉片、不能带自定义请求头，
+// 所以必须交出 arcmedia 地址。
+//
+// ⚠️ 这里同时给出「带 ?v= 时间戳」与否两种形态：归档后的文件带 v 参数
+// 是为了绕缓存，实测两种都能取到，优先用不带 v 的干净地址。
+func deriveArcmediaPublicURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	// 找 /api/v1/remote-generation/jobs/{jobId}/outputs/{file} 这一段。
+	marker := "/api/v1/remote-generation/jobs/"
+	idx := strings.Index(parsed.Path, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := strings.TrimPrefix(parsed.Path[idx:], marker)
+	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	// 形如 {jobId}/outputs/{file}
+	if len(parts) != 3 || parts[0] == "" || parts[2] == "" || parts[1] != "outputs" {
+		return ""
+	}
+	jobID, file := parts[0], parts[2]
+	scheme := "https"
+	if parsed.Scheme == "http" {
+		scheme = "http"
+	}
+	// arcmedia 与 arcreel 同属一个主域，保留主域即可。
+	host := parsed.Hostname()
+	if host == "" {
+		return ""
+	}
+	// IP 主机推不出 arcmedia 对应域（arcmedia.127.0.0.1 根本不存在）。
+	if net.ParseIP(host) != nil {
+		return ""
+	}
+	mediaHost := "arcmedia." + strings.TrimPrefix(host, "arcreel.")
+	return fmt.Sprintf("%s://%s/projects/remote_outputs/%s/%s", scheme, mediaHost, jobID, file)
 }
 
 // PollPostProcess 推进超分任务；done=true 表示已到终态。

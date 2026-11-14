@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -233,4 +234,69 @@ func TestAfterUpstreamSuccessWithoutMediaURLDeliversOriginal(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, handled)
 	assert.False(t, called, "没有可抓取的成片地址时不该提交注定失败的超分任务")
+}
+
+// ───────────────────────── ArcReel 产物三种落法（2026-11-14 实测）─────────
+//
+// 上游把成片放在两个域名下，有三种可观察的响应形态：
+//
+//	302 + Location → 还没内联，跳转到 arcmedia 公网地址；
+//	200 + 正文     → 已内联，arcreel 直接吐 mp4（无鉴权 401）；
+//	206 + 正文     → 同上，按 Range 只给一段。
+//
+// 之前只认 Location，于是 200/206 被判成「拿不到地址」→ 超分静默跳过。
+// 这条用例锁死 206 也要能推出公网地址。
+
+// 上游直出正文（206）时，必须推出 arcmedia 公网地址 ——
+// MPS 从公网拉片且不能带 Authorization。
+func TestResolveCapcutMediaURLDerivesPublicURLWhenBodyServedDirectly(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 模拟上游：直出 206 正文，没有 Location。
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer server.Close()
+
+	// 把服务地址改造成 arcreel 那种路径形态，才能命中推导逻辑。
+	raw := strings.Replace(server.URL, "://", "://arcreel.", 1) +
+		"/api/v1/remote-generation/jobs/job-1/outputs/out-1.mp4"
+
+	// 单测里 httptest 监听的是 IP，推不出真实的 arcmedia 域，
+	// 所以把推导这一步替换掉，只验证「上游直出正文时确实会去推导」。
+	previous := deriveArcmediaPublicURLFunc
+	deriveArcmediaPublicURLFunc = func(string) string {
+		return "https://arcmedia.example.com/projects/remote_outputs/job-1/out-1.mp4"
+	}
+	t.Cleanup(func() { deriveArcmediaPublicURLFunc = previous })
+
+	adaptor := &TaskAdaptor{apiKey: "sk-test"}
+	got := adaptor.resolveCapcutMediaURL(context.Background(), raw)
+	assert.Equal(t, "https://arcmedia.example.com/projects/remote_outputs/job-1/out-1.mp4", got,
+		"上游直出正文时必须改用 arcmedia 公网地址")
+	assert.NotContains(t, got, "/api/v1/remote-generation/",
+		"推出来的地址不能再是需要鉴权的那条")
+}
+
+// 推导不出（路径不匹配）时返回空串 —— 不能凭空造地址。
+func TestDeriveArcmediaPublicURLRejectsUnknownPath(t *testing.T) {
+	assert.Equal(t, "", deriveArcmediaPublicURL("https://example.com/some/other/path.mp4"))
+	assert.Equal(t, "", deriveArcmediaPublicURL(""))
+}
+
+// 路径形态正确时，推导结果要精确。
+func TestDeriveArcmediaPublicURL(t *testing.T) {
+	got := deriveArcmediaPublicURL(
+		"https://arcreel.heibaidao.cn/api/v1/remote-generation/jobs/gen-abc123/outputs/output-x.mp4")
+	assert.Equal(t,
+		"https://arcmedia.heibaidao.cn/projects/remote_outputs/gen-abc123/output-x.mp4",
+		got)
+}
+
+// IP 主机推不出 arcmedia 对应域（arcmedia.127.0.0.1 根本不存在），
+// 这种情况必须返回空串而不是造一个无效地址。
+func TestDeriveArcmediaPublicURLRejectsIPHost(t *testing.T) {
+	got := deriveArcmediaPublicURL(
+		"http://127.0.0.1:8080/api/v1/remote-generation/jobs/job-1/outputs/out-1.mp4")
+	assert.Equal(t, "", got, "IP 主机不能瞎推域名")
 }
