@@ -221,7 +221,7 @@ func TestDefaultModelPriceDoubaoSeedance(t *testing.T) {
 }
 
 // wan3.0-班车（2026-11-04 上架，原名「wan3.0-排队」）：视频生成车站排队通道，
-// 按次 ¥1.50/次（上游成本 ¥1/次）。
+// 按次 ¥3.50/次（2026-11-14 老板调价，原 ¥1.50；上游成本 ¥1/次）。
 //
 // ⚠️ 旧名「wan3.0-排队」不得再有价格 —— 改名时生产库尚无该模型的渠道与能力
 // 记录，不存在旧名调用方，留着会让旧名在广场或计费里复活。
@@ -230,8 +230,8 @@ func TestDefaultModelPriceYuanmengBanChe(t *testing.T) {
 
 	price, ok := GetModelPrice("wan3.0-班车", false)
 	require.True(t, ok, "wan3.0-班车 must have an explicit per-use price")
-	require.InDelta(t, 1.5/USD2RMB, price, 1e-12, "wan3.0-班车 must be ¥1.50/call in USD")
-	require.InDelta(t, 0.2054795, price, 1e-7, "wan3.0-班车 must be ¥1.50/call in USD")
+	require.InDelta(t, 3.5/USD2RMB, price, 1e-12, "wan3.0-班车 must be ¥3.50/call in USD")
+	require.InDelta(t, 0.4794521, price, 1e-7, "wan3.0-班车 must be ¥3.50/call in USD")
 
 	_, exists := defaultModelPrice["wan3.0-排队"]
 	require.False(t, exists, "旧名「wan3.0-排队」必须从默认价格表移除")

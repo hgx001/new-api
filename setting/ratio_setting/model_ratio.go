@@ -437,12 +437,11 @@ var defaultModelPrice = map[string]float64{
 	"wan3.0-1080p-慢速":       2.0 / USD2RMB,   // 三元巡狩 wanwan 1080P（拼车），按次 ¥2.0/次（上游成本 ¥1/次）；拼车批次制，次日出片（EstimateBilling 返回 nil）
 	// wan3.0-班车（2026-11-04 上架，原名「wan3.0-排队」）：视频生成车站排队通道的
 	// 万相 wan3 全模态，攒批发车。480P/720P/1080P **上游同价**（每条固定扣 1 次），
-	// 对外也按次单一价位 ¥1.5/次，不叠时长/分辨率倍率（EstimateBilling 返回 nil）。
+	// 对外也按次单一价位 ¥3.5/次，不叠时长/分辨率倍率（EstimateBilling 返回 nil）。
 	//
-	// ⚠️ 上游成本 ¥1/次（充值 1 元 = 1 次），对外 ¥1.5/次 —— 毛利 ¥0.5/次。
-	//    这是**唯一比成本价低的档**，定价依据是「排队要等数小时」，
-	//    用低价换客户对慢速档位的接受度。
-	"wan3.0-班车":                         1.5 / USD2RMB,
+	// ⚠️ 上游成本 ¥1/次（充值 1 元 = 1 次），对外 ¥3.5/次 —— 毛利 ¥2.5/次。
+	//    2026-11-14 老板调价（原 ¥1.5/次）；生产以 options 的 ModelPrice 为准。
+	"wan3.0-班车":                         3.5 / USD2RMB,
 	"autodl:minimax-h3-text-to-video":   autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5":     autoDLVideoBasePrice,
 	"autodl:minimax-h3-lightx2v-v5-15s": autoDLVideoBasePrice,
