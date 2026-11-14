@@ -30,8 +30,13 @@ echo "DISK_OK: ${free_mb}MB free"
 #
 # ⚠️ 必须带 timeout：服务器到 github 不通时，裸 `git fetch` 会一直挂在
 # TCP 超时上（2026-11-06 实测卡了 15 分钟，部署停在第一步没有任何输出）。
-# 25 秒拿不到就直接走「本地已有该 commit」分支。
-if ! timeout 25 git fetch -q origin main 2>/dev/null; then
+# 超时后走「本地已有该 commit」分支。
+#
+# ⚠️ 超时值给到 90 秒：老机到 github 是**慢**而不是不通
+# （2026-11-14 19:38 实测：手动 fetch 用 60 秒成功，脚本的 25 秒连续两次
+# 判定失败 → ABORT）。25 秒那次是「网好时的经验值」，慢一点的机器上
+# 就变成了误判。宁可多等一分钟，不要在代码没拉到的状态下误判。
+if ! timeout 90 git fetch -q origin main 2>/dev/null; then
   echo "WARN: fetch 失败，检查本地是否已有 $TARGET"
   if ! git cat-file -e "${TARGET}^{commit}" 2>/dev/null; then
     echo "ABORT: 本地也没有 $TARGET，无法部署"
