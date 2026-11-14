@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { EXCLUDED_GROUPS, QUOTA_TYPE_VALUES } from '../constants'
 import type { PricingModel } from '../types'
 import { getSeedance25SampleResolution } from './seedance25-family'
+import { isCapcutFamilyMember } from './capcut-family'
 
 // ----------------------------------------------------------------------------
 // Model Helper Utilities
@@ -128,6 +129,15 @@ export function getWan3SampleResolution(modelName: string): string | null {
  */
 export function isPerSecondModel(model: PricingModel): boolean {
   const name = model.model_name ?? ''
+  // CapCut（剪映国际版）五档：cp-seedance-2.0mini / -2.0fast / -2.0 /
+  // -2.5flash / -2.5。**五档全部按秒**（480p 基准价 × 时长 × 分辨率倍率），
+  // 不登记的话广场会把 ¥0.05/秒 的牌价挂在「/次」下 —— 客户按次理解就是错价。
+  //
+  // ⚠️ 用**精确集合**而非前缀：`cp-seedance-2.5flash` 包含子串
+  // `cp-seedance-2.5`，前缀匹配会把两档混为一谈（时长上界 15 vs 30 秒）。
+  if (isCapcutFamilyMember(name)) {
+    return true
+  }
   // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥5/次），不命中。
   if (name.startsWith('seedance-2-0')) {
     return true

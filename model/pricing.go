@@ -525,6 +525,18 @@ func isAllowedPricingModel(name string) bool {
 	if name == "seedance-2.0" || name == "seedance-2.5" {
 		return true
 	}
+	// 漫屋 ArcReel CapCut（剪映国际版）五档：cp-seedance-2.0mini /
+	// -2.0fast / -2.0 / -2.5flash / -2.5。
+	//
+	// ⚠️ 判定走**能力组**（constant.IsCapcutFamily），不要在这里手写模型名 ——
+	// 能力组是「谁是这一族」的唯一来源；将来加第六档，这里自动生效，
+	// 不会出现「加了模型忘了上广场」。
+	//
+	// ⚠️ 能力组用**精确集合**：公开名 `cp-seedance-2.5flash` 包含子串
+	// `cp-seedance-2.5`，前缀匹配会误伤别家渠道的枚举表。
+	if constant.IsCapcutFamily(name) {
+		return true
+	}
 	// 漫屋 ArcReel 豆包官网视频（公开短名，转发前由 manwu adaptor 翻译成官网真名；
 	// 2026-10-12 去掉 db- 前缀：db-seedance-2-0 → seedance-2-0-fast、db-seedance-2-5 → seedance-2-5）
 	if name == "seedance-2-5" || name == "seedance-2-0-fast" {
