@@ -916,6 +916,26 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 				"invalid_request", http.StatusBadRequest,
 			)
 		}
+		// CapCut 归一结果**逐项落日志**（2026-11-14 参数链路核对）：
+		// new-api 不留存原始请求体（logs.other 只有 request_path/model_price），
+		// 排查「订单要 5 秒 720p 却出了 5 秒 480p」这类问题时，
+		// 网关侧唯一的证据就是「我们最终归一成什么」+「客户原始传了什么」。
+		//
+		// ⚠️ 必须同时记**原始值**与**归一值**：两者不一致 = 发生了改写
+		// （例如客户传 1080p 被拒、传 30 秒被 2.0 档拒），
+		// 只记归一值就看不出「改写发生过」。
+		logger.LogInfo(c, fmt.Sprintf(
+			"manwu capcut 参数归一：model=%s upstream=%s duration=%d(原始 %s) "+
+				"resolution=%s(原始 %s) ratio=%s 参考图=%d",
+			norm.Model,
+			firstNonEmpty(spec.UpstreamModel, norm.Model),
+			norm.Duration,
+			firstNonEmpty(string(req.Seconds), string(req.Duration), "<none>"),
+			norm.Resolution,
+			firstNonEmpty(req.Resolution, "<none>"),
+			firstNonEmpty(norm.Ratio, "<none>"),
+			norm.ReferenceCount,
+		))
 	case kindVeoVideo:
 		// Veo 官网只有宽高比控件（2026-09-22 真机验证）：模型/时长/分辨率没有可实现
 		// 的控件，Worker 侧会 fail-fast 拒单。这里提前 400，别让用户白付一次预扣。
@@ -1301,12 +1321,33 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 参考图来源字段名与张数一并落日志（2026-10-22 丢图事故的排查盲区：
 	// new-api 不留存原始请求体，这一行是「客户端到底传了什么字段名」的唯一定位点）。
 	referenceSource, referenceCount := "<none>", 0
+	// 归一后的下发参数（用于「任务下发明细」日志）。
+	normKind, normDuration, normResolution, normRatio := "<none>", "<none>", "<none>", "<none>"
 	if norm, err := getNormalizedRequest(c); err == nil && norm != nil {
 		referenceSource = firstNonEmpty(norm.ReferenceSource, "<none>")
 		referenceCount = norm.ReferenceCount
+		normKind = norm.Kind
+		normDuration = strconv.Itoa(norm.Duration)
+		normResolution = firstNonEmpty(norm.Resolution, "<default>")
+		normRatio = firstNonEmpty(norm.Ratio, "<default>")
 	}
 	logger.LogInfo(c, fmt.Sprintf("manwu 任务已提交 task_id=%s upstream_job_id=%s model=%s ref_source=%s ref_count=%d",
 		info.PublicTaskID, taskID, info.OriginModelName, referenceSource, referenceCount))
+	// 任务下发明细落日志（2026-11-14）：任务已提交这一刻是「网关侧最终下发内容」
+	// 的**唯一**留痕点（ArcReel 之后会再归一一次，Worker 侧还会再归一一次）。
+	// 三段日志合起来才能回答「订单要的 5 秒 720p 是不是真的这么跑了」。
+	logger.LogInfo(c, fmt.Sprintf(
+		"manwu 任务下发明细 task_id=%s upstream_job_id=%s kind=%s model=%s "+
+			"duration=%s resolution=%s ratio=%s 参考图=%d",
+		info.PublicTaskID,
+		taskID,
+		normKind,
+		info.OriginModelName,
+		normDuration,
+		normResolution,
+		normRatio,
+		referenceCount,
+	))
 	return taskID, responseBody, nil
 }
 
