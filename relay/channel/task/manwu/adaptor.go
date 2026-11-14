@@ -949,11 +949,31 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		//
 		// ⚠️ 这一步**必须**在参考图上限复核之前 —— 因为 media 数组里的
 		// 图片也要计入张数，而 media 里的音视频必须在建单前就被拒掉。
-		mediaImages, audit, matErr := resolveCapcutReferenceMaterials(req, norm.Model)
+		mediaImages, mediaVideos, audit, matErr := resolveCapcutReferenceMaterials(req, norm.Model)
 		if matErr != nil {
-			// 参考视频 → 显式 400；图片超限 → 400。
+			// 参考视频超限 / 视频缺 URL / 图片超限 → 400。
 			logger.LogInfo(c, audit.auditLog(norm.Model))
 			return service.TaskErrorWrapperLocal(matErr, "invalid_input_reference", http.StatusBadRequest)
+		}
+		// 参考视频：保留 URL，进建单载荷的 reference_video 槽。
+		//
+		// 计费探测放在这里（validate 阶段、预扣费之前）：EstimateBilling 没有
+		// 错误返回值，拿不到时长就没法在计费阶段拒单 —— 只能在这里判。
+		// 探测口径与 erchun / hailuo / wan3 / seeta 完全一致（1:1 同价）。
+		norm.Videos = append(norm.Videos, mediaVideos...)
+		if len(norm.Videos) > 0 {
+			client, clientErr := service.GetHttpClientWithProxy("")
+			if clientErr != nil {
+				return service.TaskErrorWrapperLocal(
+					errors.Wrap(clientErr, "new http client failed"), "invalid_input_reference", http.StatusInternalServerError)
+			}
+			refSeconds, probeErr := taskcommon.ProbeAndEnforceReferenceVideos(
+				context.Background(), norm.Videos, taskcommon.MaxReferenceVideoSeconds, client)
+			if probeErr != nil {
+				logger.LogInfo(c, audit.auditLog(norm.Model))
+				return service.TaskErrorWrapperLocal(probeErr, "invalid_input_reference", http.StatusBadRequest)
+			}
+			c.Set(capcutRefVideoSecondsContextKey, refSeconds)
 		}
 		// 参考图合并：顶层别名（公共段已解析）+ media 数组里的图片。
 		if len(mediaImages) > 0 {
@@ -1185,8 +1205,12 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	//   （会被 relay_task.go 再乘一遍，账实不符）。
 	if req.Kind == kindCapcutVideo {
 		ratios := map[string]float64{}
-		if req.Duration > 0 {
-			ratios["seconds"] = float64(req.Duration)
+		// 参考视频按秒 1:1 同价：seconds = 生成时长 + 参考视频总秒数。
+		// 上游 input_video_second 与 output_video_second 同价（wan3.0 / prime /
+		// vega-lite 实测都是 1:1），白送等于每单按秒亏。
+		seconds := req.Duration + capcutRefVideoSeconds(c)
+		if seconds > 0 {
+			ratios["seconds"] = float64(seconds)
 		}
 		if ratio := capcutResolutionRatio(req.Model, req.Resolution); ratio != 1 {
 			ratios["size"] = ratio
@@ -1315,7 +1339,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			Duration:   &req.Duration,
 			Resolution: req.Resolution,
 		}
-		body.Inputs = toInputs(InputTypeImage, req.Images)
+		// 图在前、视频在后：Worker 按 inputs 顺序逐条上传，图先落位才不会被
+		// 视频的解码耗时拖住确认窗口；客户端 @imageN 的位置绑定也依赖图在前。
+		body.Inputs = append(toInputs(InputTypeImage, req.Images), toInputs(InputTypeVideo, req.Videos)...)
 	default:
 		return nil, fmt.Errorf("unsupported manwu request kind: %s", spec.Kind)
 	}
@@ -1725,7 +1751,38 @@ const (
 	//
 	// 超出显式拒绝，不静默截断（截断 = 客户按 30 张下单，成片里少了一张约束）。
 	capcutMaxReferenceImages = 30
+	// capcutMaxReferenceVideos：参考视频上限 **1 个**（2026-11-14 放开参考视频）。
+	//
+	// Worker 载荷的 referenceVideo 是**单值**字段，多个视频无处可放 ——
+	// 收钱只下发 1 个就是错交付，所以超出直接 400，不静默截断。
+	// 官网公开口径是「30 图 + 10 视频 + 10 音频」（2.5 系列），但我们只真机
+	// 验过 1 个视频；要扩容必须同时改 Worker 载荷结构，只改这个常量会让
+	// 第 2 个视频被静默丢掉。
+	capcutMaxReferenceVideos = 1
 )
+
+// capcutRefVideoSecondsContextKey 保存 validate 阶段探测出的参考视频计费总秒数。
+//
+// 为什么不能到 EstimateBilling 再探测：那里没有错误返回值，探测失败时
+// 只能按 0 秒算 = 白送；而且探测要下载素材，不该在计费回调里做。
+// 与 erchun / hailuo 同一条取舍。
+const capcutRefVideoSecondsContextKey = "manwu_capcut_ref_video_seconds"
+
+// capcutRefVideoSeconds 读回 validate 阶段存的参考视频计费总秒数（0 = 没有）。
+func capcutRefVideoSeconds(c *gin.Context) int {
+	if c == nil {
+		return 0
+	}
+	value, ok := c.Get(capcutRefVideoSecondsContextKey)
+	if !ok {
+		return 0
+	}
+	seconds, ok := value.(int)
+	if !ok || seconds <= 0 {
+		return 0
+	}
+	return seconds
+}
 
 // capcut720PRatios：720p 相对 480p 基准价的倍率（2026-11-13 定价口径）。
 //
@@ -1970,17 +2027,25 @@ func (a capcutReferenceAudit) auditLog(model string) string {
 // resolveCapcutReferenceMaterials 归一 CapCut 请求里的参考素材。
 //
 // 返回值：
-//   - images：**只含图片**的 URL 列表（要下发到建单载荷）；
+//   - images：**只含图片**的 URL 列表（进 inputs 的 reference_image 槽）；
+//   - videos：**只含视频**的 URL 列表（进 inputs 的 reference_video 槽）；
 //   - audit：处置审计（用于日志）。
-//   - err：只有「参考视频」才返回错误（显式 400）。
+//   - err：数量超限 / 视频缺 URL 时返回错误（显式 400）。
 //
-// 三条处置规则（用户口径 2026-11-14）：
+// 三条处置规则（用户口径 2026-11-14，当日随参考视频放开更新）：
 //
 //	图片 → 透传（上限 30 张，超出显式 400）；
 //	音频 → **静默丢弃**（接受、不报错、不下发）；
-//	视频 → **显式 400**（静默丢会让客户按带视频下单却拿到纯图生成的片）。
-func resolveCapcutReferenceMaterials(req clientRequest, model string) ([]string, capcutReferenceAudit, error) {
+//	视频 → **透传**（上限 1 个，超出显式 400）。
+//
+// ⚠️ 视频为什么从「显式 400」改成「透传」：旧口径的唯一前提是「官网是否接受
+// 视频参考未验证」。2026-11-14 真机标定推翻了这个前提 —— CapCut
+// 「多模态参考」模式下参考位的 file input accept 是 image/*,video/*,audio/*，
+// 上传 4 秒 mp4 后页面立刻出现 data-reference-media-tag-type="video" 节点，
+// 6 秒内变 loaded，无任何报错。卡在网关只会白拒掉官网本来就支持的能力。
+func resolveCapcutReferenceMaterials(req clientRequest, model string) ([]string, []string, capcutReferenceAudit, error) {
 	audit := capcutReferenceAudit{}
+	mediaVideos := make([]string, 0, capcutMaxReferenceVideos)
 
 	// ① 图片：走顶层那 14 个别名（resolveReferenceImages 已在公共段解析过，
 	//    这里只做上限复核 —— 公共段用的是全局 10 张上限，CapCut 要 30 张）。
@@ -1992,7 +2057,7 @@ func resolveCapcutReferenceMaterials(req clientRequest, model string) ([]string,
 	// ② media 数组里的图片：也认（客户端常把全部素材塞进 media）。
 	mediaEntries, err := parseCapcutMediaEntries(req.Media)
 	if err != nil {
-		return nil, audit, err
+		return nil, nil, audit, err
 	}
 	// ②' metadata.media / metadata.input.media —— 素材的另两处落点。
 	mediaEntries = append(mediaEntries, parseCapcutMetadataMediaEntries(req.Metadata)...)
@@ -2022,6 +2087,9 @@ func resolveCapcutReferenceMaterials(req clientRequest, model string) ([]string,
 			audit.AudioSources = append(audit.AudioSources, "media")
 		case capcutMediaTypeVideo:
 			audit.VideoCount++
+			if u := strings.TrimSpace(entry.URL); u != "" {
+				mediaVideos = append(mediaVideos, u)
+			}
 		}
 	}
 	// 顶层音频计账。
@@ -2031,30 +2099,41 @@ func resolveCapcutReferenceMaterials(req clientRequest, model string) ([]string,
 	if len(audioURLs) > 0 {
 		audit.AudioSources = append(audit.AudioSources, "audios/audio")
 	}
-	// 顶层视频计账。
-	for range videoURLs {
-		audit.VideoCount++
-	}
+	// 顶层视频计账（videoURLs 已在上面收集，这里只补计数）。
+	audit.VideoCount += len(videoURLs)
+	videoURLs = append(videoURLs, mediaVideos...)
 
-	// ⑤ 参考视频：显式拒绝（在建单之前，别让客户白等一轮 + 白烧一次预扣）。
-	if audit.VideoCount > 0 {
-		return nil, audit, fmt.Errorf(
-			"%s does not accept reference video; it supports reference images and reference audio only",
-			model,
+	// ⑤ 参考视频（2026-11-14 放开，见函数头）：先查数量上限，再确认每条都有 URL。
+	//
+	// 上限 1 个：Worker 载荷 referenceVideo 是**单值**字段，多收的视频无处可放，
+	// 收钱只下发 1 个 = 错交付，必须显式 400（不静默截断）。
+	if audit.VideoCount > capcutMaxReferenceVideos {
+		return nil, nil, audit, fmt.Errorf(
+			"%s accepts at most %d reference video, got %d",
+			model, capcutMaxReferenceVideos, audit.VideoCount,
+		)
+	}
+	// 计数与可下发 URL 数不一致 = 有素材只有 path 没有 url。new-api 只下发 URL，
+	// 静默放过会让客户按「带视频」下单却拿到没有视频的片。
+	if len(videoURLs) != audit.VideoCount {
+		return nil, nil, audit, fmt.Errorf(
+			"%s reference video #%d is missing url; only URL-type reference video is supported",
+			model, len(videoURLs)+1,
 		)
 	}
 
 	// ⑥ 图片上限复核（CapCut 口径 30 张）。
 	audit.ImageCount = len(mediaImages)
 	if audit.ImageCount > capcutMaxReferenceImages {
-		return nil, audit, fmt.Errorf(
+		return nil, nil, audit, fmt.Errorf(
 			"%s accepts at most %d reference images, got %d",
 			model, capcutMaxReferenceImages, audit.ImageCount,
 		)
 	}
 
 	// ⑦ 音频静默丢弃 —— 到这里 audioURLs / media 里的音频**不会**进 images。
-	return mediaImages, audit, nil
+	//    视频**保留**：它进 inputs 的 reference_video 槽，由 Worker 传到官网。
+	return mediaImages, videoURLs, audit, nil
 }
 
 // resolveWanDuration 解析万相（图生/编辑）时长：seconds → duration → 缺省 5。

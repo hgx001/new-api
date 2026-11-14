@@ -1,6 +1,8 @@
 package manwu
 
 import (
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -184,29 +186,137 @@ func TestCapcutReferenceAudioMixedWithImages(t *testing.T) {
 	assert.NotContains(t, string(data), "reference_audio")
 }
 
-// ── ③ 参考视频：显式拒绝 ──────────────────────────────────────────────
+// ── ③ 参考视频：2026-11-14 放开（口径反转） ──────────────────────────
+//
+// 旧口径是「显式 400」，前提是「官网是否接受视频参考未验证」。真机标定推翻了
+// 这个前提：CapCut「多模态参考」模式下参考位的 file input accept 是
+// image/*,video/*,audio/*，上传 4 秒 mp4 后页面立刻出现
+// data-reference-media-tag-type="video" 节点并在 6 秒内变 loaded，无报错。
+//
+// 现在：三种形态全部**接受**，视频进 inputs 的 reference_video 槽；
+// 但上限仍是 1 个（Worker 载荷 referenceVideo 是单值），超出显式 400。
 
-func TestCapcutReferenceVideoRejected(t *testing.T) {
+// capcutRefVideoDataURL 造一个「结构可解析」的最小 MP4 data URL。
+//
+// 为什么不用 https://example.com/a.mp4：计费探测真的会去读 mvhd
+// （拿不到时长就 fail-loud 400，绝不按 0 秒放行），用外网地址会让单测
+// 依赖网络，而 example.com 返回 HTML 必然解析失败 → 全部用例假红。
+func capcutRefVideoDataURL(seconds float64) string {
+	box := func(boxType string, payload []byte) []byte {
+		out := make([]byte, 8, 8+len(payload))
+		binary.BigEndian.PutUint32(out[0:4], uint32(8+len(payload)))
+		copy(out[4:8], boxType)
+		return append(out, payload...)
+	}
+	// mvhd v0：version/flags + create/modify(各4) + timescale(4) + duration(4) + 其余
+	payload := []byte{0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2}
+	var ts [4]byte
+	binary.BigEndian.PutUint32(ts[:], 1000)
+	payload = append(payload, ts[:]...)
+	var dur [4]byte
+	binary.BigEndian.PutUint32(dur[:], uint32(seconds*1000))
+	payload = append(payload, dur[:]...)
+	payload = append(payload, make([]byte, 80)...)
+
+	mp4 := box("ftyp", []byte("isom\x00\x00\x02\x00isomiso2"))
+	mp4 = append(mp4, box("moov", box("mvhd", payload))...)
+	return "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(mp4)
+}
+
+func TestCapcutReferenceVideoAccepted(t *testing.T) {
+	video := capcutRefVideoDataURL(6)
 	cases := []struct {
 		name  string
 		extra string
 	}{
-		{"top-level-videos", `,"videos":["https://example.com/a.mp4"]`},
-		{"top-level-video", `,"video":"https://example.com/a.mp4"`},
-		{"media-reference-video", `,"media":[{"type":"reference_video","url":"https://example.com/a.mp4"}]`},
-		{"metadata-media-reference-video", `,"metadata":{"media":[{"type":"reference_video","url":"https://example.com/a.mp4"}]}`},
-		{"metadata-input-media-reference-video", `,"metadata":{"input":{"media":[{"type":"reference_video","url":"https://example.com/a.mp4"}]}}`},
+		{"top-level-videos", fmt.Sprintf(`,"videos":[%q]`, video)},
+		{"top-level-video", fmt.Sprintf(`,"video":%q`, video)},
+		{"media-reference-video", fmt.Sprintf(`,"media":[{"type":"reference_video","url":%q}]`, video)},
+		{"metadata-media-reference-video", fmt.Sprintf(`,"metadata":{"media":[{"type":"reference_video","url":%q}]}`, video)},
+		{"metadata-input-media-reference-video", fmt.Sprintf(`,"metadata":{"input":{"media":[{"type":"reference_video","url":%q}]}}`, video)},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			body := buildCapcutBody(tc.extra)
 			c, info, a := postVideoCtx(t, body)
-			err := a.ValidateRequestAndSetAction(c, info)
-			require.NotNil(t, err, "参考视频必须被显式拒绝（静默丢 = 错交付）")
-			assert.Contains(t, err.Message, "video")
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info), "参考视频必须被接受")
+
+			reader, err := a.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			data, err := io.ReadAll(reader)
+			require.NoError(t, err)
+
+			var payload struct {
+				Inputs []struct {
+					Type string `json:"type"`
+					URL  string `json:"url"`
+				} `json:"inputs"`
+			}
+			require.NoError(t, json.Unmarshal(data, &payload))
+			require.Len(t, payload.Inputs, 1, "一个视频就是一条 reference_video")
+			assert.Equal(t, "reference_video", payload.Inputs[0].Type)
+			assert.Equal(t, video, payload.Inputs[0].URL)
 		})
 	}
+}
+
+// 视频必须排在图片**之后**：Worker 按顺序逐条上传，图先落位才不会被
+// 视频的解码耗时拖住；客户端 @imageN 的位置绑定也依赖图在前。
+func TestCapcutReferenceVideoGoesAfterImages(t *testing.T) {
+	video := capcutRefVideoDataURL(6)
+	body := buildCapcutBody(fmt.Sprintf(`,"images":[%q],"videos":[%q]`, capcutRefImageURL, video))
+	c, info, a := postVideoCtx(t, body)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	reader, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var payload struct {
+		Inputs []struct {
+			Type string `json:"type"`
+			URL  string `json:"url"`
+		} `json:"inputs"`
+	}
+	require.NoError(t, json.Unmarshal(data, &payload))
+	require.Len(t, payload.Inputs, 2)
+	assert.Equal(t, "reference_image", payload.Inputs[0].Type)
+	assert.Equal(t, "reference_video", payload.Inputs[1].Type)
+}
+
+// 上限仍是 1 个：Worker 载荷 referenceVideo 是单值字段，多收的视频无处可放，
+// 收钱只下发 1 个 = 错交付，必须显式 400。
+func TestCapcutReferenceVideoLimitOne(t *testing.T) {
+	video := capcutRefVideoDataURL(6)
+	body := buildCapcutBody(fmt.Sprintf(`,"videos":[%q,%q]`, video, video))
+	c, info, a := postVideoCtx(t, body)
+	err := a.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, err, "两个参考视频必须被拒")
+	assert.Contains(t, err.Message, "reference video")
+}
+
+// 计费：seconds = 生成时长 + 参考视频秒数（各条四舍五入后相加，1:1 同价）。
+// 白送等于每单按秒亏 —— 上游 input_video_second 与 output_video_second 同价。
+func TestCapcutEstimateBillingAddsReferenceVideoSeconds(t *testing.T) {
+	video := capcutRefVideoDataURL(6)
+	body := buildCapcutBody(fmt.Sprintf(`,"videos":[%q]`, video))
+	c, info, a := postVideoCtx(t, body)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	billing := a.EstimateBilling(c, info)
+	assert.Equal(t, float64(11), billing["seconds"], "5 秒生成 + 6 秒参考视频 = 11 秒")
+}
+
+// 没有参考视频时 seconds 不得被改动（否则无视频的单被凭空加价）。
+func TestCapcutEstimateBillingWithoutReferenceVideo(t *testing.T) {
+	body := buildCapcutBody("")
+	c, info, a := postVideoCtx(t, body)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	billing := a.EstimateBilling(c, info)
+	assert.Equal(t, float64(5), billing["seconds"])
 }
 
 // ── ④ 载荷不得出现未知字段 ────────────────────────────────────────────
