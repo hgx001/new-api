@@ -121,23 +121,26 @@ type Policy struct {
 
 	// ─────────────────── 规则六：短时长分流（short）───────────────────
 	//
-	// 2026-11-13 老板定：源模型 + 请求时长 **≤ 阈值**（默认 10 秒）
-	// → 改派到有赞标准版 wan3.0-video。
+	// 源模型 + 请求时长 **≤ 阈值**（默认 10 秒）→ 改派到短时长目标。
+	// 两个目标、两个开关（2026-11-13 心笔内链 → 2026-11-14 加有赞标准版兜底）：
+	//
+	//	1. 心笔内链（short_target_model + short_link_enabled，优先）：
+	//	   wan3.0-720p-特惠-内链，480P 生成 + 超分 720P 交付，上游成本最低；
+	//	2. 有赞标准版（short_youzan_enabled，兜底）：
+	//	   wan3.0-video，与源链路同渠道同 adaptor，绕开 prime 的
+	//	   PRIME_DURATION_TOO_SHORT（<10 秒不受理）。
+	//
+	// 优先级：心笔 > 有赞；两个开关都关闭 → 不路由，短请求走原链路。
 	//
 	// 与规则一**方向相反**：规则一是「太长 → 换到按次链路」，规则六是
-	// 「太短 → 换到同渠道的标准档」。两者时长区间不重叠（≤10 与 >20），
+	// 「太短 → 换到内链/标准档」。两者时长区间不重叠（≤阈值 与 >20），
 	// 判定顺序不影响结果；但规则六必须排在规则二（比例）**之前** ——
-	// 老板口径是「短任务优先」，9:16 的短任务也走标准版。
+	// 老板口径是「短任务优先」，9:16 的短任务也走分流目标。
 	//
-	// 为什么是同一渠道的另一个档：源模型 seedance2.5-特惠 常驻有赞 **prime**
-	// （满血档），标准版 wan3.0-video 是同一渠道的另一档（三档同价 ¥0.23/秒）。
-	// 短任务分流过去，把 prime 的算力留给长任务；两条链路的 adaptor 是同一个
-	// （relay/channel/task/youzanwan3），入参契约完全一致，改派只换 model 字段。
-	//
-	// ShortTargetModel 是规则六的目标模型名。空 = 规则六不启用（默认）。
+	// ShortTargetModel 是规则六（心笔路径）的目标模型名。空 = 心笔路径不启用。
 	//
 	// ⚠️ 与 TargetModel 一样 omitempty：旧的生产 option JSON 里没有它，
-	// 解析后为空 → 规则六不生效 → 行为与改造前逐字节一致。
+	// 解析后为空 → 心笔路径不生效 → 行为与改造前逐字节一致。
 	ShortTargetModel string `json:"short_target_model,omitempty"`
 
 	// ShortTriggerSeconds 是规则六的时长阈值（秒），**≤ 该值命中**。
@@ -164,6 +167,19 @@ type Policy struct {
 	// 细粒度开关（只停一个成员），这个是**全局**闸门（一键全停）。
 	// 两层任何一层关掉，规则六都不生效。
 	ShortLinkEnabled *bool `json:"short_link_enabled,omitempty"`
+
+	// ShortYouzanEnabled 是规则六「有赞标准版兜底」开关（2026-11-14 起）。
+	//
+	// 语义：心笔内链（short_link_enabled）优先；心笔关闭、无可用渠道或契约
+	// 不兼容时，≤阈值的请求改派有赞标准版 wan3.0-video（同一 adaptor，
+	// 入参契约与源链路一致，只换 model 并钉住源链路实际执行的分辨率档）。
+	//
+	// 两个开关都关闭 → 不路由，短请求走原链路（seedance2.5-特惠 → prime）。
+	//
+	// ⚠️ 用 bool 而不是三态指针：这是**新行为**，旧的生产 option JSON 里没有
+	// 这个字段，解析后是零值 false = 不兜底，语义正好是「没配过就不生效」，
+	// 升级当天线上流量逐字节不变（与 FailoverEnabled 同一口径）。
+	ShortYouzanEnabled bool `json:"short_youzan_enabled,omitempty"`
 
 	// ─────────────────── 规则五：故障转移（failover）───────────────────
 	//
@@ -707,7 +723,10 @@ func (p Policy) anyRuleReady() bool {
 		if secondsRuleConfiguredFor(p, source) ||
 			ratioRuleConfiguredFor(p, source) ||
 			framesRuleReadyFor(p, source) ||
-			shortRuleConfiguredFor(p, source) {
+			shortRuleConfiguredFor(p, source) ||
+			// 有赞兜底不依赖 short_target_model（心笔目标）：两个按钮独立配置，
+			// 只打开有赞按钮也必须算「策略可用」，否则中间件会被整体短路。
+			shortYouzanReadyFor(p, source) {
 			return true
 		}
 	}
@@ -789,7 +808,11 @@ func IsAnyRouteEnabled() bool {
 		if secondsRuleActiveFor(current, source, nowUnix()) ||
 			ratioRuleReadyFor(current, source) ||
 			framesRuleReadyFor(current, source) ||
-			shortRuleReadyFor(current, source) {
+			shortRuleReadyFor(current, source) ||
+			// 有赞兜底与心笔开关相互独立：只打开有赞按钮时，
+			// shortRuleReadyFor 会因 short_link_enabled=false 返回 false，
+			// 必须单独判一次，否则中间件早退、按钮看起来没反应。
+			shortYouzanReadyFor(current, source) {
 			return true
 		}
 	}

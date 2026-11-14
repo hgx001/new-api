@@ -65,6 +65,14 @@ export type VideoRoutePolicy = {
   /** 规则六的时长阈值（秒），≤ 该值命中。 */
   short_trigger_seconds: number
   /**
+   * 规则六的「有赞标准版兜底」开关（2026-11-14）。
+   * true = 心笔接不住时短请求改派 short_youzan_target_model；
+   * false（默认）= 不兜底。心笔开关优先，两个都关闭走原链路。
+   */
+  short_youzan_enabled: boolean
+  /** 有赞兜底的目标模型（有赞标准版 wan3.0-video）。 */
+  short_youzan_target_model: string
+  /**
    * 规则一的可选比例条件（后台勾选）。
    * 非空 = 只有该比例的请求才改派目标链路；空 = 不限比例。
    * 与 `trigger_ratio`（规则二自己的触发比例）是两个独立字段。
@@ -214,6 +222,25 @@ export async function setShortLinkEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/short-link', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换规则六的「有赞标准版兜底」开关（2026-11-14）。
+ *
+ * 打开：心笔内链接不住（关闭 / 无可用渠道 / 契约不兼容）时，
+ * ≤阈值的短请求改派有赞标准版 wan3.0-video（同一 adaptor，绕开
+ * prime 的 PRIME_DURATION_TOO_SHORT）；
+ * 关闭（默认）：不兜底，短请求走原链路。
+ *
+ * 优先级：心笔开关 > 本开关；两个都关闭 = 不路由。
+ */
+export async function setShortYouzanEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/short-youzan-link', {
     enabled,
   })
   return res.data.data

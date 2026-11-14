@@ -54,6 +54,9 @@ function policy(overrides: Partial<VideoRoutePolicy> = {}): VideoRoutePolicy {
     short_link_enabled: true,
     short_target_model: '',
     short_trigger_seconds: 10,
+    // 规则六的有赞标准版兜底：默认关闭，目标固定 wan3.0-video。
+    short_youzan_enabled: false,
+    short_youzan_target_model: 'wan3.0-video',
     seconds_rule_ratio_gate: '',
     seconds_rule_ratio_gate_default: '9:16',
     updated_at: 0,

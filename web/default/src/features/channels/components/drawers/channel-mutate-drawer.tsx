@@ -110,6 +110,7 @@ import {
 } from '@/features/auth/secure-verification'
 import { DoubaoLinkCard } from '@/features/video-route/components/doubao-link-card'
 import { ShortLinkCard } from '@/features/video-route/components/short-link-card'
+import { ShortYouzanCard } from '@/features/video-route/components/short-youzan-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
@@ -3590,16 +3591,21 @@ export function ChannelMutateDrawer({
                               只在本渠道承载目标模型时渲染 —— 渠道 20 上还挂着
                               另外 7 个与豆包无关的模型，在它们的抽屉里显示这个
                               开关会让人以为按了会停掉整条渠道。 */}
-                          <DoubaoLinkCard
-                            channelModels={currentModels ?? ''}
-                          />
+                          <DoubaoLinkCard channelModels={currentModels ?? ''} />
 
                           {/* 规则六（短时长分流）链路开关：一个开关 = 心笔内链
                               通不通。打开：≤阈值（默认 10 秒）的短请求改派
                               wan3.0-720p-特惠-内链；关闭：走原链路。只在本渠道
                               承载规则六目标模型时渲染 —— 与豆包卡同理，别的
                               渠道抽屉里显示会让人以为按了会停掉整条渠道。 */}
-                          <ShortLinkCard
+                          <ShortLinkCard channelModels={currentModels ?? ''} />
+
+                          {/* 规则六（短时长分流）的有赞标准版兜底开关：
+                              心笔接不住（余额耗尽 / AutoBan / 契约不兼容）时，
+                              ≤阈值短请求改派 wan3.0-video，绕开 prime 的
+                              PRIME_DURATION_TOO_SHORT。心笔开关优先，两个都
+                              关闭走原链路。只在本渠道承载目标模型时渲染。 */}
+                          <ShortYouzanCard
                             channelModels={currentModels ?? ''}
                           />
 

@@ -132,6 +132,11 @@ func SetApiRouter(router *gin.Engine) {
 			// 无自动恢复时间、无接单计数、不强制故障转移。
 			videoRouteAdmin.POST("/policy/short-link", controller.SetShortLinkAdmin)
 
+			// 规则六的「有赞标准版兜底」开关（2026-11-14）：
+			// 打开后心笔接不住的短请求改派 wan3.0-video；
+			// 与心笔开关并列时心笔优先，两个都关闭走原链路。
+			videoRouteAdmin.POST("/policy/short-youzan-link", controller.SetShortYouzanLinkAdmin)
+
 			// 豆包链路的「最多接单数」（2026-11-13 老板定）：
 			// 豆包链路上游给的是运营自己掌握的一小批额度，设成 3 就是
 			// 「这批只接 3 单，接满自动关闭，我手动再打开时又来 3 单」。

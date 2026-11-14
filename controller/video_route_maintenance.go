@@ -440,6 +440,55 @@ func SetShortLinkAdmin(c *gin.Context) {
 	common.ApiSuccess(c, doubaoRouteAdminState())
 }
 
+// shortYouzanSwitchRequest 是规则六「有赞标准版兜底」开关的请求体。
+type shortYouzanSwitchRequest struct {
+	// Enabled true = 心笔接不住时短请求改派 wan3.0-video；false = 不兜底。
+	//
+	// 用指针收：不传（nil）必须报错，不能默认成 false —— 少写一个字段
+	// 会把兜底静默关掉（与 shortLinkSwitchRequest 同款理由）。
+	Enabled *bool `json:"enabled"`
+}
+
+// SetShortYouzanLinkAdmin 切换规则六「有赞标准版兜底」开关（2026-11-14）。
+//
+//   - 开启：心笔内链接不住（关闭 / 无可用渠道 / 契约不兼容）时，
+//     ≤阈值的短请求改派 wan3.0-video（有赞标准版，同一 adaptor）；
+//   - 关闭（默认）：不兜底，短请求走原链路。
+//
+// 优先级：心笔内链开关 > 本开关；两个都关闭 = 不路由。
+func SetShortYouzanLinkAdmin(c *gin.Context) {
+	var req shortYouzanSwitchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "enabled is required",
+		})
+		return
+	}
+
+	policy := seedanceroute_setting.WithShortYouzanEnabled(*req.Enabled)
+	if err := saveRoutePolicy(policy); err != nil {
+		common.SysLog("update short youzan link switch failed: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to save route policy",
+		})
+		return
+	}
+
+	recordManageAudit(c, "video_route.short_youzan_link_switch", map[string]interface{}{
+		"enabled": *req.Enabled,
+	})
+	common.ApiSuccess(c, doubaoRouteAdminState())
+}
+
 // doubaoRouteState 是给客户端看的当前状态。
 //
 // 字段命名刻意直白：客户端要用 paused 决定按钮显示「已暂停/暂停」，
@@ -488,6 +537,10 @@ func doubaoRouteAdminState() gin.H {
 	state["short_link_enabled"] = seedanceroute_setting.IsShortLinkEnabled()
 	state["short_target_model"] = policy.ShortTargetModel
 	state["short_trigger_seconds"] = policy.ShortTriggerSecondsOrDefault()
+	// 规则六的有赞标准版兜底开关（2026-11-14）：与心笔开关并列展示，
+	// 运营要能看出「两个按钮都开时心笔优先」。
+	state["short_youzan_enabled"] = seedanceroute_setting.IsShortYouzanEnabled()
+	state["short_youzan_target_model"] = seedanceroute_setting.DefaultShortYouzanTargetModel
 	// 按源模型的改派开关：运营要知道「现在哪个模型被单独关掉了」。
 	// 只给公共 target_model 不够 —— 两个源模型的目标可以不同。
 	state["source_switches"] = seedanceroute_setting.SourceSwitchStates()
