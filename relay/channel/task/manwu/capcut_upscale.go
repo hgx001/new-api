@@ -40,6 +40,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -207,7 +208,9 @@ func (a *TaskAdaptor) resolveCapcutMediaURL(ctx context.Context, raw string) str
 
 	loc := strings.TrimSpace(resp.Header.Get("Location"))
 	if loc == "" {
-		logger.LogError(ctx, "解析 CapCut 成片公开地址失败：上游没有返回 Location")
+		logger.LogError(ctx, fmt.Sprintf(
+			"解析 CapCut 成片公开地址失败：上游返回 %d，但没有 Location（带鉴权=%v）",
+			resp.StatusCode, a.apiKey != ""))
 		return ""
 	}
 	// 相对跳转（少见）按请求 URL 补全。
