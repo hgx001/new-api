@@ -194,7 +194,13 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 计费原点：顶层这一段，客户请求的就是 seedance-2-5，
 		// 所以计费口径 = seedance-2-5（¥3.50/次，按次不叠时长倍率）。
 		requestedModel, _ := body["model"].(string)
-		if routed, _ := tryFailoverRoute(c, body, strings.TrimSpace(requestedModel)); routed {
+		// 计费原点沿用客户原始模型：别名中间件（Wan3TehuiAliasRoute）可能已经把
+		// wan3.0-720p-特惠 改成了 seedance2.5-特惠，规则五不能按别名后的名字记账。
+		requestedOrigin := RouteOriginModel(c)
+		if requestedOrigin == "" {
+			requestedOrigin = strings.TrimSpace(requestedModel)
+		}
+		if routed, _ := tryFailoverRoute(c, body, requestedOrigin); routed {
 			c.Next()
 			return
 		}
@@ -208,6 +214,15 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 日志必须打**它** —— 改派日志是排查的唯一凭据，
 		// 写死成某一个源模型名会让「客户请求活动版、日志却显示特惠版」完全对不上账。
 		sourceModel := strings.TrimSpace(modelName)
+
+		// 计费原点：如果前面的 Wan3TehuiAliasRoute 已经改过名（客户请求的是
+		// wan3.0-720p-特惠，被等价成了 seedance2.5-特惠），原点必须**保持客户原始模型**，
+		// 不能被这里的 sourceModel（别名后的名字）覆盖 —— 否则账单/日志会把
+		// 「从旧模型名进来的请求」记成 seedance2.5-特惠，对不上客户的请求记录。
+		billingOriginModel := RouteOriginModel(c)
+		if billingOriginModel == "" {
+			billingOriginModel = sourceModel
+		}
 
 		// ── 按次档：先把时长区间锁定 ──
 		//
@@ -256,7 +271,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		framesTarget := policy.FramesTargetModelFor(sourceModel)
 		if seedanceroute_setting.IsFramesRouteEnabledFor(sourceModel) && hasFrameMedia(body) {
 			if newBody, routed := prepareFramesRoute(c, body, policy, framesTarget); routed {
-				if applyRewrittenBody(c, newBody, sourceModel) {
+				if applyRewrittenBody(c, newBody, billingOriginModel) {
 					logger.LogInfo(c, fmt.Sprintf(
 						"条件路由：命中首尾帧，改派 %s → %s",
 						sourceModel, framesTarget))
@@ -292,7 +307,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.ExceedsTriggerSeconds(seconds) &&
 				secondsRatioGatePasses(body, policy.SecondsRuleRatioGate) {
 				if newBody, routed := prepareSecondsRoute(c, body, policy, secondsTarget, seconds); routed {
-					if applyRewrittenBody(c, newBody, sourceModel) {
+					if applyRewrittenBody(c, newBody, billingOriginModel) {
 						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
 						// 把判定命中的秒数记下来，交给 relay_task.go 补进 OtherRatios。
 						// ⚠️ 记的是客户**请求时填的秒数**；2026-11-09 起下发值也是同一个
@@ -312,7 +327,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						// ⚠️ 计费原点必须是 **sourceModel**（客户最初请求的促销族模型），
 						// 不能是 secondsTarget —— 客户买的是 seedance2.5-特惠，
 						// 降级后仍按它计费（¥0.20/秒），不是按目标模型的按次价。
-						if failRouted, _ := tryFailoverAfterDoubaoRoute(c, newBody, sourceModel); failRouted {
+						if failRouted, _ := tryFailoverAfterDoubaoRoute(c, newBody, billingOriginModel); failRouted {
 							c.Next()
 							return
 						}
@@ -362,7 +377,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 							logger.LogInfo(c, "条件路由：短时长请求指定 1080P，心笔内链只交付 720P（按 720P 计价）")
 						}
 						if newBody, routed := prepareTehuiXinbiRouteWithSeconds(c, body, shortTarget, seconds); routed {
-							if applyRewrittenBody(c, newBody, sourceModel) {
+							if applyRewrittenBody(c, newBody, billingOriginModel) {
 								// 计费按**源模型**（seedance2.5-特惠）的按秒价算。
 								// 心笔 adaptor 会自己给 seconds（读改写后的顶层 seconds），
 								// 这里再记一份是兜底：GetTaskRequest 万一失败，它的
@@ -384,7 +399,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 				if youzanReady {
 					target := seedanceroute_setting.DefaultShortYouzanTargetModel
 					if newBody, sizeRatio, routed := prepareShortYouzanRoute(c, body, target, sourceModel, seconds); routed {
-						if applyRewrittenBody(c, newBody, sourceModel) {
+						if applyRewrittenBody(c, newBody, billingOriginModel) {
 							// 计费按**源模型**算：秒数按触发判定拿到的值，
 							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
 							// 目标标准版三档同价、adaptor 给的 size 恒为 1.0，
@@ -424,7 +439,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 				} else {
 					newBody, routed = prepareWan3Route(c, body, policy, ratioTarget)
 				}
-				if routed && applyRewrittenBody(c, newBody, sourceModel) {
+				if routed && applyRewrittenBody(c, newBody, billingOriginModel) {
 					logger.LogInfo(c, fmt.Sprintf(
 						"条件路由：命中比例 %s，改派 %s → %s",
 						policy.TriggerRatio, sourceModel, ratioTarget))

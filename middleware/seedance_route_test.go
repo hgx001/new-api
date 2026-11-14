@@ -81,12 +81,18 @@ type routeRecorder struct {
 
 // newRouteEngine 建一个挂上条件路由中间件的引擎。
 //
+// 默认只挂 Seedance25TeHuiRoute；需要验「别名 → 条件规则」串联的用例
+// 可以把中间件按顺序显式传进来。
+//
 // ⚠️ Use 必须在 POST 之前 —— gin 在注册路由时就快照了中间件链。
-func newRouteEngine(rec *routeRecorder) *gin.Engine {
+func newRouteEngine(rec *routeRecorder, middlewares ...gin.HandlerFunc) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
-	engine.Use(Seedance25TeHuiRoute())
-	engine.POST("/v1/video/generations", func(c *gin.Context) {
+	if len(middlewares) == 0 {
+		middlewares = []gin.HandlerFunc{Seedance25TeHuiRoute()}
+	}
+	engine.Use(middlewares...)
+	handler := func(c *gin.Context) {
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			c.String(500, "read body storage: %v", err)
@@ -102,7 +108,9 @@ func newRouteEngine(rec *routeRecorder) *gin.Engine {
 		rec.billingSeconds, rec.hasBillingSec = common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSeconds)
 		rec.billingSizeRatio, rec.hasBillingSize = common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSizeRatio)
 		c.String(200, "ok")
-	})
+	}
+	engine.POST("/v1/video/generations", handler)
+	engine.POST("/v1/videos/:video_id/remix", handler)
 	return engine
 }
 

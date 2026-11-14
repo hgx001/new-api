@@ -30,11 +30,19 @@ func SetVideoRouter(router *gin.Engine) {
 	// 2026-11-11：活动版常驻链路已从心笔切回有赞原生 720P，
 	// 「活动版参考视频改派有赞」规则随之删除 —— 源链路就是目标链路，
 	// 再改写成特惠只会多绕一次素材搬运，没有任何收益。
+	//
+	// 2026-11-14：wan3.0-720p-特惠 已停止单独供货，客户带这个旧名字进来的
+	// 请求由 Wan3TehuiAliasRoute 无条件等价成 seedance2.5-特惠（不看参数、
+	// 不受 seedanceroute 开关影响），随后照常走 seedance2.5-特惠 的全部规则。
+	// 必须排在 Seedance25TeHuiRoute **之前**：一是别名先改名、规则再分流；
+	// 二是规则二/三内部改派到 wan3.0-720p-特惠 时本中间件已执行完，
+	// 不会把内部改派（首尾帧仍需 wan3 直连）再打回特惠链路。
 	videoV1Router.Use(
 		middleware.TokenAuth(),
 		// 必须在所有条件路由之前：它们会改写 body 的 model/seconds，
 		// 之后捕获到的就不是客户原始请求参数了（日志详情要按原始请求展示）。
 		middleware.CaptureTaskRequestParams(),
+		middleware.Wan3TehuiAliasRoute(),
 		middleware.Seedance25TeHuiRoute(),
 		middleware.Wan3PromptCompress(),
 		middleware.Wan3TehuiXinbiRoute(),
