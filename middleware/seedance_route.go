@@ -284,6 +284,133 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			}
 		}
 
+		// ── 规则六（短时长分流）：排在规则七与规则二之前 ──
+		//
+		// 2026-11-13 老板定：请求时长 ≤ 阈值（默认 10 秒）→ 改派到**心笔内链**
+		// （wan3.0-720p-特惠-内链，ch25：480P 生成 + 超分交付 720P）。
+		//
+		// 2026-11-14 新增有赞标准版兜底（独立按钮 short_youzan_enabled）：
+		// 心笔不可用（余额耗尽 / AutoChannel / 契约不兼容）时，短请求改派
+		// 有赞标准版 wan3.0-video —— 它与源链路同渠道同 adaptor，绕开 prime
+		// 的 <10 秒保护（PRIME_DURATION_TOO_SHORT）。
+		//
+		// 2026-11-14 再加第三条分支（short_capcut_enabled）：短请求改派
+		// cp-seedance-2.0fast（CapCut 快速档）。
+		//
+		// ⚠️ **三条分支同时只能有一条生效**：心笔 > 有赞 > CapCut。
+		// 写入口（controller）保证互斥（开一个自动关另两个），
+		// 这里再按优先级取第一条做**读侧兜底** —— 万一配置被 SQL 手改过，
+		// 也不会出现两条同时生效（那会让运营看着两个亮着的按钮却只有一条真跑）。
+		//
+		// 优先级口径：心笔成本最低（480P 生成 + 超分）且能力边界最宽；
+		// 有赞标准版次之（同渠道同 adaptor，最不容易失败）；
+		// CapCut 排最后（跨渠道，契约限制最多：只收 http(s) 参考图、
+		// 只卖 480p/720p、时长 4–15 秒）。
+		//
+		// 为什么排在规则二（比例）之前：老板口径是「短任务优先」——
+		// 9:16 的短任务也走内链/标准版，不再落到比例目标链路。
+		//
+		// 为什么排在规则三（首尾帧）之后：首尾帧是**能力约束**，心笔兼容口
+		// 只收参考图、有赞标准版同样不收首尾帧（上游 2026-10-28 取消入参）。
+		// 带首尾帧的请求只有规则三的目标链路能跑，优先级高于分流优化。
+		//
+		// 为什么排在规则七（电商内容）之前：短请求是**成本**问题
+		// （绕开 prime 的 <10 秒保护），电商内容是**内容形态**问题。
+		// 一条 8 秒的电商短视频该走更便宜的短时长链路，而不是被内容判定
+		// 抢到 CapCut 2.5 Flash —— 短请求优先。
+		//
+		// 与规则一的时长区间不重叠（≤10 与 >阈值 20），两条规则不会互相抢单；
+		// 万一将来把阈值调成重叠，规则一在前 —— 长时长优先仍然是既有口径。
+		shortTarget := policy.ShortTargetModelFor(sourceModel)
+		xinbiReady := seedanceroute_setting.IsShortRouteEnabledFor(sourceModel)
+		youzanReady := seedanceroute_setting.IsShortYouzanEnabledFor(sourceModel)
+		capcutReady := seedanceroute_setting.IsShortCapcutEnabledFor(sourceModel)
+		if xinbiReady || youzanReady || capcutReady {
+			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.WithinShortTrigger(seconds) {
+				// 第一优先：心笔内链。
+				if xinbiReady {
+					// 目标只支持心笔内链。改派跨 adaptor（youzanwan3 → xinbiapi），
+					// 入参契约完全不同，必须走 prepareTehuiXinbiRoute 的准入与改写；
+					// 配置成别的模型名时宁可不用这条规则，也不能按有赞契约改写。
+					if !isXinbiTehuiTarget(shortTarget) {
+						logger.LogInfo(c, "条件路由跳过短时长分流：short_target_model 不是心笔内链，规则六不生效")
+					} else {
+						if tier := sourceResolutionTier(body); tier == "1080P" {
+							// 不挡，但要留痕：心笔内链只交付 720P，且按 720P 计价。
+							// 降档交付是可观测的，不是静默的（与规则三同口径）。
+							logger.LogInfo(c, "条件路由：短时长请求指定 1080P，心笔内链只交付 720P（按 720P 计价）")
+						}
+						if newBody, routed := prepareTehuiXinbiRouteWithSeconds(c, body, shortTarget, seconds); routed {
+							if applyRewrittenBody(c, newBody, billingOriginModel) {
+								// 计费按**源模型**（seedance2.5-特惠）的按秒价算。
+								// 心笔 adaptor 会自己给 seconds（读改写后的顶层 seconds），
+								// 这里再记一份是兜底：GetTaskRequest 万一失败，它的
+								// EstimateBilling 会退到缺省 5 秒，applyRouteBillingSeconds
+								// 能用这份把秒数补回来。size 倍率**不记** —— 交付恒 720P。
+								common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(clampTehuiXinbiSeconds(seconds)))
+								logger.LogInfo(c, fmt.Sprintf(
+									"条件路由：命中短时长 %d 秒（≤ %d 秒），改派 %s → %s（480P 生成 + 超分 720P）",
+									seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, shortTarget))
+								c.Next()
+								return
+							}
+						}
+					}
+				}
+
+				// 第二优先：有赞标准版兜底。心笔没接住（关闭 / 无渠道 /
+				// 契约不兼容）时才会走到这里。
+				if youzanReady {
+					target := seedanceroute_setting.DefaultShortYouzanTargetModel
+					if newBody, sizeRatio, routed := prepareShortYouzanRoute(c, body, target, sourceModel, seconds); routed {
+						if applyRewrittenBody(c, newBody, billingOriginModel) {
+							// 计费按**源模型**算：秒数按触发判定拿到的值，
+							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
+							// 目标标准版三档同价、adaptor 给的 size 恒为 1.0，
+							// 不补倍率就会把 1080P 按 720P 的价收，少收 33%。
+							common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
+							common.SetContextKey(c, constant.ContextKeyRouteBillingSizeRatio, sizeRatio)
+							logger.LogInfo(c, fmt.Sprintf(
+								"条件路由：命中短时长 %d 秒（≤ %d 秒），心笔未接住，改派 %s → %s（有赞标准版兜底）",
+								seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, target))
+							c.Next()
+							return
+						}
+					}
+				}
+
+				// 第三优先：CapCut 快速档（cp-seedance-2.0fast）。
+				//
+				// 心笔与有赞标准版都没接住时，短请求改派 CapCut 快速档 ——
+				// 这是跨渠道改派（youzanwan3 → manwu），入参契约完全不同，
+				// 必须走 prepareShortCapcutRoute 的准入与改写，不能按有赞契约改写。
+				if capcutReady {
+					target := seedanceroute_setting.DefaultShortCapcutTargetModel
+					if newBody, routed := prepareShortCapcutRoute(c, body, target, seconds); routed {
+						if applyRewrittenBody(c, newBody, billingOriginModel) {
+							// 计费按**源模型**算：秒数按触发判定拿到的值，
+							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
+							//
+							// ⚠️ 必须覆盖 CapCut adaptor 自己给的 size 倍率
+							// （480p=1.0 / 720p=×1.5）—— 那是 CapCut 的档位差价，
+							// 与源模型的档位差价不是同一个维度，不覆盖就是超收。
+							//
+							// 档位取**源链路实际执行的档**（shortRouteResolution）：
+							// prime 只提供 720P/1080P，客户传 480P 时源链路也跑 720P，
+							// 用原始请求档算倍率会取不到值。
+							setRouteBillingContext(c, seconds,
+								sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
+							logger.LogInfo(c, fmt.Sprintf(
+								"条件路由：命中短时长 %d 秒（≤ %d 秒），心笔与有赞均未接住，改派 %s → %s（CapCut 快速档）",
+								seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, target))
+							c.Next()
+							return
+						}
+					}
+				}
+			}
+		}
+
 		// ── 规则七（电商/产品推荐内容）：排在规则一之前 ──
 		//
 		// 2026-11-14 老板需求：seedance2.5-特惠 / seedance2.5-活动 这两个对外
@@ -412,128 +539,6 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						}
 						c.Next()
 						return
-					}
-				}
-			}
-		}
-
-		// ── 规则六（短时长分流）：排在规则二之前 ──
-		//
-		// 2026-11-13 老板定：请求时长 ≤ 阈值（默认 10 秒）→ 改派到**心笔内链**
-		// （wan3.0-720p-特惠-内链，ch25：480P 生成 + 超分交付 720P）。
-		//
-		// 2026-11-14 新增有赞标准版兜底（独立按钮 short_youzan_enabled）：
-		// 心笔不可用（余额耗尽 / AutoChannel / 契约不兼容）时，短请求改派
-		// 有赞标准版 wan3.0-video —— 它与源链路同渠道同 adaptor，绕开 prime
-		// 的 <10 秒保护（PRIME_DURATION_TOO_SHORT）。
-		//
-		// 2026-11-14 再加第三条分支（short_capcut_enabled）：短请求改派
-		// cp-seedance-2.0fast（CapCut 快速档）。
-		//
-		// ⚠️ **三条分支同时只能有一条生效**：心笔 > 有赞 > CapCut。
-		// 写入口（controller）保证互斥（开一个自动关另两个），
-		// 这里再按优先级取第一条做**读侧兜底** —— 万一配置被 SQL 手改过，
-		// 也不会出现两条同时生效（那会让运营看着两个亮着的按钮却只有一条真跑）。
-		//
-		// 优先级口径：心笔成本最低（480P 生成 + 超分）且能力边界最宽；
-		// 有赞标准版次之（同渠道同 adaptor，最不容易失败）；
-		// CapCut 排最后（跨渠道，契约限制最多：只收 http(s) 参考图、
-		// 只卖 480p/720p、时长 4–15 秒）。
-		//
-		// 为什么排在规则二（比例）之前：老板口径是「短任务优先」——
-		// 9:16 的短任务也走内链/标准版，不再落到比例目标链路。
-		//
-		// 为什么排在规则三（首尾帧）之后：首尾帧是**能力约束**，心笔兼容口
-		// 只收参考图、有赞标准版同样不收首尾帧（上游 2026-10-28 取消入参）。
-		// 带首尾帧的请求只有规则三的目标链路能跑，优先级高于分流优化。
-		//
-		// 与规则一的时长区间不重叠（≤10 与 >阈值 20），两条规则不会互相抢单；
-		// 万一将来把阈值调成重叠，规则一在前 —— 长时长优先仍然是既有口径。
-		shortTarget := policy.ShortTargetModelFor(sourceModel)
-		xinbiReady := seedanceroute_setting.IsShortRouteEnabledFor(sourceModel)
-		youzanReady := seedanceroute_setting.IsShortYouzanEnabledFor(sourceModel)
-		capcutReady := seedanceroute_setting.IsShortCapcutEnabledFor(sourceModel)
-		if xinbiReady || youzanReady || capcutReady {
-			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.WithinShortTrigger(seconds) {
-				// 第一优先：心笔内链。
-				if xinbiReady {
-					// 目标只支持心笔内链。改派跨 adaptor（youzanwan3 → xinbiapi），
-					// 入参契约完全不同，必须走 prepareTehuiXinbiRoute 的准入与改写；
-					// 配置成别的模型名时宁可不用这条规则，也不能按有赞契约改写。
-					if !isXinbiTehuiTarget(shortTarget) {
-						logger.LogInfo(c, "条件路由跳过短时长分流：short_target_model 不是心笔内链，规则六不生效")
-					} else {
-						if tier := sourceResolutionTier(body); tier == "1080P" {
-							// 不挡，但要留痕：心笔内链只交付 720P，且按 720P 计价。
-							// 降档交付是可观测的，不是静默的（与规则三同口径）。
-							logger.LogInfo(c, "条件路由：短时长请求指定 1080P，心笔内链只交付 720P（按 720P 计价）")
-						}
-						if newBody, routed := prepareTehuiXinbiRouteWithSeconds(c, body, shortTarget, seconds); routed {
-							if applyRewrittenBody(c, newBody, billingOriginModel) {
-								// 计费按**源模型**（seedance2.5-特惠）的按秒价算。
-								// 心笔 adaptor 会自己给 seconds（读改写后的顶层 seconds），
-								// 这里再记一份是兜底：GetTaskRequest 万一失败，它的
-								// EstimateBilling 会退到缺省 5 秒，applyRouteBillingSeconds
-								// 能用这份把秒数补回来。size 倍率**不记** —— 交付恒 720P。
-								common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(clampTehuiXinbiSeconds(seconds)))
-								logger.LogInfo(c, fmt.Sprintf(
-									"条件路由：命中短时长 %d 秒（≤ %d 秒），改派 %s → %s（480P 生成 + 超分 720P）",
-									seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, shortTarget))
-								c.Next()
-								return
-							}
-						}
-					}
-				}
-
-				// 第二优先：有赞标准版兜底。心笔没接住（关闭 / 无渠道 /
-				// 契约不兼容）时才会走到这里。
-				if youzanReady {
-					target := seedanceroute_setting.DefaultShortYouzanTargetModel
-					if newBody, sizeRatio, routed := prepareShortYouzanRoute(c, body, target, sourceModel, seconds); routed {
-						if applyRewrittenBody(c, newBody, billingOriginModel) {
-							// 计费按**源模型**算：秒数按触发判定拿到的值，
-							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
-							// 目标标准版三档同价、adaptor 给的 size 恒为 1.0，
-							// 不补倍率就会把 1080P 按 720P 的价收，少收 33%。
-							common.SetContextKey(c, constant.ContextKeyRouteBillingSeconds, float64(seconds))
-							common.SetContextKey(c, constant.ContextKeyRouteBillingSizeRatio, sizeRatio)
-							logger.LogInfo(c, fmt.Sprintf(
-								"条件路由：命中短时长 %d 秒（≤ %d 秒），心笔未接住，改派 %s → %s（有赞标准版兜底）",
-								seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, target))
-							c.Next()
-							return
-						}
-					}
-				}
-
-				// 第三优先：CapCut 快速档（cp-seedance-2.0fast）。
-				//
-				// 心笔与有赞标准版都没接住时，短请求改派 CapCut 快速档 ——
-				// 这是跨渠道改派（youzanwan3 → manwu），入参契约完全不同，
-				// 必须走 prepareShortCapcutRoute 的准入与改写，不能按有赞契约改写。
-				if capcutReady {
-					target := seedanceroute_setting.DefaultShortCapcutTargetModel
-					if newBody, routed := prepareShortCapcutRoute(c, body, target, seconds); routed {
-						if applyRewrittenBody(c, newBody, billingOriginModel) {
-							// 计费按**源模型**算：秒数按触发判定拿到的值，
-							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
-							//
-							// ⚠️ 必须覆盖 CapCut adaptor 自己给的 size 倍率
-							// （480p=1.0 / 720p=×1.5）—— 那是 CapCut 的档位差价，
-							// 与源模型的档位差价不是同一个维度，不覆盖就是超收。
-							//
-							// 档位取**源链路实际执行的档**（shortRouteResolution）：
-							// prime 只提供 720P/1080P，客户传 480P 时源链路也跑 720P，
-							// 用原始请求档算倍率会取不到值。
-							setRouteBillingContext(c, seconds,
-								sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
-							logger.LogInfo(c, fmt.Sprintf(
-								"条件路由：命中短时长 %d 秒（≤ %d 秒），心笔与有赞均未接住，改派 %s → %s（CapCut 快速档）",
-								seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, target))
-							c.Next()
-							return
-						}
 					}
 				}
 			}

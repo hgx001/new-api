@@ -193,6 +193,71 @@ func TestEcommerceBeatsSecondsRuleOnLongRequests(t *testing.T) {
 	}
 }
 
+// ⚠️ 规则六（短时长分流）必须**排在规则七之前**。
+//
+// 这是一条顺序不变量锁。设计口径是：
+//
+//	短请求是**成本**问题（绕开 prime 的 <10 秒保护）；
+//	电商内容是**内容形态**问题。
+//
+// 一条 8 秒的电商短视频该走更便宜的短时长链路，而不是被内容判定抢到
+// CapCut 2.5 Flash（2.5 Flash 的对外价 ¥0.30/秒，是 2.0 Fast 的 2.5 倍）。
+//
+// 2026-11-14 曾出现过实际顺序与文档声明不一致的缺陷（规则七被排到了规则六
+// 之前），后果就是这条请求被改派到 cp-seedance-2.5flash ——
+// 光看代码注释发现不了，只有实测能发现，所以锁在这里。
+func TestShortRouteBeatsEcommerceOnShortRequests(t *testing.T) {
+	// 开规则七（内容入口）+ 规则六的 CapCut 快速档分支。
+	// 两次配置要合并成一份策略，所以这里直接构造一份完整策略。
+	enableEcommerceWithShortCapcut(t)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"好物推荐 种草文案"}`)
+	body := decodeBody(t, seen)
+	if body["model"] == testEcommerceTarget {
+		t.Fatalf("8 秒的电商请求应先走规则六（短时长分流），实际被规则七抢到 %s",
+			testEcommerceTarget)
+	}
+	if body["model"] != testShortCapcutTarget {
+		t.Fatalf("8 秒的电商请求应改派 %s，实际 model=%v",
+			testShortCapcutTarget, body["model"])
+	}
+}
+
+// enableEcommerceWithShortCapcut 同时打开规则七与规则六的 CapCut 快速档分支。
+//
+// 两个 helper（enableEcommerce / enableShortCapcut）各自会写一份完整策略，
+// 先后调用会互相覆盖，所以这里直接构造一份合并后的策略。
+func enableEcommerceWithShortCapcut(t *testing.T) {
+	t.Helper()
+	previous := seedanceroute_setting.Get()
+	payload := map[string]interface{}{
+		"enabled":                     true,
+		"source_models":               []string{testSourceModel, testSourceModelAlt},
+		"target_model":                testTargetModel,
+		"trigger_seconds":             20,
+		"short_target_model":          testShortTargetModel,
+		"short_trigger_seconds":       10,
+		"short_link_enabled":          false,
+		"short_youzan_enabled":        false,
+		"short_capcut_enabled":        true,
+		"ecommerce_enabled":           true,
+		"ecommerce_ratio_condition":   false,
+		"ecommerce_seconds_condition": false,
+		"ecommerce_trigger_seconds":   20,
+	}
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+}
+
 // ⚠️ 带参考视频的请求**一律不路由**（老板明确要求）。
 //
 // 三种形态都要挡：media 数组 / metadata.media / 顶层 videos。
