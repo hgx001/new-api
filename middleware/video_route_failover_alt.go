@@ -139,13 +139,21 @@ func tryFailoverAltRoute(
 		logger.LogInfo(c, "条件路由跳过故障转移备选：超分链路未配置，回落班车（避免按 720P 价交付 480P）")
 		return false
 	}
-	// 源与备选落在同一批渠道时改名无路由收益（与班车那条同一判定）。
-	if failoverSharedChannelChain(c, sourceModel, target) {
-		logger.LogInfo(c, fmt.Sprintf(
-			"条件路由跳过故障转移备选：源 %s 与备选 %s 解析到同一批渠道，改名无路由收益",
-			sourceModel, target))
-		return false
-	}
+	// ⚠️ 这里**故意不做** failoverSharedChannelChain 判断，与班车那条不同。
+	//
+	// 「源与备选解析到同一批渠道就改名无收益」这条护栏是为班车设的：
+	// 班车是同一个上游的另一个档位，同渠道意味着同一个额度池，改名救不了。
+	//
+	// 备选不是这个结构。线上两边的渠道集合完全相同（都只挂在同一个中转渠道
+	// 漫屋 ArcReel 上），但渠道背后是两个**不同的上游模型与账号**：
+	//   seedance-2-5       → 豆包官网额度
+	//   cp-seedance-2.5flash → CapCut 额度
+	// 豆包额度耗尽恰恰不影响 CapCut —— 这正是备选存在的全部理由。
+	// 复用班车那条判断的后果是：开关打开、超分配置齐全、渠道也在，
+	// 请求却一条都进不来，全员静默走班车（2026-11-14 实测确认）。
+	//
+	// 真正要防的「改了名还在同一个池子里」已由上一段的可用性探针覆盖：
+	// 目标模型在当前分组没有可用渠道时直接回落。
 
 	newBody, ok := prepareCapcutAltRoute(c, body, target)
 	if !ok {

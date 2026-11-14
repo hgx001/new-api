@@ -284,3 +284,33 @@ func TestFailoverAltBodyUsesCapcutContract(t *testing.T) {
 	assert.Equal(t, "9:16", seen["ratio"], "size 形态的比例要归一成 CapCut 的顶层 ratio")
 	assert.True(t, strings.EqualFold("480p", seen["resolution"].(string)))
 }
+
+// 源与备选落在**同一批渠道**时，备选仍然必须生效。
+//
+// 线上就是这种结构：seedance-2-5 与 cp-seedance-2.5flash 都只挂在同一个
+// 中转渠道（漫屋 ArcReel），但渠道背后是两个不同上游模型、两套独立额度。
+// 班车那条「同渠道放弃改写」的护栏套到这里就成了致命误判 ——
+// 开关打开、超分就绪、渠道也在，请求却一条都进不来（2026-11-14 实测）。
+func TestFailoverAltWorksWhenSourceAndTargetShareChannel(t *testing.T) {
+	enableFailoverWithAlt(t, true, nil)
+	stubChannelAvailableByModel(t, map[string]bool{
+		failoverSourceModel:       false,
+		failoverBackupModel:       true,
+		testCapcutAltChannelModel: true,
+	})
+	// 两者解析到完全相同的渠道集合。
+	stubChannelIDsByModel(t, map[string][]int{
+		failoverSourceModel:       {20},
+		failoverBackupModel:       {27},
+		testCapcutAltChannelModel: {20},
+	})
+	stubSuperResolution(t, true)
+
+	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"16:9"}`)
+	seen := decodeBody(t, rec.body)
+
+	assert.Equal(t, testCapcutAltModel, seen["model"],
+		"同一中转渠道下豆包与 CapCut 是两套上游额度，备选必须生效")
+	assert.Equal(t, "480p", seen["resolution"])
+	assert.True(t, rec.suppressTaskRatios)
+}
