@@ -63,11 +63,17 @@ func SetVideoRouter(router *gin.Engine) {
 	// 本地参考图上交换公网 URL（manwu 渠道闭环，2026-10-11）：multipart 薄转发到
 	// ArcReel 暂存图床。只挂 TokenAuth 不挂 Distribute——没有模型路由语义，
 	// 渠道（baseURL+密钥）在 controller 内按 manwu 类型解析。
-	uploadsV1Router := router.Group("/v1")
-	uploadsV1Router.Use(middleware.RouteTag("relay"))
-	uploadsV1Router.Use(middleware.TokenAuth())
+	//
+	// 2026-11-14 新增 /v1/files：签发 COS 直传预签名，客户端把素材**直接**
+	// PUT 到对象存储，字节不经过本机（/v1/uploads 的字节要走 3Mbps 出口）。
+	// 两者共存：/v1/uploads 适合小图且想一步到位；/v1/files 适合大素材或
+	// 素材源在境外（代下载受 ArcReel 侧 60s 硬预算约束，超过 4MB 必定 400）。
+	filesV1Router := router.Group("/v1")
+	filesV1Router.Use(middleware.RouteTag("relay"))
+	filesV1Router.Use(middleware.TokenAuth())
 	{
-		uploadsV1Router.POST("/uploads", controller.UploadStagingFile)
+		filesV1Router.POST("/uploads", controller.UploadStagingFile)
+		filesV1Router.POST("/files", controller.PresignCosUploadFile)
 	}
 
 	klingV1Router := router.Group("/kling/v1")

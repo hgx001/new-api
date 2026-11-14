@@ -162,7 +162,9 @@ func SetRelayRouter(router *gin.Engine) {
 		// not implemented
 		httpRouter.POST("/images/variations", controller.RelayNotImplemented)
 		httpRouter.GET("/files", controller.RelayNotImplemented)
-		httpRouter.POST("/files", controller.RelayNotImplemented)
+		// ⚠️ POST /v1/files **不注册在这里**：它不是模型 relay，走 httpRouter 会
+		// 被 Distribute() 要求模型路由。真正的实现在 router/video-router.go 的
+		// filesV1Router（只挂 TokenAuth）—— 签发 COS 直传预签名，见该文件注释。
 		httpRouter.DELETE("/files/:id", controller.RelayNotImplemented)
 		httpRouter.GET("/files/:id", controller.RelayNotImplemented)
 		httpRouter.GET("/files/:id/content", controller.RelayNotImplemented)
