@@ -137,6 +137,18 @@ func SetApiRouter(router *gin.Engine) {
 			// 与心笔开关并列时心笔优先，两个都关闭走原链路。
 			videoRouteAdmin.POST("/policy/short-youzan-link", controller.SetShortYouzanLinkAdmin)
 
+			// 规则六的第三条分支「CapCut 快速档」开关（2026-11-14）：
+			// 打开后短请求改派 cp-seedance-2.0fast。
+			// ⚠️ 三条分支同时只能有一条生效 —— 打开本条时自动关掉心笔与有赞。
+			videoRouteAdmin.POST("/policy/short-capcut-link", controller.SetShortCapcutLinkAdmin)
+
+			// 规则七（电商/产品推荐内容 → cp-seedance-2.5flash，2026-11-14）：
+			// 总开关 + 参数条件勾选（9:16 / 时长阈值）+ 关键词表。
+			// 带参考视频的请求一律不路由（老板明确要求），与开关无关。
+			videoRouteAdmin.POST("/policy/ecommerce", controller.SetEcommerceRouteAdmin)
+			videoRouteAdmin.POST("/policy/ecommerce/conditions", controller.SetEcommerceConditionsAdmin)
+			videoRouteAdmin.POST("/policy/ecommerce/keywords", controller.SetEcommerceKeywordsAdmin)
+
 			// 豆包链路的「最多接单数」（2026-11-13 老板定）：
 			// 豆包链路上游给的是运营自己掌握的一小批额度，设成 3 就是
 			// 「这批只接 3 单，接满自动关闭，我手动再打开时又来 3 单」。
@@ -155,6 +167,9 @@ func SetApiRouter(router *gin.Engine) {
 			videoRouteAdmin.GET("/policy/failover", controller.GetFailoverPolicyAdmin)
 			videoRouteAdmin.POST("/policy/failover/switch", controller.SetFailoverSwitchAdmin)
 			videoRouteAdmin.POST("/policy/failover/models", controller.SetFailoverModelsAdmin)
+			// 备选备胎（CapCut 2.5 Flash，480p 生成 + 超分 720P 交付）。
+			// 与主开关分开：主开关决定「要不要改派」，这个决定「改派到哪一条」。
+			videoRouteAdmin.POST("/policy/failover/alt", controller.SetFailoverAltAdmin)
 			videoRouteAdmin.POST("/policy/failover/unavailable", controller.MarkFailoverSourceUnavailableAdmin)
 			videoRouteAdmin.POST("/policy/failover/available", controller.ClearFailoverSourceUnavailableAdmin)
 		}

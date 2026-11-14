@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -212,6 +213,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 是 1.5 倍），而规则六的改派目标 wan3.0-video 三档同价、adaptor 给 1.0。
 	// 不覆盖就会按 ¥0.20/秒 收 1080P（应收 ¥0.30），少收 33%。
 	applyRouteBillingSizeRatio(c, info)
+
+	// 5.7 改派到「一口价交付」的链路时，清空目标 adaptor 给的倍率
+	//
+	// 与 5.5 / 5.6 相反方向：那两条是「补源模型口径的倍率」，
+	// 这条是「源模型本身就是一口价，任何倍率都不该乘」。
+	//
+	// 触发场景（2026-11-14）：规则五把 seedance-2-5（¥3.50/次）降级到
+	// CapCut cp-seedance-2.5flash —— CapCut adaptor 一律返回 {"seconds": N}，
+	// 不清理的话 5 秒的单子会被乘成 ¥17.50（超收 5 倍，且账单上看不出来）。
+	suppressRouteTaskRatios(c, info)
 
 	// 6. 将 OtherRatios 应用到基础额度
 	//
@@ -1111,6 +1122,30 @@ func applyRouteBillingSizeRatio(c *gin.Context, info *relaycommon.RelayInfo) {
 		return
 	}
 	info.PriceData.AddOtherRatio("size", ratio)
+}
+
+// suppressRouteTaskRatios 清空「目标 adaptor 给出的计费倍率」。
+//
+// 只在路由层显式标记了 ContextKeyRouteSuppressTaskRatios 时生效 ——
+// 标记方是规则五的 CapCut 备选链路（源模型一口价，目标 adaptor 按秒给倍率）。
+//
+// ⚠️ 必须放在 mergeEstimatedRatios / applyRouteBillingSeconds /
+// applyRouteBillingSizeRatio **之后**、applyBillingRatios **之前**：
+// 前面三步都可能写入倍率，清早了会被它们补回来。
+func suppressRouteTaskRatios(c *gin.Context, info *relaycommon.RelayInfo) {
+	if c == nil || info == nil {
+		return
+	}
+	if !common.GetContextKeyBool(c, constant.ContextKeyRouteSuppressTaskRatios) {
+		return
+	}
+	if len(info.PriceData.OtherRatios) == 0 {
+		return
+	}
+	logger.LogInfo(c, fmt.Sprintf(
+		"计费：改派到一口价交付的链路，忽略目标 adaptor 的计费倍率 %v（计费口径 %s）",
+		info.PriceData.OtherRatios, info.BillingModelName()))
+	info.PriceData.OtherRatios = nil
 }
 
 // applyTaskOtherRatios 把时长/分辨率等附加倍率乘到任务预扣额度上。

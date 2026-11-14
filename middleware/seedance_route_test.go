@@ -77,6 +77,11 @@ type routeRecorder struct {
 	// 而源模型 seedance2.5-特惠 的 1080P 是 1.5 倍。不覆盖就会少收。
 	billingSizeRatio float64
 	hasBillingSize   bool
+	// suppressTaskRatios 是中间件是否标记了「屏蔽目标 adaptor 的计费倍率」。
+	//
+	// 规则五的 CapCut 备选链路需要它：客户买的是一口价，而 CapCut adaptor
+	// 按秒给倍率 —— 不屏蔽就会 ¥3.50×N（见 constant.ContextKeyRouteSuppressTaskRatios）。
+	suppressTaskRatios bool
 }
 
 // newRouteEngine 建一个挂上条件路由中间件的引擎。
@@ -107,6 +112,7 @@ func newRouteEngine(rec *routeRecorder, middlewares ...gin.HandlerFunc) *gin.Eng
 		rec.originModel = RouteOriginModel(c)
 		rec.billingSeconds, rec.hasBillingSec = common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSeconds)
 		rec.billingSizeRatio, rec.hasBillingSize = common.GetContextKeyType[float64](c, constant.ContextKeyRouteBillingSizeRatio)
+		rec.suppressTaskRatios = common.GetContextKeyBool(c, constant.ContextKeyRouteSuppressTaskRatios)
 		c.String(200, "ok")
 	}
 	engine.POST("/v1/video/generations", handler)

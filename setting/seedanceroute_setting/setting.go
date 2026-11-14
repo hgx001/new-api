@@ -181,6 +181,59 @@ type Policy struct {
 	// 升级当天线上流量逐字节不变（与 FailoverEnabled 同一口径）。
 	ShortYouzanEnabled bool `json:"short_youzan_enabled,omitempty"`
 
+	// ShortCapcutEnabled 是规则六第三分支「CapCut 快速档」的开关（2026-11-14 起）。
+	//
+	// 目标模型固定为 DefaultShortCapcutTargetModel（cp-seedance-2.0fast）——
+	// 与另外两条分支一样是可配置的运营决策，但**互斥**：三条短时长分支同时
+	// 只能有一条生效（写入口在 controller 侧保证，见 short_capcut.go）。
+	//
+	// ⚠️ 用 bool 而不是三态指针：这是**新行为**，旧的生产 option JSON 里没有
+	// 这个字段，解析后是零值 false = 不启用，语义正好是「没配过就不生效」，
+	// 升级当天线上流量逐字节不变（与 ShortYouzanEnabled 同一口径）。
+	ShortCapcutEnabled bool `json:"short_capcut_enabled,omitempty"`
+
+	// ─────────────────── 规则七：电商内容 → CapCut 快速档 ───────────────────
+	//
+	// 触发源与前六条都不同：前六条看的是**请求的客观参数**（时长/比例/首尾帧），
+	// 这条看的是**提示词的内容**（电商类 / 产品推荐）。
+	//
+	// 命中条件 = 内容命中（关键词）**或** 参数命中（勾选的 9:16 / 时长条件）。
+	// 详见 ecom_route.go 的包头注释（为什么是「或」而不是「且」）。
+	//
+	// EcommerceEnabled 是规则七的总开关。false = 不生效（默认）。
+	//
+	// ⚠️ 用 bool 而不是三态指针：这是**全新**的规则，旧的生产 option JSON 里
+	// 根本没有这个字段，解析后是零值 false = 不启用，语义正好是「没配过就不生效」，
+	// 升级当天线上流量逐字节不变（与 FailoverEnabled / ShortYouzanEnabled 同一口径）。
+	EcommerceEnabled bool `json:"ecommerce_enabled,omitempty"`
+
+	// EcommerceTargetModel 是规则七的目标模型名。空 = 用 DefaultEcommerceTargetModel
+	//（cp-seedance-2.5flash）。
+	//
+	// 同样支持按源模型覆盖（source_overrides[模型].ecommerce_target_model）。
+	EcommerceTargetModel string `json:"ecommerce_target_model,omitempty"`
+
+	// EcommercePromptKeywords 是电商/产品推荐的关键词表。空 = 用 DefaultEcommerceKeywords。
+	//
+	// 为什么不是唯一事实源：品类词每个运营不一样，关键词表天然需要按站点调；
+	// 代码里那份默认值只保证「打开开关就有能用的起点」。
+	EcommercePromptKeywords []string `json:"ecommerce_prompt_keywords,omitempty"`
+
+	// EcommerceRatioCondition 是「9:16 比例」入口的勾选状态。
+	//
+	// 勾上 = 9:16 的请求也走规则七（不管提示词是不是电商类）。
+	//
+	// ⚠️ 与 TriggerRatio（规则二的触发比例）**分开存**：两条规则的语义独立 ——
+	// 共用一个字段会让「开规则七」顺带改掉规则二的改派范围，属于隐式耦合。
+	EcommerceRatioCondition bool `json:"ecommerce_ratio_condition,omitempty"`
+
+	// EcommerceSecondsCondition 是「时长超过阈值」入口的勾选状态。
+	EcommerceSecondsCondition bool `json:"ecommerce_seconds_condition,omitempty"`
+
+	// EcommerceTriggerSecondsValue 是「时长条件」的阈值（秒），**超过**该值命中。
+	// 0 = 用 DefaultEcommerceTriggerSeconds（20 秒）。
+	EcommerceTriggerSecondsValue int `json:"ecommerce_trigger_seconds,omitempty"`
+
 	// ─────────────────── 规则五：故障转移（failover）───────────────────
 	//
 	// 前三条规则的触发源都是**请求特征**（时长 / 比例 / 首尾帧），
@@ -204,6 +257,31 @@ type Policy struct {
 
 	// FailoverTargetModel 是故障转移的目标模型名（备胎，如 wan3.0-班车）。空 = 规则五不启用。
 	FailoverTargetModel string `json:"failover_target_model,omitempty"`
+
+	// FailoverAltEnabled 是规则五「备选备胎」开关（2026-11-14 起）。
+	//
+	// 语义：豆包链路（seedance-2-5）不可用或被关闭时，
+	//   - 打开：改派 cp-seedance-2.5flash（CapCut 2.5 Flash），
+	//     按 480p 生成、交付前超分到 720P（与心笔内链同一套腾讯 MPS 超分）；
+	//   - 关闭（默认）：仍走 failover_target_model（wan3.0-班车）。
+	//
+	// 为什么要第三个出口：班车是「同上游的车站队列」，排队时长不可控；
+	// CapCut 是另一家上游（我们自己的账号池），豆包挂掉时它是**独立**的一条路。
+	// 但它的契约更窄（只卖 480p/720p、无「自动」比例），所以默认不启用 ——
+	// 运营确认成本与能力都能接受时再打开。
+	//
+	// ⚠️ 用 bool 而不是三态指针：这是**新增的备选出口**，旧的生产 option JSON 里
+	// 没有这个字段，解析后是零值 false = 走班车，语义正好是「没配过就保持现状」，
+	// 升级当天线上流量逐字节不变（与 FailoverEnabled / ShortYouzanEnabled 同一口径）。
+	FailoverAltEnabled bool `json:"failover_alt_enabled,omitempty"`
+
+	// FailoverAltModel 是备选备胎的模型名。空 = 用 DefaultFailoverAltModel。
+	//
+	// ⚠️ 只有 CapCut 2.5 Flash 这一个目标被代码支持：它的改写契约
+	// （480p 生成 + 超分 720P、CapCut 比例表、单值参考视频槽）与其他模型都不同。
+	// 配成别的名字时规则五**不生效**（回落班车），不做「按有赞契约改写」这种猜测 ——
+	// 猜错的后果是「把能跑的请求改成跑不了的」。
+	FailoverAltModel string `json:"failover_alt_model,omitempty"`
 
 	// DoubaoLinkOffUntil 是豆包链路开关的关闭截止时间（Unix 秒）。
 	// >0 且未到点 = 运营手动关闭了豆包链路（一个开关表达「豆包通不通」）：
@@ -329,6 +407,9 @@ type SourceOverride struct {
 	// ShortTargetModel 覆盖规则六（短时长分流）的目标模型。
 	ShortTargetModel string `json:"short_target_model,omitempty"`
 
+	// EcommerceTargetModel 覆盖规则七（电商内容 → CapCut）的目标模型。
+	EcommerceTargetModel string `json:"ecommerce_target_model,omitempty"`
+
 	// SecondsRuleEnabled 是该源模型专属的「按时长改派」开关（2026-11-03 起）。
 	//
 	// 语义：
@@ -388,6 +469,18 @@ type SourceOverride struct {
 	// 短任务分流对母本是调度优化、对活动版可能改变一口价的成本结构 ——
 	// 老板需要能**只停一个**。公共 short_target_model 一改就是所有源模型一起改。
 	ShortRuleEnabled *bool `json:"short_rule_enabled,omitempty"`
+
+	// EcommerceRuleEnabled 是该源模型专属的「电商内容改派」开关（2026-11-14 起）。
+	//
+	// 语义与上面四个开关一致（三态指针）：
+	//   - nil（配置里没写这个字段）= **默认开启**，行为与加这个字段之前逐字节一致；
+	//   - 显式 false = 该源模型的规则七不改派，请求留在自己的常驻链路；
+	//   - 显式 true = 明确开启（用于把别人关掉的开关改回来）。
+	//
+	// 为什么需要按源模型分：促销族两个成员的经营口径不同（母本按秒、活动版按次），
+	// 电商流量导到 CapCut 快档对两者的成本收益不一样 ——
+	// 老板需要能**只停一个**。公共 ecommerce_enabled 一改就是所有源模型一起改。
+	EcommerceRuleEnabled *bool `json:"ecommerce_rule_enabled,omitempty"`
 }
 
 // overrideFor 返回「这个源模型的专属覆盖」以及是否存在。
@@ -517,6 +610,8 @@ func (p Policy) targetFor(sourceModel, field string) string {
 		return override.FramesTargetModel
 	case fieldShort:
 		return override.ShortTargetModel
+	case fieldEcommerce:
+		return override.EcommerceTargetModel
 	}
 	return ""
 }
@@ -524,10 +619,11 @@ func (p Policy) targetFor(sourceModel, field string) string {
 // 四条规则的字段名。用常量而不是裸字符串，避免调用点写错字段名后
 // 静默取到空值（那会让规则「配了却不生效」，且没有任何报错）。
 const (
-	fieldTarget = "target_model"
-	fieldRatio  = "ratio_target_model"
-	fieldFrames = "frames_target_model"
-	fieldShort  = "short_target_model"
+	fieldTarget    = "target_model"
+	fieldRatio     = "ratio_target_model"
+	fieldFrames    = "frames_target_model"
+	fieldShort     = "short_target_model"
+	fieldEcommerce = "ecommerce_target_model"
 )
 
 // trimModelName 去掉首尾空格，与 IsSourceModel 的口径保持一致。
@@ -724,6 +820,12 @@ func (p Policy) anyRuleReady() bool {
 			ratioRuleConfiguredFor(p, source) ||
 			framesRuleReadyFor(p, source) ||
 			shortRuleConfiguredFor(p, source) ||
+			// 规则七（电商内容 → CapCut）：只配总开关就算配全 ——
+			// 目标模型有默认值（cp-seedance-2.5flash），不需要运营先配目标名。
+			ecommerceConfiguredFor(p, source) ||
+			// 规则六第三分支（CapCut 快速档）：与前两条分支独立 ——
+			// 只打开它而心笔/有赞都关着时，中间件不能被短路。
+			shortCapcutReadyFor(p, source) ||
 			// 有赞兜底不依赖 short_target_model（心笔目标）：两个按钮独立配置，
 			// 只打开有赞按钮也必须算「策略可用」，否则中间件会被整体短路。
 			shortYouzanReadyFor(p, source) {
@@ -731,6 +833,38 @@ func (p Policy) anyRuleReady() bool {
 		}
 	}
 	return false
+}
+
+// ecommerceConfiguredFor 判断「规则七对某个源模型是否配全」（不看按源模型开关）。
+//
+// 与其它规则的「configured 那一份」分工一致：供 anyRuleReady 判断
+// 「整份策略配全了没有」；叠加开关的 ready 那一份决定「要不要真的改派」。
+//
+// 必要条件只有两个：整份策略开着 + 该源模型在源列表里 ——
+// 目标模型有默认值，不需要运营先配目标名。
+func ecommerceConfiguredFor(p Policy, sourceModel string) bool {
+	return p.Enabled && p.hasSourceModel() && p.EcommerceEnabled
+}
+
+// PrimarySourceModel 返回「主源模型名」。
+//
+// 多源场景（SourceModel 单值 + SourceModels 数组）下，两个字段可能都配着，
+// 这里按「SourceModel 优先，没有就取 SourceModels 第一个」的顺序给一个代表。
+//
+// 用途：管理后台展示「这条规则的默认目标模型」这类**展示性**取值。
+// 真正决定改派目标的是各源模型自己的覆盖（见 targetFor），
+// 展示用的代表值与实际生效值不一致时，运营会按错的目标去核对 ——
+// 所以展示时必须明说「这是默认目标」。
+func (p Policy) PrimarySourceModel() string {
+	if trimmed := trimModelName(p.SourceModel); trimmed != "" {
+		return trimmed
+	}
+	for _, name := range p.SourceModels {
+		if trimmed := trimModelName(name); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // allSourceModels 返回策略涉及的全部源模型名（单值 + 多值，去重去空）。
@@ -809,6 +943,13 @@ func IsAnyRouteEnabled() bool {
 			ratioRuleReadyFor(current, source) ||
 			framesRuleReadyFor(current, source) ||
 			shortRuleReadyFor(current, source) ||
+			// 规则七（电商内容 → CapCut）：勾了总开关就要参与判定。
+			// 与上面几条同口径：只看公共字段会误判成「没有规则生效」，
+			// 把中间件整个跳过 —— 运营会看到「开关打开了但一点反应都没有」。
+			ecommerceReadyFor(current, source) ||
+			// 规则六第三分支（CapCut 快速档）：独立于前两条分支，
+			// 只打开它时必须单独判一次，否则中间件早退、按钮看起来没反应。
+			shortCapcutReadyFor(current, source) ||
 			// 有赞兜底与心笔开关相互独立：只打开有赞按钮时，
 			// shortRuleReadyFor 会因 short_link_enabled=false 返回 false，
 			// 必须单独判一次，否则中间件早退、按钮看起来没反应。
@@ -1374,6 +1515,11 @@ func clonePolicy(p Policy) Policy {
 		enabled := *p.ShortLinkEnabled
 		out.ShortLinkEnabled = &enabled
 	}
+	// EcommercePromptKeywords 是切片：浅拷贝会让 Get() 返回的副本与全局状态
+	// 共享底层数组，调用方改一个元素就悄悄改到了全局配置。
+	if p.EcommercePromptKeywords != nil {
+		out.EcommercePromptKeywords = append([]string(nil), p.EcommercePromptKeywords...)
+	}
 	// SourceOverrides 是 map：浅拷贝会让 Get() 返回的副本与全局状态共享底层 map，
 	// 调用方改一个键就悄悄改到了全局配置。必须深拷贝。
 	if p.SourceOverrides != nil {
@@ -1396,6 +1542,10 @@ func clonePolicy(p Policy) Policy {
 			if value.ShortRuleEnabled != nil {
 				enabled := *value.ShortRuleEnabled
 				value.ShortRuleEnabled = &enabled
+			}
+			if value.EcommerceRuleEnabled != nil {
+				enabled := *value.EcommerceRuleEnabled
+				value.EcommerceRuleEnabled = &enabled
 			}
 			out.SourceOverrides[key] = value
 		}

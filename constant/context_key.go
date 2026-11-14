@@ -52,6 +52,26 @@ const (
 	// 与源模型的档位差价是同一维度，不是两个可叠加的倍率。
 	ContextKeyRouteBillingSizeRatio ContextKey = "route_billing_size_ratio"
 
+	// ContextKeyRouteSuppressTaskRatios 是「屏蔽目标 adaptor 给出的计费倍率」。
+	//
+	// 为什么需要：计费口径 = 客户请求的源模型（见 ContextKeyRouteOriginModel）。
+	// 当源模型是**一口价**（ModelPrice 按次，如 seedance-2-5 ¥3.50/次），
+	// 而改派目标 adaptor 恰好按自己的习惯返回 {"seconds": N, "size": R} 时，
+	// 这些倍率会把一口价乘成 ¥3.50×N —— 超收 N 倍，账单上却看不出异常。
+	//
+	// 典型案例（2026-11-14 加）：规则五把 seedance-2-5 降级到 CapCut
+	// cp-seedance-2.5flash。CapCut adaptor 一律按秒给倍率（它自己就是按秒商品），
+	// 而客户买的是 seedance-2-5 的一口价。不屏蔽就会 5 秒的单子收 ¥17.50。
+	//
+	// ⚠️ 与 constant.IsTaskPerCallModel 的分工：
+	//   IsTaskPerCallModel 判「这个**模型**是不是按次商品」（判据是模型名）；
+	//   本键表达「这条**请求**虽然跑在按秒链路上，但计费口径是一口价」——
+	//   模型名判不出来（seedance-2-5 的按次性不在能力组里），只能由路由层标记。
+	//
+	// 语义是**清空**而不是把倍率设成 1：留着 {"seconds": 1} 会让日志与
+	// BillingContext 快照看起来像「按秒计费」，排查时被带偏。
+	ContextKeyRouteSuppressTaskRatios ContextKey = "route_suppress_task_ratios"
+
 	// ContextKeyPromptCompressFrom / To 是提示词压缩的「原长度 → 压缩后长度」。
 	//
 	// 为什么要记下来：压缩改写了客户的创作描述，而任务照样成功、账单照收 ——

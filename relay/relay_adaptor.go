@@ -61,6 +61,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// 把成片超分能力注入 manwu（2026-11-14）。
+//
+// 为什么在这一层装配：超分实现住在 wan3 包，而 wan3 **已经 import manwu**
+// （media_relocate.go 复用素材转存），manwu 反向 import 会成环。
+// 本包同时 import 两者，是天然的 composition root —— 依赖方向显式、可搜可查，
+// 不用 init 隐式注册表（那会让「谁注册的」在代码里找不到）。
+//
+// 用于：规则五降级到 CapCut（cp-seedance-2.5flash）时的 480p → 720P 交付超分。
+func init() {
+	manwu.SetSuperResolutionHooks(taskwan3.SubmitSuperResolution, taskwan3.PollSuperResolution)
+}
+
 func GetAdaptor(apiType int) channel.Adaptor {
 	switch apiType {
 	case constant.APITypeAli:

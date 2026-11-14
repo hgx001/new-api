@@ -72,3 +72,8 @@ tmpimg/
 # 如需归档，先把 secret_id / secret_key 换成环境变量或占位符再提交。
 scripts/probe_tencent_bill.go
 scripts/prod-set-tencent-mps-20261029.sql
+
+# 部署产物 / 报价表 / 成片样例：不进库（2026-11-14）
+.deploy-*.log
+*.mp4
+*.xlsx

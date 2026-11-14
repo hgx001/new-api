@@ -47,6 +47,16 @@ import (
 // （慢 18 倍、成片规格不同），且没有任何报错。
 const maxFailoverUnavailableDuration = 30 * 24 * time.Hour
 
+// failoverChannelProbe 判定「某个模型在当前分组下有没有可用渠道」。
+//
+// 声明成变量只为测试可替换 —— 真实实现要查渠道表（model.GetRandomSatisfiedChannel），
+// 单测没有 DB 环境，直接调会 nil panic。与 middleware 的
+// channelAvailabilityProbe / channelIDsProbe 同一套做法：生产路径永远走默认值。
+//
+// 三个调用点（源链路 / 班车 / 备选 CapCut）共用同一个探针，避免
+// 「有没有渠道」在不同接口里出现两套口径。
+var failoverChannelProbe = middleware.HasAvailableChannel
+
 // failoverSwitchRequest 是「启停规则五」的请求体。
 type failoverSwitchRequest struct {
 	// Enabled 是否启用故障转移。用指针收：不传 = 不改（缺字段与「明确要关」
@@ -265,11 +275,11 @@ func failoverAdminState(c *gin.Context) gin.H {
 
 	sourceAvailable := false
 	if sourceModel != "" {
-		sourceAvailable = middleware.HasAvailableChannel(c, sourceModel)
+		sourceAvailable = failoverChannelProbe(c, sourceModel)
 	}
 	targetAvailable := false
 	if targetModel != "" {
-		targetAvailable = middleware.HasAvailableChannel(c, targetModel)
+		targetAvailable = failoverChannelProbe(c, targetModel)
 	}
 
 	until := seedanceroute_setting.FailoverUnavailableUntil()
@@ -302,6 +312,12 @@ func failoverAdminState(c *gin.Context) gin.H {
 	}
 	if until > 0 {
 		state["failover_unavailable_until_text"] = time.Unix(until, 0).In(beijingZone).Format("2006-01-02 15:04:05")
+	}
+
+	// 备选备胎（CapCut 2.5 Flash）挂在同一份快照里，见
+	// video_route_failover_alt_admin.go 的说明（班车与备选是同一问题的两个答案）。
+	for key, value := range failoverAltAdminState(c) {
+		state[key] = value
 	}
 	return state
 }

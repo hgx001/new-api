@@ -95,7 +95,10 @@ func RouteOriginModel(c *gin.Context) string {
 //	规则三（首尾帧）：  源模型 + media 含 first_frame/last_frame → frames_target_model
 //	规则一（时长）：    源模型 + 时长 > 阈值（生产 20 秒）→ target_model（seedance-2-5 按次）
 //	规则六（短时长）：  源模型 + 时长 ≤ 阈值（默认 10 秒）→ 心笔内链；
-//	                    心笔接不住且 short_youzan_enabled 打开 → 有赞标准版 wan3.0-video
+//	                    心笔接不住且 short_youzan_enabled 打开 → 有赞标准版 wan3.0-video；
+//	                    再接不住且 short_capcut_enabled 打开 → CapCut 快速档 cp-seedance-2.0fast
+//	规则七（电商内容）：源模型 + 提示词命中电商/产品推荐关键词（或勾选的比例/时长条件命中）
+//	                    → CapCut 快速档 cp-seedance-2.5flash；带参考视频一律不路由
 //	规则二（比例）：    源模型 + 命中 trigger_ratio → ratio_target_model
 //	                    生产配 9:16 → wan3.0-720p-特惠-内链（心笔 480P 链路，ch25）
 //
@@ -346,8 +349,20 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 2026-11-14 新增有赞标准版兜底（独立按钮 short_youzan_enabled）：
 		// 心笔不可用（余额耗尽 / AutoChannel / 契约不兼容）时，短请求改派
 		// 有赞标准版 wan3.0-video —— 它与源链路同渠道同 adaptor，绕开 prime
-		// 的 <10 秒保护（PRIME_DURATION_TOO_SHORT）。优先级：心笔 > 有赞；
-		// 两个按钮都关闭 → 不路由，走原链路。
+		// 的 <10 秒保护（PRIME_DURATION_TOO_SHORT）。
+		//
+		// 2026-11-14 再加第三条分支（short_capcut_enabled）：短请求改派
+		// cp-seedance-2.0fast（CapCut 快速档）。
+		//
+		// ⚠️ **三条分支同时只能有一条生效**：心笔 > 有赞 > CapCut。
+		// 写入口（controller）保证互斥（开一个自动关另两个），
+		// 这里再按优先级取第一条做**读侧兜底** —— 万一配置被 SQL 手改过，
+		// 也不会出现两条同时生效（那会让运营看着两个亮着的按钮却只有一条真跑）。
+		//
+		// 优先级口径：心笔成本最低（480P 生成 + 超分）且能力边界最宽；
+		// 有赞标准版次之（同渠道同 adaptor，最不容易失败）；
+		// CapCut 排最后（跨渠道，契约限制最多：只收 http(s) 参考图、
+		// 只卖 480p/720p、时长 4–15 秒）。
 		//
 		// 为什么排在规则二（比例）之前：老板口径是「短任务优先」——
 		// 9:16 的短任务也走内链/标准版，不再落到比例目标链路。
@@ -361,7 +376,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		shortTarget := policy.ShortTargetModelFor(sourceModel)
 		xinbiReady := seedanceroute_setting.IsShortRouteEnabledFor(sourceModel)
 		youzanReady := seedanceroute_setting.IsShortYouzanEnabledFor(sourceModel)
-		if xinbiReady || youzanReady {
+		capcutReady := seedanceroute_setting.IsShortCapcutEnabledFor(sourceModel)
+		if xinbiReady || youzanReady || capcutReady {
 			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.WithinShortTrigger(seconds) {
 				// 第一优先：心笔内链。
 				if xinbiReady {
@@ -412,6 +428,93 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 							c.Next()
 							return
 						}
+					}
+				}
+
+				// 第三优先：CapCut 快速档（cp-seedance-2.0fast）。
+				//
+				// 心笔与有赞标准版都没接住时，短请求改派 CapCut 快速档 ——
+				// 这是跨渠道改派（youzanwan3 → manwu），入参契约完全不同，
+				// 必须走 prepareShortCapcutRoute 的准入与改写，不能按有赞契约改写。
+				if capcutReady {
+					target := seedanceroute_setting.DefaultShortCapcutTargetModel
+					if newBody, routed := prepareShortCapcutRoute(c, body, target, seconds); routed {
+						if applyRewrittenBody(c, newBody, billingOriginModel) {
+							// 计费按**源模型**算：秒数按触发判定拿到的值，
+							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
+							//
+							// ⚠️ 必须覆盖 CapCut adaptor 自己给的 size 倍率
+							// （480p=1.0 / 720p=×1.5）—— 那是 CapCut 的档位差价，
+							// 与源模型的档位差价不是同一个维度，不覆盖就是超收。
+							//
+							// 档位取**源链路实际执行的档**（shortRouteResolution）：
+							// prime 只提供 720P/1080P，客户传 480P 时源链路也跑 720P，
+							// 用原始请求档算倍率会取不到值。
+							setRouteBillingContext(c, seconds,
+								sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
+							logger.LogInfo(c, fmt.Sprintf(
+								"条件路由：命中短时长 %d 秒（≤ %d 秒），心笔与有赞均未接住，改派 %s → %s（CapCut 快速档）",
+								seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, target))
+							c.Next()
+							return
+						}
+					}
+				}
+			}
+		}
+
+		// ── 规则七（电商/产品推荐内容）：排在规则二之前 ──
+		//
+		// 2026-11-14 老板需求：seedance2.5-特惠 / seedance2.5-活动 这两个对外
+		// 模型，当提示词是**电商类 / 产品推荐**类内容时，改派到 CapCut 快速档
+		// cp-seedance-2.5flash。外加两个可选的参数入口（9:16 比例、时长超阈值）。
+		//
+		// 触发语义是「内容 **或** 参数」（见 setting/seedanceroute_setting/
+		// ecom_route.go 的包头注释）：内容命中是电商流量，参数命中是竖屏/长视频，
+		// 两者都是老板明确要的进料口。
+		//
+		// 为什么排在规则二（比例）之前：规则二也是盯 9:16 的，两条规则会抢同一批
+		// 9:16 请求。规则七在前 —— 它是**内容驱动**的（电商内容就该走快档），
+		// 规则二是**参数驱动**的兜底（不是电商内容但竖屏的请求）。
+		//
+		// 为什么排在规则六（短时长）之后：短请求是**成本**问题（绕开 prime 的
+		// <10 秒保护），电商内容是**内容形态**问题。短请求本来就不该被内容判定
+		// 抢走 —— 否则一条「8 秒的电商短视频」会走 2.5 Flash（4–30 秒，能跑）
+		// 而不是成本更低的短时长链路。规则六在前 = 短请求优先走便宜的那条。
+		//
+		// 为什么排在规则一（时长）之后：规则一是「>20 秒改派按次豆包」的成本优化，
+		// 与规则七的时长条件（>20 秒）会重叠。规则一在前 —— 既有口径不动，
+		// 新规则只接规则一没吃掉的流量。
+		//
+		// ⚠️ 带参考视频的请求**一律不路由**（老板明确要求），
+		// 也不路由带首尾帧/1080P 的请求（CapCut 链路不收那些）——
+		// 准入细节见 middleware/seedance_route_ecommerce.go。
+		if seedanceroute_setting.EcommerceEnabledFor(sourceModel) {
+			// 时长口径与规则六一致：extractRequestSeconds 读得到就用它，
+			// 读不到（客户没传时长）就不算命中时长条件 ——
+			// 拿缺省值去比阈值是在替客户猜时长。
+			seconds, hasSeconds := extractRequestSeconds(body)
+			if !hasSeconds {
+				seconds = 0
+			}
+			if triggered, reason, contentMatched := ecommerceRouteTriggered(body, policy, seconds); triggered {
+				ecomTarget := policy.EcommerceTargetModelFor(sourceModel)
+				if newBody, routed := prepareEcommerceRoute(c, body, ecomTarget, seconds); routed {
+					if applyRewrittenBody(c, newBody, billingOriginModel) {
+						// 计费按**源模型**算：秒数按触发判定拿到的值，
+						// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
+						//
+						// ⚠️ 必须覆盖 CapCut adaptor 自己给的 size 倍率
+						// （480p=1.0 / 720p=×2.0）—— 那是 CapCut 的档位差价，
+						// 与源模型的档位差价不是同一个维度，不覆盖就是超收。
+						setRouteBillingContext(c, seconds,
+							sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
+						logger.LogInfo(c, fmt.Sprintf(
+							"条件路由：命中规则七（%s），改派 %s → %s",
+							reason, sourceModel, ecomTarget))
+						_ = contentMatched
+						c.Next()
+						return
 					}
 				}
 			}

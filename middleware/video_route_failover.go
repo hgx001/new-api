@@ -244,15 +244,23 @@ func tryFailoverRoute(c *gin.Context, body map[string]interface{}, billingOrigin
 	if !seedanceroute_setting.IsFailoverSource(modelName) {
 		return false, ""
 	}
-	target := seedanceroute_setting.FailoverTargetModel()
-	if target == "" {
-		return false, ""
-	}
 
 	// 源链路不可用吗？两种形态取并集。
 	unavailable, reason := sourceChainUnavailable(c, modelName)
 	if !unavailable {
 		return false, ""
+	}
+
+	// 备选备胎优先于班车（2026-11-14）：开关打开时先试 CapCut 480p + 超分 720P。
+	// 接不住（能力不兼容 / 没渠道 / 没配超分）时**继续往下走班车** ——
+	// 备选是更好的退路，不是唯一退路。
+	if tryFailoverAltRoute(c, body, modelName, billingOriginModel) {
+		return true, reason
+	}
+
+	target := seedanceroute_setting.FailoverTargetModel()
+	if target == "" {
+		return false, reason
 	}
 	// 源与备胎解析到同一批渠道 → 放弃改写，放行原请求。
 	if failoverSharedChannelChain(c, modelName, target) {
@@ -322,14 +330,19 @@ func tryFailoverAfterDoubaoRoute(
 			billingOriginModel, modelName))
 		return false, ""
 	}
-	target := seedanceroute_setting.FailoverTargetModel()
-	if target == "" {
-		return false, ""
-	}
-
 	unavailable, reason := sourceChainUnavailable(c, modelName)
 	if !unavailable {
 		return false, ""
+	}
+	// 备选备胎优先（与顶层 tryFailoverRoute 同口径）：
+	// 促销族 → 豆包 → CapCut（480p + 超分 720P）优先于班车。
+	// 放在 target 判空之前：班车没配时备选这条退路仍然应该生效。
+	if tryFailoverAltRoute(c, doubaoBody, modelName, billingOriginModel) {
+		return true, reason
+	}
+	target := seedanceroute_setting.FailoverTargetModel()
+	if target == "" {
+		return false, reason
 	}
 	// 源与备胎解析到同一批渠道 → 放弃第二段降级，停在规则一的改写结果上。
 	if failoverSharedChannelChain(c, modelName, target) {

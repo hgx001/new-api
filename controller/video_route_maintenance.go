@@ -570,6 +570,9 @@ func doubaoRouteAdminState() gin.H {
 	state["doubao_link_remaining"] = seedanceroute_setting.DoubaoLinkRemaining()
 	// 关闭原因：区分「人工关（有自动恢复时间）」与「限额满（要等人再打开）」。
 	state["doubao_link_off_reason"] = seedanceroute_setting.DoubaoLinkOffReason()
+	// 规则七（电商内容）与规则六第三分支（CapCut 快速档）的状态：
+	// 字段较多，单独一个函数追加（见 controller/video_route_ecommerce_admin.go）。
+	appendEcommerceRouteState(state)
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }
