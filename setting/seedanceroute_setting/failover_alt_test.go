@@ -103,3 +103,56 @@ func TestFailoverAltSurvivesJSONRoundTrip(t *testing.T) {
 		t.Fatalf("JSON 往返后目标模型应保留，实际 %q", got)
 	}
 }
+
+// ApplyFailoverAltModel 必须在**已有改动**的策略副本上继续改，
+// 而不是从全局快照重来。
+//
+// 这是接口层最容易踩的坑：With* 系列每个都 clonePolicy(current)，
+// 连着调两个（先开开关、再写模型名）会把前一个改动悄悄丢掉 ——
+// 结果是运营点了开关，界面回显「已开启」，实际上开关没落库。
+func TestApplyFailoverAltModelKeepsPreviousChanges(t *testing.T) {
+	applyPolicy(t, failoverAltPolicy())
+
+	policy := WithFailoverAltEnabled(true)
+	policy = ApplyFailoverAltModel(policy, "cp-seedance-2.5flash")
+
+	if !policy.FailoverAltEnabled {
+		t.Fatal("ApplyFailoverAltModel 不能覆盖掉刚设好的开关")
+	}
+	if policy.FailoverAltModel != "cp-seedance-2.5flash" {
+		t.Fatalf("模型名应写进同一个副本，实际 %q", policy.FailoverAltModel)
+	}
+	if IsFailoverAltEnabled() {
+		t.Fatal("ApplyFailoverAltModel 同样不应修改全局策略")
+	}
+}
+
+// 传空串 = 回到默认值，而不是「关闭」。两者混在一起会让
+// 「清空模型名」顺手把退路从 CapCut 切回班车。
+func TestApplyFailoverAltModelEmptyFallsBackToDefault(t *testing.T) {
+	payload := failoverAltPolicy()
+	payload["failover_alt_enabled"] = true
+	payload["failover_alt_model"] = "cp-seedance-2.0fast"
+	applyPolicy(t, payload)
+
+	policy := ApplyFailoverAltModel(Get(), "")
+	if policy.FailoverAltModel != "" {
+		t.Fatalf("空的模型名应原样存为空（读取时才回落默认值），实际 %q", policy.FailoverAltModel)
+	}
+	if !policy.FailoverAltEnabled {
+		t.Fatal("清空模型名不应把开关一起关掉")
+	}
+
+	// 落库后再读：空配置必须回落默认值，否则「清空」会变成「本链路不生效」。
+	cleared := failoverAltPolicy()
+	cleared["failover_alt_enabled"] = true
+	cleared["failover_alt_model"] = policy.FailoverAltModel
+	applyPolicy(t, cleared)
+
+	if got := FailoverAltTargetModel(); got != DefaultFailoverAltModel {
+		t.Fatalf("空模型名应回落默认值，实际 %q", got)
+	}
+	if !IsFailoverAltEnabled() {
+		t.Fatal("清空模型名不应关掉开关")
+	}
+}

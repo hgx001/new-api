@@ -22,6 +22,12 @@ import (
 const (
 	testEcommerceTarget   = "cp-seedance-2.5flash"
 	testShortCapcutTarget = "cp-seedance-2.0fast"
+	// testSourceModelAlt 是促销族的活动版（按次固定档）。
+	//
+	// 必须与母本一起写进 source_models：中间件入口的 IsSourceModel 早退
+	// 只认配置里列出的名字，漏配的源模型根本走不到规则七 ——
+	// 那时「规则七对活动版不生效」看起来像规则实现的问题，其实是配置。
+	testSourceModelAlt = "seedance2.5-活动"
 )
 
 // enableEcommerce 配置规则七，测试结束恢复原状。
@@ -30,7 +36,7 @@ func enableEcommerce(t *testing.T, ratioEnabled, secondsEnabled bool, triggerSec
 	previous := seedanceroute_setting.Get()
 	payload := map[string]interface{}{
 		"enabled":                     true,
-		"source_models":               []string{testSourceModel},
+		"source_models":               []string{testSourceModel, testSourceModelAlt},
 		"target_model":                testTargetModel,
 		"trigger_seconds":             20,
 		"short_target_model":          testShortTargetModel,
@@ -145,19 +151,45 @@ func TestEcommerceRatioConditionOffDoesNotRoute(t *testing.T) {
 }
 
 // 「时长超过阈值」勾选后，超阈值请求改派；不超的不改派。
+//
+// 关键回归点：**桶口与规则一重叠时规则七必须赢**。
+// 规则七排在规则一之前（见 middleware/seedance_route.go 的顺序说明）——
+// 一条 25 秒的电商请求如果先被规则一改派豆包按次档，运营勾选的
+// 「时长大于 20 秒」就成了一份永远轮不到的**死配置**：
+// 后台看着是勾着的，代码里永远到不了。这正是最难查的那类故障。
 func TestEcommerceRoutesOnSecondsConditionWhenChecked(t *testing.T) {
 	enableEcommerce(t, false, true, 20)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
 	if body["model"] != testEcommerceTarget {
-		t.Fatalf("时长 %d 秒超过阈值 20 秒应改派 %s，实际 model=%v", 25, testEcommerceTarget, body["model"])
+		t.Fatalf("时长 %d 秒超过阈值 20 秒应改派 %s（且优先于规则一的豆包按次档），实际 model=%v",
+			25, testEcommerceTarget, body["model"])
 	}
 
 	seen, _ = runRoute(t, `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat"}`)
 	body = decodeBody(t, seen)
 	if body["model"] != testSourceModel {
 		t.Fatalf("时长 15 秒未超阈值不该改派，实际 model=%v", body["model"])
+	}
+}
+
+// 规则七必须排在规则一**之前** —— 否则「时长大于 N 秒」这个入口是死配置。
+//
+// 回归意义（2026-11-14 修掉的真实缺陷）：
+// 规则七原先排在规则一之后，而规则一的阈值也是 20 秒。运营在后台勾上
+// 「时长大于 20 秒」后，一条 25 秒的电商请求会**先**被规则一接走改派豆包，
+// 规则七永远轮不到 —— 后台看着勾着的，代码里是死配置。
+//
+// 这条用例把「25 秒 + 阈值 20 + 命中时长条件」钉死到 cp-seedance-2.5flash，
+// 且**不依赖提示词**（用「a cat」这种不含电商词的）—— 纯参数入口也要生效。
+func TestEcommerceBeatsSecondsRuleOnLongRequests(t *testing.T) {
+	enableEcommerce(t, false, true, 20)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`)
+	body := decodeBody(t, seen)
+	if body["model"] != testEcommerceTarget {
+		t.Fatalf("25 秒 + 阈值 20 应命中规则七（%s），实际 model=%v", testEcommerceTarget, body["model"])
 	}
 }
 
@@ -224,10 +256,15 @@ func TestEcommerceDoesNotRouteBelowCapcutMinDuration(t *testing.T) {
 }
 
 // 参考图必须抬到顶层 input_reference，且原位置要摘掉（否则同图投两次）。
+//
+// ⚠️ 请求必须**带比例**：CapCut 没有自适应档，而带参考图时「不传比例」
+// 意味着源链路按那张图的画幅出片 —— 我们推不出它是什么比例，替他挑一档
+// 就是替他改需求，所以带图且无比例的请求本来就会被挡在准入之外
+//（见 prepareEcommerceRoute 的比例分支）。
 func TestEcommerceLiftsReferenceImagesToInputReference(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐",
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐","ratio":"16:9",
 		"metadata":{"media":[{"type":"reference_image","url":"https://example.com/a.png"}]}}`)
 	body := decodeBody(t, seen)
 

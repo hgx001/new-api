@@ -172,10 +172,14 @@ function parseGoIntConstants(source: string): Map<string, number> {
 /**
  * 解析 Go 源码里的 `map[string]int{ ... }` 成员（返回 [常量名, 数值][]）。
  */
+// 后端表是 map[string]int，但**值可能是派生常量名**（如 capcutMaxDuration25），
+// 所以这里返回的是源码里的原始 token（字符串），由调用方自己决定怎么解析。
+// 别把返回类型写成 number —— 那样每个 token 都得先被 Number() 一遍，
+// 常量名会变成 NaN，而常量名正是这个交叉校验要盯的东西。
 function parseGoIntMap(
   source: string,
   varName: string
-): Array<[string, number]> {
+): Array<[string, string]> {
   const startMarker = `var ${varName} = map[string]int{`
   const start = source.indexOf(startMarker)
   assert.notEqual(
@@ -187,7 +191,7 @@ function parseGoIntMap(
   assert.notEqual(end, -1, `${varName} 的 map 字面量没有闭合`)
 
   const body = source.slice(start + startMarker.length, end)
-  const entries: Array<[string, number]> = []
+  const entries: Array<[string, string]> = []
   const entryPattern = /^\s*(\w+)\s*:\s*(\w+)\s*,?\s*$/gm
   let match: RegExpExecArray | null
   while ((match = entryPattern.exec(body)) !== null) {

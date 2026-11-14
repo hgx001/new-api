@@ -86,6 +86,20 @@ var DefaultEcommerceKeywords = []string{
 	// 营销文案形态
 	"促销", "优惠", "折扣", "限时", "爆款", "热销",
 	"广告", "宣传片", "营销视频", "详情页",
+
+	// 英文电商词（2026-11-14 补）。
+	//
+	// 为什么要英文：CapCut 是**剪映国际版**，客户在这条链路上写的提示词
+	// 本来就可能是英文（"Black Friday SALE promotion" 这种）。
+	// 只认中文会让一批货真价实的电商内容留在源链路上，
+	// 而运营在后台看到的是一张「已经配好了」的关键词表。
+	//
+	// ⚠️ 只放「出现即大概率是电商」的词，不放 buy / price / product 这类
+	// 在任何产品说明里都常见的词 —— 子串匹配下它们会把大量普通提示词
+	// 误判成电商内容，而误判的代价是改派到另一条链路（档位/时长能力都不同）。
+	"e-commerce", "ecommerce", "product review", "unboxing",
+	"shopping haul", "sponsored", "discount", "coupon",
+	"promo code", "black friday", "cyber monday", "limited offer",
 }
 
 // EcommerceKeywords 返回「当前生效的电商关键词表」。
