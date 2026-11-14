@@ -52,7 +52,14 @@
 - `Nano Banana Pro` 对应 ArcReel 抽象 `manwu-image`，内部实际站点由服务端路由；图片不接受视频参数。
 - `jimeng-video-reverse` 恰好一段公网参考视频，文本产物、prompt 可选；不接受图片/时长/比例/分辨率或 multipart 本地文件直传。
 - 万相图生/编辑分别由 `wan2.7-图生` / `wan2.7-编辑` 表项按素材形态区分，不能因同 platformId 就混用协议。详细限值查当前表和验证分支，不复制固定模型数量。
-- CapCut（剪映国际版）另算一个站：公开名 `cp-seedance-2.0`（**按次**，EstimateBilling 返回 nil）/ `cp-seedance-2.0fast`（**按秒**，返回 seconds 倍率），上游真名 `seedance_2.0` / `seedance_2.0_fast`，platformId `capcut`。时长 4–15 秒、只卖 480p、比例六档（不含官网 "Fit" 自适应）、参考图 ≤9 张。`cp-` 前缀与豆包 `seedance-2-0-fast` 区分，**不做互为别名**。
+- CapCut（剪映国际版）另算一个站，**五档独立商品**：公开名 `cp-seedance-2.0mini` / `cp-seedance-2.0fast` / `cp-seedance-2.0` / `cp-seedance-2.5flash` / `cp-seedance-2.5`，上游真名 `seedance_2.0_mini` / `seedance_2.0_fast` / `seedance_2.0` / `seedance_2.5_flash` / `seedance_2.5`，platformId `capcut`。
+  - **五档统一按秒**：EstimateBilling 对**全部五档**返回 `seconds` 倍率，720p 再乘 `size` 倍率（`capcut720PRatios`：mini/fast ×1.5，2.0/2.5/2.5flash ×2）。⚠️ 漏给任何一档 `seconds` 就会按「1 秒」收费。
+  - ModelPrice 配 **480p 基准单价（元/秒）**，改价时 ModelPrice 与 `capcut720PRatios` 必须同时改。
+  - 时长：2.5 / 2.5 Flash 4–30 秒，其余 4–15 秒。⚠️ 上界用**表驱动**（`capcutMaxDurations`）—— `cp-seedance-2.5flash` 含子串 `cp-seedance-2.5`，子串匹配会把它误判成 2.5 档（时长与分辨率倍率一起错）。
+  - 分辨率只卖 480p / 720p；1080p / 4K 未定价 → 显式 400，**不静默降级**（客户按 1080p 下单却收到 480p = 错交付）。
+  - 比例六档（不含官网 "Fit" 自适应）、参考图 ≤9 张。
+  - `cp-` 前缀与豆包 `seedance-2-0-fast` 区分，**不做互为别名**。
+  - **上架**：`models` 卡片 / `abilities` / `ModelPrice` 三处必须齐（直改 `channels.models` **不会**自动同步 `abilities`，漏了就表现为「模型不存在」）。⚠️ 双机生产库各自独立（`api.heibaidao.cn` / `api2.heibaidao.cn`），改库要**两台各执行一次**幂等脚本：`scripts/prod-upsert-capcut-models-20261114.sql`。
 - 拒绝无法诚实实现的显式参数，本地400；不悄悄改规格、丢图或换档交付。
 - 改公开名同步 ArcReel `_MANWU_MODEL_PATTERN` 与 Worker `heibaidaoModelCapabilities` / `modelProviderPresets`。正则不得误吃其它供应商相近名字；旧 db-* 不重新对外上架。
 
