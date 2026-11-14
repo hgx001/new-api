@@ -212,6 +212,52 @@ func EnforceReferenceVideoMaxSeconds(ctx context.Context, urls []string, maxSeco
 	return unmeasured, nil
 }
 
+// ProbeAndEnforceReferenceVideos 一次探测同时产出两件事：**计费秒数**与**单条限长**。
+//
+// 返回 billingSeconds 是各条时长四舍五入到整秒后的合计（与 RoundSecondsToBilling /
+// wan3 / seeta 同口径）；任一条实测超过 maxSeconds 即报错（maxSeconds <= 0 表示不限长）。
+//
+// 为什么把两件事合在一次探测里：这两条判据解析的是同一批素材、同一套 mvhd 规则，
+// 分开调用要把每条视频下载两遍（moov 在尾部时等于下整个文件）。早先各渠道各写一份，
+// 于是出现了「限长探测失败放行、计费探测失败报错」两套相反口径，正是这次要收口的地方。
+//
+// ⚠️ 探测失败一律 fail-loud 返回 error，**不再**像 EnforceReferenceVideoMaxSeconds
+// 那样放行：计费依赖这个结果，拿不到时长却按 0 秒放行 = 少收钱，而 EstimateBilling
+// 没有错误返回值、无法在计费阶段再拒单。调用方必须在 validate 阶段（预扣费之前）
+// 把 error 转成 400 本地错误。这与 wan3 / seeta 的既有取舍一致 —— 那两条链路
+// 同样是「拿不到时长就无法算钱」。
+func ProbeAndEnforceReferenceVideos(ctx context.Context, urls []string, maxSeconds float64, client *http.Client) (billingSeconds int, err error) {
+	if len(urls) == 0 {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeReferenceVideosTimeout)
+	defer cancel()
+
+	total := 0
+	for i, raw := range urls {
+		itemCtx, itemCancel := context.WithTimeout(ctx, probePerReferenceVideoTimeout)
+		seconds, probeErr := ProbeReferenceVideoDuration(itemCtx, raw, client)
+		itemCancel()
+		if probeErr != nil {
+			// 底层 http 错误带完整 URL（可能含签名参数），只能压摘要再回给客户。
+			return 0, errors.Errorf(
+				"reference video #%d (%s) duration unavailable for per-second billing (readable MP4/MOV required): %s",
+				i+1, RedactMaterialURL(raw), truncateForLog(probeErr.Error()))
+		}
+		if maxSeconds > 0 && seconds > maxSeconds+DurationEpsilon {
+			return 0, errors.Errorf("参考视频时长 %.2f 秒超过 %.0f 秒上限，请裁剪后重试", seconds, maxSeconds)
+		}
+		total += RoundSecondsToBilling(seconds)
+	}
+	return total, nil
+}
+
 // decodeDataURLPrefix 解码 data URL 的 base64 部分。
 //
 // 同时接受带 padding 的标准编码与无 padding 的 Raw 变体：客户端手工拼 data URL 时

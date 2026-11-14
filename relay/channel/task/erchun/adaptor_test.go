@@ -159,6 +159,32 @@ func TestEstimateBillingOnlyMultipliesSeconds(t *testing.T) {
 	require.Equal(t, float64(2), billing["seconds"], "seconds 字符串形状必须被采纳")
 }
 
+// 参考视频按秒同价：seconds = 生成时长 + 参考视频总秒数（2026-11-14 口径）。
+//
+// 白送等于每单按秒亏：成本侧上游的 input_video_second 与 output_video_second 同价。
+func TestEstimateBillingAddsReferenceVideoSeconds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{Duration: 5, Resolution: "480P"})
+	ctx.Set(refVideoSecondsContextKey, 8)
+
+	billing := (&TaskAdaptor{}).EstimateBilling(ctx, &relaycommon.RelayInfo{OriginModelName: PublicModel})
+	require.Equal(t, float64(13), billing["seconds"], "5 秒生成 + 8 秒参考视频 = 13 秒")
+	require.NotContains(t, billing, "size", "参考视频不该引入分辨率倍率")
+}
+
+// 0 秒或缺失都不能改动 seconds —— 否则没有参考视频的请求会被凭空加价。
+func TestEstimateBillingIgnoresZeroReferenceVideoSeconds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, value := range []int{0, -3} {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set("task_request", relaycommon.TaskSubmitReq{Duration: 5, Resolution: "480P"})
+		ctx.Set(refVideoSecondsContextKey, value)
+		billing := (&TaskAdaptor{}).EstimateBilling(ctx, &relaycommon.RelayInfo{OriginModelName: PublicModel})
+		require.Equal(t, float64(5), billing["seconds"], "value=%d 必须被忽略", value)
+	}
+}
+
 // 素材数量上限取自 catalog capabilities（不是文档里的全局 upload 限制）。
 func TestValidateMediaEnforcesCatalogCounts(t *testing.T) {
 	images := make([]relaycommon.TaskMedia, 0, 11)

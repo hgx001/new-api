@@ -13,6 +13,8 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ---------------------------------------------------------------------------
@@ -244,6 +246,46 @@ func validateV2Request(req *relaycommon.TaskSubmitReq, spec V2ModelSpec) *dto.Ta
 	// 「建单 → 预扣费 → 上游拒绝 → 等退款」，客户白占一次余额还看不懂原因。
 	if err := checkV2ReferenceVideoSeconds(req); err != nil {
 		return taskErrBadRequest(err.Error())
+	}
+	return nil
+}
+
+// refVideoSecondsContextKey 保存 validate 阶段探测出的参考视频计费总秒数。
+// EstimateBilling 读它把秒数并入计费（生成秒数 + 参考视频总秒数），与 wan3 / seeta 同口径。
+const refVideoSecondsContextKey = "hailuo_ref_video_seconds"
+
+// validateV2RequestForBilling 在 validateV2Request 之上补一步「参考视频计费秒数」探测。
+//
+// 为什么不直接改 validateV2Request 的签名：它被 9 处单测直接调用，加 gin.Context
+// 会让那些与计费无关的用例全部要造 context。这里多包一层，校验语义完全不变。
+//
+// ⚠️ 参考视频会被探测两次（validateV2Request 里的限长一次、这里计费一次）。
+// 刻意不合并：两次解析必须与各自下游的素材解析完全一致，共用一次结果一旦有偏差
+// 就是把钱算错；而参考视频通常只有几十 KB，多下一次的代价远小于算错钱。
+func validateV2RequestForBilling(c *gin.Context, req *relaycommon.TaskSubmitReq, spec V2ModelSpec) *dto.TaskError {
+	if taskErr := validateV2Request(req, spec); taskErr != nil {
+		return taskErr
+	}
+	var videos []string
+	for _, it := range collectV2Media(req) {
+		if it.role == roleReferenceVideo && it.kind == "video" {
+			videos = append(videos, it.url)
+		}
+	}
+	if len(videos) == 0 {
+		return nil
+	}
+	client, err := service.GetHttpClientWithProxy("")
+	if err != nil {
+		return taskErrBadRequest(fmt.Sprintf("new http client failed: %s", err.Error()))
+	}
+	seconds, err := taskcommon.ProbeAndEnforceReferenceVideos(
+		context.Background(), videos, taskcommon.MaxReferenceVideoSeconds, client)
+	if err != nil {
+		return taskErrBadRequest(err.Error())
+	}
+	if c != nil && seconds > 0 {
+		c.Set(refVideoSecondsContextKey, seconds)
 	}
 	return nil
 }

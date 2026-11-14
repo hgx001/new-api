@@ -72,7 +72,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	}
 	if media, mediaErr := buildMedia(req); mediaErr != nil {
 		return service.TaskErrorWrapperLocal(mediaErr, "invalid_request", http.StatusBadRequest)
-	} else if guardErr := checkReferenceVideoSeconds(media); guardErr != nil {
+	} else if guardErr := checkReferenceVideoSeconds(c, media); guardErr != nil {
 		return service.TaskErrorWrapperLocal(guardErr, "invalid_input_reference", http.StatusBadRequest)
 	}
 	if _, resErr := resolveResolution(req); resErr != nil {
@@ -253,12 +253,23 @@ func validateMedia(media []relaycommon.TaskMedia) error {
 	return nil
 }
 
-// checkReferenceVideoSeconds 校验参考视频单条时长不超过统一上限（15 秒）。
+// refVideoSecondsContextKey 保存 validate 阶段探测出的参考视频计费总秒数。
+// EstimateBilling 读它把秒数并入计费（生成秒数 + 参考视频总秒数），与 wan3 / seeta 同口径。
+const refVideoSecondsContextKey = "erchun_ref_video_seconds"
+
+// checkReferenceVideoSeconds 探测参考视频时长，**一次探测同时服务计费与限长**：
+//   - 计费：把四舍五入后的整秒合计写进 context，由 EstimateBilling 并入 seconds；
+//   - 限长：任一条超过 taskcommon.MaxReferenceVideoSeconds（15 秒）即拒。
 //
-// 为什么在本地拦：超长素材提交后要走完「建单 → 预扣费 → 上游拒绝 → 等轮询退款」，
-// 客户白占一次余额、等几分钟，还看不出该怎么改。本地 400 既不扣费也不 AutoBan。
-// 上限口径由 taskcommon.MaxReferenceVideoSeconds 统一（所有支持参考视频的渠道同一条线）。
-func checkReferenceVideoSeconds(media []relaycommon.TaskMedia) error {
+// 为什么在 validate 阶段做：计费依赖探测结果，而 EstimateBilling 没有错误返回值、
+// 无法在计费阶段拒单。放在这里（预扣费之前）既能把 400 直达客户，又不扣费、
+// 不触发渠道 AutoBan。超长素材若放到上游才拒，客户要走完「建单 → 预扣费 →
+// 上游拒绝 → 等轮询退款」，白占一次余额还看不出该怎么改。
+//
+// ⚠️ 参考视频**按秒同价计费**（2026-11-14 口径）：与输出秒数一个单价，
+// 因为成本侧上游就是这么收的（模型广场 input_video_second 与 output_video_second
+// 同价，wan3.0 / prime / vega-lite 都是 1:1）。白送等于每单按秒亏。
+func checkReferenceVideoSeconds(c *gin.Context, media []relaycommon.TaskMedia) error {
 	var videos []string
 	for _, item := range media {
 		if strings.TrimSpace(item.Type) == "reference_video" {
@@ -272,23 +283,38 @@ func checkReferenceVideoSeconds(media []relaycommon.TaskMedia) error {
 	if err != nil {
 		return errors.Wrap(err, "new http client failed")
 	}
-	unmeasured, err := taskcommon.EnforceReferenceVideoMaxSeconds(context.Background(), videos, taskcommon.MaxReferenceVideoSeconds, client)
-	if len(unmeasured) > 0 {
-		common.SysLog(fmt.Sprintf("erchun 参考视频时长无法探测，放行（无法判断是否超限）：%v", unmeasured))
+	total, err := taskcommon.ProbeAndEnforceReferenceVideos(
+		context.Background(), videos, taskcommon.MaxReferenceVideoSeconds, client)
+	if err != nil {
+		return err
 	}
-	return err
+	if c != nil {
+		c.Set(refVideoSecondsContextKey, total)
+	}
+	return nil
 }
 
 // EstimateBilling 按秒计费，base = ModelPrice 的每秒单价，只乘 seconds。
 //
 // 没有 size 倍率：本渠道只允许 480P，分辨率维度恒为 1。写成两个倍率再加一次浮点
 // 乘截断只会引入不必要的不确定性（见 relay_task.go 的 applyTaskOtherRatios 注释）。
+//
+// 带参考视频时 seconds = 生成时长 + 参考视频总秒数（同单价 1:1），
+// 例如 10 秒参考视频生成 5 秒 480P → 秒数按 15 计。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
-	return map[string]float64{"seconds": float64(resolveDuration(req))}
+	seconds := resolveDuration(req)
+	if c != nil {
+		if value, ok := c.Get(refVideoSecondsContextKey); ok {
+			if refSeconds, ok := value.(int); ok && refSeconds > 0 {
+				seconds += refSeconds
+			}
+		}
+	}
+	return map[string]float64{"seconds": float64(seconds)}
 }
 
 // ---------------------------------------------------------------- 建单

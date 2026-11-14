@@ -287,6 +287,44 @@ func TestResolveV2Resolution(t *testing.T) {
 	})
 }
 
+// 参考视频按秒同价：seconds = 生成时长 + 参考视频总秒数（2026-11-14 口径）。
+// 与 wan3 / seeta / erchun 同一条口径，白送等于每单按秒亏。
+func TestEstimateBillingV2AddsReferenceVideoSeconds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{Duration: 5, Metadata: map[string]interface{}{"ratio": "16:9"}})
+	ctx.Set(refVideoSecondsContextKey, 8)
+
+	got := (&TaskAdaptor{}).EstimateBilling(ctx, relayInfoWithModel(ModelH3))
+	assert.Equal(t, 13.0, got["seconds"], "5 秒生成 + 8 秒参考视频 = 13 秒")
+	assert.Equal(t, 1.0, got["size"], "参考视频不影响分辨率倍率")
+}
+
+// 参考视频秒数为 0 或负数时不能改动 seconds（否则无参考视频的请求被凭空加价）。
+func TestEstimateBillingV2IgnoresNonPositiveReferenceSeconds(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, value := range []int{0, -2} {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set("task_request", relaycommon.TaskSubmitReq{Duration: 6, Metadata: map[string]interface{}{"ratio": "16:9"}})
+		ctx.Set(refVideoSecondsContextKey, value)
+		got := (&TaskAdaptor{}).EstimateBilling(ctx, relayInfoWithModel(ModelH3))
+		assert.Equal(t, 6.0, got["seconds"], "value=%d 必须被忽略", value)
+	}
+}
+
+// 参考视频秒数仍要跟着分辨率倍率走：2K 的 13 秒不能按基础档收。
+func TestEstimateBillingV2ReferenceSecondsKeepsResolutionRatio(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{
+		Duration: 4, Resolution: "2K", Metadata: map[string]interface{}{"ratio": "16:9"}})
+	ctx.Set(refVideoSecondsContextKey, 6)
+
+	got := (&TaskAdaptor{}).EstimateBilling(ctx, relayInfoWithModel(ModelH3))
+	assert.Equal(t, 10.0, got["seconds"])
+	assert.Equal(t, 1.625, got["size"])
+}
+
 func TestGetModelListIncludesH3Family(t *testing.T) {
 	a := &TaskAdaptor{}
 	list := a.GetModelList()

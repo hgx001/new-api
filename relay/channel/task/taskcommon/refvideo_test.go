@@ -216,3 +216,56 @@ func TestRoundSecondsToBilling(t *testing.T) {
 	require.Equal(t, 7, RoundSecondsToBilling(6.5))
 	require.Equal(t, 15, RoundSecondsToBilling(15))
 }
+
+// ---- ProbeAndEnforceReferenceVideos ----
+
+// 计费秒数是「逐条四舍五入后相加」，与 RoundSecondsToBilling / wan3 / seeta 同口径。
+// 3.4 + 7.4 → 3 + 7 = 10。先加总再取整会得到 11，两条判据在这里能区分开。
+func TestProbeAndEnforceReferenceVideosRoundsPerVideo(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideos(t.Context(),
+		[]string{dataURLVideo(3.4), dataURLVideo(7.4)}, MaxReferenceVideoSeconds, nil)
+	require.NoError(t, err)
+	require.Equal(t, 10, total, "每条各自四舍五入后相加，不能先加总再取整")
+}
+
+// 没有参考视频就是 0 秒，不能因为「没有视频」就去建 client 或起超时。
+func TestProbeAndEnforceReferenceVideosNoVideos(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideos(t.Context(), nil, MaxReferenceVideoSeconds, nil)
+	require.NoError(t, err)
+	require.Zero(t, total)
+}
+
+// 计费链路必须 fail-loud：测不出时长就报错，绝不能悄悄按 0 秒计费。
+func TestProbeAndEnforceReferenceVideosFailsLoudWhenUnmeasurable(t *testing.T) {
+	_, err := ProbeAndEnforceReferenceVideos(t.Context(),
+		[]string{"https://a.example/not-reachable.mp4"}, MaxReferenceVideoSeconds, nil)
+	require.Error(t, err, "计费依赖时长，测不出来不能按 0 秒放行")
+	require.Contains(t, err.Error(), "duration unavailable")
+	require.Contains(t, err.Error(), "#1", "错误里要指明是第几条素材")
+}
+
+// 一条成功一条失败时整组报错，不能返回「部分秒数」——那等于少收钱。
+func TestProbeAndEnforceReferenceVideosAbortsOnAnyFailure(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideos(t.Context(),
+		[]string{dataURLVideo(5), "https://a.example/not-reachable.mp4"}, MaxReferenceVideoSeconds, nil)
+	require.Error(t, err)
+	require.Zero(t, total, "失败时不能把已测到的部分当结果")
+	require.Contains(t, err.Error(), "#2")
+}
+
+// 同一个函数顺手做单条限长：一条 20 秒必须被拒，且拒之前不能把钱算出来。
+func TestProbeAndEnforceReferenceVideosEnforcesPerVideoLimit(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideos(t.Context(),
+		[]string{dataURLVideo(5), dataURLVideo(20)}, MaxReferenceVideoSeconds, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "20")
+	require.Zero(t, total)
+}
+
+// 传 maxSeconds <= 0 表示不限长：只算钱，不拦长素材。
+func TestProbeAndEnforceReferenceVideosSkipsLimitWhenZero(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideos(t.Context(),
+		[]string{dataURLVideo(40)}, 0, nil)
+	require.NoError(t, err)
+	require.Equal(t, 40, total)
+}

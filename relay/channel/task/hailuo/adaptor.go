@@ -51,7 +51,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			req.Images = []string{req.Image}
 		}
 		spec, _ := lookupV2Spec(info.UpstreamModelName)
-		if taskErr := validateV2Request(&req, spec); taskErr != nil {
+		if taskErr := validateV2RequestForBilling(c, &req, spec); taskErr != nil {
 			return taskErr
 		}
 		// ⚠️ 必须写回 context：BuildRequestBody 读的是 "task_request"，而
@@ -266,6 +266,8 @@ func isV2UpstreamModel(body map[string]any) bool {
 // 其余档位用 size 倍率上浮；这样 ModelRatio 里的数字直接读作「每秒单价」。
 //
 // Context-IR 不产视频、按时长计费无意义，回落到 BaseBilling（按次）。
+//
+// 带参考视频时 seconds = 生成时长 + 参考视频总秒数（同单价 1:1），与 wan3 同口径。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	if info == nil || info.ChannelMeta == nil {
 		return nil
@@ -281,6 +283,13 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	duration := spec.DefaultDur
 	if req.Duration > 0 {
 		duration = req.Duration
+	}
+	if c != nil {
+		if value, ok := c.Get(refVideoSecondsContextKey); ok {
+			if refSeconds, ok := value.(int); ok && refSeconds > 0 {
+				duration += refSeconds
+			}
+		}
 	}
 	resolution, err := resolveV2Resolution(&req, spec)
 	if err != nil {
