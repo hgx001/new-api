@@ -37,6 +37,19 @@ type ecommerceSwitchRequest struct {
 //
 // 带参考视频的请求**永远不路由**（老板明确要求），与开关无关。
 func SetEcommerceRouteAdmin(c *gin.Context) {
+	setEcommerceRouteAdmin(c, saveRoutePolicy, recordManageAudit)
+}
+
+// setEcommerceRouteAdmin 是唯一实现。
+//
+// save / audit 显式注入而不是写死：审计日志要落库，controller 单测环境
+// 没有 DB；把两个副作用收进参数，成功路径也能被完整测到（校验拒绝时
+// 一次都不写库），不必为了测试去起数据库。与 setSecondsRuleRatioGateAdmin 同款做法。
+func setEcommerceRouteAdmin(
+	c *gin.Context,
+	save func(seedanceroute_setting.Policy) error,
+	audit func(*gin.Context, string, map[string]interface{}),
+) {
 	var req ecommerceSwitchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -54,7 +67,7 @@ func SetEcommerceRouteAdmin(c *gin.Context) {
 	}
 
 	policy := seedanceroute_setting.WithEcommerceEnabled(*req.Enabled)
-	if err := saveRoutePolicy(policy); err != nil {
+	if err := save(policy); err != nil {
 		common.SysLog("update ecommerce route switch failed: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -63,7 +76,7 @@ func SetEcommerceRouteAdmin(c *gin.Context) {
 		return
 	}
 
-	recordManageAudit(c, "video_route.ecommerce_switch", map[string]interface{}{
+	audit(c, "video_route.ecommerce_switch", map[string]interface{}{
 		"enabled": *req.Enabled,
 	})
 	common.ApiSuccess(c, doubaoRouteAdminState())
@@ -90,6 +103,15 @@ type ecommerceConditionsRequest struct {
 // 用 bool 的话前端漏传一个字段就会把它静默关掉 —— 那正是「配置项形同虚设」
 // 那种最难排查的故障（后台看着勾着的，代码里是关的）。
 func SetEcommerceConditionsAdmin(c *gin.Context) {
+	setEcommerceConditionsAdmin(c, saveRoutePolicy, recordManageAudit)
+}
+
+// setEcommerceConditionsAdmin 是唯一实现（依赖注入理由同 setEcommerceRouteAdmin）。
+func setEcommerceConditionsAdmin(
+	c *gin.Context,
+	save func(seedanceroute_setting.Policy) error,
+	audit func(*gin.Context, string, map[string]interface{}),
+) {
 	var req ecommerceConditionsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -129,7 +151,7 @@ func SetEcommerceConditionsAdmin(c *gin.Context) {
 		})
 		return
 	}
-	if err := saveRoutePolicy(updated); err != nil {
+	if err := save(updated); err != nil {
 		common.SysLog("update ecommerce route conditions failed: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -138,7 +160,7 @@ func SetEcommerceConditionsAdmin(c *gin.Context) {
 		return
 	}
 
-	recordManageAudit(c, "video_route.ecommerce_conditions", map[string]interface{}{
+	audit(c, "video_route.ecommerce_conditions", map[string]interface{}{
 		"ratio_enabled":   *req.RatioEnabled,
 		"seconds_enabled": *req.SecondsEnabled,
 		"trigger_seconds": triggerSeconds,
@@ -158,6 +180,15 @@ type ecommerceKeywordsRequest struct {
 
 // SetEcommerceKeywordsAdmin 设置规则七的关键词表。
 func SetEcommerceKeywordsAdmin(c *gin.Context) {
+	setEcommerceKeywordsAdmin(c, saveRoutePolicy, recordManageAudit)
+}
+
+// setEcommerceKeywordsAdmin 是唯一实现（依赖注入理由同 setEcommerceRouteAdmin）。
+func setEcommerceKeywordsAdmin(
+	c *gin.Context,
+	save func(seedanceroute_setting.Policy) error,
+	audit func(*gin.Context, string, map[string]interface{}),
+) {
 	var req ecommerceKeywordsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -168,7 +199,7 @@ func SetEcommerceKeywordsAdmin(c *gin.Context) {
 	}
 
 	policy := seedanceroute_setting.WithEcommerceKeywords(req.Keywords)
-	if err := saveRoutePolicy(policy); err != nil {
+	if err := save(policy); err != nil {
 		common.SysLog("update ecommerce route keywords failed: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -177,7 +208,7 @@ func SetEcommerceKeywordsAdmin(c *gin.Context) {
 		return
 	}
 
-	recordManageAudit(c, "video_route.ecommerce_keywords", map[string]interface{}{
+	audit(c, "video_route.ecommerce_keywords", map[string]interface{}{
 		"count": len(policy.EcommercePromptKeywords),
 	})
 	common.ApiSuccess(c, doubaoRouteAdminState())
@@ -208,6 +239,15 @@ type shortCapcutSwitchRequest struct {
 // 读侧还有一层兜底（见 seedanceroute_setting.ActiveShortRouteTarget）：
 // 万一配置被 SQL 直接改过，也不会出现两条同时生效。
 func SetShortCapcutLinkAdmin(c *gin.Context) {
+	setShortCapcutLinkAdmin(c, saveRoutePolicy, recordManageAudit)
+}
+
+// setShortCapcutLinkAdmin 是唯一实现（依赖注入理由同 setEcommerceRouteAdmin）。
+func setShortCapcutLinkAdmin(
+	c *gin.Context,
+	save func(seedanceroute_setting.Policy) error,
+	audit func(*gin.Context, string, map[string]interface{}),
+) {
 	var req shortCapcutSwitchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -234,7 +274,7 @@ func SetShortCapcutLinkAdmin(c *gin.Context) {
 		policy = seedanceroute_setting.ApplyShortLinkEnabled(policy, false)
 		policy = seedanceroute_setting.ApplyShortYouzanEnabled(policy, false)
 	}
-	if err := saveRoutePolicy(policy); err != nil {
+	if err := save(policy); err != nil {
 		common.SysLog("update short capcut switch failed: " + err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
@@ -243,7 +283,7 @@ func SetShortCapcutLinkAdmin(c *gin.Context) {
 		return
 	}
 
-	recordManageAudit(c, "video_route.short_capcut_switch", map[string]interface{}{
+	audit(c, "video_route.short_capcut_switch", map[string]interface{}{
 		"enabled": *req.Enabled,
 	})
 	common.ApiSuccess(c, doubaoRouteAdminState())

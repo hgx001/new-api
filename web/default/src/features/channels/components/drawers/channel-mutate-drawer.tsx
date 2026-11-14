@@ -109,7 +109,9 @@ import {
   useSecureVerification,
 } from '@/features/auth/secure-verification'
 import { DoubaoLinkCard } from '@/features/video-route/components/doubao-link-card'
+import { EcommerceRouteCard } from '@/features/video-route/components/ecommerce-route-card'
 import { FailoverAltCard } from '@/features/video-route/components/failover-alt-card'
+import { ShortCapcutCard } from '@/features/video-route/components/short-capcut-card'
 import { ShortLinkCard } from '@/features/video-route/components/short-link-card'
 import { ShortYouzanCard } from '@/features/video-route/components/short-youzan-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -3609,6 +3611,20 @@ export function ChannelMutateDrawer({
                           <ShortYouzanCard
                             channelModels={currentModels ?? ''}
                           />
+
+                          {/* 规则六（短时长分流）的第三条分支 —— CapCut 快速档
+                              cp-seedance-2.0fast。心笔与有赞标准版都接不住时
+                              的退路。⚠️ 三条短时长分支同时只能有一条生效：
+                              打开本条会自动关掉另外两条（后端写入口保证），
+                              读侧还有「心笔 > 有赞 > CapCut」的优先级兜底。 */}
+                          <ShortCapcutCard channelModels={currentModels ?? ''} />
+
+                          {/* 规则七（电商/产品推荐内容 → CapCut 2.5 Flash）：
+                              提示词命中电商关键词，或勾选的参数条件（9:16
+                              比例 / 时长超过阈值）命中，就改派快档。带参考
+                              视频的请求永远不路由。源渠道与目标渠道都显示
+                              —— 源渠道是决策入口，目标渠道是排查入口。 */}
+                          <EcommerceRouteCard channelModels={currentModels ?? ''} />
 
                           {/* 规则五（故障转移）的**备选备胎**开关：豆包不可用时
                               改派 cp-seedance-2.5flash（480p 生成 + 超分 720P

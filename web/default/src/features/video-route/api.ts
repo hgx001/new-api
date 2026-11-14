@@ -73,6 +73,49 @@ export type VideoRoutePolicy = {
   /** 有赞兜底的目标模型（有赞标准版 wan3.0-video）。 */
   short_youzan_target_model: string
   /**
+   * 规则六的**第三条分支**（CapCut 快速档 cp-seedance-2.0fast）的开关。
+   *
+   * ⚠️ 三条短时长分支**同时只能有一条生效**：心笔内链 / 有赞标准版 /
+   * CapCut 快速档。打开本条会自动关掉另外两条（后端写入口保证），
+   * 读侧还有一层按「心笔 > 有赞 > CapCut」的优先级兜底。
+   */
+  short_capcut_enabled: boolean
+  /** CapCut 快速档的目标模型。 */
+  short_capcut_target_model: string
+  /**
+   * 当前生效的短时长分支（读侧优先级兜底后的结果）。
+   * 空串 = 三条都没开 = 短请求走原链路。
+   */
+  short_active_target: string
+  /** 配置上开着的短时长分支列表（按优先级排序）。 */
+  short_active_targets: string[]
+  /**
+   * 规则七（电商/产品推荐内容 → CapCut 快速档）的总开关。
+   *
+   * 打开：提示词命中电商/产品推荐关键词（或勾选的参数条件命中）的请求
+   * 改派 cp-seedance-2.5flash；关闭（默认）：这类请求留在源链路。
+   *
+   * ⚠️ 带参考视频的请求**永远不路由**，与本开关无关。
+   */
+  ecommerce_enabled: boolean
+  /** 规则七的目标模型（默认 cp-seedance-2.5flash）。 */
+  ecommerce_target_model: string
+  /** 是否勾选「9:16 比例」入口。 */
+  ecommerce_ratio_condition: boolean
+  /** 是否勾选「时长超过阈值」入口。 */
+  ecommerce_seconds_condition: boolean
+  /** 「时长条件」的阈值（秒），**超过**该值命中。 */
+  ecommerce_trigger_seconds: number
+  /**
+   * 「9:16 比例」入口对应的比例 —— 由后端给出唯一事实源，
+   * 前端不硬编码比例字符串（两处各写一份必然漂）。
+   */
+  ecommerce_ratio_condition_default: string
+  /** 当前生效的电商关键词表（运营配了就给配的，否则给默认表）。 */
+  ecommerce_keywords: string[]
+  /** 默认关键词表（供前端做「恢复默认」用）。 */
+  ecommerce_keywords_default: string[]
+  /**
    * 规则一的可选比例条件（后台勾选）。
    * 非空 = 只有该比例的请求才改派目标链路；空 = 不限比例。
    * 与 `trigger_ratio`（规则二自己的触发比例）是两个独立字段。
@@ -313,6 +356,81 @@ export async function setSecondsRuleRatioGate(
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/ratio-gate', {
     enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换规则六的**第三条分支**（CapCut 快速档 cp-seedance-2.0fast）。
+ *
+ * 打开：心笔与有赞标准版都接不住时，≤阈值的短请求改派
+ * cp-seedance-2.0fast；关闭（默认）：不走这条。
+ *
+ * ⚠️ 打开本条会**自动关掉**另外两条短时长分支（心笔内链 / 有赞标准版）——
+ * 三条是同一个时长区间的三个出口，同时开着时「落到哪一条」必须是明确的
+ * 经营意图，而不是「谁写在配置里靠前」。关掉本条时不动另外两条。
+ */
+export async function setShortCapcutEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/short-capcut-link', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换规则七（电商/产品推荐内容 → CapCut 快速档）的总开关。
+ *
+ * 打开：seedance2.5-特惠 / seedance2.5-活动 的请求，只要提示词命中
+ * 电商/产品推荐关键词（或勾选的参数条件命中），就改派 cp-seedance-2.5flash；
+ * 关闭（默认）：这类请求留在源链路。
+ *
+ * ⚠️ 带参考视频的请求**永远不路由**（老板明确要求），与本开关无关。
+ */
+export async function setEcommerceEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/ecommerce', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 设置规则七的**参数条件**（后台勾选）。
+ *
+ * 命中 = 内容命中（电商关键词）**或** 参数命中（勾选的项）——
+ * 两者是并列的进料口，不是串联的闸门。
+ *
+ * - ratioEnabled：勾上「9:16 比例」入口（比例由后端给默认值）；
+ * - secondsEnabled：勾上「时长超过阈值」入口；
+ * - triggerSeconds：时长阈值；不传则沿用当前配置（避免「只改勾选却把阈值重置」）。
+ */
+export async function setEcommerceConditions(
+  ratioEnabled: boolean,
+  secondsEnabled: boolean,
+  triggerSeconds?: number
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/ecommerce/conditions', {
+    ratio_enabled: ratioEnabled,
+    seconds_enabled: secondsEnabled,
+    ...(triggerSeconds === undefined ? {} : { trigger_seconds: triggerSeconds }),
+  })
+  return res.data.data
+}
+
+/**
+ * 设置规则七的电商关键词表。
+ *
+ * 判定口径是大小写不敏感的**子串**匹配。传空数组 = 回落后端默认表
+ * （不是「关掉内容判定」—— 内容判定是这条规则的主入口）。
+ */
+export async function setEcommerceKeywords(
+  keywords: string[]
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/ecommerce/keywords', {
+    keywords,
   })
   return res.data.data
 }

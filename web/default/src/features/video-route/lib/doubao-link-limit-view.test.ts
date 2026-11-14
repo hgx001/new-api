@@ -55,6 +55,20 @@ function policy(overrides: Partial<VideoRoutePolicy> = {}): VideoRoutePolicy {
     // 规则六的有赞标准版兜底：默认关闭，目标固定 wan3.0-video。
     short_youzan_enabled: false,
     short_youzan_target_model: 'wan3.0-video',
+    // 规则六的第三条分支（CapCut 快速档）：默认关闭；三路互斥的当前生效方为空串。
+    short_capcut_enabled: false,
+    short_capcut_target_model: 'cp-seedance-2.0fast',
+    short_active_target: '',
+    short_active_targets: [],
+    // 规则七（电商内容路由）：默认关闭；参数条件默认都不勾；阈值 20 秒。
+    ecommerce_enabled: false,
+    ecommerce_target_model: 'cp-seedance-2.5flash',
+    ecommerce_ratio_condition: false,
+    ecommerce_seconds_condition: false,
+    ecommerce_trigger_seconds: 20,
+    ecommerce_ratio_condition_default: '9:16',
+    ecommerce_keywords: [],
+    ecommerce_keywords_default: [],
     seconds_rule_ratio_gate: '',
     seconds_rule_ratio_gate_default: '9:16',
     updated_at: 0,

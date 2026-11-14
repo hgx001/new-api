@@ -260,7 +260,7 @@ func TestEcommerceDoesNotRouteBelowCapcutMinDuration(t *testing.T) {
 // ⚠️ 请求必须**带比例**：CapCut 没有自适应档，而带参考图时「不传比例」
 // 意味着源链路按那张图的画幅出片 —— 我们推不出它是什么比例，替他挑一档
 // 就是替他改需求，所以带图且无比例的请求本来就会被挡在准入之外
-//（见 prepareEcommerceRoute 的比例分支）。
+// （见 prepareEcommerceRoute 的比例分支）。
 func TestEcommerceLiftsReferenceImagesToInputReference(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
