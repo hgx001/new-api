@@ -136,6 +136,32 @@ export type VideoRouteFailoverState = {
   /** 标记来源：auto（额度探针）/ manual（人工）/ ''（未标记）。 */
   failover_unavailable_source: '' | 'auto' | 'manual'
   failover_unavailable_until_text: string
+  /**
+   * 备选备胎（CapCut 2.5 Flash）的开关 —— 决定「改派到哪一条」。
+   *
+   * 与 `failover_enabled` 是两件事：后者决定「要不要改派」，
+   * 这个决定改派到班车还是 CapCut。两者都开着时 CapCut 优先。
+   */
+  failover_alt_enabled: boolean
+  /** 配置的备选模型名（可能为空 = 用默认值）。 */
+  failover_alt_model: string
+  /** 生效的备选模型名（空配置时回落默认 cp-seedance-2.5flash）。 */
+  failover_alt_target_model: string
+  /** 备选模型名是否被本链路支持（只有 2.5 Flash 一档生效）。 */
+  failover_alt_target_supported: boolean
+  /** CapCut 那条路上当前有没有可用渠道。 */
+  failover_alt_target_available: boolean
+  /** 超分链路（腾讯 MPS）是否配好 —— 没配就只能走班车。 */
+  failover_alt_upscale_configured: boolean
+  /**
+   * 综合结论：开关 + 模型名 + 超分配置 + 渠道可用 四项全满足。
+   *
+   * ⚠️ 只有它为 true 时「豆包挂了真的会走 CapCut」。开关开着但它是 false
+   * 的四种情况必须由 `failover_alt_note` 说明，否则运营会以为已经生效。
+   */
+  failover_alt_effective: boolean
+  /** 一句话说明当前处于哪种状态（后端算，前端直接展示）。 */
+  failover_alt_note: string
 }
 
 export async function getVideoRoutePolicy(): Promise<VideoRoutePolicy> {
@@ -156,6 +182,29 @@ export async function setVideoRouteFailoverModels(
   const res = await api.post('/api/video-route/policy/failover/models', {
     source_model: sourceModel,
     target_model: targetModel,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换规则五的**备选备胎**（CapCut 2.5 Flash，480p 生成 + 超分 720P 交付）。
+ *
+ * 打开：豆包不可用时改派 cp-seedance-2.5flash（按 480p 生成，交付前用腾讯
+ * MPS 超分到 720P）；关闭（默认）：仍走 wan3.0-班车。
+ *
+ * 前提不变：只有豆包链路真的不可用（渠道被关 / AutoBan / 额度探针标记 /
+ * 豆包链路开关人工关闭）时才触发，豆包好用的时候这条链路永远不参与调度。
+ *
+ * ⚠️ 超分没配好时后端会自动回落班车 —— 返回的 `failover_alt_effective`
+ * 会是 false，界面必须据此提示「已打开但不会生效」。
+ */
+export async function setFailoverAltEnabled(
+  enabled: boolean,
+  model?: string
+): Promise<VideoRouteFailoverState> {
+  const res = await api.post('/api/video-route/policy/failover/alt', {
+    enabled,
+    ...(model === undefined ? {} : { model }),
   })
   return res.data.data
 }

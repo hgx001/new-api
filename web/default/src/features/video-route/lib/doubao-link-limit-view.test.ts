@@ -83,6 +83,15 @@ function failover(
     failover_unavailable_until: 0,
     failover_unavailable_source: '',
     failover_unavailable_until_text: '',
+    // 规则五的备选备胎（2026-11-14）：默认关闭，关闭时走班车。
+    failover_alt_enabled: false,
+    failover_alt_model: '',
+    failover_alt_target_model: 'cp-seedance-2.5flash',
+    failover_alt_target_supported: true,
+    failover_alt_target_available: true,
+    failover_alt_upscale_configured: true,
+    failover_alt_effective: false,
+    failover_alt_note: '',
     ...overrides,
   }
 }

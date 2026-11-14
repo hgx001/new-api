@@ -109,6 +109,7 @@ import {
   useSecureVerification,
 } from '@/features/auth/secure-verification'
 import { DoubaoLinkCard } from '@/features/video-route/components/doubao-link-card'
+import { FailoverAltCard } from '@/features/video-route/components/failover-alt-card'
 import { ShortLinkCard } from '@/features/video-route/components/short-link-card'
 import { ShortYouzanCard } from '@/features/video-route/components/short-youzan-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -3608,6 +3609,13 @@ export function ChannelMutateDrawer({
                           <ShortYouzanCard
                             channelModels={currentModels ?? ''}
                           />
+
+                          {/* 规则五（故障转移）的**备选备胎**开关：豆包不可用时
+                              改派 cp-seedance-2.5flash（480p 生成 + 超分 720P
+                              交付），关闭仍走班车。与豆包卡不同，这张卡在
+                              豆包源渠道和 CapCut 目标渠道里都显示 —— 运营是在
+                              豆包渠道排查「挂了怎么办」的。 */}
+                          <FailoverAltCard channelModels={currentModels ?? ''} />
 
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.internalNotes}
