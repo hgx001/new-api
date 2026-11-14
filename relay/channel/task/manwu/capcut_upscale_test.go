@@ -12,6 +12,9 @@ package manwu
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -147,4 +150,87 @@ func TestPollPostProcessOnlyForCapcutAltTasks(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, done)
 	assert.Equal(t, 1, polled, "非降级任务不该被推进后处理")
+}
+
+// ───────────────────────── 成片地址解析（2026-11-14 实测修复）─────────
+
+// ArcReel 走自有托管时 ParseTaskResult 不吐地址，service 层传下来的
+// upstreamURL 是空串。此时必须从任务的原始响应里把 sourceUrl 找回来，
+// 否则超分拿不到输入、静默跳过 —— 客户拿到 480P 却按 720P 计费。
+func TestAfterUpstreamSuccessFallsBackToTaskSourceURL(t *testing.T) {
+	var got string
+	SetSuperResolutionHooks(
+		func(_ context.Context, _ *model.Task, upstreamURL string) (bool, error) {
+			got = upstreamURL
+			return true, nil
+		},
+		func(context.Context, *model.Task) (bool, error) { return true, nil },
+	)
+	t.Cleanup(func() { SetSuperResolutionHooks(nil, nil) })
+
+	task := capcutAltTask()
+	task.Data = json.RawMessage(`{"status":"ready","sourceUrl":"https://cdn.example.com/out.mp4"}`)
+
+	adaptor := &TaskAdaptor{}
+	handled, err := adaptor.AfterUpstreamSuccess(context.Background(), task, "")
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, "https://cdn.example.com/out.mp4", got,
+		"upstreamURL 为空时必须回落到任务原始响应里的 sourceUrl")
+}
+
+// ArcReel 的产物接口需要渠道密钥（无鉴权 401），但它会 302 到公开 CDN。
+// MPS 只能拉无鉴权地址，所以要先用密钥把 Location 读出来。
+func TestAfterUpstreamSuccessResolvesAuthedMediaToPublicURL(t *testing.T) {
+	var seenAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		w.Header().Set("Location", "https://arcmedia.example.com/public/out.mp4")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+
+	var got string
+	SetSuperResolutionHooks(
+		func(_ context.Context, _ *model.Task, upstreamURL string) (bool, error) {
+			got = upstreamURL
+			return true, nil
+		},
+		func(context.Context, *model.Task) (bool, error) { return true, nil },
+	)
+	t.Cleanup(func() { SetSuperResolutionHooks(nil, nil) })
+
+	task := capcutAltTask()
+	task.Data = json.RawMessage(`{"sourceUrl":"` + server.URL + `/api/v1/remote-generation/jobs/j1/outputs/o1.mp4"}`)
+
+	adaptor := &TaskAdaptor{apiKey: "sk-test"}
+	handled, err := adaptor.AfterUpstreamSuccess(context.Background(), task, "")
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.Equal(t, "Bearer sk-test", seenAuth, "换公开地址必须带上渠道密钥")
+	assert.Equal(t, "https://arcmedia.example.com/public/out.mp4", got,
+		"交给 MPS 的必须是 302 之后的公开地址")
+}
+
+// 完全拿不到地址（既没有 upstreamURL 也没有 sourceUrl）：
+// 不接管、按原片交付，任务不能挂在「处理中」。
+func TestAfterUpstreamSuccessWithoutMediaURLDeliversOriginal(t *testing.T) {
+	called := false
+	SetSuperResolutionHooks(
+		func(context.Context, *model.Task, string) (bool, error) {
+			called = true
+			return true, nil
+		},
+		func(context.Context, *model.Task) (bool, error) { return true, nil },
+	)
+	t.Cleanup(func() { SetSuperResolutionHooks(nil, nil) })
+
+	task := capcutAltTask()
+	task.Data = json.RawMessage(`{"status":"ready"}`)
+
+	adaptor := &TaskAdaptor{}
+	handled, err := adaptor.AfterUpstreamSuccess(context.Background(), task, "")
+	require.NoError(t, err)
+	assert.False(t, handled)
+	assert.False(t, called, "没有可抓取的成片地址时不该提交注定失败的超分任务")
 }

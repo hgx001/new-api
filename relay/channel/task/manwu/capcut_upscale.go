@@ -38,8 +38,13 @@ package manwu
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -47,6 +52,19 @@ import (
 
 // capcutFailoverUpscaleModel 是走「480p 生成 + 超分 720P 交付」的执行模型。
 const capcutFailoverUpscaleModel = ModelCapcut25Flash
+
+// capcutAuthedMediaPath 是 ArcReel「需要渠道密钥才能取片」的产物接口路径片段。
+//
+// 为什么单独判它：ArcReel 的成片有两种形态（见 ParseTaskResult）——
+// 公网直链（可直接给第二跳服务）与自有托管路径（必须带 Authorization）。
+// 后者对 MPS 不可用：MPS 从公网拉片，不能带自定义请求头。
+const capcutAuthedMediaPath = "/api/v1/remote-generation/"
+
+// capcutMediaResolveTimeout 是「换公开地址」这一跳的超时。
+//
+// 只用来读一个 302 响应头，正常在百毫秒级；给 20 秒是防代理层抽风，
+// 不能让一次网络抖动把成片交付拖成「处理中」。
+const capcutMediaResolveTimeout = 20 * time.Second
 
 // superResolutionSubmitter / superResolutionPoller 是注入的超分实现。
 //
@@ -107,7 +125,96 @@ func (a *TaskAdaptor) AfterUpstreamSuccess(
 			model.TaskLogLevelError, "super resolution hook is not registered", nil)
 		return false, nil
 	}
-	return superResolutionSubmitter(ctx, task, upstreamURL)
+
+	// ⚠️ 成片地址必须自己解析，不能只信 upstreamURL。
+	//
+	// ArcReel 走自有托管时，ParseTaskResult **刻意不吐地址**（交付由本站的
+	// content 代理回源，见那里的注释），于是 service 层传下来的 upstreamURL
+	// 是空串 —— 第二跳拿不到输入，只能静默跳过超分。2026-11-14 实测：
+	// 开关全开、日志也显示已改派，客户拿到的仍是 854×480。
+	//
+	// 这里补两道：
+	//  1. upstreamURL 为空 → 从任务的原始响应（task.Data）里取 sourceUrl；
+	//  2. 该地址若需要渠道密钥，用一次带头 302 换成公开 CDN 地址
+	//     （MPS 只能拉无鉴权地址）。
+	media := strings.TrimSpace(upstreamURL)
+	if media == "" {
+		media = capcutSourceURLFromTask(task)
+	}
+	media = a.resolveCapcutMediaURL(ctx, media)
+	if media == "" {
+		logger.LogError(ctx, "CapCut 降级任务拿不到可抓取的成片地址，按原片交付（"+task.TaskID+"）")
+		model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePostProcess,
+			model.TaskLogLevelError, "upstream media url is empty or unreachable", nil)
+		return false, nil
+	}
+	return superResolutionSubmitter(ctx, task, media)
+}
+
+// capcutSourceURLFromTask 从任务保存的上游原始响应里取成片地址。
+//
+// 用 jobResponse 而不是自己 define 一个匿名结构，是为了与 ParseTaskResult
+// 共用同一份字段口径（sourceUrl / source_url 两个别名都认）。
+func capcutSourceURLFromTask(task *model.Task) string {
+	if task == nil || len(task.Data) == 0 {
+		return ""
+	}
+	var res jobResponse
+	if err := common.Unmarshal(task.Data, &res); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(res.resultURL())
+}
+
+// resolveCapcutMediaURL 把「需要渠道密钥才能取」的成片地址换成公开地址。
+//
+// ArcReel 的 job 产物接口对无鉴权请求返回 401，但它会 302 到
+// arcmedia CDN —— 那个地址是公开的，MPS 可以直接拉。
+// 所以只要用渠道密钥发一次请求、把 Location 读出来即可（不跟随，
+// 避免整片进了我们的内存）。
+func (a *TaskAdaptor) resolveCapcutMediaURL(ctx context.Context, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	// 已经是公网直链 → 原样交出去。
+	if !strings.Contains(raw, capcutAuthedMediaPath) {
+		return raw
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return ""
+	}
+	if a.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	}
+	// 只取响应头：Range 让上游别把整片推过来（不支持 Range 的服务端也只会
+	// 多传一点，我们下面用 LimitReader 兜住）。
+	req.Header.Set("Range", "bytes=0-0")
+	client := &http.Client{
+		Timeout: capcutMediaResolveTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.LogError(ctx, "解析 CapCut 成片公开地址失败："+err.Error())
+		return ""
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<12))
+
+	loc := strings.TrimSpace(resp.Header.Get("Location"))
+	if loc == "" {
+		logger.LogError(ctx, "解析 CapCut 成片公开地址失败：上游没有返回 Location")
+		return ""
+	}
+	// 相对跳转（少见）按请求 URL 补全。
+	if parsed, perr := url.Parse(loc); perr == nil && !parsed.IsAbs() {
+		loc = resp.Request.URL.ResolveReference(parsed).String()
+	}
+	return loc
 }
 
 // PollPostProcess 推进超分任务；done=true 表示已到终态。
