@@ -58,6 +58,31 @@ function autoDLModel(model_name: string): PricingModel {
   }
 }
 
+describe('CapCut 满血展示名', () => {
+  // 「满血」只是运营口径的展示名：对外 API 名必须保持 cp-seedance-2.0 / 2.5，
+  // 否则渠道、abilities、manwu adaptor 的模型白名单全部对不上。
+  test('shows 满血 names for the two flagship CapCut models', () => {
+    assert.equal(
+      getModelDisplayName(autoDLModel('cp-seedance-2.0')),
+      'cp-seedance-2.0满血'
+    )
+    assert.equal(
+      getModelDisplayName(autoDLModel('cp-seedance-2.5')),
+      'cp-seedance-2.5满血'
+    )
+  })
+
+  test('keeps other CapCut tiers unchanged', () => {
+    for (const modelName of [
+      'cp-seedance-2.0fast',
+      'cp-seedance-2.0mini',
+      'cp-seedance-2.5flash',
+    ]) {
+      assert.equal(getModelDisplayName(autoDLModel(modelName)), modelName)
+    }
+  })
+})
+
 describe('AutoDL H3 resolution tier note', () => {
   test('lists the four H3 workflows that share the resolution tier note', () => {
     assert.deepEqual(getResolutionTieredModels(), [

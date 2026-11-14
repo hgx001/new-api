@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { EXCLUDED_GROUPS, QUOTA_TYPE_VALUES } from '../constants'
 import type { PricingModel } from '../types'
-import { getSeedance25SampleResolution } from './seedance25-family'
 import { isCapcutFamilyMember } from './capcut-family'
+import { getSeedance25SampleResolution } from './seedance25-family'
 
 // ----------------------------------------------------------------------------
 // Model Helper Utilities
@@ -189,6 +189,11 @@ const MODEL_DISPLAY_NAME_OVERRIDES: Record<string, string> = {
   'kimi-for-coding': 'kimi-k2.7',
   // sd2.5 慢速满血版实际支持 30 秒（youkou 模型 id 仍保留 "20秒内" 以便路由）
   'sd2.5慢速20秒内排队满血版': 'sd2.5慢速30秒内排队满血版',
+  // CapCut 满血档：对外 API 名保持 cp-seedance-2.0 / cp-seedance-2.5
+  // （渠道、abilities、manwu adaptor 白名单都按这两个名字匹配），
+  // 只在模型广场展示「满血」。
+  'cp-seedance-2.0': 'cp-seedance-2.0满血',
+  'cp-seedance-2.5': 'cp-seedance-2.5满血',
 }
 
 /** Channel namespace prefixes hidden from the user-facing display name. */
