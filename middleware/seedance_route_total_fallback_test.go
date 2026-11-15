@@ -26,8 +26,13 @@ import (
 const totalFallbackTarget = "cp-seedance-2.5flash"
 
 // enableTotalFallback 只打开规则八（前七条都不配），测试结束恢复原状。
+//
+// 同时把「超分链路可用」桩成 true：规则八改派到 CapCut 的生成档位是
+// **480p + 超分 720P 交付**，超分没配时才会退回 720p 直接生成
+// （见 middleware/seedance_route_ecommerce.go 的 capcutGenerationResolution）。
 func enableTotalFallback(t *testing.T) {
 	t.Helper()
+	stubSuperResolution(t, true)
 	previous := seedanceroute_setting.Get()
 	payload := map[string]interface{}{
 		"enabled":                true,
@@ -56,7 +61,7 @@ func TestTotalFallbackRoutesShortPlainRequest(t *testing.T) {
 
 	assert.Equal(t, totalFallbackTarget, body["model"], "规则八必须无条件改派 CapCut")
 	assert.Equal(t, "5", body["seconds"], "时长必须原样下发（字符串形态）")
-	assert.Equal(t, "720p", body["resolution"], "CapCut 缺省 480p，必须显式钉住源链路的实际档 720P")
+	assert.Equal(t, "480p", body["resolution"], "生成档必须钉 480p（交付前超分到 720P，省一半 credits）")
 	assert.Equal(t, "16:9", body["ratio"], "比例必须显式落到顶层 ratio")
 
 	images, _ := body["input_reference"].([]interface{})
@@ -129,6 +134,36 @@ func TestTotalFallbackNormalizesPerCallSeconds(t *testing.T) {
 	assert.Equal(t, totalFallbackTarget, body["model"])
 	assert.Equal(t, "30", body["seconds"], "按次档没传时长必须体现为 30 秒，不能落到 CapCut 的缺省 5 秒")
 	assert.Equal(t, "seedance2.5-活动", rec.originModel)
+}
+
+// 超分链路没配时不许钉 480p：按 720P 直接生成，宁可多花 credits
+// 也不能「按 720P 的价交付 480P 的片」（静默降质）。
+func TestTotalFallbackKeeps720pWhenSuperResolutionUnavailable(t *testing.T) {
+	enableTotalFallback(t)
+	stubSuperResolution(t, false)
+
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
+	body := decodeBody(t, rec.body)
+
+	assert.Equal(t, totalFallbackTarget, body["model"])
+	assert.Equal(t, "720p", body["resolution"], "超分不可用时必须直接出 720p，不能降档交付")
+}
+
+// 生成档降到 480p **不能**把对客价格也降下去：计费仍按源模型 720P 档
+// （size 倍率来自 sourceModelSizeRatio，覆盖 CapCut 自己的档位差价）。
+//
+// 漏了这条覆盖的后果：CapCut adaptor 按 480p 给 1.0，看起来「没错」，
+// 但一旦上游把 480p 调价或换成别的档位，客户价就跟着调度策略漂。
+func TestTotalFallbackKeepsSourceTierBillingRatio(t *testing.T) {
+	enableTotalFallback(t)
+
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
+	body := decodeBody(t, rec.body)
+
+	require.Equal(t, totalFallbackTarget, body["model"])
+	require.Equal(t, "480p", body["resolution"])
+	assert.True(t, rec.hasBillingSize, "必须显式记源模型口径的 size 倍率")
+	assert.Equal(t, 1.0, rec.billingSizeRatio, "720P 源档的倍率是 1.0（与生成档 480p 无关）")
 }
 
 // 1080P 不改派：CapCut 只卖 480p/720p，改派过去必 400。 留原链路至少能得到准确的原因（没有可用渠道），而不是把链路故障

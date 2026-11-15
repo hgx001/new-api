@@ -72,7 +72,20 @@
 
 改派不改变对客价格：客户买的是 `seedance2.5-特惠` / `-活动`，
 账单按这两个模型的 `ModelPrice` 算。中间件记的秒数与 size 倍率都取**源模型口径**
-（不覆盖就会被 CapCut adaptor 的 720p ×2.0 档位差价超收一倍）。
+（不覆盖就会被 CapCut adaptor 的档位差价超收一倍）。
+
+## 五之一、生成档位：480p 生成 + 超分 720P 交付（2026-11-15）
+
+改派到 CapCut 时**生成档固定 480p**，交付前用腾讯 MPS 超分到 720P
+（`capcutGenerationResolution` → `relay/channel/task/manwu/capcut_upscale.go`
+的 `needsCapcutUpscale`）。CapCut 的 720p 是 480p 的 **2 倍 credits**
+（2.5 Flash 30 秒：510 vs 240），超分单价低于这半个档位，净省成本；
+交付档位与售价都不变。
+
+- 超分链路（`TencentMPSSetting`）没配时**退回 720p 直接生成** ——
+  宁可多花 credits 也不能「按 720P 的价交付 480P 的片」。
+- 规则五备选链路（豆包 → CapCut）早已是这套口径，两条链共用同一个超分钩子。
+- 客户**直接购买** `cp-seedance-2.5flash` 不触发超分：买什么档交付什么档。
 按次档（活动版）由 `applyRouteBillingSeconds` / `applyRouteBillingSizeRatio`
 按 `BillingModelName` 判定，天然不叠秒数与倍率。
 

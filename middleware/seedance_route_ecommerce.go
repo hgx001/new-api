@@ -38,6 +38,9 @@ package middleware
 //
 //	· 分辨率：源链路支持 480P/720P/1080P，CapCut **只卖 480p/720p**
 //	  （1080p 官网有但未定价，显式 400）。1080P 的请求改派过去必 400 → 挡。
+//	  改派时的**生成档固定 480p**（2026-11-15 起）+ 交付前超分到 720P：
+//	  CapCut 720p 是 480p 的 2 倍 credits，超分比这半个档位便宜。
+//	  超分链路没配时退回 720p 直接生成，绝不按 720P 价交付 480P。
 //
 //	· 时长：源链路 2–30 秒，CapCut 2.5 Flash **4–30 秒**、2.0 Fast **4–15 秒**。
 //	  2–3 秒的请求改派过去必被上游拒 → 挡。
@@ -296,11 +299,12 @@ func prepareCapcutRoute(
 		return nil, false
 	}
 
-	// 分辨率：源链路的实际档位映射到 CapCut 的档位（480P→480p，其余→720p）。
+	// 生成档位：默认钉 480p（交付前超分到 720P，省一半 credits）；
+	// 超分链路没配时退 720p 直接生成，绝不「按 720P 价交付 480P」。
 	//
 	// ⚠️ 必须在准入检查**之后**算：准入已经挡掉了 1080P，
 	// 所以这里一定落在 480p / 720p 两个上游认的档位里。
-	resolution := capcutResolutionFor(body)
+	resolution := capcutGenerationResolution(c)
 
 	return rewriteBodyForCapcut(body, targetModel, ratio, resolution, seconds), true
 }
@@ -510,13 +514,9 @@ func rewriteBodyForCapcut(body map[string]interface{}, target, ratio, resolution
 
 	// 分辨率：CapCut 只卖 480p / 720p，缺省 480p。
 	//
-	// ⚠️ **必须显式落**：CapCut 的缺省是 480p，而源链路（prime）缺省 720P ——
-	// 不显式写就是「客户按 720P 的钱拿到 480p 的片」（静默降档）。
-	//
-	// 源链路的实际档位口径用 sourceResolutionTier（顶层 resolution →
-	// metadata.resolution → 顶层 size），与 adaptor 逐字一致；
-	// 解析不出（或客户要 1080P，已在准入挡掉）时钉 720P ——
-	// 720P 是源链路的缺省档，且 CapCut 支持。
+	// 2026-11-15 起**生成档固定 480p**（交付前超分到 720P，省一半 credits），
+	// 超分没配时退回 720p 直接生成 —— 两个档位都是上游认的字面量，
+	// 而 1080P 已在准入阶段挡掉。
 	out["resolution"] = resolution
 
 	// 比例：显式落到顶层 ratio。
@@ -530,29 +530,35 @@ func rewriteBodyForCapcut(body map[string]interface{}, target, ratio, resolution
 	return out
 }
 
-// capcutResolutionFor 返回改派到 CapCut 时要下发的分辨率档位。
+const (
+	// capcutUpscaleGenerationResolution 是「480p 生成 + 超分 720P 交付」的生成档位。
+	capcutUpscaleGenerationResolution = "480p"
+	// capcutDirectDeliveryResolution 是超分不可用时的直接生成档位（= 源链路的交付承诺）。
+	capcutDirectDeliveryResolution = "720p"
+)
+
+// capcutGenerationResolution 返回改派到 CapCut 时要下发的**生成档位**（小写，CapCut 口径）。
 //
-// ⚠️ **恒为 720p**，不做 480P→480p 的映射。
+// 2026-11-15 老板口径：促销族（seedance2.5-特惠 / seedance2.5-活动）改派 CapCut 时
+// **统一按 480p 生成、交付前超分到 720P**，不再直接买 720p 档。
 //
-// 理由：源链路（有赞 prime）**只提供 720P / 1080P 两档** —— 客户传 480P 时
-// prime 按最低档 720P 执行（见 youzanwan3.normalizeResolutionForModel：
-// "480P" → primeDefaultResolution = "720P"）。所以源链路交付的永远是 720P
-// 或 1080P：
+// 理由纯成本：CapCut 2.5 Flash 的 720p 是 480p 的 **2 倍 credits**
+// （30 秒：720p=510 / 480p=240，见 App 侧 capcutCreditsPerSecond），
+// 而 MPS 超分的单价远低于半个档位的差价。交付档位不变 —— 客户买的是源链路
+// 的 720P，超分后交付的仍是 720P（超分在 relay/channel/task/manwu 的
+// AfterUpstreamSuccess 里做，判据见该文件 needsCapcutUpscale）。
 //
-//	· 客户要 1080P → 准入已挡（CapCut 不卖 1080p，改派过去必 400）；
-//	· 客户要 480P / 没传 → 源链路实际交付 720P。
-//
-// 改派过去钉 480p 就是**静默降档**：客户按源模型（720P 价）付费，
-// 拿到的是 480p 的片。这与规则六心笔路径「480P 生成 + 超分 720P」的口径
-// 一致 —— 改派不能降档。
-//
-// ⚠️ 另一个必须显式落的理由：CapCut 的缺省是 480p，源链路的缺省是 720P。
-// 不显式写就是「客户按 720P 的钱拿到 480p 的片」。
-func capcutResolutionFor(body map[string]interface{}) string {
-	// body 参数保留是为了与调用点的签名一致（并留出将来分档的空间），
-	// 但当前口径下**恒定 720p** —— 1080P 已在准入阶段挡掉。
-	_ = body
-	return "720p"
+// ⚠️ 超分没配就**不能钉 480p**：那会「按 720P 的价交付 480P 的片」，
+// 是静默降质（任务成功、账单照收、客户拿到低一档的成片）。
+// 这种情况退回 720p 直接生成 —— 与改造前的行为完全一致，只是不省钱。
+// 与规则五备选链路同一口径（那边是「超分没配就不改派」，这里不能不改派：
+// 规则七/八的目标链路本来就是出片出口，退回 720p 出片比不出片强）。
+func capcutGenerationResolution(c *gin.Context) string {
+	if !superResolutionConfiguredProbe() {
+		logger.LogInfo(c, "条件路由：超分链路未配置，CapCut 仍按 720p 直接生成（避免按 720P 价交付 480P）")
+		return capcutDirectDeliveryResolution
+	}
+	return capcutUpscaleGenerationResolution
 }
 
 // ecommerceRouteTriggered 判断请求是否命中规则七的触发条件。

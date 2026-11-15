@@ -24,4 +24,15 @@ const (
 	//   - relay/channel/task/manwu：改派到 CapCut 备选链路后的「超分交付」判定
 	//     （按 RouteOriginModel 识别「这条 CapCut 任务是不是豆包降级来的」）。
 	Seedance25DoubaoModel = "seedance-2-5"
+
+	// Wan3TehuiLegacyModel 是促销族母本的**历史别名**（wan3.0-720p-特惠）。
+	//
+	// 客户带这个旧名字进来时，别名中间件（middleware/wan3_tehui_alias.go）
+	// 只改请求体里的 model，**计费原点仍保留旧名** —— 所以凡是按
+	// RouteOriginModel 判定「客户买的是哪一档交付」的地方（当前是 CapCut
+	// 交付前的超分判定），必须把它和促销族一视同仁：它同样按 720P 售卖。
+	//
+	// 漏掉它的后果：这一批老客户的 CapCut 任务只按 480p 生成、又不超分，
+	// 最后交付的是 480P 原片 —— 任务成功、账单照收，客户才发现糊了。
+	Wan3TehuiLegacyModel = "wan3.0-720p-特惠"
 )

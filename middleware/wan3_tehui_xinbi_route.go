@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 
 	"github.com/gin-gonic/gin"
@@ -27,7 +28,12 @@ import (
 // OpenAI Video 响应仍显示客户买的那个模型。
 const (
 	// wan3TehuiModelName 是触发分流的对外模型名。
-	wan3TehuiModelName = "wan3.0-720p-特惠"
+	//
+	// 引用 constant（不是再写一份字面量）：这个名字同时被 CapCut 交付前的
+	// 超分判定使用（relay/channel/task/manwu 按 RouteOriginModel 认「客户买的
+	// 是不是 720P 档」），两边各写一份就会出现「别名改了名、超分不认识」——
+	// 交付掉到 480P 而账单照收。
+	wan3TehuiModelName = constant.Wan3TehuiLegacyModel
 	// xinbiTehuiTargetModel 是心笔渠道的内部目标模型名，
 	// 必须与 relay/channel/task/xinbiapi.ModelNameTehuiRoute 一致（有测试守着）。
 	xinbiTehuiTargetModel = "wan3.0-720p-特惠-内链"

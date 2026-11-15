@@ -1,14 +1,16 @@
 package manwu
 
-// CapCut 备选链路「交付前超分」钩子的测试（2026-11-14）。
+// CapCut「交付前超分」钩子的测试（2026-11-14 起，2026-11-15 扩到促销族）。
 //
-// 要锁的核心不变量：**只有规则五降级过来的 CapCut 任务**才超分。
+// 要锁的核心不变量：**只有「客户买 720P、CapCut 按 480p 生成」的任务**才超分。
 //
 //	客户直接买 cp-seedance-2.5flash      → 不超分（它自己就是商品档位）；
 //	客户直接买 seedance-2-5（豆包正常）  → 不超分（执行模型不是 CapCut）；
-//	规则七（电商内容 → 2.5 Flash）        → 不超分（计费原点不是豆包）。
+//	规则五（豆包不可用 → 2.5 Flash 480p）→ 超分到 720P；
+//	规则六/七/八（促销族 → CapCut 480p）→ 超分到 720P。
 //
-// 误判的后果分别是「白花钱多跑一次 MPS」和「模糊了成片」—— 两者都不会报错。
+// 误判的后果分别是「白花钱多跑一次 MPS」和「交付 480P 原片给按 720P 付费的客户」——
+// 两者都不会报错。
 
 import (
 	"context"
@@ -32,33 +34,52 @@ func capcutAltTask() *model.Task {
 	return task
 }
 
-// 只认「执行 CapCut 2.5 Flash + 计费原点是豆包」这一种组合。
-func TestNeedsCapcutFailoverUpscaleMatrix(t *testing.T) {
-	assert.True(t, needsCapcutFailoverUpscale(capcutAltTask()), "降级任务必须超分")
+// 只认「执行 CapCut + 计费原点按 720P 售卖」这一种组合。
+func TestNeedsCapcutUpscaleMatrix(t *testing.T) {
+	assert.True(t, needsCapcutUpscale(capcutAltTask()), "规则五降级任务必须超分")
 
 	direct := &model.Task{TaskID: "task_direct"}
 	direct.Properties.OriginModelName = ModelCapcut25Flash
-	assert.False(t, needsCapcutFailoverUpscale(direct),
-		"客户直接买 2.5 Flash 时不该超分（它本来就是该档商品）")
+	assert.False(t, needsCapcutUpscale(direct),
+		"客户直接买 2.5 Flash 时不该超分（买什么档交付什么档）")
 
 	doubao := &model.Task{TaskID: "task_doubao"}
 	doubao.Properties.OriginModelName = "seedance-2-5"
 	doubao.PrivateData.RouteOriginModel = "seedance-2-5"
-	assert.False(t, needsCapcutFailoverUpscale(doubao),
+	assert.False(t, needsCapcutUpscale(doubao),
 		"执行模型是豆包时不该超分（豆包本来就是 720P 交付）")
 
+	// 促销族改派（规则七/八，2026-11-15 起同样按 480p 生成）。
 	ecom := &model.Task{TaskID: "task_ecom"}
 	ecom.Properties.OriginModelName = ModelCapcut25Flash
 	ecom.PrivateData.RouteOriginModel = "seedance2.5-特惠"
-	assert.False(t, needsCapcutFailoverUpscale(ecom),
-		"规则七的促销族改派不该被当成豆包降级")
+	assert.True(t, needsCapcutUpscale(ecom),
+		"促销族改派 CapCut 必须超分（生成的是 480p，客户买的是 720P）")
 
-	other := &model.Task{TaskID: "task_other"}
-	other.Properties.OriginModelName = ModelCapcut25
-	other.PrivateData.RouteOriginModel = "seedance-2-5"
-	assert.False(t, needsCapcutFailoverUpscale(other), "只有 2.5 Flash 这一档走 480p")
+	huodong := &model.Task{TaskID: "task_huodong"}
+	huodong.Properties.OriginModelName = ModelCapcut25Flash
+	huodong.PrivateData.RouteOriginModel = "seedance2.5-活动"
+	assert.True(t, needsCapcutUpscale(huodong), "活动版按次档同样承诺 720P 交付")
 
-	assert.False(t, needsCapcutFailoverUpscale(nil), "nil 任务必须安全")
+	// 历史别名：别名中间件只改 body.model，计费原点保留旧名。
+	legacy := &model.Task{TaskID: "task_legacy"}
+	legacy.Properties.OriginModelName = ModelCapcut25Flash
+	legacy.PrivateData.RouteOriginModel = "wan3.0-720p-特惠"
+	assert.True(t, needsCapcutUpscale(legacy),
+		"wan3.0-720p-特惠 是促销族的历史别名，漏掉会让老客户拿到 480P 原片")
+
+	// 规则六短时长分支的目标（2.0 Fast）同样按 480p 生成。
+	fast := &model.Task{TaskID: "task_fast"}
+	fast.Properties.OriginModelName = ModelCapcut20Fast
+	fast.PrivateData.RouteOriginModel = "seedance2.5-特惠"
+	assert.True(t, needsCapcutUpscale(fast), "CapCut 快速档改派也要补齐 720P 交付")
+
+	// 直接买 CapCut 其它档位：不受影响。
+	directOther := &model.Task{TaskID: "task_direct_other"}
+	directOther.Properties.OriginModelName = ModelCapcut25
+	assert.False(t, needsCapcutUpscale(directOther), "直接购买的档位不超分")
+
+	assert.False(t, needsCapcutUpscale(nil), "nil 任务必须安全")
 }
 
 // 钩子注入后：匹配的任务被委托给超分实现（handled=true 让任务保持处理中）。

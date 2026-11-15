@@ -1,25 +1,31 @@
 package manwu
 
-// CapCut 备选链路的「交付前超分」钩子（2026-11-14 加）。
+// CapCut 链路的「交付前超分」钩子（2026-11-14 加，2026-11-15 扩到促销族）。
 //
 // ───────────────────────── 什么时候触发 ─────────────────────────
 //
-//	只对**规则五降级过来的 CapCut 任务**触发：豆包链路（seedance-2-5）不可用时，
-//	条件路由把请求改派到 cp-seedance-2.5flash，并按 480p 生成；
-//	成片要超分到 720P 再交付，才算兑现「客户买的 720P」。
-//
 //	判定用「执行模型 + 计费原点」两个事实，不新增状态位：
-//	  Properties.OriginModelName == cp-seedance-2.5flash（实际跑的模型）
-//	  PrivateData.RouteOriginModel == seedance-2-5（客户原本买的模型）
+//	  Properties.OriginModelName 是 CapCut 档位（cp-seedance-*）
+//	  PrivateData.RouteOriginModel 是「按 720P 售卖」的源模型
 //
-//	这对组合**只有**规则五的备选链路能产生：
-//	  - 客户直接买 cp-seedance-2.5flash → RouteOriginModel 为空 → 不触发；
-//	  - 客户直接买 seedance-2-5（豆包正常）→ 执行模型不是 CapCut → 不触发；
-//	  - 规则七（电商内容 → cp-seedance-2.5flash）→ RouteOriginModel 是促销族成员
-//	    → 不触发（规则七是另一套定价，与本链路无关）。
+//	当前覆盖两条改派链，它们的共同点是「客户买 720P、CapCut 只按 480p 生成」：
 //
-//	⚠️ 为什么不给 CapCut 全档做超分：CapCut 自己就是按档卖的商品，
-//	720p 单子已经是 720p，再超分一次是白花钱且会糊。
+//	  1. 规则五降级（2026-11-14）：豆包 seedance-2-5 不可用 → 改派
+//	     cp-seedance-2.5flash 按 480p 生成（middleware/video_route_failover_alt.go），
+//	     计费原点 seedance-2-5（一口价 ¥3.50/次）。
+//	  2. 规则六/七/八（2026-11-15）：促销族 seedance2.5-特惠 / -活动 改派
+//	     cp-seedance-2.5flash（或 2.0fast）时统一钉 480p 生成
+//	     （middleware/seedance_route_ecommerce.go 的 capcutGenerationResolution），
+//	     计费原点仍是促销族（按秒 ¥0.20/秒 或按次 ¥4.5/次）。
+//	     促成的动机是成本：CapCut 720p 是 480p 的 2 倍 credits，
+//	     超分（MPS）比这半个档位便宜得多。
+//
+//	反面必须**不触发**的两类（误判就是白花钱、或把成片越超越糊）：
+//	  - 客户直接买 cp-seedance-2.5flash（RouteOriginModel 为空）→ 他买的
+//	    就是那个档位，480p 单不该超分、720p 单已经是对应档位；
+//	  - 执行模型不是 CapCut（豆包/班车等）→ 它们自己交付的就是承诺档位。
+//
+//	⚠️ 为什么不给 CapCut 全档无脑超分：CapCut 自己就是按档卖的商品，
 //	超分只服务「生成档位低于交付档位」这一种情况。
 //
 // ───────────────────────── 为什么用「注入」而不是直接调用 ─────────────────────────
@@ -52,8 +58,49 @@ import (
 	"github.com/QuantumNous/new-api/model"
 )
 
-// capcutFailoverUpscaleModel 是走「480p 生成 + 超分 720P 交付」的执行模型。
-const capcutFailoverUpscaleModel = ModelCapcut25Flash
+// capcutUpscaleDeliveryOrigin 判断计费原点是不是「按 720P 售卖」的模型。
+//
+// 三类原点都算：豆包 seedance-2-5（规则五降级）、促销族
+// seedance2.5-特惠 / -活动（规则六/七/八改派）、以及促销族母本的历史别名
+// wan3.0-720p-特惠（别名中间件只改 body.model、计费原点保留旧名）。
+//
+// 空串（= 没发生改派，客户直接买 CapCut 档位）一律 false ——
+// 那种任务买什么档就交付什么档，不该被超分。
+func capcutUpscaleDeliveryOrigin(origin string) bool {
+	name := strings.TrimSpace(origin)
+	if name == "" {
+		return false
+	}
+	if name == constant.Seedance25DoubaoModel || name == constant.Wan3TehuiLegacyModel {
+		return true
+	}
+	return constant.IsSeedance25Family(name)
+}
+
+// isCapcutVideoExecutionModel 判断实际执行的是不是 CapCut 档位。
+//
+// 用 modelSpecs 的 Kind 判定而不是比模型名：五档 CapCut 商品（2.0mini /
+// 2.0fast / 2.0 / 2.5flash / 2.5）都是同一条链路、同一个超分前提，
+// 新增档位时自动命中，不用回来改这里。
+func isCapcutVideoExecutionModel(name string) bool {
+	spec, ok := modelSpecs[strings.TrimSpace(name)]
+	return ok && spec.Kind == kindCapcutVideo
+}
+
+// needsCapcutUpscale 判断某个任务是否需要在交付前超分。
+//
+// 两个条件必须同时成立（缺一不可）：
+//  1. 实际执行的是 CapCut 档位；
+//  2. 计费原点是按 720P 售卖的源模型（豆包 / 促销族 / 老别名）。
+func needsCapcutUpscale(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	if !isCapcutVideoExecutionModel(task.Properties.OriginModelName) {
+		return false
+	}
+	return capcutUpscaleDeliveryOrigin(task.PrivateData.RouteOriginModel)
+}
 
 // capcutAuthedMediaPath 是 ArcReel「需要渠道密钥才能取片」的产物接口路径片段。
 //
@@ -89,40 +136,25 @@ func SetSuperResolutionHooks(
 	superResolutionPoller = poll
 }
 
-// needsCapcutFailoverUpscale 判断某个任务是否需要在交付前超分。
-//
-// 两个条件必须同时成立（缺一不可）：
-//  1. 实际执行的是 CapCut 2.5 Flash；
-//  2. 计费原点是豆包 seedance-2-5（即这条请求是规则五降级来的）。
-func needsCapcutFailoverUpscale(task *model.Task) bool {
-	if task == nil {
-		return false
-	}
-	if strings.TrimSpace(task.Properties.OriginModelName) != capcutFailoverUpscaleModel {
-		return false
-	}
-	return strings.TrimSpace(task.PrivateData.RouteOriginModel) == constant.Seedance25DoubaoModel
-}
-
 // AfterUpstreamSuccess 在上游第一跳成功后接管「超分」这一步。
 //
 // 返回 handled=true 表示已提交超分任务，service 层会保持任务「处理中」，
 // 等轮询推进完成后才置 SUCCESS（此时 ResultURL 已是 720P 产物）。
 //
 // 其它模型一律返回 (false, nil)：本 adaptor 承载豆包/即梦/CapCut 等多个平台，
-// 只有上面那一种组合需要二次加工，其余保持原有的一跳交付行为。
+// 只有 needsCapcutUpscale 命中的组合需要二次加工，其余保持原有的一跳交付行为。
 func (a *TaskAdaptor) AfterUpstreamSuccess(
 	ctx context.Context,
 	task *model.Task,
 	upstreamURL string,
 ) (bool, error) {
-	if !needsCapcutFailoverUpscale(task) {
+	if !needsCapcutUpscale(task) {
 		return false, nil
 	}
 	if superResolutionSubmitter == nil {
 		// 装配缺失：宁可交付 480P 原片也不要把任务挂在「处理中」，
 		// 但必须留一条错误日志 —— 这是配置问题，不是业务失败。
-		logger.LogError(ctx, "manwu 超分钩子未注入，CapCut 降级任务按原片交付（请检查 relay_adaptor 的装配）")
+		logger.LogError(ctx, "manwu 超分钩子未注入，CapCut 任务按原片交付（请检查 relay_adaptor 的装配）")
 		model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePostProcess,
 			model.TaskLogLevelError, "super resolution hook is not registered", nil)
 		return false, nil
@@ -145,7 +177,7 @@ func (a *TaskAdaptor) AfterUpstreamSuccess(
 	}
 	media = a.resolveCapcutMediaURL(ctx, media)
 	if media == "" {
-		logger.LogError(ctx, "CapCut 降级任务拿不到可抓取的成片地址，按原片交付（"+task.TaskID+"）")
+		logger.LogError(ctx, "CapCut 任务拿不到可抓取的成片地址，按原片交付（"+task.TaskID+"）")
 		model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePostProcess,
 			model.TaskLogLevelError, "upstream media url is empty or unreachable", nil)
 		return false, nil
@@ -295,13 +327,13 @@ func deriveArcmediaPublicURL(raw string) string {
 
 // PollPostProcess 推进超分任务；done=true 表示已到终态。
 //
-// 只有 needsCapcutFailoverUpscale 为真时才推进 —— 与本 adaptor 其它任务的
+// 只有 needsCapcutUpscale 为真时才推进 —— 与本 adaptor 其它任务的
 // 「无后处理」语义保持一致（返回 true 表示「没有后处理要等」，service 层照常收尾）。
 func (a *TaskAdaptor) PollPostProcess(ctx context.Context, task *model.Task) (bool, error) {
 	if task == nil || task.PrivateData.PostProcess == nil {
 		return true, nil
 	}
-	if !needsCapcutFailoverUpscale(task) {
+	if !needsCapcutUpscale(task) {
 		return true, nil
 	}
 	if superResolutionPoller == nil {

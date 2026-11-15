@@ -433,15 +433,34 @@ func TestEcommerceLiftsReferenceImagesToInputReference(t *testing.T) {
 	}
 }
 
-// 分辨率必须显式钉 720p：CapCut 缺省是 480p，不钉就是静默降档。
-func TestEcommercePinsResolutionTo720p(t *testing.T) {
+// 生成档位必须显式钉 480p（2026-11-15 老板口径）：CapCut 720p 是 480p 的
+// 2 倍 credits，交付靠超分补回 720P。
+//
+// ⚠️ 这里**不能**留空让 CapCut 用自己的缺省值：虽然它的缺省恰好也是 480p，
+// 但「靠巧合对上」在改一次上游缺省后就会变成 720p 白烧钱。
+func TestEcommercePinsGenerationResolutionTo480p(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
+	stubSuperResolution(t, true)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐"}`)
+	body := decodeBody(t, seen)
+
+	if body["resolution"] != "480p" {
+		t.Fatalf("生成档位必须钉 480p（交付前超分到 720P），实际 %v", body["resolution"])
+	}
+}
+
+// 超分链路没配时不许钉 480p：那会「按 720P 的价交付 480P 的片」。
+// 退回 720p 直接生成 —— 与改造前的行为一致，只是不省钱。
+func TestEcommerceKeeps720pWhenSuperResolutionUnavailable(t *testing.T) {
+	enableEcommerce(t, true, true, 20)
+	stubSuperResolution(t, false)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐"}`)
 	body := decodeBody(t, seen)
 
 	if body["resolution"] != "720p" {
-		t.Fatalf("分辨率必须钉 720p（源链路 prime 缺省交付 720P），实际 %v", body["resolution"])
+		t.Fatalf("超分不可用必须按 720p 直接生成，实际 %v", body["resolution"])
 	}
 }
 
