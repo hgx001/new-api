@@ -273,8 +273,13 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         </div>
       </div>
 
-      {/* Description */}
-      <p className='text-muted-foreground mt-3 line-clamp-1 flex-1 text-[13px] leading-relaxed sm:mt-4 sm:line-clamp-2 sm:min-h-[2.5rem]'>
+      {/* Description
+          描述固定高度、超出可滚动查看，而不是把卡片撑高。
+          不能用 line-clamp + flex-1：在 flex item 上 -webkit-line-clamp 会被
+          blockify 失效，剩余空间全被 flex-grow 吃掉，长描述会把健康度面板
+          挤出卡片（2026-11 线上实测）。固定高度 + overflow-y-auto 既保证
+          卡片等高、健康度面板始终可见，又能滚动读完整描述。 */}
+      <p className='text-muted-foreground hover-scrollbar mt-3 h-[1.7em] overflow-y-auto text-[13px] leading-relaxed sm:mt-4 sm:h-[3.25em]'>
         {props.model.description ||
           (descriptionKey ? t(descriptionKey) : null) ||
           t('No description available.')}
@@ -293,8 +298,8 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         </div>
       )}
 
-      {/* Footer: metadata pills */}
-      <div className='mt-3 flex flex-wrap items-center gap-1.5 sm:mt-4'>
+      {/* Footer: metadata pills（mt-auto 贴底，行内空白留在描述与底部之间） */}
+      <div className='mt-auto flex flex-wrap items-center gap-1.5 pt-3 sm:pt-4'>
         {primaryGroup && (
           <span className='bg-primary/10 text-primary inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium'>
             {primaryGroup} {t('Groups')}
