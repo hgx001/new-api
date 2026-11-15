@@ -3,18 +3,14 @@ package youzanwan3
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"image"
-	"image/color"
-	"image/draw"
 	_ "image/gif"
-	"image/jpeg"
+	_ "image/jpeg"
 	_ "image/png"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -33,49 +29,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
-	xdraw "golang.org/x/image/draw"
 	"golang.org/x/sync/errgroup"
 )
 
-const maxAssetBytes = 100 << 20
-
-const (
-	// assetTotalBudget 是「一次提交里所有素材处理」的总预算。
-	//
-	// 2026-11-12 客户反馈（threeFatAi）：工作台的提交超时**写死 60 秒**，
-	// 而 POST /v1/videos 是同步拉取素材的 —— 21.89MB 的参考视频放在境外源站上，
-	// 我们迟迟不返回，客户先超时。更糟的是我们这边没有任何超时：
-	// 客户 60 秒断开后 goroutine 还在下载，下完照样建单扣费，客户以为失败。
-	//
-	// 所以这里钉一个**明显早于 60 秒**的预算：宁可我们主动失败并说清原因，
-	// 也不能让客户等到自己的超时，还顺带被扣一次钱。
-	assetTotalBudget = 50 * time.Second
-
-	// assetMaxConcurrency 限制同时处理的素材数。
-	//
-	// 【2026-11-13 从 2 提到 6】一次提交常见 6~7 张参考图，2 路要跑 3~4 轮：
-	// 实测 4 张图 2 路并发吃掉 6.7 秒，7 张就要 11 秒以上，叠在上游 26 秒的
-	// 受理时间上正好撞穿客户 60 秒的提交超时。
-	//
-	// 上限停在 6 而不是更高：解码后是 w×h×4 字节，一张 1200 万像素的手机照
-	// 就是 48MB，6 路峰值在 300MB 量级，3.7GB 的机器还能承受（超过
-	// referenceImageMaxPixels 的图会被本地拒掉，见 flattenImage）；
-	// 再往上就是拿 OOM 换几十毫秒。
-	assetMaxConcurrency = 6
-
-	// assetVideoMaxConcurrency 单独限制参考视频的并发。
-	//
-	// 单个素材上限 100MB（maxAssetBytes），6 个视频同时下载就是 600MB 常驻内存。
-	// 视频不像图片那样有本地解码/缩放的成本，但同时挂 6 个只会有反效果：
-	// 出口带宽是共享的 5Mbps，并发下载只会让每个都更慢。
-	assetVideoMaxConcurrency = 2
-)
-
-// assetVideoSlots 是参考视频的**全局**并发闸门（跨请求共享）。
-//
-// 用包级 channel 而不是每请求一个 errgroup 限流：多个客户同时提交时，
-// 每个请求各开 2 路一样会把内存顶穿。这里限制的是整台机器的视频下载并发。
-var assetVideoSlots = make(chan struct{}, assetVideoMaxConcurrency)
+// 2026-11-15 上游切到 New API 协议：建单 POST /v1/videos、查询 GET /v1/videos/{id}，
+// 素材直接在请求体的 media 里给公网 URL（上游自己抓取），不再有 /v1/assets 上传、
+// 本地下载/缩放/重编码这一步 —— 提交是纯本地的，不再需要素材处理预算与并发闸门。
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
@@ -86,31 +45,24 @@ type TaskAdaptor struct {
 }
 
 type generateResponse struct {
-	ID     string `json:"id"`
-	TaskID string `json:"taskId"`
-	Task   struct {
-		ID string `json:"id"`
-	} `json:"task"`
-	Data struct {
-		ID string `json:"id"`
-	} `json:"data"`
-	// 上游 V1 协议用 ok + error 表达失败（形如 {"ok":false,"error":{"code":...,
-	// "message":...}}）。这两个字段必须单独解析：失败响应里根本没有 task id，
-	// 若不先判错误就会退化成「returned empty task id」，把上游的真实原因
-	// （如 DURATION_INVALID / PROMPT_INVALID / 积分不足）吞成无信息量的 502。
-	OK      bool          `json:"ok"`
+	ID string `json:"id"`
+	// 上游失败时返回 {"error":{...}} 或 {"error":"..."}（New API 的 OpenAI 风格错误）。
+	// 这些字段必须单独解析：失败响应里根本没有 task id，若不先判错误就会退化成
+	// 「returned empty task id」，把上游的真实原因（积分不足 / 参数非法）吞成 502。
 	Error   upstreamError `json:"error"`
 	Message string        `json:"message"`
 }
 
-// upstreamError 兼容有赞两种 error 形态：裸字符串，或 {code, message} 对象。
+// upstreamError 兼容上游三种 error 形态：{code,message} 对象、裸字符串、
+// 以及只有 message 的对象（New API 的 OpenAI 风格错误对象）。
 //
-// 2026-10-05 事故：对象形态让 `Error string` 整体反序列化失败，ParseTaskResult
-// 每轮轮询都抛 "cannot unmarshal object into ... error of type string"，任务因此
-// 永远停在 NOT_START / 0%——用户既看不到失败原因，也永远拿不到退款（上游早已
-// refundedPoints）。对象形态统一拍平成 "code: message"，与上游字符串形态里已有的
-// "WAN3_QUOTA_CAPACITY_INSUFFICIENT: ..." 风格一致。
-type upstreamError string
+// 对客文案优先取 message：新版上游把机器码放 code（invalid_request_error 之类）、
+// 把可读原因放 message，拼在一起既鼓噪又帮不上客户（2026-11-15 切协议）。
+// code 仍保留用于排查 —— 拿不到 message 时兜底回显 code。
+type upstreamError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
 
 func (e *upstreamError) UnmarshalJSON(data []byte) error {
 	trimmed := strings.TrimSpace(string(data))
@@ -122,51 +74,40 @@ func (e *upstreamError) UnmarshalJSON(data []byte) error {
 		if err := common.Unmarshal(data, &text); err != nil {
 			return err
 		}
-		*e = upstreamError(text)
+		e.Message = text
 		return nil
 	}
-	var object struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	}
+	// 用别名类型解码，避免再次进入本方法（无限递归）。
+	type plain upstreamError
+	var object plain
 	if err := common.Unmarshal(data, &object); err != nil {
 		return err
 	}
-	switch {
-	case object.Code != "" && object.Message != "":
-		*e = upstreamError(object.Code + ": " + object.Message)
-	case object.Message != "":
-		*e = upstreamError(object.Message)
-	default:
-		*e = upstreamError(object.Code)
-	}
+	*e = upstreamError(object)
 	return nil
 }
 
-type taskResponse struct {
-	OK     bool   `json:"ok"`
-	Status string `json:"status"`
-	Result struct {
-		URL string `json:"url"`
-	} `json:"result"`
-	Error   upstreamError `json:"error"`
-	Message string        `json:"message"`
-	Task    struct {
-		ID           string        `json:"id"`
-		Status       string        `json:"status"`
-		VideoURL     string        `json:"videoUrl"`
-		ErrorCode    string        `json:"errorCode"`
-		ErrorMessage string        `json:"errorMessage"`
-		Error        upstreamError `json:"error"`
-	} `json:"task"`
+// text 返回给客户/日志看的一行文案。
+func (e upstreamError) text() string {
+	if message := strings.TrimSpace(e.Message); message != "" {
+		return message
+	}
+	return strings.TrimSpace(e.Code)
 }
 
-type assetResponse struct {
-	Asset struct {
-		ID   string `json:"id"`
-		Kind string `json:"kind"`
-	} `json:"asset"`
-	URL string `json:"url"`
+// videoTaskResponse 是 GET /v1/videos/{id} 的响应（2026-11-15 上游切到 New API 协议）。
+// 状态取 queued / in_progress / completed / failed，进度是 0—100 的整数，
+// 完成态的成片地址在 metadata.url，失败原因在 error.message。
+type videoTaskResponse struct {
+	ID       string        `json:"id"`
+	Status   string        `json:"status"`
+	Progress int           `json:"progress"`
+	Error    upstreamError `json:"error"`
+	Message  string        `json:"message"`
+	URL      string        `json:"url"`
+	Metadata struct {
+		URL string `json:"url"`
+	} `json:"metadata"`
 }
 
 var versionSuffixPattern = regexp.MustCompile(`(?i)/v\d+(beta)?$`)
@@ -220,6 +161,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	media, mediaErr := buildMedia(req)
 	if mediaErr != nil {
 		return service.TaskErrorWrapperLocal(mediaErr, "invalid_request", http.StatusBadRequest)
+	}
+	// 参考图尺寸校验（短边 <720 本地 400）：上游的 MEDIA_IMAGE_INVALID 文案是
+	// 「图片无法读取或格式不支持」，客户看不懂只会反复重试同一张图。
+	// 新版协议下素材由上游抓取，这里只读图片头部拿尺寸，不下载整图。
+	imageCtx, cancelImages := context.WithTimeout(c.Request.Context(), referenceImageProbeTimeout)
+	defer cancelImages()
+	if imageErr := a.validateReferenceImages(imageCtx, media); imageErr != nil {
+		return service.TaskErrorWrapperLocal(imageErr, "invalid_image", http.StatusBadRequest)
 	}
 	// 参考视频按秒加价（生成秒数 + 参考视频总秒数），秒数在这里探测并塞进 context，
 	// 由 EstimateBilling 读出来并入计费。必须放在预扣之前：EstimateBilling 没有
@@ -751,14 +700,17 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 		if strings.TrimSpace(item.URL) == "" {
 			return errors.New("youzan wan3 media url is required")
 		}
+		if err := validateMediaURL(item.URL); err != nil {
+			return err
+		}
 		switch item.Type {
 		case "reference_image", "reference_video", "reference_audio":
 			counts[item.Type]++
 		case "first_frame", "last_frame":
-			// 2026-10-28 上游 /v1/tasks 取消了 firstFrameAssetId/lastFrameAssetId，
-			// media 只认 reference_image / reference_video / reference_audio 三类，
-			// 且 type 必须等于上传回执的 asset.kind。首尾帧已无法表达；静默降级成
-			// 参考图会让客户端以为做了首尾帧控制（实际只是普通参考），故本地直接拒绝。
+			// 2026-10-28 上游取消首尾帧（firstFrameAssetId/lastFrameAssetId 已不存在），
+			// media 只认 reference_image / reference_video / reference_audio 三类；
+			// 2026-11-15 切到 New API 协议后素材契约不变。静默降级成参考图会让客户端
+			// 以为做了首尾帧控制（实际只是普通参考），故本地直接拒绝。
 			return errors.New("youzan wan3 no longer supports first_frame/last_frame, use reference_image instead")
 		default:
 			return errors.Errorf("youzan wan3 media type %q is unsupported", item.Type)
@@ -779,233 +731,105 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	return nil
 }
 
-func parseDataURL(value string) ([]byte, string, error) {
-	parts := strings.SplitN(value, ",", 2)
-	if len(parts) != 2 || !strings.HasPrefix(strings.ToLower(parts[0]), "data:") {
-		return nil, "", errors.New("参考素材的 data URL 格式不正确")
-	}
-	meta := parts[0][5:]
-	mimeType := strings.Split(meta, ";")[0]
-	if strings.Contains(meta, ";base64") {
-		decoded, err := base64.StdEncoding.DecodeString(parts[1])
-		return decoded, mimeType, err
-	}
-	decoded, err := url.PathUnescape(parts[1])
-	return []byte(decoded), mimeType, err
-}
-
-func getHTTPClient(proxy string) (*http.Client, error) {
-	client, err := service.GetHttpClientWithProxy(proxy)
-	if err != nil {
-		return nil, err
-	}
-	if client == nil {
-		client = http.DefaultClient
-	}
-	return client, nil
-}
-
-// errClientGone 标记「客户端已断开」。
+// validateMediaURL 参考素材必须是上游能自己抓取的公网 http(s) 地址。
 //
-// 它不是参数错误：没有人还在读这条消息，也不该降级成给客户看的 400 文案，
-// 更不能因此让客户以为是自己填错了素材地址。用哨兵值而不是比字符串，
-// 是为了让上层（asAssetSourceError）能可靠地把它排除在「素材不可用」之外。
-//
-// 哨兵本身放在 taskcommon：relay_task 要在**不知道是哪个渠道**的情况下识别
-// 断线（499 不重试、不记渠道错），import 具体渠道包会造成反向依赖。
-var errClientGone = taskcommon.ErrClientDisconnected
-
-func isClientGone(err error) bool {
-	return taskcommon.IsClientDisconnected(err)
+// 2026-11-15 协议切换后素材不再经我们上传（旧 /v1/assets 已失效），上游按 URL
+// 自己抓取：data URL / 相对路径 / 内网地址它都拿不到。这种请求提交上去会变成
+// 「客户付了钱、任务跑完才报素材取不到」，是最差的一种失败，所以本地 400 提前拒。
+// 与 manwu / megabyai 通道同一口径。
+func validateMediaURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		// 脱敏后再回显：raw 可能是整张图片的 base64 data URL，
+		// 原样回显等于把字节流写进 400 响应与网关日志。
+		return errors.Errorf("参考素材必须是公网 http(s) 地址（当前：%s）：新版上游自己按 URL 抓取，不再接受内联 data URL。请先上传素材（图片 /v1/uploads，视频/音频 /v1/files）后重试",
+			taskcommon.RedactMaterialURL(raw))
+	}
+	return nil
 }
 
-// assetStageError 把素材处理中的「超时 / 客户端断开」翻译成合适的错误。
+const (
+	// referenceImageProbeBytes 只读参考图头部：DecodeConfig 只需要文件头，
+	// 不再像旧协议那样整张下载 + 缩放重编码（素材改由上游按 URL 自己抓取）。
+	referenceImageProbeBytes = 2 << 20
+
+	// referenceImageProbeTimeout 是「一次提交里所有参考图校验」的总预算，
+	// 不能让客户为了本地校验等到自己的提交超时。
+	referenceImageProbeTimeout = 20 * time.Second
+
+	// referenceImageProbeConcurrency 限制同时探测的参考图数量：
+	// 一次提交常见 6~7 张，串行会把 RTT 叠加成十秒级。
+	referenceImageProbeConcurrency = 4
+)
+
+// validateReferenceImages 在提交前校验参考图尺寸（只读头部，不下载整图）。
 //
-// 两种情形必须分开：
-//   - 预算耗尽（DeadlineExceeded）：客户还在等，要给他一条**能照做**的中文提示，
-//     并且降级成 400（素材地址问题，不该算渠道故障、不能触发 AutoBan 和换渠道重试）；
-//   - 客户端断开（Canceled）：没有人会读这条消息，原样返回即可，
-//     重点是让下载/上传立刻停下，别再建单扣费。
-func assetStageError(ctx context.Context, err error, stage string) error {
-	if err == nil {
-		return nil
+// 2026-11-11 真机实测（同一张图只改尺寸）：短边 204/230 上游回 MEDIA_IMAGE_INVALID，
+// 文案却是「图片无法读取或格式不支持」，客户只会反复重试同一张图；短边 <720 的图
+// 放大到 720P 交付本身也是糊的。规则沿用（短边 <720 本地 400，禁止透传给上游），
+// 只是素材改由上游抓取后，我们不再需要整张下载/重编码，读头部拿尺寸即可。
+func (a *TaskAdaptor) validateReferenceImages(ctx context.Context, media []relaycommon.TaskMedia) error {
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(referenceImageProbeConcurrency)
+	for _, item := range media {
+		if item.Type != "reference_image" {
+			continue
+		}
+		group.Go(func() error {
+			return a.probeReferenceImage(groupCtx, item.URL)
+		})
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-		return errors.Wrapf(errClientGone, "客户端已断开，素材%s中止", stage)
-	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		// 不写「已等待 N 秒」：真正触发的可能是父级更早的 deadline，
-		// 报一个没发生过的时长会让运维照着错的方向查。
-		//
-		// 兜底建议只能提「图片可用 /v1/uploads」：那个端点只收图片（25MB 上限、
-		// 只验图片魔数），对视频/音频说这句等于把客户引到一个必然失败的入口。
-		return taskcommon.NewUserError(errors.Errorf(
-			"参考素材%s超时（提交预算 %d 秒内未完成）：素材源站响应过慢。"+
-				"请把素材换到国内可访问的地址后重试（参考图也可先用 /v1/uploads 上传）",
-			stage, int(assetTotalBudget.Seconds())), "asset_timeout")
-	}
-	return err
+	return group.Wait()
 }
 
-// asAssetSourceError 把「素材源站 / 素材本身」的所有失败统一降级成 400。
-//
-// 为什么不止降级超时：素材地址是**客户填的**，404、DNS 解析不了、文件超过
-// 100MB、指向内网，全都是「换个地址就能修」。不降级的话 relay_task 会把它包成
-// 500 build_request_failed，而 controller/relay.go 对非 LocalError 会走
-// processChannelError —— 一个客户填错 URL 就能把有赞渠道打到 AutoBan，
-// 全体客户的视频一起停。这与 seeta 链路同口径
-// （见 relay/channel/task/seeta/adaptor.go：「素材问题属于客户入参错误」）。
-//
-// 上传到上游那一段**不**走这里：那才是渠道故障，该 500、该重试、该 AutoBan。
-func asAssetSourceError(err error) error {
-	if err == nil {
-		return nil
-	}
-	var userErr *taskcommon.UserError
-	if errors.As(err, &userErr) {
-		return err // 已经带好了 400 与可读文案
-	}
-	if isClientGone(err) {
-		return err
-	}
-	// 不额外加前缀：下面每条 readAssetBytes 的错误文案都已经写成客户能读的中文，
-	// 再包一层「参考素材不可用: 」只会让同义词重复两遍。
-	return taskcommon.NewUserError(err, "asset_unavailable")
-}
-
-// assetBudgetContext 给素材处理套上总预算，同时继承客户连接的取消。
-//
-// 两者缺一不可：只继承 parent 没有上限（客户不断开就永远等），
-// 只用 Background 加超时则客户断开后我们还在跑。
-func assetBudgetContext(parent context.Context) (context.Context, context.CancelFunc) {
-	if parent == nil {
-		parent = context.Background()
-	}
-	return context.WithTimeout(parent, assetTotalBudget)
-}
-
-// readAsset 读取素材字节。所有失败都会被 asAssetSourceError 统一降级成 400 ——
-// 这一层只负责「把字节拿回来」和「说清哪一步错了」。
-func (a *TaskAdaptor) readAsset(ctx context.Context, source string) ([]byte, string, string, error) {
-	data, mimeType, name, err := a.readAssetBytes(ctx, source)
-	if err != nil {
-		return nil, "", "", asAssetSourceError(err)
-	}
-	return data, mimeType, name, nil
-}
-
-func (a *TaskAdaptor) readAssetBytes(ctx context.Context, source string) ([]byte, string, string, error) {
-	if strings.HasPrefix(strings.ToLower(source), "data:") {
-		data, mimeType, err := parseDataURL(source)
-		return data, mimeType, "asset", err
-	}
-	parsed, err := url.Parse(source)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return nil, "", "", errors.New("参考素材地址必须是 http(s) 链接或 data URL")
-	}
+func (a *TaskAdaptor) probeReferenceImage(ctx context.Context, source string) error {
 	fetchSetting := system_setting.GetFetchSetting()
 	if err := common.ValidateURLWithFetchSetting(source, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain); err != nil {
-		return nil, "", "", errors.Wrap(err, "参考素材地址不被允许（内网或受限地址）")
+		return errors.Wrap(err, "参考图地址不被允许（内网或受限地址）")
 	}
 	client, err := getHTTPClient(a.proxy)
 	if err != nil {
-		return nil, "", "", err
+		return err
 	}
-	// 必须带 context：RELAY_TIMEOUT 默认是 0（永不超时），不接 context 的话
-	// 素材源站挂住，我们就会一直等到天荒地老，客户早就断开了。
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
 	if err != nil {
-		return nil, "", "", err
+		return err
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, "", "", assetStageError(ctx, err, "下载")
+		return errors.Wrap(err, "参考图无法访问（源站下载失败）")
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, "", "", errors.Errorf("参考素材下载失败：源站返回 HTTP %d（地址可能已失效）", response.StatusCode)
+		return errors.Errorf("参考图无法访问：源站返回 HTTP %d（地址可能已失效）", response.StatusCode)
 	}
-	if response.ContentLength > maxAssetBytes {
-		return nil, "", "", errors.Errorf("参考素材超过 %dMB 上限，请压缩或裁剪后重试", maxAssetBytes>>20)
-	}
-	limited := io.LimitReader(response.Body, maxAssetBytes+1)
-	data, err := io.ReadAll(limited)
+	data, err := io.ReadAll(io.LimitReader(response.Body, referenceImageProbeBytes))
 	if err != nil {
-		return nil, "", "", assetStageError(ctx, err, "下载")
+		return errors.Wrap(err, "参考图读取失败")
 	}
-	if len(data) > maxAssetBytes {
-		return nil, "", "", errors.Errorf("参考素材超过 %dMB 上限，请压缩或裁剪后重试", maxAssetBytes>>20)
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 {
+		return errors.Errorf("参考图无法解析（文件可能已损坏，或为暂不支持的格式 %s），请转成 JPG/PNG 后重试",
+			http.DetectContentType(data))
 	}
-	mimeType := response.Header.Get("Content-Type")
-	if index := strings.IndexByte(mimeType, ';'); index >= 0 {
-		mimeType = mimeType[:index]
-	}
-	return data, mimeType, path.Base(parsed.Path), nil
+	return checkReferenceImageSize(config.Width, config.Height)
 }
 
-// flattenImage 把参考图规整成上游能吃的 JPEG：转 sRGB 白底、长边压到 1920、质量 88。
-//
-// 【为什么必须缩放】2026-11-13 实测：4000×3000 的手机原图按 q95 全尺寸上传仍是
-// 4MB，经 5Mbps 出口要 7 秒，而且上游受理时间随素材体积上涨（4 张图那次 26 秒，
-// 没有素材只要 3.2 秒）。缩到长边 1920 + q88 后约 500KB，客户端 60 秒的提交窗口
-// 才够用。缩放**只缩不放**：放大只会凭空增体积，不会增加任何信息。
-func flattenImage(data []byte) ([]byte, string, error) {
-	// 先看头信息再解码：解码后的内存是 w×h×4 字节，一张 20000×20000 的图
-	// 直接就是 1.6GB，6 路并发会立刻 OOM。DecodeConfig 只解析头部，几乎零成本。
-	config, _, err := image.DecodeConfig(bytes.NewReader(data))
-	if err != nil {
-		return nil, "", undecodableImageError(data)
+// checkReferenceImageSize 按「长边不超过 referenceImageMaxSide、短边不低于
+// minReferenceImageShortSide」判定参考图是否可用。
+func checkReferenceImageSize(width, height int) error {
+	target := referenceImageTargetSize(image.Rect(0, 0, width, height))
+	if target.Dx() >= minReferenceImageShortSide && target.Dy() >= minReferenceImageShortSide {
+		return nil
 	}
-	if config.Width <= 0 || config.Height <= 0 {
-		return nil, "", undecodableImageError(data)
+	if target.Dx() != width || target.Dy() != height {
+		return errors.Errorf(
+			"参考图长宽比过窄：%dx%d 压缩到长边 %dpx 后为 %dx%d，短边至少需要 %dpx，请裁剪后重试",
+			width, height, referenceImageMaxSide,
+			target.Dx(), target.Dy(), minReferenceImageShortSide)
 	}
-	if int64(config.Width)*int64(config.Height) > referenceImageMaxPixels {
-		return nil, "", taskcommon.NewUserError(errors.Errorf(
-			"参考图分辨率过大：%dx%d，上限 %d 万像素，请先缩小后重试",
-			config.Width, config.Height, referenceImageMaxPixels/10000), "invalid_image")
-	}
-
-	img, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		// 旧逻辑在这里 return 原字节 + 假装是 image/jpeg，于是损坏的 PNG
-		// （生产实例：CRC invalid checksum）被当成 JPEG 传给上游，客户收到的是
-		// 上游的「文件内容与声明格式不符」——完全看不懂该改什么。
-		return nil, "", undecodableImageError(data)
-	}
-
-	bounds := img.Bounds()
-	target := referenceImageTargetSize(bounds)
-	// 尺寸过小直接本地拒绝：上游会回「图片无法读取或格式不支持」（实际是分辨率不够），
-	// 客户要么白等一次退款，要么反复重试同一张图。
-	// 用 UserError 是为了降级成 400：换张图就能修，不能算渠道故障（500 会重试 + AutoBan）。
-	if target.Dx() < minReferenceImageShortSide || target.Dy() < minReferenceImageShortSide {
-		if target.Dx() != bounds.Dx() || target.Dy() != bounds.Dy() {
-			return nil, "", taskcommon.NewUserError(errors.Errorf(
-				"参考图长宽比过窄：%dx%d 压缩到长边 %dpx 后为 %dx%d，短边至少需要 %dpx，请裁剪后重试",
-				bounds.Dx(), bounds.Dy(), referenceImageMaxSide,
-				target.Dx(), target.Dy(), minReferenceImageShortSide), "invalid_image")
-		}
-		return nil, "", taskcommon.NewUserError(errors.Errorf(
-			"参考图分辨率过低：%dx%d，短边至少需要 %dpx，请更换清晰图片后重试",
-			bounds.Dx(), bounds.Dy(), minReferenceImageShortSide), "")
-	}
-
-	// 统一白底：PNG 的透明区域直接转 JPEG 会变成黑块。
-	canvas := image.NewRGBA(target)
-	draw.Draw(canvas, canvas.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
-	if target.Dx() == bounds.Dx() && target.Dy() == bounds.Dy() {
-		draw.Draw(canvas, canvas.Bounds(), img, bounds.Min, draw.Over)
-	} else {
-		// CatmullRom：参考图里常见文字与细线，最近邻会让它们锯齿化，
-		// 上游识别素材特征时明显变差。
-		xdraw.CatmullRom.Scale(canvas, canvas.Bounds(), img, bounds, draw.Over, nil)
-	}
-
-	var output bytes.Buffer
-	if err := jpeg.Encode(&output, canvas, &jpeg.Options{Quality: referenceImageQuality}); err != nil {
-		return nil, "", err
-	}
-	return output.Bytes(), "image/jpeg", nil
+	return errors.Errorf("参考图分辨率过低：%dx%d，短边至少需要 %dpx，请更换清晰图片后重试",
+		width, height, minReferenceImageShortSide)
 }
 
 // referenceImageTargetSize 计算缩放后的目标尺寸：长边不超过 referenceImageMaxSide，
@@ -1023,7 +847,7 @@ func referenceImageTargetSize(bounds image.Rectangle) image.Rectangle {
 	target := image.Rect(0, 0,
 		int(math.Round(float64(width)*scale)),
 		int(math.Round(float64(height)*scale)))
-	// 极端长宽比可能把短边算成 0，留 1px 让后面的「短边不足」判定给出可读报错。
+	// 极端长宽比可能把短边算成 0，留 1px 让「短边不足」判定给出可读报错。
 	if target.Dx() < 1 {
 		target.Max.X = 1
 	}
@@ -1033,111 +857,24 @@ func referenceImageTargetSize(bounds image.Rectangle) image.Rectangle {
 	return target
 }
 
-// undecodableImageError 把「解不出来」翻译成客户能照做的 400。
-func undecodableImageError(data []byte) error {
-	return taskcommon.NewUserError(errors.Errorf(
-		"参考图无法解析（文件可能已损坏，或为暂不支持的格式 %s），请转成 JPG/PNG 后重试",
-		http.DetectContentType(data)), "invalid_image")
+func getHTTPClient(proxy string) (*http.Client, error) {
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	return client, nil
 }
 
-func fileName(kind, source, mimeType string) string {
-	name := path.Base(strings.TrimSpace(source))
-	if name == "." || name == "/" || name == "" {
-		name = "reference-" + kind
-	}
-	if strings.HasPrefix(name, "data:") || strings.Contains(name, "?") {
-		name = "reference-" + kind
-	}
-	if kind == "image" {
-		return strings.TrimSuffix(name, path.Ext(name)) + ".jpg"
-	}
-	if path.Ext(name) == "" {
-		switch mimeType {
-		case "video/mp4":
-			name += ".mp4"
-		case "audio/mpeg":
-			name += ".mp3"
-		}
-	}
-	return name
-}
-
-func assetUploadKind(mediaType string) (string, string, error) {
-	switch mediaType {
-	case "reference_image":
-		return "reference_image", "image", nil
-	case "reference_video":
-		return "reference_video", "video", nil
-	case "reference_audio":
-		return "reference_audio", "audio", nil
-	default:
-		return "", "", errors.Errorf("youzan wan3 media type %q is unsupported by the current API", mediaType)
-	}
-}
-
-func (a *TaskAdaptor) uploadAsset(ctx context.Context, mediaType, source string) (string, error) {
-	assetKind, fileKind, err := assetUploadKind(mediaType)
-	if err != nil {
-		return "", err
-	}
-	data, mimeType, sourceName, err := a.readAsset(ctx, source)
-	if err != nil {
-		return "", err
-	}
-	if fileKind == "image" {
-		data, mimeType, err = flattenImage(data)
-		if err != nil {
-			return "", err
-		}
-	}
-	contentType := strings.TrimSpace(mimeType)
-	if contentType == "" {
-		contentType = http.DetectContentType(data)
-	}
-	query := url.Values{
-		"kind":     {assetKind},
-		"filename": {fileName(fileKind, sourceName, mimeType)},
-	}
-	client, err := getHTTPClient(a.proxy)
-	if err != nil {
-		return "", err
-	}
-	request, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPost,
-		strings.TrimRight(a.baseURL, "/")+"/v1/assets?"+query.Encode(),
-		bytes.NewReader(data),
-	)
-	if err != nil {
-		return "", err
-	}
-	request.Header.Set("Authorization", "Bearer "+a.apiKey)
-	request.Header.Set("Content-Type", contentType)
-	request.Header.Set("Accept", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return "", assetStageError(ctx, err, "上传")
-	}
-	defer response.Body.Close()
-	dataResponse, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return "", assetStageError(ctx, err, "上传")
-	}
-	var parsed assetResponse
-	if err := common.Unmarshal(dataResponse, &parsed); err != nil || response.StatusCode < 200 || response.StatusCode >= 300 || parsed.Asset.ID == "" || strings.TrimSpace(parsed.URL) == "" {
-		detail := strings.TrimSpace(string(dataResponse))
-		if len(detail) > 300 {
-			detail = detail[:300]
-		}
-		return "", errors.Errorf("youzan wan3 asset upload failed: HTTP %d: %s", response.StatusCode, detail)
-	}
-	if parsed.Asset.Kind != "" && parsed.Asset.Kind != assetKind {
-		return "", errors.Errorf("youzan wan3 asset kind mismatch: requested %s, got %s", assetKind, parsed.Asset.Kind)
-	}
-	return parsed.URL, nil
-}
-
-func (a *TaskAdaptor) buildRequestBody(ctx context.Context, req relaycommon.TaskSubmitReq) ([]byte, error) {
+// buildRequestBody 组装 POST /v1/videos 的请求体（2026-11-15 上游切到 New API 协议）。
+//
+// 与旧协议（POST /v1/tasks + POST /v1/assets 上传换签名地址）的区别：素材 URL
+// **原样透传**，由上游自己抓取；时长改用上游 TaskSubmitReq 认的 seconds 字符串
+// （2026-11-15 探针实测：body 只带 seconds:"2"，查询响应回显 seconds=2）。
+// 构建过程纯本地、无网络调用 —— 客户 60 秒的提交超时不再受素材体积影响。
+func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, error) {
 	upstreamModel, err := upstreamModelFor(req.Model)
 	if err != nil {
 		return nil, err
@@ -1155,68 +892,12 @@ func (a *TaskAdaptor) buildRequestBody(ctx context.Context, req relaycommon.Task
 		"prompt":     prompt,
 		"ratio":      resolveRatio(req),
 		"resolution": resolveResolution(req),
-		"duration":   resolveDuration(req),
+		"seconds":    strconv.Itoa(resolveDuration(req)),
 	}
-	if len(media) == 0 {
-		return common.Marshal(body)
+	if len(media) > 0 {
+		body["media"] = media
 	}
-	// 2026-10-28 协议：素材先 POST /v1/assets 上传，再把回执里的签名 url 按数组顺序
-	// 放进 media，且 type 必须等于回执的 asset.kind。旧协议那套
-	// conversationId + mentions + @alias 占位符已被上游整体移除。
-	items, err := a.uploadMedia(ctx, media)
-	if err != nil {
-		return nil, err
-	}
-	body["media"] = items
 	return common.Marshal(body)
-}
-
-// uploadMedia 并发上传素材，**结果按下标落位**，保持与入参一致的顺序。
-//
-// 为什么必须并发：一次提交可能同时带参考视频和参考图，视频动辄 20MB。
-// 串行的话后面每个素材都要排在前面那个大文件的下载+上传之后，
-// 客户 60 秒的提交窗口很容易被一个视频吃光（2026-11-12 客户反馈）。
-//
-// 为什么必须保序：上游按 media 数组顺序对应 @视频1/@图片1，
-// 顺序错乱等于给客户换了素材 —— 画面会串，而且看不出来是哪一步错的。
-// isHeavyAsset 判断素材是否要走「大文件」闸门。
-//
-// 只看参考视频：音频实测几百 KB，图片在 flattenImage 里已经被压到 500KB 量级，
-// 都不需要单独限流。视频可以到 100MB（maxAssetBytes）。
-func isHeavyAsset(mediaType string) bool {
-	return mediaType == "reference_video"
-}
-
-func (a *TaskAdaptor) uploadMedia(ctx context.Context, media []relaycommon.TaskMedia) ([]map[string]string, error) {
-	items := make([]map[string]string, len(media))
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(assetMaxConcurrency)
-	for index := range media {
-		group.Go(func() error {
-			item := media[index]
-			// 参考视频另过一道全局闸门：单个上限 100MB，图片那 6 路配额给它会 OOM。
-			// 闸门跨请求共享（见 assetVideoSlots），所以排队是正常的，不是死锁：
-			// 占着名额的 goroutine 不需要再拿第二个名额。
-			if isHeavyAsset(item.Type) {
-				select {
-				case assetVideoSlots <- struct{}{}:
-					defer func() { <-assetVideoSlots }()
-				case <-groupCtx.Done():
-					return groupCtx.Err()
-				}
-			}
-			assetURL, err := a.uploadAsset(groupCtx, item.Type, item.URL)
-			if err != nil {
-				return err
-			}
-			items[index] = map[string]string{"type": item.Type, "url": assetURL}
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
@@ -1343,9 +1024,11 @@ func resolutionRatioForModel(model, resolution string) float64 {
 	return 1
 }
 
-// idempotencyKey 由公开 task id 派生：上游 /v1/tasks 强制要求 Idempotency-Key
-// （8—100 位，仅字母/数字/下划线/连字符），同一编号不得改任务内容。
-// 用公开 task id 派生可让「本地重试同一次提交」命中上游幂等窗口，避免重复扣费。
+// idempotencyKey 由公开 task id 派生（8—100 位，仅字母/数字/下划线/连字符）。
+//
+// 旧上游 /v1/tasks **强制**要求 Idempotency-Key；2026-11-15 切到 New API 协议后
+// 它不再是必填项，但保留发送：同一公开 task id 的本地重试会复用同一把钥匙，
+// 万一上游（或它后面的通道）实现了幂等窗口，就能挡住一次「超时重试 = 重复建单 + 重复扣费」。
 func idempotencyKey(info *relaycommon.RelayInfo) string {
 	raw := ""
 	if info != nil {
@@ -1374,7 +1057,7 @@ func idempotencyKey(info *relaycommon.RelayInfo) string {
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	return strings.TrimRight(a.baseURL, "/") + "/v1/tasks", nil
+	return strings.TrimRight(a.baseURL, "/") + "/v1/videos", nil
 }
 
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
@@ -1392,11 +1075,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if info != nil && strings.TrimSpace(info.UpstreamModelName) != "" {
 		req.Model = info.UpstreamModelName
 	}
-	// 素材处理挂一个总预算：既跟着客户连接走（断开即停，不再白扣费），
-	// 又保证在客户自己的 60 秒提交超时之前收场（见 assetTotalBudget）。
-	ctx, cancel := assetBudgetContext(c.Request.Context())
-	defer cancel()
-	body, err := a.buildRequestBody(ctx, req)
+	body, err := a.buildRequestBody(req)
 	if err != nil {
 		return nil, err
 	}
@@ -1428,20 +1107,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	taskID := parsed.ID
 	if taskID == "" {
-		taskID = parsed.TaskID
-	}
-	if taskID == "" {
-		// V1 协议把 task id 放在 task 对象里（{"ok":true,"task":{"id":"wz_..."}}），
-		// 这一支必须查，否则所有正常建单都会退化成「empty task id」。
-		taskID = parsed.Task.ID
-	}
-	if taskID == "" {
-		taskID = parsed.Data.ID
-	}
-	if taskID == "" {
-		// 先把上游的真实错误透出去：ok=false 或带 error 字段时上游没建任务，
+		// 先把上游的真实错误透出去：失败响应里没有 task id，
 		// 直接报「空 task id」会掩盖真实原因（入参非法 / 积分不足 / 上游故障）。
-		if upstreamMsg := string(parsed.Error); upstreamMsg != "" {
+		if upstreamMsg := parsed.Error.text(); upstreamMsg != "" {
 			return "", nil, service.TaskErrorWrapper(
 				errors.New("youzan wan3 rejected the request: "+upstreamMsg),
 				"upstream_error",
@@ -1486,7 +1154,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if err != nil {
 		return nil, err
 	}
-	request, err := http.NewRequest(http.MethodGet, normalizeAPIRoot(baseURL)+"/v1/tasks/"+url.PathEscape(taskID), nil)
+	request, err := http.NewRequest(http.MethodGet, normalizeAPIRoot(baseURL)+"/v1/videos/"+url.PathEscape(taskID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1494,71 +1162,50 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	return client.Do(request)
 }
 
-// normalizeFailureReason 把上游的**兜底**错误码换成客户能行动的说法。
+// progressString 把上游的百分比进度转成 TaskInfo 的进度文案。
 //
-// 只动兜底码，具体错误一律原样透传：
-//   - CONTENT_REJECTED / MEDIA_DURATION_INVALID / MEDIA_PARAMETER_INVALID 这些码
-//     本身就是「该怎么改」的指引，替换掉反而让客户无从下手。
-//   - TASK_ERROR 是上游自己都定位不到的兜底码，原话是「错误请重试」
-//     「未知错误，请重新尝试」——客户读到会以为是自己参数写错了，
-//     于是反复改 prompt、改分辨率、改时长，其实什么都不用改，等几分钟重投即可。
-//
-// 原始错误不会被丢掉：上游的完整响应一直存在 tasks.data 里（含 errorCode 与
-// errorMessage），运营排查时随时能翻出来，所以这里不需要再记一条日志。
-func normalizeFailureReason(errorCode, reason string) string {
-	if strings.EqualFold(strings.TrimSpace(errorCode), upstreamCatchAllErrorCode) {
-		return reasonUpstreamBusy
+// 上游在 in_progress 时会带 progress（0—100），透传它客户才能看到「在动」；
+// 拿不到时退回通用文案 —— 回显 0% 会被当成卡死。
+func progressString(progress int) string {
+	if progress <= 0 {
+		return taskcommon.ProgressInProgress
 	}
-	// 老协议（扁平 error 字段）会把 code 与 message 拼成「CODE: message」，
-	// 没有独立的 errorCode 可读，这里按前缀再兜一次。
-	if strings.HasPrefix(strings.TrimSpace(reason), upstreamCatchAllErrorCode) {
-		return reasonUpstreamBusy
+	if progress > 100 {
+		progress = 100
 	}
-	return reason
+	return strconv.Itoa(progress) + "%"
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
-	var response taskResponse
+	var response videoTaskResponse
 	if err := common.Unmarshal(respBody, &response); err != nil {
 		return nil, err
 	}
-	// 2026-10-28 起 /v1/tasks 把状态放在 task 对象里（task.status / task.videoUrl /
-	// task.errorCode / task.errorMessage）。旧的扁平字段（status / result.url）保留
-	// 兼容读取，因为库里按老协议落库的历史任务还要在轮询里正常收敛。
-	status := strings.ToLower(strings.TrimSpace(firstNonEmpty(response.Task.Status, response.Status)))
-	resultURL := firstNonEmpty(response.Task.VideoURL, response.Result.URL)
-	reason := firstNonEmpty(
-		string(response.Task.ErrorMessage),
-		// 只有 errorCode 时也要把它带出来：比兜底的「内容审核不通过」更接近真相，
-		// 也能避免把参数类失败误报成审核问题。
-		response.Task.ErrorCode,
-		string(response.Task.Error),
-		string(response.Error),
-		response.Message,
-	)
 	result := &relaycommon.TaskInfo{Code: 0}
-	switch status {
+	switch strings.ToLower(strings.TrimSpace(response.Status)) {
 	case "queued", "pending", "submitted", "submitting":
 		result.Status = model.TaskStatusQueued
 		result.Progress = taskcommon.ProgressQueued
 	case "running", "processing", "in_progress":
 		result.Status = model.TaskStatusInProgress
-		result.Progress = taskcommon.ProgressInProgress
+		result.Progress = progressString(response.Progress)
 	case "succeeded", "success", "completed", "done":
-		if resolved := a.resolveResultURL(resultURL); resolved == "" {
+		// 完成态的成片地址在 metadata.url（New API 惯例），顶层 url 是变体；
+		// 地址还没落下来时不能提前收尾，否则客户拿到 SUCCESS 却取不到片。
+		if resolved := a.resolveResultURL(firstNonEmpty(response.Metadata.URL, response.URL)); resolved == "" {
 			result.Status = model.TaskStatusInProgress
-			result.Progress = taskcommon.ProgressInProgress
+			result.Progress = progressString(response.Progress)
 		} else {
 			result.Status = model.TaskStatusSuccess
 			result.Progress = taskcommon.ProgressComplete
 			result.Url = resolved
 		}
 	case "failed", "failure", "canceled", "cancelled", "error", "refunded":
-		// refunded 是有赞的终态：上游已把点数退回（refundedPoints > 0）且 result 为空。
-		// 不映射成失败的话会落进 default 继续报 IN_PROGRESS，用户的钱就卡在预扣里。
+		// refunded 等终态必须收敛为失败，否则任务会落进 default 一直 IN_PROGRESS，
+		// 客户的钱卡在预扣里拿不回来。
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = normalizeFailureReason(response.Task.ErrorCode, firstNonEmpty(reason, reasonContentModeration))
+		result.Reason = firstNonEmpty(response.Error.text(), response.Message, reasonContentModeration)
 	default:
 		result.Status = model.TaskStatusInProgress
 		result.Progress = taskcommon.ProgressInProgress

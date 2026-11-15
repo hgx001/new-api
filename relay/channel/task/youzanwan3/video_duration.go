@@ -61,7 +61,7 @@ func mp4Seconds(data []byte) (float64, bool) {
 
 // probeReferenceVideoSeconds 探测单个参考视频的时长，返回四舍五入后的整秒。
 //
-// 支持 data URL 与公网 http(s) URL（与 readAsset 的上传路径一致）。
+// 支持 data URL 与公网 http(s) URL（探测在本地完成，不依赖上游）。
 // 解析不出时长时返回错误（fail-loud）：宁可拒单，也不能按 0 秒收钱。
 func probeReferenceVideoSeconds(rawURL, proxy string) (int, error) {
 	client, err := getHTTPClient(proxy)

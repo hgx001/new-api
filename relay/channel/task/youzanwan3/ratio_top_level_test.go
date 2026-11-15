@@ -1,7 +1,6 @@
 package youzanwan3
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -96,7 +95,7 @@ func TestResolveRatioReadsTopLevelFields(t *testing.T) {
 
 // 顶层比例必须真的落到上游请求体里，而不是只在单元函数里正确。
 func TestTopLevelRatioReachesUpstreamBody(t *testing.T) {
-	body, err := (&TaskAdaptor{}).buildRequestBody(context.Background(), relaycommon.TaskSubmitReq{
+	body, err := (&TaskAdaptor{}).buildRequestBody(relaycommon.TaskSubmitReq{
 		Model:  "seedance2.5-特惠",
 		Prompt: "test prompt",
 		Ratio:  "9:16",
@@ -110,7 +109,7 @@ func TestTopLevelRatioReachesUpstreamBody(t *testing.T) {
 
 // 回归护栏：metadata 路径不能被这次改动破坏（此前生产 38 条 9:16 依赖它）。
 func TestMetadataRatioStillWorks(t *testing.T) {
-	body, err := (&TaskAdaptor{}).buildRequestBody(context.Background(), relaycommon.TaskSubmitReq{
+	body, err := (&TaskAdaptor{}).buildRequestBody(relaycommon.TaskSubmitReq{
 		Model:    "seedance2.5-特惠",
 		Prompt:   "test prompt",
 		Metadata: map[string]interface{}{"ratio": "9:16"},

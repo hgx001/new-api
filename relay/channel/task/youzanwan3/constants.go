@@ -83,7 +83,7 @@ var r2vResolutionSizeRatio = map[string]float64{
 	"1080p": 1.0,
 }
 
-// smartRatios 是上游 /v1/tasks 允许的成片比例（2026-10-28 新增 21:9 宽银幕），
+// smartRatios 是上游允许的成片比例（2026-10-28 新增 21:9 宽银幕），
 // 两个在售模型共用同一套比例。
 var smartRatios = []string{"adaptive", "16:9", "9:16", "1:1", "4:3", "3:4", "21:9"}
 
@@ -94,22 +94,6 @@ const (
 	// reasonContentModeration 是无理由失败的统一口径：任务已运行一段时间
 	// 才失败、且上游未返回任何原因时，归因为内容审核不通过。
 	reasonContentModeration = "内容审核不通过"
-
-	// upstreamCatchAllErrorCode 是上游的**兜底**错误码。
-	//
-	// 上游的错误码是分层的：能定位的问题都有专属码
-	// （CONTENT_REJECTED / MEDIA_DURATION_INVALID / MEDIA_PARAMETER_INVALID），
-	// 落到 TASK_ERROR 就说明上游自己也不知道原因。
-	//
-	// 2026-10-31 实证：三单 720P 纯文生（2/2/5 秒，同一 prompt），21:57:37 同批提交
-	// 后全部返回 TASK_ERROR「错误请重试」；而**完全相同**的 prompt 与参数在
-	// 21:54:03 和 22:00:42 都成功出片 —— 参数、时长、内容审核全部排除，
-	// 属于上游侧偶发内部失败（上游同时把 ⚡ 释放了，billingState=released）。
-	upstreamCatchAllErrorCode = "TASK_ERROR"
-
-	// reasonUpstreamBusy 是兜底码的对客文案，与漫屋渠道共用同一句，
-	// 保证客户在同一个平台里看到的说法一致（见 taskcommon.ReasonUpstreamFailure）。
-	reasonUpstreamBusy = taskcommon.ReasonUpstreamFailure
 
 	// videoModel 三档（480P/720P/1080P）同价，缺省取最低档 480P。
 	defaultResolution = "480P"
@@ -130,7 +114,7 @@ const (
 	maxDuration     = 30
 	defaultDuration = 5
 
-	// 2026-10-28 上游 /v1/tasks 的 media 上限：图片 10 + 视频 5 + 音频 5，
+	// 上游 media 上限（2026-10-28 口径）：图片 10 + 视频 5 + 音频 5，
 	// 三类合计不得超过 20 项。两个模型同一口径（旧版 prime 的 8 张限制已取消）。
 	maxReferenceImages = 10
 	maxReferenceVideos = 5
@@ -146,23 +130,9 @@ const (
 	// 且这种尺寸放大到 720P 交付本身就是糊的，故本地直接按交付档 720 拦截。
 	minReferenceImageShortSide = 720
 
-	// referenceImageMaxSide 是上传前把参考图长边压到的上限（px）。
-	//
-	// 2026-11-13：上游受理时间随素材体积上涨（4 张 4MB 原图 → 26 秒，无素材 → 3.2 秒），
-	// 客户工作台的提交超时又写死 60 秒。1920 是 1080P 交付档的 1.78 倍，
-	// 缩放后画质余量足够，体积却能降一个数量级。
+	// referenceImageMaxSide 是参考图长边上限（px）：判断「长宽比过窄」时按它折算，
+	// 1920 是 1080P 交付档的 1.78 倍，缩放后画质余量足够。
 	referenceImageMaxSide = 1920
-
-	// referenceImageQuality 是重编码质量。95 → 88 在参考图这种「只给模型看特征」
-	// 的场景里肉眼无差，体积再降约 40%。
-	referenceImageQuality = 88
-
-	// referenceImageMaxPixels 限制解码规模（像素）。
-	//
-	// 解码后是 w×h×4 字节：64M 像素 = 256MB，已经是单张图能承受的上限；
-	// 6 路并发再大就会把 3.7GB 的机器打到 OOM。64M 足以覆盖 48MP 手机原图
-	// （8064×6048 = 48.8M）。
-	referenceImageMaxPixels = 64 << 20
 
 	// maxReferenceVideoSeconds 是单条参考视频的时长上限（秒）。
 	//

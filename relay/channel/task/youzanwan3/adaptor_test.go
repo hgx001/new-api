@@ -3,16 +3,13 @@ package youzanwan3
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"image"
-	"image/color"
 	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,115 +17,120 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/setting/youzanwan3_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
-// referenceImagePNG 生成一张达到本地最小尺寸（短边 720）的参考图。
-// 尺寸校验见 flattenImage：过小的图会在本地被拒，这里只关心协议字段。
-func referenceImagePNG(t *testing.T) string {
+func testReferenceImagePNG(t *testing.T, width, height int) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
-	img := image.NewRGBA(image.Rect(0, 0, 720, 1280))
-	img.Set(0, 0, color.RGBA{R: 255, A: 255})
-	require.NoError(t, png.Encode(&buffer, img))
-	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buffer.Bytes())
+	require.NoError(t, png.Encode(&buffer, image.NewRGBA(image.Rect(0, 0, width, height))))
+	return buffer.Bytes()
 }
 
-// 2026-10-28 协议：素材走 POST /v1/assets?kind=&filename=（裸 body + 真实 MIME），
-// 建单时把回执 url 按数组顺序放进 media，不再有 conversationId / mentions / @alias。
-//
-// 2026-11-12：素材改为并发上传后，「到达顺序」不再等于「入参顺序」，
-// 回执 url 里带上 kind，断言才能锁住「第 i 个位置的素材来自第 i 个入参」。
-func TestBuildRequestBodyUsesV1AssetsAndMediaArray(t *testing.T) {
-	type upload struct {
-		kind        string
-		filename    string
-		contentType string
-	}
-	var (
-		mu      sync.Mutex
-		uploads []upload
-	)
+// allowLoopbackFetchForTest 放行 httptest 的随机端口与本机地址。
+// 生产默认只允许 80/443/8080/8443 且禁内网，测试服务器不满足。
+func allowLoopbackFetchForTest(t *testing.T) {
+	t.Helper()
+	setting := system_setting.GetFetchSetting()
+	originalPorts, originalPrivate := setting.AllowedPorts, setting.AllowPrivateIp
+	setting.AllowedPorts = append(append([]string{}, originalPorts...), "10000-65535")
+	setting.AllowPrivateIp = true
+	t.Cleanup(func() {
+		setting.AllowedPorts = originalPorts
+		setting.AllowPrivateIp = originalPrivate
+	})
+}
+
+// 参考图短边 <720 必须本地 400，禁止透传上游（上游只会回误导性的
+// MEDIA_IMAGE_INVALID「图片无法读取或格式不支持」）。新版协议下我们只读图片头部。
+func TestValidateReferenceImagesRejectsSmallImage(t *testing.T) {
+	allowLoopbackFetchForTest(t)
+	small := testReferenceImagePNG(t, 300, 500)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/v1/assets":
-			query := request.URL.Query()
-			_, _ = writer.Write([]byte{})
-			mu.Lock()
-			uploads = append(uploads, upload{
-				kind:        query.Get("kind"),
-				filename:    query.Get("filename"),
-				contentType: request.Header.Get("Content-Type"),
-			})
-			index := len(uploads)
-			mu.Unlock()
-			writer.Header().Set("Content-Type", "application/json")
-			_, _ = writer.Write([]byte(`{"asset":{"id":"asset-` + strconv.Itoa(index) + `","kind":"` +
-				query.Get("kind") + `"},"url":"https://signed.example/` + query.Get("kind") + `"}`))
-		default:
-			t.Fatalf("unexpected path: %s", request.URL.Path)
-		}
+		writer.Header().Set("Content-Type", "image/png")
+		_, _ = writer.Write(small)
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	err := adaptor.validateReferenceImages(context.Background(), []relaycommon.TaskMedia{
+		{Type: "reference_image", URL: server.URL + "/small.png"},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "短边至少需要 720")
+}
+
+func TestValidateReferenceImagesAcceptsLargeImage(t *testing.T) {
+	allowLoopbackFetchForTest(t)
+	large := testReferenceImagePNG(t, 720, 1280)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "image/png")
+		_, _ = writer.Write(large)
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	require.NoError(t, adaptor.validateReferenceImages(context.Background(), []relaycommon.TaskMedia{
+		{Type: "reference_image", URL: server.URL + "/large.png"},
+		// 非图片素材不参与尺寸校验。
+		{Type: "reference_audio", URL: "https://cdn.example/a.mp3"},
+	}))
+}
+
+// 2026-11-15 上游切到 New API 协议：建单 POST /v1/videos，素材在 body 的 media 里
+// **直接给原始 URL**（上游自己抓取），不再有 POST /v1/assets 上传换签名地址这一步。
+// duration 也随之改成上游 TaskSubmitReq 认的 seconds 字符串。
+func TestBuildRequestBodyPostsInlineMediaToV1Videos(t *testing.T) {
+	var upstreamCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		upstreamCalls++
+		t.Errorf("新协议下构建请求体不应访问上游素材接口，实际请求: %s", request.URL.Path)
 	}))
 	defer server.Close()
 
 	adaptor := &TaskAdaptor{baseURL: server.URL, apiKey: "test-key"}
-	body, err := adaptor.buildRequestBody(context.Background(), relaycommon.TaskSubmitReq{
+	body, err := adaptor.buildRequestBody(relaycommon.TaskSubmitReq{
 		Model:  "wan3.0-smart",
 		Prompt: "城市夜景缓慢推进",
 		Media: []relaycommon.TaskMedia{
-			{Type: "reference_image", URL: referenceImagePNG(t)},
-			{Type: "reference_audio", URL: "data:audio/mpeg;base64," + base64.StdEncoding.EncodeToString([]byte("audio"))},
+			{Type: "reference_image", URL: "https://cdn.example/ref.png"},
+			{Type: "reference_audio", URL: "https://cdn.example/a.mp3"},
 		},
 		Duration:   2,
 		Resolution: "480P",
 	})
 	require.NoError(t, err)
+	require.Zero(t, upstreamCalls, "构建请求体必须是纯本地的")
 
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(body, &payload))
 	// 公开别名 wan3.0-smart 必须映射成上游现存的 wan3.0-video。
 	require.Equal(t, "wan3.0-video", payload["model"])
-	require.Equal(t, float64(2), payload["duration"])
+	// 上游 /v1/videos 收 seconds 字符串（2026-11-15 探针实测回显 seconds=2）。
+	require.Equal(t, "2", payload["seconds"])
 	require.Equal(t, "480P", payload["resolution"])
 	require.Equal(t, "adaptive", payload["ratio"])
-	// 旧协议的痕迹必须彻底消失。
-	require.NotContains(t, payload, "conversationId")
-	require.NotContains(t, payload, "mentions")
-	require.NotContains(t, payload, "audio")
+	require.NotContains(t, payload, "duration")
 
 	media, ok := payload["media"].([]any)
 	require.True(t, ok)
 	require.Len(t, media, 2)
 	first := media[0].(map[string]any)
 	require.Equal(t, "reference_image", first["type"])
-	require.Equal(t, "https://signed.example/reference_image", first["url"])
+	require.Equal(t, "https://cdn.example/ref.png", first["url"], "素材 URL 必须原样透传，不再换签名地址")
 	second := media[1].(map[string]any)
 	require.Equal(t, "reference_audio", second["type"])
-	require.Equal(t, "https://signed.example/reference_audio", second["url"])
-
-	mu.Lock()
-	defer mu.Unlock()
-	require.Len(t, uploads, 2)
-	byKind := make(map[string]upload, len(uploads))
-	for _, item := range uploads {
-		byKind[item.kind] = item
-	}
-	image, ok := byKind["reference_image"]
-	require.True(t, ok, "参考图必须走一次 /v1/assets?kind=reference_image")
-	require.Contains(t, image.contentType, "image/")
-	require.Equal(t, "asset.jpg", image.filename)
-	audio, ok := byKind["reference_audio"]
-	require.True(t, ok, "参考音频必须走一次 /v1/assets?kind=reference_audio")
-	require.Equal(t, "audio/mpeg", audio.contentType)
+	require.Equal(t, "https://cdn.example/a.mp3", second["url"])
 }
 
 func TestBuildRequestURLAndIdempotencyKey(t *testing.T) {
 	adaptor := &TaskAdaptor{baseURL: normalizeAPIRoot("https://youzan666.vip/v1")}
 	url, err := adaptor.BuildRequestURL(nil)
 	require.NoError(t, err)
-	require.Equal(t, "https://youzan666.vip/v1/tasks", url)
+	require.Equal(t, "https://youzan666.vip/v1/videos", url)
 
 	// 上游要求 8—100 位、仅字母/数字/下划线/连字符。
 	require.Equal(t, "task_1791125558575_71psn3", idempotencyKey(&relaycommon.RelayInfo{
@@ -151,24 +153,24 @@ func TestBuildRequestURLAndIdempotencyKey(t *testing.T) {
 	require.GreaterOrEqual(t, len(idempotencyKey(nil)), 8)
 }
 
-func TestFetchTaskHitsV1TasksPath(t *testing.T) {
+func TestFetchTaskHitsV1VideosPath(t *testing.T) {
 	var gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		gotPath = request.URL.Path
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"ok":true,"task":{"id":"wz_1","status":"processing"}}`))
+		_, _ = writer.Write([]byte(`{"id":"task_gWJ8","object":"video","model":"wan3.0-video","status":"in_progress","progress":30,"created_at":1794711440}`))
 	}))
 	defer server.Close()
 
 	adaptor := &TaskAdaptor{}
-	resp, err := adaptor.FetchTask(server.URL, "k", map[string]any{"id": "wz_32167290-46e9-48d3-aeb7-69ba331223c3"}, "")
+	resp, err := adaptor.FetchTask(server.URL, "k", map[string]any{"id": "task_gWJ8"}, "")
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	_ = resp.Body.Close()
-	require.Equal(t, "/v1/tasks/wz_32167290-46e9-48d3-aeb7-69ba331223c3", gotPath)
+	require.Equal(t, "/v1/videos/task_gWJ8", gotPath)
 }
 
-// 上游建单失败时返回 {"ok":false,"error":{"code":...,"message":...}}，
+// 上游拒绝建单时返回 {"error":{...}}（New API 的 OpenAI 风格错误对象），
 // 响应里没有 task id。适配器必须把上游的真实原因透出去，
 // 而不是退化成无信息量的「returned empty task id」（2026-10-28 生产实测）。
 func TestDoResponseSurfacesUpstreamRejection(t *testing.T) {
@@ -179,17 +181,17 @@ func TestDoResponseSurfacesUpstreamRejection(t *testing.T) {
 	}{
 		{
 			name:     "对象形态 error",
-			payload:  `{"ok":false,"error":{"code":"DURATION_INVALID","message":"时长必须为 2 至 30 秒整数"}}`,
-			contains: "DURATION_INVALID",
+			payload:  `{"error":{"code":"invalid_request_error","message":"seconds must be between 2 and 30"}}`,
+			contains: "seconds must be between 2 and 30",
 		},
 		{
 			name:     "裸字符串 error",
-			payload:  `{"ok":false,"error":"积分不足"}`,
+			payload:  `{"error":"积分不足"}`,
 			contains: "积分不足",
 		},
 		{
 			name:     "顶层 message",
-			payload:  `{"ok":false,"message":"提示词不能为空或超过 20000 字"}`,
+			payload:  `{"message":"提示词不能为空或超过 20000 字"}`,
 			contains: "提示词不能为空",
 		},
 	}
@@ -224,154 +226,84 @@ func TestDoResponseIgnoresErrorWhenTaskIDPresent(t *testing.T) {
 	response := &http.Response{
 		StatusCode: http.StatusOK,
 		Body: io.NopCloser(strings.NewReader(
-			`{"ok":true,"task":{"id":"wz_1","status":"queued"}}`)),
+			`{"id":"task_gWJ8","object":"video","model":"wan3.0-video","status":"queued","progress":0,"created_at":1794711440}`)),
 	}
 
-	_, _, taskErr := adaptor.DoResponse(context, response, nil)
+	taskID, _, taskErr := adaptor.DoResponse(context, response, nil)
 	require.Nil(t, taskErr)
+	require.Equal(t, "task_gWJ8", taskID, "轮询要靠这个上游 id")
 }
 
-// 生产实测报文（2026-10-28，task wz_32167290）：状态在 task 对象里，videoUrl 为绝对地址。
-func TestParseTaskResultReadsV1TaskObject(t *testing.T) {
+// 2026-11-15 上游切到 New API 的 OpenAIVideo 形态（探针实测）：
+// {"id":...,"object":"video","model":...,"status":"queued|in_progress|failed","progress":N,...}
+// 完成态的成片地址按 New API 惯例放在 metadata.url；顶层 url 变体也认。
+func TestParseTaskResultReadsOpenAIVideoShape(t *testing.T) {
 	adaptor := &TaskAdaptor{baseURL: "https://youzan666.vip"}
 
-	queued, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"queued","videoUrl":null}}`))
+	queued, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","object":"video","status":"queued","progress":0}`))
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusQueued, queued.Status)
+	require.Equal(t, taskcommon.ProgressQueued, queued.Progress)
 
-	processing, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"processing","videoUrl":null}}`))
+	processing, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","object":"video","status":"in_progress","progress":42}`))
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusInProgress, processing.Status)
+	require.Equal(t, "42%", processing.Progress, "上游给了真实进度就该透传给客户")
 
-	done, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"succeeded","videoUrl":"https://oss.example/v.mp4?Expires=1&Signature=x"}}`))
+	// 没有 progress 时退回通用进度文案，不能回显 0%（看着像卡死）。
+	noProgress, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"in_progress"}`))
+	require.NoError(t, err)
+	require.Equal(t, taskcommon.ProgressInProgress, noProgress.Progress)
+
+	done, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"completed","progress":100,"metadata":{"url":"https://oss.example/v.mp4?Expires=1&Signature=x"}}`))
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusSuccess, done.Status)
 	require.Equal(t, "100%", done.Progress)
 	require.Equal(t, "https://oss.example/v.mp4?Expires=1&Signature=x", done.Url)
 
-	// succeeded 但还没有 videoUrl：不能提前收尾，继续轮询。
-	pending, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"succeeded","videoUrl":null}}`))
+	topLevel, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"completed","url":"https://oss.example/v2.mp4"}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusSuccess, topLevel.Status)
+	require.Equal(t, "https://oss.example/v2.mp4", topLevel.Url)
+
+	// completed 但还没有地址：不能提前收尾，继续轮询。
+	pending, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"completed","metadata":{}}`))
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusInProgress, pending.Status)
 
-	failed, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"MEDIA_INVALID","errorMessage":"参考素材已失效"}}`))
+	failed, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"failed","error":{"code":"CONTENT_REJECTED","message":"生成结果疑似包含真人面部，未通过内容安全审核，请更换或风格化相关素材后重试"}}`))
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusFailure, failed.Status)
-	require.Equal(t, "参考素材已失效", failed.Reason)
+	require.Equal(t, "100%", failed.Progress)
+	require.Equal(t, "生成结果疑似包含真人面部，未通过内容安全审核，请更换或风格化相关素材后重试", failed.Reason,
+		"对客文案取 error.message，不能把机器码拼进来")
 
-	// 只有 errorCode 没有 message 时也不能丢信息。
-	codeOnly, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"MEDIA_INVALID"}}`))
+	// 只有 code 没有 message 时也不能丢信息。
+	codeOnly, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"failed","error":{"code":"MEDIA_INVALID"}}`))
 	require.NoError(t, err)
 	require.Equal(t, "MEDIA_INVALID", codeOnly.Reason)
-}
-
-// 老协议落库的历史任务仍在轮询中，扁平字段必须继续可解析。
-func TestParseTaskResultKeepsLegacyFlatShape(t *testing.T) {
-	adaptor := &TaskAdaptor{baseURL: normalizeAPIRoot("https://youzan666.vip/v1")}
-
-	result, err := adaptor.ParseTaskResult([]byte(`{"status":"succeeded","result":{"url":"/outputs/videos/vid_1.mp4"}}`))
-	require.NoError(t, err)
-	require.Equal(t, model.TaskStatusSuccess, result.Status)
-	require.Equal(t, "https://youzan666.vip/outputs/videos/vid_1.mp4", result.Url)
-
-	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","message":"balance insufficient"}`))
-	require.NoError(t, err)
-	require.Equal(t, model.TaskStatusFailure, result.Status)
-	require.Equal(t, "balance insufficient", result.Reason)
 
 	// 无理由失败统一归因内容审核不通过。
-	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","error":null,"result":null}`))
+	noReason, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"failed"}`))
 	require.NoError(t, err)
-	require.Equal(t, "内容审核不通过", result.Reason)
+	require.Equal(t, "内容审核不通过", noReason.Reason)
+
+	// 相对路径（历史上游会回 host 相对地址）要按 API 根解析。
+	relative, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"completed","metadata":{"url":"/outputs/videos/vid_1.mp4"}}`))
+	require.NoError(t, err)
+	require.Equal(t, "https://youzan666.vip/outputs/videos/vid_1.mp4", relative.Url)
 }
 
-// 回归守卫：上游兜底错误码 TASK_ERROR 不能原样透传给客户。
-//
-// 2026-10-31 实证：三单 720P 纯文生（2/2/5 秒，同一 prompt）在 21:57:37 同批提交后
-// 全部返回 TASK_ERROR「错误请重试」，而**完全相同**的 prompt 与参数在 21:54:03 和
-// 22:00:42 都成功出片。参数、时长、内容审核全部排除，属于上游内部偶发失败。
-//
-// 原话「错误请重试」会让客户以为是自己参数写错，反复改 prompt / 分辨率 / 时长重试，
-// 实际上什么都不用改，等几分钟重投即可。所以兜底码统一换成中性文案。
-//
-// 但**只动兜底码**：专属码（内容审核、素材时长、参数不合法）本身就是「该怎么改」的
-// 指引，替换掉反而让客户无从下手。
-func TestParseTaskResultMapsCatchAllErrorToActionableReason(t *testing.T) {
+// 上游的终态失败词形都必须收敛成失败，否则任务永远停在预扣里、客户拿不到退款。
+func TestParseTaskResultCollapsesTerminalFailureStates(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-
-	// 兜底码 + 上游原话 → 中性文案
-	catchAll, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"TASK_ERROR","errorMessage":"错误请重试"}}`))
-	require.NoError(t, err)
-	require.Equal(t, model.TaskStatusFailure, catchAll.Status)
-	require.Equal(t, taskcommon.ReasonUpstreamFailure, catchAll.Reason)
-
-	// 兜底码的另一种话术，同样要归一
-	unknown, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"TASK_ERROR","errorMessage":"未知错误，请重新尝试"}}`))
-	require.NoError(t, err)
-	require.Equal(t, taskcommon.ReasonUpstreamFailure, unknown.Reason)
-
-	// 只有 errorCode 没有 message 的兜底码也要归一，不能把 "TASK_ERROR" 直接甩给客户
-	codeOnly, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"TASK_ERROR"}}`))
-	require.NoError(t, err)
-	require.Equal(t, taskcommon.ReasonUpstreamFailure, codeOnly.Reason)
-
-	// 老协议把 code 与 message 拼成一个字符串，没有独立 errorCode 可读，按前缀兜
-	legacy, err := adaptor.ParseTaskResult([]byte(`{"status":"failed","error":"TASK_ERROR: 错误请重试"}`))
-	require.NoError(t, err)
-	require.Equal(t, taskcommon.ReasonUpstreamFailure, legacy.Reason)
-
-	// 专属码必须原样保留 —— 它们告诉客户「改哪里」
-	for _, tc := range []struct {
-		body string
-		want string
-	}{
-		{`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"CONTENT_REJECTED","errorMessage":"生成结果疑似包含真人面部，未通过内容安全审核，请更换或风格化相关素材后重试"}}`,
-			"生成结果疑似包含真人面部，未通过内容安全审核，请更换或风格化相关素材后重试"},
-		{`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"MEDIA_DURATION_INVALID","errorMessage":"参考素材时长过长：当前为 31.609 秒，最长允许 15 秒"}}`,
-			"参考素材时长过长：当前为 31.609 秒，最长允许 15 秒"},
-		{`{"ok":true,"task":{"id":"wz_1","status":"failed","errorCode":"MEDIA_PARAMETER_INVALID","errorMessage":"参数或参考素材不符合要求，请检查提示词、分辨率、时长、画幅和素材类型后重试"}}`,
-			"参数或参考素材不符合要求，请检查提示词、分辨率、时长、画幅和素材类型后重试"},
-	} {
-		result, err := adaptor.ParseTaskResult([]byte(tc.body))
-		require.NoError(t, err)
-		require.Equal(t, tc.want, result.Reason, "专属错误码不能被兜底文案覆盖：%s", tc.body)
+	for _, status := range []string{"failed", "failure", "canceled", "cancelled", "error", "refunded"} {
+		result, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"` + status + `","error":{"message":"素材不可访问"}}`))
+		require.NoError(t, err, "status=%s", status)
+		require.Equal(t, model.TaskStatusFailure, result.Status, "status=%s", status)
+		require.Equal(t, "100%", result.Progress, "status=%s", status)
+		require.Equal(t, "素材不可访问", result.Reason, "status=%s", status)
 	}
-
-	// 成功路径不受影响
-	ok, err := adaptor.ParseTaskResult([]byte(`{"ok":true,"task":{"id":"wz_1","status":"succeeded","videoUrl":"https://oss.example/v.mp4"}}`))
-	require.NoError(t, err)
-	require.Equal(t, model.TaskStatusSuccess, ok.Status)
-	require.Empty(t, ok.Reason)
-}
-
-// 有赞的 error 有两种形态，且 status 还有 refunded 终态。任一处理不对，
-// 任务会永远停在 0%：2026-10-05 生产事故 task 249 就是 {code,message} 对象形态
-// 导致反序列化失败，退款已在有赞侧发生而用户的钱卡在预扣里。
-func TestParseTaskResultHandlesUpstreamErrorShapesAndRefundedStatus(t *testing.T) {
-	adaptor := &TaskAdaptor{}
-
-	result, err := adaptor.ParseTaskResult([]byte(`{
-		"taskId":"task_1791125558575_71psn3","type":"video","model":"wan2.7-r2v",
-		"status":"refunded","result":null,
-		"error":{"code":"UPSTREAM_TASK_FAILED","message":"参考素材已失效或无法访问，请重新上传素材后再试"},
-		"chargedPoints":0,"refundedPoints":10
-	}`))
-	require.NoError(t, err)
-	require.Equal(t, model.TaskStatusFailure, result.Status, "refunded 必须收敛为失败，否则用户永远拿不到退款")
-	require.Equal(t, "100%", result.Progress)
-	require.Equal(t, "UPSTREAM_TASK_FAILED: 参考素材已失效或无法访问，请重新上传素材后再试", result.Reason)
-
-	result, err = adaptor.ParseTaskResult([]byte(`{"status":"failed","error":"WAN3_QUOTA_CAPACITY_INSUFFICIENT: max duration is 4 seconds"}`))
-	require.NoError(t, err)
-	require.Equal(t, "WAN3_QUOTA_CAPACITY_INSUFFICIENT: max duration is 4 seconds", result.Reason)
-
-	result, err = adaptor.ParseTaskResult([]byte(`{"status":"error","error":{"message":"素材不可访问"}}`))
-	require.NoError(t, err)
-	require.Equal(t, "素材不可访问", result.Reason)
-
-	result, err = adaptor.ParseTaskResult([]byte(`{"status":"error","error":{"code":"ASSET_EXPIRED"}}`))
-	require.NoError(t, err)
-	require.Equal(t, "ASSET_EXPIRED", result.Reason)
 }
 
 func TestValidateMediaRejectsUnsupportedTypesAndLimits(t *testing.T) {
@@ -413,6 +345,18 @@ func TestValidateMediaRejectsUnsupportedTypesAndLimits(t *testing.T) {
 	require.Error(t, validateMedia([]relaycommon.TaskMedia{{Type: "reference_image", URL: " "}}, "wan3.0-smart"))
 	// 未知类型拒绝。
 	require.Error(t, validateMedia([]relaycommon.TaskMedia{{Type: "mask", URL: "https://cdn.example/m.png"}}, "wan3.0-smart"))
+
+	// 新版上游自己按 URL 抓素材，data URL / 相对路径它抓不到 —— 必须本地 400，
+	// 不能等它建单跑完才报「素材取不到」（那时客户已经付了钱）。
+	err = validateMedia([]relaycommon.TaskMedia{
+		{Type: "reference_image", URL: "data:image/png;base64,AAAA"},
+	}, "wan3.0-smart")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "http(s)")
+	require.NotContains(t, err.Error(), "AAAA", "错误信息不能回显 base64 原文")
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{
+		{Type: "reference_image", URL: "/local/relative.png"},
+	}, "wan3.0-smart"))
 }
 
 func TestUpstreamModelFor(t *testing.T) {
