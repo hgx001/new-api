@@ -56,6 +56,44 @@ func TestPresignCosUploadFileRejectsDisallowedExtension(t *testing.T) {
 	}
 }
 
+// 音频扩展名（2026-11-15 放宽）：参考音频素材走同一条直传通道，
+// 与 ArcReel 侧 _ALLOWED_EXTENSIONS 同口径。
+func TestPresignCosUploadFileAcceptsAudioExtensions(t *testing.T) {
+	orig := resolveCosPresignChannel
+	defer func() { resolveCosPresignChannel = orig }()
+
+	gotContentType := make(map[string]string, 3)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"url":"https://cos.test/put","object_url":"https://cdn.test/a%s","key":"inputs/u/a%s"}`, payload["filename"], payload["filename"])
+	}))
+	defer srv.Close()
+
+	baseURL := srv.URL
+	resolveCosPresignChannel = func() (*model.Channel, error) {
+		return &model.Channel{BaseURL: &baseURL, Key: "sk-service"}, nil
+	}
+
+	for name, wantCT := range map[string]string{
+		"a.mp3": "audio/mpeg",
+		"a.wav": "audio/wav",
+		"a.m4a": "audio/mp4",
+	} {
+		c, rec := newFilesTestContext(t, fmt.Sprintf(`{"filename":%q}`, name))
+		PresignCosUploadFile(c)
+		require.Equal(t, http.StatusOK, rec.Code, "filename=%s 应被放行", name)
+		var body struct {
+			ContentType string `json:"content_type"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		assert.Equal(t, wantCT, body.ContentType, "filename=%s content_type 不匹配", name)
+		gotContentType[name] = body.ContentType
+	}
+	assert.Len(t, gotContentType, 3)
+}
+
 // 大小写扩展名要归一化后再判白名单。
 func TestPresignCosUploadFileAcceptsUppercaseExtension(t *testing.T) {
 	orig := resolveCosPresignChannel

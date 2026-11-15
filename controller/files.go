@@ -47,6 +47,13 @@ var cosPresignAllowedExtensions = map[string]string{
 	".mp4":  "video/mp4",
 	".mov":  "video/quicktime",
 	".webm": "video/webm",
+	// 音频（2026-11-15）：参考音频素材走同一条直传通道。音频在浏览器只会被
+	// 当媒体播放/下载，不像 .html/.svg 有执行面，放宽无安全增量。
+	// ⚠️ 与 ArcReel server/routers/remote_cos_upload.py 的 _ALLOWED_EXTENSIONS
+	//    必须同步，否则一边放行一边拒。
+	".mp3": "audio/mpeg",
+	".wav": "audio/wav",
+	".m4a": "audio/mp4",
 }
 
 // resolveCosPresignChannel 取用于预签发的 manwu 渠道（baseURL + 密钥）。
@@ -94,7 +101,7 @@ func PresignCosUploadFile(c *gin.Context) {
 	contentType, ok := cosPresignAllowedExtensions[ext]
 	if !ok {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error",
-			"仅支持 png/jpg/webp/mp4/mov/webm 素材，请先转换为常见格式")
+			"仅支持 png/jpg/webp/mp4/mov/webm/mp3/wav/m4a 素材，请先转换为常见格式")
 		return
 	}
 
