@@ -698,6 +698,9 @@ func TestModelListAndChannelName(t *testing.T) {
 		"seedance-2-5",
 		"seedance-2.0",
 		"seedance-2.5",
+		// TikTok Symphony（2026-11-15 接入）：公开名不用 cp- 前缀
+		//（那是 CapCut/剪映国际版的身份），字节序在 seedance-* 之后、wan-* 之前。
+		"tk-symphony-1.5pro",
 		// 改名前后两个公开名都在：新名上广场，旧名只保可调用
 		//（ModelWan3TeHuiLegacy 的注释里写了清理条件）。
 		"wan-3.0-无限",

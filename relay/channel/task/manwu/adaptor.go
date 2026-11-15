@@ -83,6 +83,12 @@ const (
 	// → 独立 Kind，不复用 kindDolaVideo / kindPicsartVideo。
 	PlatformIDCapcut = "capcut"
 
+	// PlatformIDTiktok 是 TikTok Creative Studio（Symphony，ads.tiktok.com）平台。
+	//
+	// ⚠️ 与 CapCut（剪映国际版）是**两个独立平台**：不同站点、不同账号池、
+	// 不同风控身份，公开名也不复用 cp-* 前缀（cp-* 已被 CapCut 占用）。
+	PlatformIDTiktok = "tiktok"
+
 	// baseURLDefault 为渠道未配置 BaseURL 时的兜底（ArcReel 生产地址）
 	baseURLDefault = "https://arcreel.heibaidao.cn"
 
@@ -206,6 +212,16 @@ const (
 	ModelCapcut20      = "cp-seedance-2.0"
 	ModelCapcut20Fast  = "cp-seedance-2.0fast"
 	ModelCapcut20Mini  = "cp-seedance-2.0mini"
+	// ModelTikTokSymphony 是 TikTok Symphony（图生视频）的对外公开名。
+	//
+	// ⚠️ 公开名**不用 cp- 前缀**（那是 CapCut/剪映国际版的身份）：TikTok 是
+	// 另一个站点、另一套账号池与风控身份，两个平台同名会造成归一表串台。
+	// 官网模型下拉显示 "Video 1.5 Pro"，权益接口里叫 "Seedance 1.5"
+	// （Worker 真机 2026-11-15 实测）。
+	ModelTikTokSymphony = "tk-symphony-1.5pro"
+	// tiktokUpstreamModel 是发往 ArcReel 的上游模型名；ArcReel 侧 TikTok 按
+	// **平台**记账（billing_model_id 固定 "tiktok-symphony"），所以它与公开名不同。
+	tiktokUpstreamModel = "tiktok-symphony"
 	ModelImage         = "Nano Banana Pro"
 	ModelVideo         = "gemini-web-video"
 	ModelReverse       = "jimeng-video-reverse"
@@ -313,6 +329,15 @@ const (
 	//
 	// ⚠️ 不复用 kindDolaVideo：dola 是 5–15 秒且按次，CapCut 区间与计价都不同。
 	kindCapcutVideo = "capcut_video"
+
+	// kindTikTokVideo 是 TikTok Symphony（图生视频）视频：
+	// 时长**只三档** 5 / 10 / 12 秒（官网原生下拉，单档 5s 是默认值）、
+	// 比例**只有 9:16**（官网无比例控件，成片比例跟随参考图）、
+	// 分辨率不可选（实测成片 720x1280 / 360x640）、参考图 ≤4 张、每次 1 张。
+	//
+	// ⚠️ 不复用 kindCapcutVideo：CapCut 是 4–30s / 六档比例 / 只卖 480p+720p，
+	// 两者参数空间完全不同；静默回落会把 12s 做成 5s（用户付费档位被降级）。
+	kindTikTokVideo = "tiktok_video"
 )
 
 // 万相 wan2.7 免灵感值参数口径（与 Worker 侧 TONGYIWAN_UNLIMITED_VIDEO_PROFILE 同源：
@@ -413,6 +438,7 @@ var modelSpecs = map[string]modelSpec{
 	ModelCapcut20:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
 	ModelCapcut20Fast:  {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
 	ModelCapcut20Mini:  {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
+	ModelTikTokSymphony: {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstreamModel},
 }
 
 // capcutOfficialToPublic 是「官网档位真名 → 对外公开名」的**反向**映射
@@ -857,7 +883,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	// Picsart 同理：官网默认档是 adaptive（跟随输入图比例），缺省不能补成 16:9。
 	// 豆包系图片（kindSeedreamImage）同理：官网图片模式出厂档是「自动」，
 	// 未指定时必须留空 —— 补 16:9 等于把「用户没选」变成一次静默的参数改写。
-	if spec.Kind != kindDoubaoVideo && spec.Kind != kindPicsartVideo && spec.Kind != kindSeedreamImage {
+	if spec.Kind != kindDoubaoVideo && spec.Kind != kindPicsartVideo && spec.Kind != kindSeedreamImage && spec.Kind != kindTikTokVideo {
 		ratio, err := resolveRatio(req)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
@@ -871,6 +897,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	referenceImageLimit := maxReferenceImages
 	if spec.Kind == kindCapcutVideo {
 		referenceImageLimit = capcutMaxReferenceImages
+	}
+	if spec.Kind == kindTikTokVideo {
+		// 官网面板只收 4 张（"Upload up to 4 images"）；超出会被官网静默丢弃，
+		// 用户会以为全部素材都参与了生成 → 显式拒绝。
+		referenceImageLimit = tiktokMaxReferenceImages
 	}
 	images, referenceSource, err := resolveReferenceImagesWithLimit(req, referenceImageLimit)
 	if err != nil {
@@ -934,6 +965,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
 		norm.Duration = duration
+	case kindTikTokVideo:
+		// TikTok Symphony（图生视频）：
+		//   - 时长**只三档** 5 / 10 / 12 秒（官网原生下拉；单档 5s 是默认值）；
+		//   - 比例**只有 9:16**（官网无比例控件，成片比例跟随参考图）；
+		//   - 分辨率不可选（实测成片 720x1280 / 360x640）→ 传别的档位显式拒绝；
+		//   - 参考图 ≤4 张（官网面板文案 "Upload up to 4 images"）；
+		//   - 不收参考视频 / 参考音频（官网面板只有图位）。
+		// 非法时长/比例/分辨率一律**显式拒绝**，不静默回落 5 秒 / 16:9。
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		duration, err := resolveTikTokDuration(req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		norm.Duration = duration
+		norm.Ratio = tiktokRatio
 	case kindCapcutVideo:
 		// CapCut（剪映国际版）Seedance 2.5 / 2.5 Flash / 2.0 / 2.0 Fast / 2.0 Mini：
 		//   - 时长 4–30 秒任意整数秒（2.5 与 2.5 Flash，官网 2.5 系列 4–30s）；
@@ -1689,6 +1737,36 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 		if _, err := normalizeCapcutResolution(resolution); err != nil {
 			return fmt.Errorf("%s supports only 480p/720p resolution, got %q", modelName, resolution)
 		}
+	case kindTikTokVideo:
+		// TikTok Symphony：官网**没有比例控件**（成片固定 9:16，实测 720x1280 / 360x640）
+		// → 传其它比例显式拒绝（不能静默当成 9:16：用户会为一个没生效的档位付费）。
+		ratio := strings.TrimSpace(req.Ratio)
+		if ratio == "" {
+			ratio = strings.TrimSpace(req.AspectRatio)
+		}
+		if ratio != "" && !strings.EqualFold(ratio, tiktokRatio) {
+			return fmt.Errorf("%s supports only %s ratio, got %q", modelName, tiktokRatio, ratio)
+		}
+		// 分辨率不可选：实测输出固定，传 480p/720p/1080p 都是没生效的档位。
+		resolution := strings.TrimSpace(req.Resolution)
+		if resolution != "" && !strings.EqualFold(resolution, "720p") {
+			return fmt.Errorf("%s has no resolution option (output is 9:16), got %q", modelName, resolution)
+		}
+		// 官网面板只有图位：参考视频 / 参考音频会被官网静默忽略。
+		// 客户端可能把 mp4 直接放进 input_reference（URL 后缀就是形态线索），
+		// 而图片解析不查后缀 → 这里显式按后缀判一次非图片素材。
+		if len(req.Videos) > 0 || len(req.Audios) > 0 {
+			return fmt.Errorf("%s does not support reference videos or audios", modelName)
+		}
+		for _, raw := range tiktokReferenceURLs(req.InputReference) {
+			if ext := strings.ToLower(strings.TrimSpace(path.Ext(raw))); ext != "" {
+				switch ext {
+				case ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif":
+				default:
+					return fmt.Errorf("%s only accepts image references, got %q", modelName, ext)
+				}
+			}
+		}
 	case kindVeoVideo:
 		if hasValue(req.Seconds) {
 			return fmt.Errorf("%s is fixed-duration web Veo: seconds/duration is not supported", modelName)
@@ -1941,6 +2019,81 @@ func resolveCapcutDuration(req clientRequest, model string) (int, error) {
 	}
 
 	return capcutDefaultDuration, nil
+}
+
+// ── TikTok Symphony（图生视频）参数口径（Worker 真机 2026-11-15 实测）──
+//
+//   - 时长：官网原生下拉**只三档** 5 / 10 / 12 秒，单档 5s 是默认值；
+//   - 比例：官网**无比例控件**，成片固定 9:16（实测成片 720x1280 / 360x640）；
+//   - 分辨率：不可选（实测固定输出）；
+//   - 参考图：≤4 张（面板文案 "Upload up to 4 images"）；
+//   - 计费单位：官网按 credits（5s 成片 = 5 credits，实测余额 400 → 390）。
+//
+// ⚠️ 非法档位一律**显式拒绝**：回落 5 秒等于把用户买的长片做成短片（账实不符）。
+const (
+	// tiktokMaxReferenceImages 是官网面板能收的参考图上限。
+	tiktokMaxReferenceImages = 4
+	// tiktokRatio 是唯一可交付的比例（官网只出 9:16）。
+	tiktokRatio = "9:16"
+)
+
+// tiktokDurationWhitelist 是官网原生时长档位（与 Worker 侧 TIKTOK_DURATION_WHITELIST 同源）。
+var tiktokDurationWhitelist = []int{5, 10, 12}
+
+// resolveTikTokDuration 归一时长：seconds → duration → 缺省 5 秒；
+// 白名单外**显式拒绝**（不回落、不吸附）。
+func resolveTikTokDuration(req clientRequest) (int, error) {
+	seconds, found, err := parseFlexibleInt(req.Seconds)
+	if err != nil {
+		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
+	}
+	if found {
+		return validateTikTokDuration("seconds", seconds)
+	}
+	duration, found, err := parseFlexibleInt(req.Duration)
+	if err != nil {
+		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
+	}
+	if found {
+		return validateTikTokDuration("duration", duration)
+	}
+	return tiktokDurationWhitelist[0], nil
+}
+
+// validateTikTokDuration 校验时长是否在官网三档内。
+func validateTikTokDuration(field string, value int) (int, error) {
+	for _, d := range tiktokDurationWhitelist {
+		if value == d {
+			return value, nil
+		}
+	}
+	return 0, fmt.Errorf("%s must be one of 5/10/12 seconds, got %d", field, value)
+}
+
+// tiktokReferenceURLs 从 input_reference 原始 JSON 里取 URL 列表
+// （只用于**后缀**判形态；真正的图片解析仍走共享层）。
+func tiktokReferenceURLs(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var items []string
+	if err := json.Unmarshal(raw, &items); err == nil {
+		return items
+	}
+	var objs []map[string]any
+	if err := json.Unmarshal(raw, &objs); err == nil {
+		out := make([]string, 0, len(objs))
+		for _, o := range objs {
+			for _, key := range []string{"url", "image_url", "video_url"} {
+				if v, ok := o[key].(string); ok && v != "" {
+					out = append(out, v)
+					break
+				}
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // ── CapCut 参考素材：图片 / 视频 / 音频全量透传 ──────────────────────
