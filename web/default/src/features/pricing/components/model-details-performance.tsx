@@ -26,7 +26,10 @@ import {
   staticDataTableClassNames as tableStyles,
 } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
-import { getPerfMetrics } from '@/features/performance-metrics/api'
+import {
+  getPerfMetrics,
+  getTaskHealthSummary,
+} from '@/features/performance-metrics/api'
 import {
   formatLatency,
   formatThroughput,
@@ -36,9 +39,10 @@ import {
 import type { PerformanceGroup } from '@/features/performance-metrics/types'
 import { cn } from '@/lib/utils'
 
-import { type UptimeDayPoint } from '../lib/mock-stats'
+import type { UptimeDayPoint } from '../lib/mock-stats'
 import type { PricingModel } from '../types'
 import { LatencyTrendChart, UptimeTrendChart } from './model-details-charts'
+import { ModelHealthPanel } from './model-health-panel'
 import { UptimeSparkline } from './model-details-uptime-sparkline'
 
 function StatCard(props: {
@@ -97,7 +101,7 @@ function toLatencySeries(groups: PerformanceGroup[]) {
     }
   }
 
-  return Array.from(byTs.entries())
+  return [...byTs.entries()]
     .sort(([a], [b]) => a - b)
     .map(([ts, values]) => ({
       timestamp: new Date(ts * 1000).toISOString(),
@@ -121,7 +125,7 @@ function toUptimeSeries(groups: PerformanceGroup[]): UptimeDayPoint[] {
       byTs.set(point.ts, current)
     }
   }
-  return Array.from(byTs.entries())
+  return [...byTs.entries()]
     .sort(([a], [b]) => a - b)
     .map(([ts, value]) => {
       const uptime =
@@ -168,6 +172,18 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
     queryFn: () => getPerfMetrics(props.model.model_name, 24),
     staleTime: 60 * 1000,
   })
+  // 异步任务健康度：视频等任务协议模型的成功率与完成耗时不来自同步采样表，
+  // 必须单独查 tasks 聚合接口。
+  const healthQuery = useQuery({
+    queryKey: ['task-health-summary', 24],
+    queryFn: () => getTaskHealthSummary(24),
+    staleTime: 60 * 1000,
+    retry: false,
+  })
+  const health = useMemo(() => {
+    const models = healthQuery.data?.data?.models ?? []
+    return models.find((item) => item.model_name === props.model.model_name)
+  }, [healthQuery.data, props.model.model_name])
   const groups = useMemo(
     () => metricsQuery.data?.data.groups ?? [],
     [metricsQuery.data]
@@ -193,7 +209,15 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
     return map
   }, [groups])
 
-  if (metricsQuery.isLoading || performances.length === 0) {
+  // 异步模型（视频/音频/图片任务协议）没有同步 relay 采样，只有任务健康度数据。
+  // 所以「没有同步指标」不等于「没有性能数据」—— 只要有健康度数据就照常渲染。
+  const hasSyncMetrics = performances.length > 0
+  const hasHealth = Boolean(health)
+
+  if (
+    (metricsQuery.isLoading && healthQuery.isLoading) ||
+    (!hasSyncMetrics && !hasHealth && !metricsQuery.isLoading && !healthQuery.isLoading)
+  ) {
     return (
       <div className='text-muted-foreground rounded-lg border p-6 text-center text-sm'>
         {t('Performance data is not yet available for this model.')}
@@ -221,126 +245,148 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
 
   return (
     <div className='flex flex-col gap-4'>
-      <div className='grid grid-cols-1 gap-2 sm:grid-cols-3'>
-        <StatCard
-          icon={Timer}
-          label='TPS'
-          value={formatThroughput(avgTps)}
-          hint={t('Sustained tokens per second')}
-        />
-        <StatCard
-          icon={Timer}
-          label={t('Average latency')}
-          value={formatLatency(avgLatency)}
-        />
-        <StatCard
-          icon={HeartPulse}
-          label={t('Success rate')}
-          value={formatUptimePct(successRate)}
-          hint={
-            incidentCount > 0
-              ? t('{{count}} incidents in the last 24 hours', {
-                  count: incidentCount,
-                })
-              : t('No incidents in the last 24 hours')
-          }
-          valueClassName={getSuccessRateTextClass(successRate)}
-        />
-      </div>
+      {hasHealth && (
+        <section className='bg-card/60 rounded-xl border p-4 shadow-sm'>
+          <SectionHeader
+            icon={HeartPulse}
+            title={t('Task health')}
+            description={t(
+              'Request success rate and completion time for asynchronous task models'
+            )}
+          />
+          <ModelHealthPanel
+            health={health}
+            bucketSeconds={healthQuery.data?.data?.bucket_seconds ?? 3600}
+          />
+        </section>
+      )}
 
-      <section>
-        <SectionHeader
-          icon={HeartPulse}
-          title={t('Per-group performance')}
-          description={t('Average latency, TTFT, TPS, and success rate')}
-        />
-        <StaticDataTable
-          className='rounded-lg'
-          tableClassName='text-sm'
-          headerRowClassName={tableStyles.compactHeaderRow}
-          data={performances}
-          getRowKey={(perf) => perf.group}
-          columns={[
-            {
-              id: 'group',
-              header: t('Group'),
-              className: tableStyles.compactHeaderCell,
-              cellClassName: tableStyles.compactCell,
-              cell: (perf) => <GroupBadge group={perf.group} size='sm' />,
-            },
-            {
-              id: 'tps',
-              header: 'TPS',
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactNumericCell,
-              cell: (perf) => formatThroughput(perf.avg_tps),
-            },
-            {
-              id: 'ttft',
-              header: t('Average TTFT'),
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactNumericCell,
-              cell: (perf) => formatLatency(perf.avg_ttft_ms),
-            },
-            {
-              id: 'latency',
-              header: t('Average latency'),
-              className: tableStyles.compactHeaderCellRight,
-              cellClassName: tableStyles.compactMutedNumericCell,
-              cell: (perf) => formatLatency(perf.avg_latency_ms),
-            },
-            {
-              id: 'success',
-              header: t('Success rate'),
-              className: cn(tableStyles.compactHeaderCell, 'min-w-[180px]'),
-              cellClassName: tableStyles.compactCell,
-              cell: (perf) => (
-                <UptimeSparkline
-                  size='sm'
-                  series={uptimeByGroup[perf.group] ?? []}
-                />
-              ),
-            },
-          ]}
-        />
-      </section>
+      {hasSyncMetrics && (
+        <div className='grid grid-cols-1 gap-2 sm:grid-cols-3'>
+          <StatCard
+            icon={Timer}
+            label='TPS'
+            value={formatThroughput(avgTps)}
+            hint={t('Sustained tokens per second')}
+          />
+          <StatCard
+            icon={Timer}
+            label={t('Average latency')}
+            value={formatLatency(avgLatency)}
+          />
+          <StatCard
+            icon={HeartPulse}
+            label={t('Success rate')}
+            value={formatUptimePct(successRate)}
+            hint={
+              incidentCount > 0
+                ? t('{{count}} incidents in the last 24 hours', {
+                    count: incidentCount,
+                  })
+                : t('No incidents in the last 24 hours')
+            }
+            valueClassName={getSuccessRateTextClass(successRate)}
+          />
+        </div>
+      )}
 
-      <section>
-        <SectionHeader
-          icon={Timer}
-          title={t('Latency trend (last 24h)')}
-          description={t('Average TTFT')}
-        />
-        <LatencyTrendChart series={latencySeries} />
-      </section>
+      {hasSyncMetrics && (
+        <>
+          <section>
+            <SectionHeader
+              icon={HeartPulse}
+              title={t('Per-group performance')}
+              description={t('Average latency, TTFT, TPS, and success rate')}
+            />
+            <StaticDataTable
+              className='rounded-lg'
+              tableClassName='text-sm'
+              headerRowClassName={tableStyles.compactHeaderRow}
+              data={performances}
+              getRowKey={(perf) => perf.group}
+              columns={[
+                {
+                  id: 'group',
+                  header: t('Group'),
+                  className: tableStyles.compactHeaderCell,
+                  cellClassName: tableStyles.compactCell,
+                  cell: (perf) => <GroupBadge group={perf.group} size='sm' />,
+                },
+                {
+                  id: 'tps',
+                  header: 'TPS',
+                  className: tableStyles.compactHeaderCellRight,
+                  cellClassName: tableStyles.compactNumericCell,
+                  cell: (perf) => formatThroughput(perf.avg_tps),
+                },
+                {
+                  id: 'ttft',
+                  header: t('Average TTFT'),
+                  className: tableStyles.compactHeaderCellRight,
+                  cellClassName: tableStyles.compactNumericCell,
+                  cell: (perf) => formatLatency(perf.avg_ttft_ms),
+                },
+                {
+                  id: 'latency',
+                  header: t('Average latency'),
+                  className: tableStyles.compactHeaderCellRight,
+                  cellClassName: tableStyles.compactMutedNumericCell,
+                  cell: (perf) => formatLatency(perf.avg_latency_ms),
+                },
+                {
+                  id: 'success',
+                  header: t('Success rate'),
+                  className: cn(tableStyles.compactHeaderCell, 'min-w-[180px]'),
+                  cellClassName: tableStyles.compactCell,
+                  cell: (perf) => (
+                    <UptimeSparkline
+                      size='sm'
+                      series={uptimeByGroup[perf.group] ?? []}
+                    />
+                  ),
+                },
+              ]}
+            />
+          </section>
 
-      <section>
-        <SectionHeader
-          icon={HeartPulse}
-          title={t('Availability (last 24h)')}
-          description={
-            incidentCount > 0
-              ? t(
-                  'Request success rate; {{incidents}} incident buckets in the last 24 hours',
-                  {
-                    incidents: incidentCount,
-                  }
-                )
-              : t('Request success rate sampled over the last 24 hours')
-          }
-          accent={
-            incidentCount > 0 ? (
-              <span className='inline-flex items-center gap-1 text-amber-600 dark:text-amber-400'>
-                <AlertTriangle className='size-3.5' />
-                {t('{{count}} incidents', {
-                  count: incidentCount,
-                })}
-              </span>
-            ) : null
-          }
-        />
-        <UptimeTrendChart series={uptimeSeries} />
-      </section>
+          <section>
+            <SectionHeader
+              icon={Timer}
+              title={t('Latency trend (last 24h)')}
+              description={t('Average TTFT')}
+            />
+            <LatencyTrendChart series={latencySeries} />
+          </section>
+
+          <section>
+            <SectionHeader
+              icon={HeartPulse}
+              title={t('Availability (last 24h)')}
+              description={
+                incidentCount > 0
+                  ? t(
+                      'Request success rate; {{incidents}} incident buckets in the last 24 hours',
+                      {
+                        incidents: incidentCount,
+                      }
+                    )
+                  : t('Request success rate sampled over the last 24 hours')
+              }
+              accent={
+                incidentCount > 0 ? (
+                  <span className='inline-flex items-center gap-1 text-amber-600 dark:text-amber-400'>
+                    <AlertTriangle className='size-3.5' />
+                    {t('{{count}} incidents', {
+                      count: incidentCount,
+                    })}
+                  </span>
+                ) : null
+              }
+            />
+            <UptimeTrendChart series={uptimeSeries} />
+          </section>
+        </>
+      )}
     </div>
   )
 }

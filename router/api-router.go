@@ -190,6 +190,13 @@ func SetApiRouter(router *gin.Engine) {
 			perfMetricsRoute.GET("/summary", controller.GetPerfMetricsSummary)
 			perfMetricsRoute.GET("", controller.GetPerfMetrics)
 		}
+		// 异步任务健康度（模型广场「每个模型最近用得怎么样」面板的数据源）。
+		// 鉴权口径与 perf-metrics 一致：模型广场公开可见时也能读。
+		taskHealthRoute := apiRouter.Group("/task-health")
+		taskHealthRoute.Use(middleware.HeaderNavModulePublicOrUserAuth("pricing"))
+		{
+			taskHealthRoute.GET("/summary", controller.GetTaskHealthSummary)
+		}
 		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)
 		apiRouter.GET("/reset_password", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.SendPasswordResetEmail)

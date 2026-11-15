@@ -59,3 +59,54 @@ export type PerfSummaryAllData = {
     models: PerfModelSummary[]
   }
 }
+
+// ---------------------------------------------------------------------------
+// 异步任务健康度（模型广场「最近用得怎么样」面板）
+// ---------------------------------------------------------------------------
+//
+// 与上面的 PerformanceMetricsData 分开：前者是**同步 relay** 的即时采样
+// （LLM / 图片），后者是**异步任务**（视频 / 音频 / 图片任务协议）的完成统计 ——
+// 任务的完成时间只有跑完才知道，不在同步采样表里。
+
+/** 趋势里的一个小时桶。 */
+export type TaskHealthBucket = {
+  /** 桶起始时间戳（秒，UTC 对齐整点）。 */
+  bucket_ts: number
+  success_count: number
+  failure_count: number
+  /**
+   * 该桶成功率（0-100）。null = 该时段没有已完成任务（**无样本**，不是 0%）。
+   * 前端必须区分这两者：把「无样本」画成红色会被误读成「全挂」。
+   */
+  success_rate: number | null
+  /** 该桶内成功任务的平均完成耗时（毫秒）。 */
+  avg_duration_ms: number
+}
+
+/** 单个模型的健康度汇总。 */
+export type TaskHealthModel = {
+  /** 计费口径的模型名（客户请求的那个），与扣费口径一致。 */
+  model_name: string
+  /** 窗口内已完成任务总数（成功 + 失败）。 */
+  request_count: number
+  success_count: number
+  failure_count: number
+  /** 窗口内成功率（0-100）。null = 窗口内没有已完成任务。 */
+  success_rate: number | null
+  /** 成功任务的平均完成耗时（毫秒）。0 = 没有成功样本。 */
+  avg_duration_ms: number
+  /** 按时间升序的每小时趋势桶。 */
+  buckets: TaskHealthBucket[]
+}
+
+export type TaskHealthSummaryData = {
+  success: boolean
+  message?: string
+  data: {
+    models: TaskHealthModel[]
+    /** 实际统计窗口长度（小时）。 */
+    hours: number
+    /** 趋势桶宽度（秒）。 */
+    bucket_seconds: number
+  }
+}

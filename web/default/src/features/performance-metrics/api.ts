@@ -18,7 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 
-import type { PerformanceMetricsData, PerfSummaryAllData } from './types'
+import type {
+  PerformanceMetricsData,
+  PerfSummaryAllData,
+  TaskHealthSummaryData,
+} from './types'
 
 export async function getPerfMetricsSummary(
   hours = 24
@@ -38,6 +42,21 @@ export async function getPerfMetrics(
       model: modelName,
       hours,
     },
+  })
+  return res.data
+}
+
+/**
+ * 拉取异步任务的健康度汇总（所有模型，一次请求）。
+ *
+ * 模型广场要展示每个模型的「最近一段时间成功率 + 用时」，所以用汇总接口
+ * 而不是逐模型查询 —— 模型多的时候逐个请求会把广场首屏打爆。
+ */
+export async function getTaskHealthSummary(
+  hours = 24
+): Promise<TaskHealthSummaryData> {
+  const res = await api.get<TaskHealthSummaryData>('/api/task-health/summary', {
+    params: { hours },
   })
   return res.data
 }

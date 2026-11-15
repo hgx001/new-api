@@ -22,7 +22,11 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
+import {
+  getPerfMetricsSummary,
+  getTaskHealthSummary,
+} from '@/features/performance-metrics/api'
+import type { TaskHealthModel } from '@/features/performance-metrics/types'
 
 import { DEFAULT_PRICING_PAGE_SIZE, DEFAULT_TOKEN_UNIT } from '../constants'
 import type { PricingModel, TokenUnit } from '../types'
@@ -53,6 +57,14 @@ export function ModelCardGrid(props: ModelCardGridProps) {
     retry: false,
   })
 
+  // 任务健康度：一次请求拿全部模型，避免按卡片逐个请求把首屏打爆。
+  const healthQuery = useQuery({
+    queryKey: ['task-health-summary', 24],
+    queryFn: () => getTaskHealthSummary(24),
+    staleTime: 60 * 1000,
+    retry: false,
+  })
+
   const pagedModels = useMemo(() => {
     const start = (currentPage - 1) * pageSize
     return props.models.slice(start, start + pageSize)
@@ -65,6 +77,14 @@ export function ModelCardGrid(props: ModelCardGridProps) {
     }
     return map
   }, [perfQuery.data])
+
+  const healthMap = useMemo(() => {
+    const map = new Map<string, TaskHealthModel>()
+    for (const model of healthQuery.data?.data?.models ?? []) {
+      map.set(model.model_name, model)
+    }
+    return map
+  }, [healthQuery.data])
 
   if (props.models.length === 0) {
     return null
@@ -82,6 +102,7 @@ export function ModelCardGrid(props: ModelCardGridProps) {
             usdExchangeRate={props.usdExchangeRate}
             showRechargePrice={props.showRechargePrice}
             perf={perfMap.get(model.model_name || '')}
+            health={healthMap.get(model.model_name || '')}
             onClick={() => props.onModelClick(model.model_name || '')}
           />
         ))}

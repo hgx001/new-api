@@ -19,6 +19,7 @@ import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
+import type { TaskHealthModel } from '@/features/performance-metrics/types'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
@@ -39,6 +40,7 @@ import {
 } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
+import { ModelHealthPanel } from './model-health-panel'
 import type { ModelPerfBadgeData } from './model-perf-badge'
 
 export interface ModelCardProps {
@@ -49,6 +51,8 @@ export interface ModelCardProps {
   tokenUnit?: TokenUnit
   showRechargePrice?: boolean
   perf?: ModelPerfBadgeData
+  /** 该模型的异步任务健康度；undefined = 近期没有任务记录。 */
+  health?: TaskHealthModel
 }
 
 function ModelCardPrice(props: {
@@ -323,6 +327,13 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           </span>
         )}
       </div>
+
+      {/* 任务健康度：最近一段时间的请求成功率与完成耗时 */}
+      {props.health && (
+        <div className='border-border/60 mt-3 border-t pt-3 sm:mt-4'>
+          <ModelHealthPanel health={props.health} compact />
+        </div>
+      )}
     </div>
   )
 })
