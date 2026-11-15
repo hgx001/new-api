@@ -269,3 +269,64 @@ func TestProbeAndEnforceReferenceVideosSkipsLimitWhenZero(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 40, total)
 }
+
+// ---- ProbeAndEnforceReferenceVideosTotal：CapCut 的「合计 ≤15s」口径 ----
+
+// 15 秒整是闭区间上界：3 条 5 秒合计正好 15 秒，必须放行。
+func TestProbeAndEnforceReferenceVideosTotalAllowsExactly15s(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideosTotal(t.Context(),
+		[]string{dataURLVideo(5), dataURLVideo(5), dataURLVideo(5)},
+		MaxReferenceVideoSeconds, nil)
+	require.NoError(t, err, "合计 15 秒整不能误伤")
+	require.Equal(t, 15, total)
+}
+
+// 合计超过 15 秒必须拒 —— 这是与逐条口径的**行为差异点**：
+// 2 条 8 秒的请求在逐条口径下一直能跑，在合计口径下开始被拒（破坏性收紧）。
+func TestProbeAndEnforceReferenceVideosTotalRejectsOverLimit(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideosTotal(t.Context(),
+		[]string{dataURLVideo(8), dataURLVideo(8)},
+		MaxReferenceVideoSeconds, nil)
+	require.Error(t, err, "2×8s = 16s 必须拒")
+	require.Zero(t, total, "拒单时不能把钱算出来")
+	require.Contains(t, err.Error(), "16")
+	require.Contains(t, err.Error(), "总时长", "文案要说清是「合计」超限，不是某一条太长")
+}
+
+// ⚠️ 限长用**未取整**的浮点合计，计费用**逐条取整后**相加。
+//
+// 3×5.4s = 16.2s 超限 → 必须拒；如果先取整成 5+5+5=15 就会误放。
+// 这条用例把「两套口径不能混用」钉死。
+func TestProbeAndEnforceReferenceVideosTotalLimitsOnUnroundedSum(t *testing.T) {
+	_, err := ProbeAndEnforceReferenceVideosTotal(t.Context(),
+		[]string{dataURLVideo(5.4), dataURLVideo(5.4), dataURLVideo(5.4)},
+		MaxReferenceVideoSeconds, nil)
+	require.Error(t, err, "16.2s 超限；取整后 15s 只是计费口径，不能拿来判限长")
+}
+
+// 未超限时计费仍按逐条四舍五入相加（与 RoundSecondsToBilling / wan3 同口径）。
+// 3.4 + 7.4 = 10.8s（浮点合计）→ 计费 3 + 7 = 10 秒。
+func TestProbeAndEnforceReferenceVideosTotalBillsRoundedPerVideo(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideosTotal(t.Context(),
+		[]string{dataURLVideo(3.4), dataURLVideo(7.4)},
+		MaxReferenceVideoSeconds, nil)
+	require.NoError(t, err)
+	require.Equal(t, 10, total, "逐条四舍五入后相加，不能先用浮点合计再取整（那会得到 11）")
+}
+
+// 视频参与计费，测不出时长必须 fail-loud —— 与音频的宽容口径刻意不同。
+func TestProbeAndEnforceReferenceVideosTotalFailsLoudWhenUnmeasurable(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideosTotal(t.Context(),
+		[]string{dataURLVideo(5), "https://a.example/not-reachable.mp4"},
+		MaxReferenceVideoSeconds, nil)
+	require.Error(t, err, "计费依赖时长，测不出来不能按 0 秒放行")
+	require.Zero(t, total)
+	require.Contains(t, err.Error(), "#2", "错误里要指明是第几条素材")
+}
+
+// 空列表直接返回 0，不建 client、不起超时。
+func TestProbeAndEnforceReferenceVideosTotalNoVideos(t *testing.T) {
+	total, err := ProbeAndEnforceReferenceVideosTotal(t.Context(), nil, MaxReferenceVideoSeconds, nil)
+	require.NoError(t, err)
+	require.Zero(t, total)
+}

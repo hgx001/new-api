@@ -258,6 +258,58 @@ func ProbeAndEnforceReferenceVideos(ctx context.Context, urls []string, maxSecon
 	return total, nil
 }
 
+// ProbeAndEnforceReferenceVideosTotal 一次探测产出两件事：**计费秒数**与**合计限长**。
+//
+// 与 ProbeAndEnforceReferenceVideos 的唯一差别是限长口径：
+//   - 本函数判「所有参考视频**合计** ≤ totalMaxSeconds」（CapCut 2026-11-15 口径：
+//     条数从 1 放宽到 5，同时用总量守住上游「参考素材合计不超过 15 秒」的硬约束）；
+//   - 原函数判「**单条** ≤ maxSeconds」（万相 / 有赞 / erchun / hailuo 的既有契约）。
+//
+// 刻意不改造原函数的语义：它被四条链路共用，改口径会连带改它们的对外行为；
+// 两个口径并存、各自有测试锁定，比一个带开关的函数更难回归。
+//
+// ⚠️ **限长用未取整的浮点合计，计费用逐条四舍五入后相加** —— 两者绝对不能混用：
+// 3 条 5.4 秒的浮点合计是 16.2 秒（该拒），若先取整成 5+5+5=15 就会误放；
+// 反过来用浮点算钱会与上游账单对不上（上游按整秒计）。
+//
+// 探测失败一律 fail-loud（返回 error）：视频参与计费，拿不到时长就无法算钱。
+// 这与参考**音频**的宽容口径刻意相反 —— 音频不参与计费，走
+// EnforceReferenceAudioMaxSeconds（探测失败放行）。
+func ProbeAndEnforceReferenceVideosTotal(ctx context.Context, urls []string, totalMaxSeconds float64, client *http.Client) (billingSeconds int, err error) {
+	if len(urls) == 0 {
+		return 0, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeReferenceVideosTimeout)
+	defer cancel()
+
+	totalSeconds := 0.0
+	for i, raw := range urls {
+		itemCtx, itemCancel := context.WithTimeout(ctx, probePerReferenceVideoTimeout)
+		seconds, probeErr := ProbeReferenceVideoDuration(itemCtx, raw, client)
+		itemCancel()
+		if probeErr != nil {
+			// 底层 http 错误带完整 URL（可能含签名参数），只能压摘要再回给客户。
+			return 0, errors.Errorf(
+				"reference video #%d (%s) duration unavailable for per-second billing (readable MP4/MOV required): %s",
+				i+1, RedactMaterialURL(raw), truncateForLog(probeErr.Error()))
+		}
+		totalSeconds += seconds
+		billingSeconds += RoundSecondsToBilling(seconds)
+	}
+	if totalMaxSeconds > 0 && totalSeconds > totalMaxSeconds+DurationEpsilon {
+		// 文案必须说「总时长」：客户看到「超过 15 秒」却逐条都不超时会无从下手。
+		return 0, errors.Errorf(
+			"参考视频总时长 %.2f 秒超过 %.0f 秒上限，请裁剪后重试", totalSeconds, totalMaxSeconds)
+	}
+	return billingSeconds, nil
+}
+
 // decodeDataURLPrefix 解码 data URL 的 base64 部分。
 //
 // 同时接受带 padding 的标准编码与无 padding 的 Raw 变体：客户端手工拼 data URL 时
