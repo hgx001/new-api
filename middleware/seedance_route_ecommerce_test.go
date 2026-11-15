@@ -193,33 +193,46 @@ func TestEcommerceBeatsSecondsRuleOnLongRequests(t *testing.T) {
 	}
 }
 
-// ⚠️ 规则六（短时长分流）必须**排在规则七之前**。
+// 电商内容路由（规则七）是**最高优先级**（老板口径 2026-11-15）：
+// 识别到电商/产品推荐内容的请求不被任何其它路由条件限制 ——
+// 短时长、长时长、非 9:16 都先走规则七。
 //
-// 这是一条顺序不变量锁。设计口径是：
-//
-//	短请求是**成本**问题（绕开 prime 的 <10 秒保护）；
-//	电商内容是**内容形态**问题。
-//
-// 一条 8 秒的电商短视频该走更便宜的短时长链路，而不是被内容判定抢到
-// CapCut 2.5 Flash（2.5 Flash 的对外价 ¥0.30/秒，是 2.0 Fast 的 2.5 倍）。
-//
-// 2026-11-14 曾出现过实际顺序与文档声明不一致的缺陷（规则七被排到了规则六
-// 之前），后果就是这条请求被改派到 cp-seedance-2.5flash ——
-// 光看代码注释发现不了，只有实测能发现，所以锁在这里。
-func TestShortRouteBeatsEcommerceOnShortRequests(t *testing.T) {
+// 这条用例锁顺序：8 秒的电商请求必须走规则七（CapCut 2.5 Flash），
+// 不能被规则六的短时长分流抢走。
+func TestEcommerceBeatsShortRouteOnShortRequests(t *testing.T) {
 	// 开规则七（内容入口）+ 规则六的 CapCut 快速档分支。
 	// 两次配置要合并成一份策略，所以这里直接构造一份完整策略。
 	enableEcommerceWithShortCapcut(t)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"好物推荐 种草文案"}`)
 	body := decodeBody(t, seen)
-	if body["model"] == testEcommerceTarget {
-		t.Fatalf("8 秒的电商请求应先走规则六（短时长分流），实际被规则七抢到 %s",
-			testEcommerceTarget)
+	if body["model"] != testEcommerceTarget {
+		t.Fatalf("8 秒的电商请求应优先走规则七（%s），实际 model=%v",
+			testEcommerceTarget, body["model"])
 	}
-	if body["model"] != testShortCapcutTarget {
-		t.Fatalf("8 秒的电商请求应改派 %s，实际 model=%v",
-			testShortCapcutTarget, body["model"])
+}
+
+// 10–20 秒、非 9:16 的电商请求也要路由：内容命中不受比例/时长参数限制。
+func TestEcommerceRoutesMidDurationNonVertical(t *testing.T) {
+	enableEcommerce(t, false, false, 20)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":15,"resolution":"720P","prompt":"双11 好物推荐 种草文案"}`)
+	body := decodeBody(t, seen)
+	if body["model"] != testEcommerceTarget {
+		t.Fatalf("15 秒非 9:16 的电商请求应改派 %s，实际 model=%v",
+			testEcommerceTarget, body["model"])
+	}
+}
+
+// 电商请求带首尾帧时不能被规则七强行改派：CapCut 链路没有首尾帧语义，
+// 改过去就是错交付。应落到规则三（首尾帧目标）或留在源链路。
+func TestEcommerceWithFramesDoesNotRouteToCapcut(t *testing.T) {
+	enableEcommerce(t, false, false, 20)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":15,"prompt":"好物推荐 种草文案","media":[{"type":"first_frame","url":"https://example.com/a.jpg"}]}`)
+	body := decodeBody(t, seen)
+	if body["model"] == testEcommerceTarget {
+		t.Fatalf("带首尾帧的电商请求不该被规则七改派到 %s", testEcommerceTarget)
 	}
 }
 
