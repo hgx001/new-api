@@ -295,7 +295,39 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 共用同一份准入 prepareCapcutRoute），但素材形态仍要合格：
 		// 非 http(s) 直链的图/视频/音频一律不改派（CapCut 只收公网直链）。
 		// 逐条理由见 setting/seedanceroute_setting/total_fallback.go 包头注释。
-		if seedanceroute_setting.TotalFallbackEnabledFor(sourceModel) {
+		//
+		// ⚠️ **2026-11-15 老板口径下的一个例外：<10 秒不走规则八**。
+		//
+		// 老板要求「特惠/活动支持 5-30 秒，<10 秒的路由到 cp-seedance-2.0」。
+		// 规则八的目标是 cp-seedance-2.5flash —— 它与 cp-seedance-2.0 是**不同档位**
+		// （2.5 Flash 便宜一档，定位是「有赞挂了时的便宜替代」，
+		// 而 cp-seedance-2.0 是「<10 秒这条业务路径的正式执行档」）。
+		//
+		// 规则八排在规则六之前，所以不显式跳过的话，<10 秒的请求会被规则八
+		// 先接走 → 落到 2.5 Flash 而不是 2.0 满血档 → 交付品质与老板口径不符
+		// （2026-11-15 22:14 线上探针实测到的就是这个）。
+		//
+		// 所以这里显式让 <10 秒的请求**跳过规则八、落到规则六**。
+		// ⚠️ 条件用同一个常量（ShortCapcutMinSeconds），与规则六第三分支的分界线
+		//   保持一致 —— 两处写不同的数就会出现「谁都不接」的空洞。
+		//
+		// 补充：规则八本来就是「有赞彻底不能用时」的逃生口，而 <10 秒的请求
+		// 即使有赞挂了也能走 CapCut（那是另一条独立链路）——
+		// 让它落到规则六反而更符合规则八的初衷（保证有出口）。
+		//
+		// ⚠️ 客户**没传时长**时也算 <10 秒：规则八对缺省是 5 秒，
+		//   而 5 秒属于 CapCut 满血档的业务路径。所以这里用「读不到就按
+		//   totalFallbackDefaultSeconds 算」的口径 —— 与规则八内部处理缺省的
+		//   方式一致，两边看到的是同一个秒数。
+		skipTotalFallbackForShort := false
+		shortSeconds, hasShortSeconds := extractRequestSeconds(body)
+		if !hasShortSeconds || shortSeconds <= 0 {
+			shortSeconds = totalFallbackDefaultSeconds
+		}
+		if shortSeconds < seedanceroute_setting.ShortCapcutMinSeconds {
+			skipTotalFallbackForShort = true
+		}
+		if seedanceroute_setting.TotalFallbackEnabledFor(sourceModel) && !skipTotalFallbackForShort {
 			target := seedanceroute_setting.TotalFallbackTargetModel()
 			// 时长口径：客户传了就用**原值**（45 秒就该按 45 秒判越界，
 			// 不能悄悄夹到 30 秒 —— 那是「按 45 秒卖、出 30 秒」的静默改档）；

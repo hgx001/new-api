@@ -131,3 +131,32 @@ func TestPromoDuration_BoundaryConstantsAligned(t *testing.T) {
 			seedanceroute_setting.DefaultShortCapcutTargetModel)
 	}
 }
+
+// 规则八开着（生产现状）时，<10 秒仍必须落 CapCut **满血档**。
+//
+// 这条是 2026-11-15 22:14 线上探针实测出来的真实缺陷：
+// 规则八（全量兜底）排在规则六之前，无条件把请求改派到
+// cp-seedance-2.5flash —— 于是 <10 秒的请求落到 2.5 Flash 而不是
+// 老板要的 2.0 满血档。修复方式是让 <10 秒跳过规则八。
+//
+// 回归守卫：这个用例必须在**规则八打开**的前提下断言满血档。
+func TestPromoDuration_TotalFallbackDoesNotStealShortRequests(t *testing.T) {
+	enableTotalFallback(t)
+	enableShortCapcut(t, false, false, true)
+	stubChannelAvailableByModel(t, map[string]bool{
+		testShortTargetModel:    false,
+		testYouzanStandardModel: true,
+		testShortCapcutTarget:   true,
+		"cp-seedance-2.5flash":  true,
+	})
+
+	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
+	body := decodeBody(t, seen)
+
+	if body["model"] == "cp-seedance-2.5flash" {
+		t.Fatalf("<10 秒被规则八抢走 —— 应落 CapCut 满血档 %s", testShortCapcutTarget)
+	}
+	if body["model"] != testShortCapcutTarget {
+		t.Fatalf("<10 秒应落 CapCut 满血档 %s，实际 model=%v", testShortCapcutTarget, body["model"])
+	}
+}

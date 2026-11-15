@@ -49,18 +49,22 @@ func enableTotalFallback(t *testing.T) {
 	})
 }
 
-// 5 秒的普通请求（不超时长阈值、非 9:16、提示词不是电商）也要改派 ——
+// 12 秒的普通请求（不超时长阈值、非 9:16、提示词不是电商）也要改派 ——
 // 这正是「无条件」与规则六/七的区别。
+//
+// ⚠️ 用例时长必须 ≥10 秒：2026-11-15 起 <10 秒的请求**跳过规则八**
+// （老板口径：<10 秒落 CapCut 满血档 cp-seedance-2.0，见
+// TestTotalFallbackSkipsBelowTenSeconds）。
 func TestTotalFallbackRoutesShortPlainRequest(t *testing.T) {
 	enableTotalFallback(t)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat",
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":12,"prompt":"a cat",
 		"metadata":{"ratio":"16:9"},
 		"media":[{"type":"reference_image","url":"https://x/a.png"}]}`)
 	body := decodeBody(t, rec.body)
 
 	assert.Equal(t, totalFallbackTarget, body["model"], "规则八必须无条件改派 CapCut")
-	assert.Equal(t, "5", body["seconds"], "时长必须原样下发（字符串形态）")
+	assert.Equal(t, "12", body["seconds"], "时长必须原样下发（字符串形态）")
 	assert.Equal(t, "480p", body["resolution"], "生成档必须钉 480p（交付前超分到 720P，省一半 credits）")
 	assert.Equal(t, "16:9", body["ratio"], "比例必须显式落到顶层 ratio")
 
@@ -72,7 +76,7 @@ func TestTotalFallbackRoutesShortPlainRequest(t *testing.T) {
 	// 计费原点仍是客户请求的源模型：改派不改对客价格。
 	assert.Equal(t, testSourceModel, rec.originModel)
 	assert.True(t, rec.hasBillingSec)
-	assert.Equal(t, float64(5), rec.billingSeconds)
+	assert.Equal(t, float64(12), rec.billingSeconds)
 }
 
 // 带参考图但**没指定比例**时也不改派：源链路缺省是 adaptive（跟随参考图），
@@ -80,7 +84,7 @@ func TestTotalFallbackRoutesShortPlainRequest(t *testing.T) {
 func TestTotalFallbackSkipsAdaptiveRatioWithReferenceImage(t *testing.T) {
 	enableTotalFallback(t)
 
-	const body = `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat",
+	const body = `{"model":"seedance2.5-特惠","seconds":12,"prompt":"a cat",
 		"media":[{"type":"reference_image","url":"https://x/a.png"}]}`
 	rewritten, _ := runRoute(t, body)
 
@@ -113,7 +117,7 @@ func TestTotalFallbackBeatsSecondsRule(t *testing.T) {
 func TestTotalFallbackIgnoresRatio(t *testing.T) {
 	enableTotalFallback(t)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":8,
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":15,
 		"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
@@ -142,7 +146,7 @@ func TestTotalFallbackKeeps720pWhenSuperResolutionUnavailable(t *testing.T) {
 	enableTotalFallback(t)
 	stubSuperResolution(t, false)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
 	assert.Equal(t, totalFallbackTarget, body["model"])
@@ -157,7 +161,7 @@ func TestTotalFallbackKeeps720pWhenSuperResolutionUnavailable(t *testing.T) {
 func TestTotalFallbackKeepsSourceTierBillingRatio(t *testing.T) {
 	enableTotalFallback(t)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
 	require.Equal(t, totalFallbackTarget, body["model"])
@@ -171,11 +175,27 @@ func TestTotalFallbackKeepsSourceTierBillingRatio(t *testing.T) {
 func TestTotalFallbackSkips1080P(t *testing.T) {
 	enableTotalFallback(t)
 
-	const body = `{"model":"seedance2.5-特惠","seconds":5,"resolution":"1080P","prompt":"a cat"}`
+	const body = `{"model":"seedance2.5-特惠","seconds":12,"resolution":"1080P","prompt":"a cat"}`
 	rewritten, origin := runRoute(t, body)
 
 	assert.Equal(t, body, rewritten, "物理接不住的请求必须原样放行，不能半改写")
 	assert.Empty(t, origin, "没改派就不该留计费原点")
+}
+
+// <10 秒的请求**跳过规则八**（2026-11-15 老板口径）。
+//
+// 老板要求「特惠/活动支持 5-30 秒，<10 秒的路由到 cp-seedance-2.0」。
+// 规则八的目标是 cp-seedance-2.5flash —— 与 cp-seedance-2.0 是不同档位。
+// 规则八排在规则六之前，不显式跳过的话 <10 秒会被它先接走，
+// 落到 2.5 Flash 而不是 2.0 满血档（2026-11-15 22:14 线上探针实测过）。
+func TestTotalFallbackSkipsBelowTenSeconds(t *testing.T) {
+	enableTotalFallback(t)
+
+	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
+	decoded := decodeBody(t, rewritten)
+
+	assert.NotEqual(t, totalFallbackTarget, decoded["model"],
+		"<10 秒不该被规则八接走 —— 那是规则六 CapCut 满血档的活")
 }
 
 // 2–3 秒不改派：CapCut 时长下界 4 秒。
@@ -195,7 +215,7 @@ func TestTotalFallbackSkipsTooShortRequest(t *testing.T) {
 func TestTotalFallbackRoutesReferenceVideo(t *testing.T) {
 	enableTotalFallback(t)
 
-	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,
+	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":12,
 		"media":[{"type":"reference_video","url":"https://x/a.mp4"}],"prompt":"a cat"}`)
 	decoded := decodeBody(t, rewritten)
 
@@ -209,7 +229,7 @@ func TestTotalFallbackRoutesReferenceVideo(t *testing.T) {
 func TestTotalFallbackRoutesReferenceAudio(t *testing.T) {
 	enableTotalFallback(t)
 
-	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"audios":["https://x/a.mp3"],"prompt":"a cat"}`)
+	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":12,"audios":["https://x/a.mp3"],"prompt":"a cat"}`)
 	decoded := decodeBody(t, rewritten)
 
 	assert.Equal(t, totalFallbackTarget, decoded["model"], "带参考音频应改派")
@@ -222,7 +242,7 @@ func TestTotalFallbackRoutesReferenceAudio(t *testing.T) {
 func TestTotalFallbackSkipsFrameMedia(t *testing.T) {
 	enableTotalFallback(t)
 
-	const body = `{"model":"seedance2.5-特惠","seconds":5,
+	const body = `{"model":"seedance2.5-特惠","seconds":12,
 		"media":[{"type":"first_frame","url":"https://x/a.png"}],"prompt":"a cat"}`
 	rewritten, _ := runRoute(t, body)
 
@@ -235,7 +255,7 @@ func TestTotalFallbackSkipsWhenTargetChannelUnavailable(t *testing.T) {
 	enableTotalFallback(t)
 	stubChannelAvailable(t, false)
 
-	const body = `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`
+	const body = `{"model":"seedance2.5-特惠","seconds":12,"prompt":"a cat"}`
 	rewritten, _ := runRouteRaw(t, body)
 
 	assert.Equal(t, body, rewritten)
@@ -243,14 +263,19 @@ func TestTotalFallbackSkipsWhenTargetChannelUnavailable(t *testing.T) {
 
 // 没传时长时按 5 秒下发：这是源链路与 CapCut **共同**的缺省值，
 // 改派前后成片长度一致。
+// 没传时长 → 规则八按缺省 5 秒处理。
+//
+// ⚠️ 2026-11-15 起 5 秒 <10 秒，**跳过规则八**（老板口径：<10 秒走
+// CapCut 满血档 cp-seedance-2.0）—— 所以这个用例现在断言「不被规则八接走」。
+// 见 TestTotalFallbackSkipsBelowTenSeconds。
 func TestTotalFallbackDefaultsMissingSecondsToFive(t *testing.T) {
 	enableTotalFallback(t)
 
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
-	assert.Equal(t, totalFallbackTarget, body["model"])
-	assert.Equal(t, "5", body["seconds"])
+	assert.NotEqual(t, totalFallbackTarget, body["model"],
+		"没传时长（缺省 5 秒）属于 <10 秒，不该被规则八接走")
 }
 
 // 45 秒不改派：CapCut 上界 30 秒。
@@ -276,7 +301,7 @@ func TestTotalFallbackDisabledKeepsBodyByteIdentical(t *testing.T) {
 	require.NoError(t, seedanceroute_setting.UpdateFromJSONString(
 		`{"enabled":true,"source_models":["seedance2.5-特惠"],"target_model":"seedance-2-5","trigger_seconds":20}`))
 
-	const body = `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`
+	const body = `{"model":"seedance2.5-特惠","seconds":12,"prompt":"a cat"}`
 	rewritten, origin := runRoute(t, body)
 
 	assert.Equal(t, body, rewritten, "开关关闭时请求体必须逐字节不变")
@@ -297,7 +322,8 @@ func TestTotalFallbackIgnoresNonSourceModel(t *testing.T) {
 func TestTotalFallbackNeverWritesEmptyModel(t *testing.T) {
 	enableTotalFallback(t)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"a cat"}`)
+	// 12 秒（≥10 秒才会走规则八；<10 秒跳过规则八）。
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":12,"prompt":"a cat"}`)
 	require.True(t, strings.Contains(rec.body, `"model":"`+totalFallbackTarget+`"`))
 	assert.NotContains(t, rec.body, `"model":""`)
 }
