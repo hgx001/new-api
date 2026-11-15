@@ -114,6 +114,7 @@ import { FailoverAltCard } from '@/features/video-route/components/failover-alt-
 import { ShortCapcutCard } from '@/features/video-route/components/short-capcut-card'
 import { ShortLinkCard } from '@/features/video-route/components/short-link-card'
 import { ShortYouzanCard } from '@/features/video-route/components/short-youzan-card'
+import { TotalFallbackCard } from '@/features/video-route/components/total-fallback-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
@@ -3625,6 +3626,14 @@ export function ChannelMutateDrawer({
                               视频的请求永远不路由。源渠道与目标渠道都显示
                               —— 源渠道是决策入口，目标渠道是排查入口。 */}
                           <EcommerceRouteCard channelModels={currentModels ?? ''} />
+
+                          {/* 规则八（全量兜底 → cp-seedance-2.5flash）：
+                              源链路（有赞）彻底不能用时的逃生口 —— 打开后
+                              特惠/活动的**所有**请求无条件改派 CapCut 2.5 Flash。
+                              放在电商卡之后：它是救火开关，不该抢日常调度的视线；
+                              但卡片本身用红色警示色调，开了就是全量改派。
+                              源渠道与目标渠道都显示（同电商卡口径）。 */}
+                          <TotalFallbackCard channelModels={currentModels ?? ''} />
 
                           {/* 规则五（故障转移）的**备选备胎**开关：豆包不可用时
                               改派 cp-seedance-2.5flash（480p 生成 + 超分 720P

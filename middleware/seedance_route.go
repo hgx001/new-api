@@ -64,6 +64,13 @@ const routeOriginModelKey = string(constant.ContextKeyRouteOriginModel)
 // 5000 个汉字按字节是 15000，用 len() 会把刚好合规的中文提示词误判成超长。
 const promptRouteLimitRunes = 5000
 
+// totalFallbackDefaultSeconds 是规则八「客户没传时长」时下发的缺省秒数。
+//
+// 5 秒不是随便挑的：源链路（youzanwan3 的 resolveDuration）与目标链路
+// （manwu/CapCut 的 resolveCapcutDuration）的缺省值**都是 5 秒** ——
+// 用同一个值，改派前后的成片时长一致，客户不会因为「被改派」而拿到别的长度。
+const totalFallbackDefaultSeconds = 5
+
 // doubaoSecondsFor 校验客户请求的时长是否可以原样发给规则一的目标链路。
 //
 // 2026-11-09 用户口径：new-api 传多少秒就下发多少秒，**禁止吸附/回落改写**。
@@ -92,6 +99,8 @@ func RouteOriginModel(c *gin.Context) string {
 // 规则，**顺序即优先级**：
 //
 //	规则五（故障转移）：seedance-2-5 源链路不可用 → 备胎（最优先，独立字段判定）
+//	规则八（全量兜底）：源模型收到的**所有**请求 → cp-seedance-2.5flash
+//	                    （2026-11-15 起；有赞链路彻底不可用时的逃生口，无触发条件）
 //	规则七（电商内容）：源模型 + 提示词命中电商/产品推荐关键词（或勾选的比例/时长条件命中）
 //	                    → CapCut 快速档 cp-seedance-2.5flash；带参考视频一律不路由
 //	                    2026-11-15 起为**最高业务优先级**：短时长/长时长/非 9:16 都不限制它
@@ -261,6 +270,53 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 				return
 			}
 			body = normalized
+		}
+
+		// ── 规则八（全量兜底）：最高业务优先级 ──
+		//
+		// 2026-11-15 老板口径：这两个模型名的常驻链路是有赞；有赞**彻底不能用**时
+		// （渠道被关 / 账号封 / 上游大面积失败），前七条规则全部失效 ——
+		// 它们都建立在「源链路至少能跑一部分请求」这个前提上。
+		// 这条是唯一的逃生口：打开开关后，请求**无条件**改派
+		// cp-seedance-2.5flash，不看时长/比例/提示词内容/首尾帧。
+		//
+		// 为什么排在规则七之前：规则八开着时「全量都走同一条链路」，
+		// 规则七再判一次关键词/比例/时长纯属白算；更糟的是日志里会出现
+		// 「命中电商关键词」这种与本次改派的真实原因无关的文案，
+		// 排查「为什么全站请求都跑了 CapCut」时反而误导。
+		//
+		// 为什么排在规则三（首尾帧）之前也不冲突：带首尾帧的请求 CapCut 接不住
+		// （它只有参考图语义），会被准入挡回来、自然落到规则三 ——
+		// 放在这里只是让「先试全量出口」这个决定在代码里只有一处。
+		//
+		// 「无条件」去掉的是业务触发条件，**不是**准入检查：下面这些一律不改派，
+		// 因为改派过去必 400，且会把「链路挂了」伪装成「你的参数不合法」：
+		// 1080P / 2–3 秒 / 带参考视频音频 / 自适应比例带参考图。
+		// 判定与规则六/七共用同一份 prepareCapcutRoute，逐条理由见
+		// setting/seedanceroute_setting/total_fallback.go 的包头注释。
+		if seedanceroute_setting.TotalFallbackEnabledFor(sourceModel) {
+			target := seedanceroute_setting.TotalFallbackTargetModel()
+			// 时长口径：客户传了就用**原值**（45 秒就该按 45 秒判越界，
+			// 不能悄悄夹到 30 秒 —— 那是「按 45 秒卖、出 30 秒」的静默改档）；
+			// 没传（或传了非法值）才按 5 秒，这是源链路与 CapCut 共同的缺省。
+			seconds, hasSeconds := extractRequestSeconds(body)
+			if !hasSeconds || seconds <= 0 {
+				seconds = totalFallbackDefaultSeconds
+			}
+			if newBody, routed := prepareTotalFallbackRoute(c, body, target, seconds); routed {
+				if applyRewrittenBody(c, newBody, billingOriginModel) {
+					// 计费仍按**源模型**算（客户买的是特惠/活动）：
+					// 秒数与 size 倍率都取源模型口径，覆盖 CapCut adaptor
+					// 自己给的档位差价（720p ×2.0 是 CapCut 的定价结构）。
+					setRouteBillingContext(c, seconds,
+						sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
+					logger.LogInfo(c, fmt.Sprintf(
+						"条件路由：命中规则八（全量兜底），改派 %s → %s（%d 秒）",
+						sourceModel, target, seconds))
+					c.Next()
+					return
+				}
+			}
 		}
 
 		// ── 规则七（电商/产品推荐内容）：最高优先级 ──

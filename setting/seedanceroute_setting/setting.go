@@ -42,9 +42,11 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 
 // Policy 是条件路由策略。
 //
-// 目前有**四条独立规则**，共用 Enabled 总开关与 SourceModel：
+// 目前有**八条独立规则**，其中规则一~七共用 Enabled 总开关与 SourceModel：
 //
-//	规则五（故障转移）：FailoverSourceModel 源链路不可用 → FailoverTargetModel（最优先）
+//	规则八（全量兜底）：源模型收到的**所有**请求 → cp-seedance-2.5flash（最优先，
+//	                   不依赖 Enabled，是「源链路彻底不可用」时的逃生口）
+//	规则五（故障转移）：FailoverSourceModel 源链路不可用 → FailoverTargetModel（独立字段）
 //	规则三（首尾帧）：SourceModel + media 含 first_frame/last_frame → FramesTargetModel
 //	规则一（时长）：SourceModel + 时长 > TriggerSeconds → TargetModel（豆包按次）
 //	               （2026-11-09 起时长原样下发，不再吸附档位）
@@ -313,6 +315,25 @@ type Policy struct {
 	// ⚠️ 「是否接满」是**算出来的**（本字段 >= DoubaoLinkMaxTasks），
 	// 不额外存标记 —— 存了就多一个可能与计数不一致的真相源。
 	DoubaoLinkAcceptedTasks int `json:"doubao_link_accepted_tasks,omitempty"`
+
+	// ─────────────────── 规则八：全量兜底（total fallback）───────────────────
+	//
+	// TotalFallbackEnabled 是规则八的开关（2026-11-15 起）。
+	//
+	// 打开：seedance2.5-特惠 / seedance2.5-活动 收到的**所有**请求
+	// 无条件改派 cp-seedance-2.5flash（不看时长/比例/内容/首尾帧）；
+	// 关闭（默认）：规则八不参与调度，行为与改造前逐字节一致。
+	//
+	// 目的是「有赞链路彻底不可用」时的逃生口 —— 前七条规则都建立在
+	// 「源链路至少能跑一部分」这个前提上，这条是唯一不依赖该前提的规则。
+	//
+	// ⚠️ 用 bool 而不是三态指针：这是**全新**的规则，旧的生产 option JSON 里
+	// 根本没有这个字段，解析后是零值 false = 不启用，语义正好是「没配过就不生效」，
+	// 升级当天线上流量逐字节不变（与 FailoverEnabled / ShortYouzanEnabled 同口径）。
+	//
+	// ⚠️ 与其它规则不同，它**不依赖 Enabled**（规则总开关）—— 理由见
+	// total_fallback.go 包头注释：应急救援开关不能被「规则全停」连坐。
+	TotalFallbackEnabled bool `json:"total_fallback_enabled,omitempty"`
 
 	// FailoverEnabled 规则五的总开关。默认 false（不改派）。
 	//
@@ -815,6 +836,12 @@ func (p Policy) anyRuleReady() bool {
 	if failoverRuleReady(p) {
 		return true
 	}
+	// 规则八（全量兜底）不依赖 Enabled、也不需要目标名/触发值，
+	// 只打开它也算「策略配全了」—— 否则「只开应急开关」会被判成
+	// 「一条都没配全」，路由被整体关掉，开关亮着却一点反应都没有。
+	if totalFallbackConfigured(p) {
+		return true
+	}
 	for _, source := range p.allSourceModels() {
 		if secondsRuleConfiguredFor(p, source) ||
 			ratioRuleConfiguredFor(p, source) ||
@@ -930,6 +957,12 @@ func IsAnyRouteEnabled() bool {
 	// 它不能被其它规则的就绪状态短路掉 —— 否则「开关关了 + 规则五总开关被关」
 	// 会让中间件早退，豆包被留在已宣布关闭的链路上静默全挂。
 	if doubaoLinkOff(current, nowUnix()) {
+		return true
+	}
+	// 规则八（全量兜底）同样不能被其它规则的就绪状态短路掉：
+	// 它是「源链路彻底不可用」时唯一的逃生口，只打开它时规则一~七
+	// 全部返回 false，早退会让这个开关静默失效。
+	if totalFallbackConfigured(current) {
 		return true
 	}
 	if secondsRuleActive(current, nowUnix()) ||

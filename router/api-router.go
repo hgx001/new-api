@@ -149,6 +149,13 @@ func SetApiRouter(router *gin.Engine) {
 			videoRouteAdmin.POST("/policy/ecommerce/conditions", controller.SetEcommerceConditionsAdmin)
 			videoRouteAdmin.POST("/policy/ecommerce/keywords", controller.SetEcommerceKeywordsAdmin)
 
+			// 规则八（全量兜底 → cp-seedance-2.5flash，2026-11-15）：
+			// 一个开关 = 「有赞这条源链路彻底不能用了，全量改派 CapCut」。
+			// 打开后不看时长/比例/内容/首尾帧，只受目标链路的物理能力约束
+			// （1080P / 2–3 秒 / 参考视频音频 仍留原链路）。
+			// ⚠️ 它不依赖规则总开关 Enabled —— 应急时不能要求先确认别的开关。
+			videoRouteAdmin.POST("/policy/total-fallback", controller.SetTotalFallbackRouteAdmin)
+
 			// 豆包链路的「最多接单数」（2026-11-13 老板定）：
 			// 豆包链路上游给的是运营自己掌握的一小批额度，设成 3 就是
 			// 「这批只接 3 单，接满自动关闭，我手动再打开时又来 3 单」。

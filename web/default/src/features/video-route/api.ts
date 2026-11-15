@@ -116,6 +116,23 @@ export type VideoRoutePolicy = {
   /** 默认关键词表（供前端做「恢复默认」用）。 */
   ecommerce_keywords_default: string[]
   /**
+   * 规则八（全量兜底 → cp-seedance-2.5flash）的开关。
+   *
+   * 打开：seedance2.5-特惠 / seedance2.5-活动 收到的**所有**请求无条件
+   * 改派 cp-seedance-2.5flash，不看时长/比例/提示词内容/首尾帧。
+   *
+   * 用途只有一个：**源链路（有赞）彻底不能用**时的逃生口。日常不要开 ——
+   * 一开就等于把这两个模型的全部流量挪到另一条上游。
+   *
+   * ⚠️ 目标链路的物理能力仍然生效：1080P / 2–3 秒 / 带参考视频音频 /
+   * 自适应比例带参考图 这四类仍留在原链路（改派过去必 400）。
+   *
+   * ⚠️ 它**不依赖**规则总开关（enabled）—— 应急时不该要求先确认别的开关。
+   */
+  total_fallback_enabled: boolean
+  /** 规则八的目标模型（恒为 cp-seedance-2.5flash，由后端常量给出）。 */
+  total_fallback_target_model: string
+  /**
    * 规则一的可选比例条件（后台勾选）。
    * 非空 = 只有该比例的请求才改派目标链路；空 = 不限比例。
    * 与 `trigger_ratio`（规则二自己的触发比例）是两个独立字段。
@@ -431,6 +448,27 @@ export async function setEcommerceKeywords(
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/ecommerce/keywords', {
     keywords,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换规则八（全量兜底 → cp-seedance-2.5flash）。
+ *
+ * 打开：seedance2.5-特惠 / seedance2.5-活动 的**所有**请求无条件改派
+ * cp-seedance-2.5flash —— 不看时长、不看比例、不看提示词内容、不看首尾帧。
+ *
+ * 只有一个用途：源链路（有赞）彻底不能用时的逃生口。日常必须关着 ——
+ * 开着就等于把这两个模型的全部流量挪到另一条上游。
+ *
+ * ⚠️ 目标链路的物理能力边界仍然生效（1080P / 2–3 秒 / 参考视频音频 /
+ * 自适应比例带参考图 留原链路），那几类改派过去必然 400。
+ */
+export async function setTotalFallbackEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/total-fallback', {
+    enabled,
   })
   return res.data.data
 }

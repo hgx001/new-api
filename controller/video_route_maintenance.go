@@ -573,6 +573,9 @@ func doubaoRouteAdminState() gin.H {
 	// 规则七（电商内容）与规则六第三分支（CapCut 快速档）的状态：
 	// 字段较多，单独一个函数追加（见 controller/video_route_ecommerce_admin.go）。
 	appendEcommerceRouteState(state)
+	// 规则八（全量兜底 → cp-seedance-2.5flash）的状态：
+	// 独立成函数，理由同规则七（见 controller/video_route_total_fallback_admin.go）。
+	appendTotalFallbackState(state)
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }

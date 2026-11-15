@@ -71,6 +71,9 @@ function policy(overrides: Partial<VideoRoutePolicy> = {}): VideoRoutePolicy {
     ecommerce_ratio_condition_default: '9:16',
     ecommerce_keywords: [],
     ecommerce_keywords_default: [],
+    // 规则八（全量兜底）：默认关闭，目标固定 cp-seedance-2.5flash。
+    total_fallback_enabled: false,
+    total_fallback_target_model: 'cp-seedance-2.5flash',
     seconds_rule_ratio_gate: '',
     seconds_rule_ratio_gate_default: '9:16',
     updated_at: 0,

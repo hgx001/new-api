@@ -43,9 +43,10 @@ package middleware
 //	· 参考图上限：源链路 ≤10 张，CapCut ≤30 张 → 源链路上限更严，不挡。
 //
 // ⚠️ 这份准入逻辑同时被**规则六第三分支**（≤10 秒 → cp-seedance-2.0fast）
-// 复用 —— 两条规则的目标在同一条 CapCut 链路（ch20），契约完全一致，
-// 只有「时长上界」不同（2.5 Flash 30 秒 / 2.0 Fast 15 秒）。
-// 同一套准入逻辑写两遍 = 迟早漂，所以抽成 prepareCapcutRoute。
+// 与**规则八**（全量兜底 → cp-seedance-2.5flash）复用 —— 三条规则的目标都在
+// 同一条 CapCut 链路（ch20），契约完全一致，只有「时长上界」与「触发条件」不同
+// （2.5 Flash 30 秒 / 2.0 Fast 15 秒；规则六/七有条件、规则八无条件）。
+// 同一套准入逻辑写三遍 = 迟早漂，所以抽成 prepareCapcutRoute。
 
 import (
 	"fmt"
@@ -126,6 +127,18 @@ func prepareEcommerceRoute(c *gin.Context, body map[string]interface{}, targetMo
 // 与规则七共用准入逻辑，唯一差别是时长上界（2.0 Fast 只有 15 秒）。
 func prepareShortCapcutRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
 	return prepareCapcutRoute(c, body, targetModel, seconds, capcutMaxDurationFast, "短时长CapCut分支")
+}
+
+// prepareTotalFallbackRoute 组装「规则八（全量兜底 → CapCut 2.5 Flash）」的改派请求体。
+//
+// 与规则七共用 prepareCapcutRoute 的**全部**准入与改写：目标链路是同一条，
+// 它的契约限制不会因为「这次是应急改派」就消失。
+//
+// 与规则七的唯一差别：**没有触发条件**（规则七要命中电商关键词或勾选的条件），
+// 规则八是「开就全量」。所以这里连 seconds 都由调用方按缺省补齐后传入 ——
+// 规则七能保证 hasSeconds，规则八不能（客户完全不传时长是常见形态）。
+func prepareTotalFallbackRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
+	return prepareCapcutRoute(c, body, targetModel, seconds, capcutMaxDuration25, "全量兜底规则八")
 }
 
 // prepareCapcutRoute 是「改派到 CapCut 链路」的**唯一**准入与改写入口。
