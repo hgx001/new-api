@@ -286,3 +286,112 @@ func TestTaskHealthWindowStart(t *testing.T) {
 	assert.InDelta(t, now-24*3600, TaskHealthWindowStart(-5), 5)
 	assert.InDelta(t, now-12*3600, TaskHealthWindowStart(12), 5)
 }
+
+// ---------------------------------------------------------------------------
+// 同步请求（logs）合并统计
+// ---------------------------------------------------------------------------
+
+// seedSyncLog 插一条同步请求日志。taskID 为空表示同步请求，非空表示任务提交日志。
+func seedSyncLog(t *testing.T, logType int, modelName string, taskID string, useTime int, createdAt int64) {
+	t.Helper()
+	require.NoError(t, DB.Create(&Log{
+		UserId:    1,
+		CreatedAt: createdAt,
+		Type:      logType,
+		ModelName: modelName,
+		UseTime:   useTime,
+		TaskId:    taskID,
+		Other:     "{}",
+	}).Error)
+}
+
+func TestGetTaskHealthSummary_MergesSyncRequestLogs(t *testing.T) {
+	truncateTables(t)
+
+	// 确定性基准时间：相对时间会随跑测时刻跨整点，导致桶归属不稳定。
+	base := int64(1_700_000_000)
+	base -= base % 3600
+	now := base + 3600
+	start := base
+
+	// 图片模型走同步接口：logs 里 3 成功（type=2，带耗时）+ 1 失败（type=5）
+	seedSyncLog(t, LogTypeConsume, "h3-image", "", 12, now-300)
+	seedSyncLog(t, LogTypeConsume, "h3-image", "", 30, now-200)
+	seedSyncLog(t, LogTypeConsume, "h3-image", "", 18, now-100)
+	seedSyncLog(t, LogTypeError, "h3-image", "", 2, now-50)
+
+	summary, err := GetTaskHealthSummary(TaskHealthQueryParams{
+		StartTs: start, EndTs: now, BucketSeconds: 3600,
+	})
+	require.NoError(t, err)
+
+	model := findHealthModel(summary, "h3-image")
+	require.NotNil(t, model, "同步图片模型也应出现在健康度统计里")
+	assert.EqualValues(t, 4, model.RequestCount)
+	assert.EqualValues(t, 3, model.SuccessCount)
+	assert.EqualValues(t, 1, model.FailureCount)
+	require.NotNil(t, model.SuccessRate)
+	assert.InDelta(t, 75.0, *model.SuccessRate, 0.001)
+	// 平均耗时 = (12+30+18)/3 = 20s = 20000ms，失败那条不计耗时
+	assert.EqualValues(t, 20000, model.AvgDurationMs)
+}
+
+func TestGetTaskHealthSummary_ExcludesTaskBoundLogs(t *testing.T) {
+	truncateTables(t)
+
+	base := int64(1_700_000_000)
+	base -= base % 3600
+	now := base + 3600
+	start := base
+
+	// 任务本身：1 成功 1 失败
+	seedTaskHealth(t, "t1", TaskStatusSuccess, now-100, now-100, now-40,
+		Properties{OriginModelName: "video-d"}, TaskPrivateData{})
+	seedTaskHealth(t, "t2", TaskStatusFailure, now-100, now-100, now-30,
+		Properties{OriginModelName: "video-d"}, TaskPrivateData{})
+
+	// 任务提交时写的消费日志（带 task_id）：成败已由 tasks 表统计，必须排除，
+	// 否则同一单会被重复计数（3 成功 2 失败）。
+	seedSyncLog(t, LogTypeConsume, "video-d", "task_x1", 2, now-100)
+	seedSyncLog(t, LogTypeConsume, "video-d", "task_x2", 2, now-100)
+
+	summary, err := GetTaskHealthSummary(TaskHealthQueryParams{
+		StartTs: start, EndTs: now, BucketSeconds: 3600,
+	})
+	require.NoError(t, err)
+
+	model := findHealthModel(summary, "video-d")
+	require.NotNil(t, model)
+	assert.EqualValues(t, 2, model.RequestCount, "带 task_id 的日志不应重复计数")
+	assert.EqualValues(t, 1, model.SuccessCount)
+	assert.EqualValues(t, 1, model.FailureCount)
+}
+
+func TestGetTaskHealthSummary_MergesTaskSubmitFailures(t *testing.T) {
+	truncateTables(t)
+
+	base := int64(1_700_000_000)
+	base -= base % 3600
+	now := base + 3600
+	start := base
+
+	// 视频模型：任务表 2 成功；提交阶段另有 2 条失败（没建出 task 行，只有 error log）
+	seedTaskHealth(t, "m1", TaskStatusSuccess, now-100, now-100, now-60,
+		Properties{OriginModelName: "video-e"}, TaskPrivateData{})
+	seedTaskHealth(t, "m2", TaskStatusSuccess, now-100, now-100, now-20,
+		Properties{OriginModelName: "video-e"}, TaskPrivateData{})
+	seedSyncLog(t, LogTypeError, "video-e", "", 1, now-300)
+	seedSyncLog(t, LogTypeError, "video-e", "", 1, now-250)
+
+	summary, err := GetTaskHealthSummary(TaskHealthQueryParams{
+		StartTs: start, EndTs: now, BucketSeconds: 3600,
+	})
+	require.NoError(t, err)
+
+	model := findHealthModel(summary, "video-e")
+	require.NotNil(t, model)
+	assert.EqualValues(t, 4, model.RequestCount, "提交阶段失败也应计入分母")
+	assert.EqualValues(t, 2, model.SuccessCount)
+	assert.EqualValues(t, 2, model.FailureCount)
+	assert.InDelta(t, 50.0, *model.SuccessRate, 0.001)
+}

@@ -36,6 +36,16 @@ import (
 //     submit_time / finish_time 都是秒级时间戳，相减得到的是**秒**，输出时统一乘 1000 换成毫秒。
 //   - **趋势桶**按小时切，桶内成功率 = 该桶成功数 / (成功数 + 失败数)。
 //     没有已完成任务的桶输出 null，前端画成灰色"无样本"，不画成 0%（0% 会被误读成全挂）。
+//
+// 数据源有两路，合并进同一套口径：
+//
+//  1. tasks 表：异步任务（视频 / 音频 / 任务协议图片）的最终成败与完成耗时。
+//  2. logs 表：**同步请求**（chat、/v1/images/generations 这类一次调用返回的）
+//     走 type=2（消费成功）与 type=5（错误）日志，use_time 即耗时；
+//     以及异步任务**提交阶段**就失败的请求 —— 它们没建出 task 行，只有 error log，
+//     不算进来会把视频模型的提交失败漏掉。
+//     logs 里带 task_id 的行是任务提交时写的消费日志，其成败已由 tasks 表统计，
+//     必须排除，否则同一单会重复计数。
 
 // TaskHealthBucket 是趋势里的一个小时桶。
 type TaskHealthBucket struct {
@@ -90,6 +100,16 @@ type TaskHealthQueryParams struct {
 	BucketSeconds int64
 }
 
+// healthAgg 是单个模型在聚合过程中的累加器。
+type healthAgg struct {
+	modelName      string
+	successCount   int64
+	failureCount   int64
+	durationSumSec int64
+	durationCount  int64
+	buckets        map[int64]*TaskHealthBucket
+}
+
 // GetTaskHealthSummary 统计窗口内的任务健康度。
 //
 // 只取「已完成」的任务（SUCCESS / FAILURE）：在途任务没有最终结论，计进分母会
@@ -113,55 +133,57 @@ func GetTaskHealthSummary(params TaskHealthQueryParams) (*TaskHealthSummary, err
 		return nil, err
 	}
 
+	// 同步请求（chat / 图片直出等）与任务提交失败的记录走 logs：
+	// type=2 消费成功、type=5 错误；带 task_id 的行是任务提交时写的消费日志，
+	// 其成败已由 tasks 表统计，排除以免重复计数。
+	var logs []Log
+	err = LOG_DB.Model(&Log{}).
+		Select("type, model_name, use_time, created_at").
+		Where("type IN ?", []int{LogTypeConsume, LogTypeError}).
+		Where("(task_id IS NULL OR task_id = '')").
+		Where("created_at >= ? AND created_at <= ?", params.StartTs, params.EndTs).
+		Find(&logs).Error
+	if err != nil {
+		return nil, err
+	}
+
 	summary := &TaskHealthSummary{
-		Models:        make([]TaskHealthModel, 0, len(tasks)),
+		Models:        make([]TaskHealthModel, 0, len(tasks)+len(logs)),
 		Hours:         int((params.EndTs - params.StartTs) / 3600),
 		BucketSeconds: bucketSeconds,
 	}
-	if len(tasks) == 0 {
+	if len(tasks) == 0 && len(logs) == 0 {
 		return summary, nil
 	}
 
-	type agg struct {
-		modelName      string
-		successCount   int64
-		failureCount   int64
-		durationSumSec int64
-		durationCount  int64
-		buckets        map[int64]*TaskHealthBucket
-	}
-
-	aggByModel := map[string]*agg{}
-	for _, task := range tasks {
-		modelName := taskHealthModelName(&task)
+	aggByModel := map[string]*healthAgg{}
+	record := func(modelName string, isSuccess bool, durationSec int64, eventTs int64) {
 		if modelName == "" {
-			continue
+			return
 		}
 		current, ok := aggByModel[modelName]
 		if !ok {
-			current = &agg{
+			current = &healthAgg{
 				modelName: modelName,
 				buckets:   map[int64]*TaskHealthBucket{},
 			}
 			aggByModel[modelName] = current
 		}
 
-		isSuccess := task.Status == TaskStatusSuccess
 		if isSuccess {
 			current.successCount++
 		} else {
 			current.failureCount++
 		}
 
-		// 完成耗时只统计成功任务：失败任务多是秒回，混进均值会拉低数字、误导用户。
-		// submit_time / finish_time 都是**秒级**时间戳，相减得到的是秒，最后统一换算成毫秒。
-		durationSec := task.FinishTime - task.SubmitTime
+		// 完成耗时只统计成功请求：失败多是秒回，混进均值会拉低数字、误导用户。
+		// tasks 的 submit/finish 与 logs 的 use_time 都是**秒级**，最后统一换算成毫秒。
 		if isSuccess && durationSec > 0 {
 			current.durationSumSec += durationSec
 			current.durationCount++
 		}
 
-		bucketTs := task.SubmitTime - (task.SubmitTime % bucketSeconds)
+		bucketTs := eventTs - (eventTs % bucketSeconds)
 		if bucketTs < params.StartTs {
 			bucketTs = params.StartTs - (params.StartTs % bucketSeconds)
 		}
@@ -179,6 +201,17 @@ func GetTaskHealthSummary(params TaskHealthQueryParams) (*TaskHealthSummary, err
 		} else {
 			bucket.FailureCount++
 		}
+	}
+
+	for _, task := range tasks {
+		durationSec := task.FinishTime - task.SubmitTime
+		if durationSec < 0 {
+			durationSec = 0
+		}
+		record(taskHealthModelName(&task), task.Status == TaskStatusSuccess, durationSec, task.SubmitTime)
+	}
+	for _, entry := range logs {
+		record(entry.ModelName, entry.Type == LogTypeConsume, int64(entry.UseTime), entry.CreatedAt)
 	}
 
 	for _, current := range aggByModel {
