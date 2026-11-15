@@ -474,7 +474,11 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 
 				// 第二优先：有赞标准版兜底。心笔没接住（关闭 / 无渠道 /
 				// 契约不兼容）时才会走到这里。
-				if youzanReady {
+				//
+				// ⚠️ 2026-11-15 上游切换后标准版最低 10 秒：<10 秒的短请求
+				// 落到它会 400，必须跳过这条分支让 CapCut 快速档（4-15 秒）接住。
+				// 恰好 10 秒的请求标准版能跑，照常兜底。
+				if youzanReady && seconds >= 10 {
 					target := seedanceroute_setting.DefaultShortYouzanTargetModel
 					if newBody, sizeRatio, routed := prepareShortYouzanRoute(c, body, target, sourceModel, seconds); routed {
 						if applyRewrittenBody(c, newBody, billingOriginModel) {
@@ -660,7 +664,10 @@ const perCallFixedTierSeconds = constant.Seedance25PerCallFixedSeconds
 // 按次档允许的时长区间。2026-11-11 起活动版与 wan3.0-720p-按次
 // 都放开 2–30 秒（此前锁死 30 秒），按次价格仍不随时长变化。
 const (
-	perCallMinSeconds = 2
+	// 2026-11-15 上游切换后按次档（上游执行模型换标准版 wan3.0-video）
+	// 时长区间从 2-30 收窄为 10-30，这里的路由层放行口径随之同步：
+	// <10 秒的按次请求在源链路会 400，提前放弃路由让它 fail-loud。
+	perCallMinSeconds = 10
 	perCallMaxSeconds = 30
 )
 
@@ -678,10 +685,12 @@ const (
 //
 // 为什么「显式传其它时长」要放弃：
 //
-//	2026-11-11 起活动版支持 2-30 秒逐秒可选，传 10 秒是**合法请求**，
+//	2026-11-11 起活动版支持逐秒可选，传 10 秒是**合法请求**，
 //	不该被改派到规则一目标（seedance-2-5，只收 >阈值 的长片），也不该被归一成 30 秒
 //	（那是静默改档：客户要 10 秒的片、拿到 30 秒的片，或按 30 秒的价收钱）。
-//	放行原请求让它走源链路（有赞支持 2-30 秒逐秒），价格仍是 ¥4.5/条。
+//	放行原请求让它走源链路，价格仍是 ¥4.5/条。
+//	2026-11-15 起合法区间随上游收窄为 10-30（上游执行模型换标准版 wan3.0-video），
+//	<10 秒的按次请求在源链路会 400，这里提前放弃路由让它 fail-loud。
 //
 // ⚠️ 归一时**必须写回请求体**：改派后目标链路是 wan3（缺省 5 秒）或
 // seedance-2-5（时长原样下发，不改写）。不写回 seconds，客户会「按 30 秒的价拿到 5 秒的片」。
@@ -1058,6 +1067,14 @@ func prepareShortYouzanRoute(c *gin.Context, body map[string]interface{}, target
 		return nil, 0, false
 	}
 
+	// 2026-11-15 上游切换：标准版仅收 reference_image，带参考视频/音频的
+	// 请求落到它必 400 —— 跳过，让 CapCut 快速档（收 http 直链音视频）或
+	// 源链路 fail-loud 接手。
+	if hasRefAudioVideoMedia(body) {
+		logger.LogInfo(c, "条件路由跳过短时长有赞兜底：请求带参考视频/音频（标准版已不收）")
+		return nil, 0, false
+	}
+
 	// 目标模型没有可用渠道 → 不路由。
 	//
 	// 与规则一同一理由：改写 body 之后重试只会用同一个模型名重选渠道，
@@ -1197,6 +1214,22 @@ func hasFrameMedia(body map[string]interface{}) bool {
 	for _, item := range collectMediaItems(body) {
 		switch strings.TrimSpace(item.Type) {
 		case "first_frame", "last_frame":
+			return true
+		}
+	}
+	return false
+}
+
+// hasRefAudioVideoMedia 判断请求是否带参考视频/音频。
+//
+// 2026-11-15 上游切换后标准版 wan3.0-video 的 media 仅接受 reference_image
+//（上游文档原话），参考视频/音频落在它身上必 400。规则六的标准版兜底
+// 分支必须跳过这类请求 —— CapCut 快速档还收 http(s) 直链的音视频，
+// 跳过才能让它们落到能接的链路；全都不接时留在源链路 fail-loud。
+func hasRefAudioVideoMedia(body map[string]interface{}) bool {
+	for _, item := range collectMediaItems(body) {
+		switch strings.TrimSpace(item.Type) {
+		case "reference_video", "reference_audio":
 			return true
 		}
 	}

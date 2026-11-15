@@ -180,12 +180,13 @@ func TestProbeReferenceVideoSecondsRejectsHTTPErrorStatus(t *testing.T) {
 func TestEstimateBillingAddsReferenceVideoSeconds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
-	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 2, Resolution: "720P"})
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "720P"})
 	context.Set(refVideoSecondsContextKey, 3)
 
 	info := &relaycommon.RelayInfo{OriginModelName: tehuiModel}
-	// 2 秒生成 + 3 秒参考视频 = 按 5 秒收，单价仍是所选档位的单价（size 不变）。
-	require.Equal(t, map[string]float64{"seconds": 5, "size": 1.0},
+	// 10 秒生成 + 3 秒参考视频 = 按 13 秒收，单价仍是所选档位的单价（size 不变）。
+	//（2026-11-15 起上游标准版最低 10 秒，2 秒的夹具不再合法。）
+	require.Equal(t, map[string]float64{"seconds": 13, "size": 1.0},
 		(&TaskAdaptor{}).EstimateBilling(context, info))
 }
 
@@ -193,11 +194,11 @@ func TestEstimateBillingIgnoresZeroReferenceVideoSeconds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, value := range []interface{}{0, -1, "3", nil} {
 		context, _ := gin.CreateTestContext(httptest.NewRecorder())
-		context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 2, Resolution: "1080P"})
+		context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
 		context.Set(refVideoSecondsContextKey, value)
 
 		info := &relaycommon.RelayInfo{OriginModelName: tehuiModel}
-		require.Equal(t, map[string]float64{"seconds": 2, "size": 1.5},
+		require.Equal(t, map[string]float64{"seconds": 10, "size": 1.5},
 			(&TaskAdaptor{}).EstimateBilling(context, info), "value=%v", value)
 	}
 }
@@ -205,10 +206,10 @@ func TestEstimateBillingIgnoresZeroReferenceVideoSeconds(t *testing.T) {
 func TestEstimateBillingWithoutReferenceVideoUnchanged(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
-	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 2, Resolution: "720P"})
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "720P"})
 
 	info := &relaycommon.RelayInfo{OriginModelName: tehuiModel}
-	require.Equal(t, map[string]float64{"seconds": 2, "size": 1.0},
+	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.0},
 		(&TaskAdaptor{}).EstimateBilling(context, info))
 }
 

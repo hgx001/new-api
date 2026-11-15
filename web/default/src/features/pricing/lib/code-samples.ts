@@ -598,7 +598,25 @@ export function buildVideoSample(lang: Lang, ctx: SampleContext): string {
   //
   // 示例是客户**直接照抄**的东西，所以必须写一个后端真正接受的值。
   const fixedTier = getSeedance25SampleSpec(ctx.modelName)
-  const secondsValue = fixedTier ? String(fixedTier.seconds) : '5'
+  // 2026-11-15 上游切换后的 wan3 系时长口径：标准版（wan3.0-video/smart/
+  // 特惠系）最低 10 秒，prime 仅 30 秒。示例是客户直接照抄的东西，
+  // 必须写后端真正接受的值 —— 不能再用通用回退 5 秒。
+  const wan3SampleSeconds = (name: string): string | null => {
+    if (name === 'wan3.0-video-prime' || name === 'wan3.0-video-prime-1080p') {
+      return '30'
+    }
+    if (
+      name === 'wan3.0-video' ||
+      name === 'wan3.0-smart' ||
+      name === 'wan3.0-720p-特惠' ||
+      name === 'seedance2.5-特惠'
+    ) {
+      return '10'
+    }
+    return null
+  }
+  const secondsValue =
+    fixedTier ? String(fixedTier.seconds) : (wan3SampleSeconds(ctx.modelName) ?? '5')
 
   if (isAutoDLAudio) {
     return buildAutoDLAudioVideoSample(lang, ctx)

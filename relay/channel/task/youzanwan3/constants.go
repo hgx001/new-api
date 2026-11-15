@@ -95,10 +95,12 @@ const (
 	// 才失败、且上游未返回任何原因时，归因为内容审核不通过。
 	reasonContentModeration = "内容审核不通过"
 
-	// videoModel 三档（480P/720P/1080P）同价，缺省取最低档 480P。
-	defaultResolution = "480P"
+	// 2026-11-15 上游切换后标准版只有 720P/1080P 两档（480P 下架），
+	// 缺省取最低档 720P（与 prime 同口径）。
+	defaultResolution = "720P"
 	// primeDefaultResolution：上游 prime 只提供 720P/1080P，缺省取最低档 720P
-	// （不静默升到更贵的 1080P）。
+	// （不静默升到更贵的 1080P）。2026-11-15 起 prime 仅 720P，见
+	// normalizeResolutionForModel / validateExplicitDurationForModel 的直连分支。
 	primeDefaultResolution = "720P"
 
 	defaultRatio = "adaptive"
@@ -109,10 +111,18 @@ const (
 	r2vMaxDuration  = 10
 	r2vDefaultRatio = "16:9"
 
-	// 两个在售模型均为按秒计费，时长 2—30 秒逐秒可选。
-	minDuration     = 2
+	// 2026-11-15 上游切换后的时长口径（见 api.youzan666.vip/docs）：
+	//   - 标准版 wan3.0-video：10—30 秒逐秒可选（480P 同步下架，仅 720P/1080P）；
+	//   - prime：仅 30 秒、仅 720P。
+	// 促销族（特惠/活动）2026-11-15 起由标准版执行，时长区间随之从 2-30
+	// 收窄为 10-30；prime 直连请求的「恰好 30 秒」见 primeFixedDuration。
+	minDuration     = 10
 	maxDuration     = 30
-	defaultDuration = 5
+	defaultDuration = 10
+
+	// primeFixedDuration 是 2026-11-15 上游切换后 prime 唯一接受的时长。
+	// 旧协议的「2-30 逐秒」已失效：非 30 秒的 prime 请求上游一律拒单。
+	primeFixedDuration = 30
 
 	// 上游 media 上限（2026-10-28 口径）：图片 10 + 视频 5 + 音频 5，
 	// 三类合计不得超过 20 项。两个模型同一口径（旧版 prime 的 8 张限制已取消）。

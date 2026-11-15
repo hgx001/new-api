@@ -169,28 +169,30 @@ describe('Wan3 Model Square API parameters', () => {
         'duration',
         'resolution',
       ])
-      assert.deepEqual(params.resolution.enumValues, ['480P', '720P', '1080P'])
-      assert.equal(params.resolution.defaultValue, '480P')
-      assert.equal(params.duration.range, '2 ~ 30')
+      // 2026-11-15 上游切换：480P 下架、最低 10 秒。
+      assert.deepEqual(params.resolution.enumValues, ['720P', '1080P'])
+      assert.equal(params.resolution.defaultValue, '720P')
+      assert.equal(params.duration.range, '10 ~ 30')
     }
   })
 
-  test('gives wan3.0-video-prime the 720P/1080P tiers and 2-30 seconds', () => {
+  test('gives wan3.0-video-prime the fixed 720P tier and 30 seconds', () => {
+    // 2026-11-15 上游切换：prime 收窄为仅 30 秒、仅 720P。
     for (const modelName of [
       'wan3.0-video-prime',
       'wan3.0-video-prime-1080p',
     ]) {
       const params = parametersByName(modelName)
-      assert.deepEqual(params.resolution.enumValues, ['720P', '1080P'])
+      assert.deepEqual(params.resolution.enumValues, ['720P'])
       assert.equal(params.resolution.defaultValue, '720P')
-      assert.equal(params.duration.range, '2 ~ 30')
+      assert.equal(params.duration.range, '30')
     }
   })
 
   // 回归守卫：wan3.0-720p-特惠 的名字不以 `wan3.0-video` 开头，
   // 漏登记会被归类成 chat 模型（参数表整张错），或者落进通用 wan3 表
   // （把 480P/1080P 也列成可选，客户传 480P 会以为拿到 480P）。
-  test('gives wan3.0-720p-特惠 a fixed 720P tier and 2-30 seconds', () => {
+  test('gives wan3.0-720p-特惠 a fixed 720P tier and 10-30 seconds', () => {
     const params = parametersByName('wan3.0-720p-特惠')
     assert.deepEqual(parameterNames('wan3.0-720p-特惠'), [
       'prompt',
@@ -199,7 +201,7 @@ describe('Wan3 Model Square API parameters', () => {
     ])
     assert.deepEqual(params.resolution.enumValues, ['720P'])
     assert.equal(params.resolution.defaultValue, '720P')
-    assert.equal(params.duration.range, '2 ~ 30')
+    assert.equal(params.duration.range, '10 ~ 30')
   })
 
   test('describes wan2.7-r2v limits including the required reference images', () => {

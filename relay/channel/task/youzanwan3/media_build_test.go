@@ -15,6 +15,9 @@ import (
 // images」导致任务照常成功、照常扣费，成片却没有任何参考图。
 func TestBuildMediaMergesLegacyImagesWithMedia(t *testing.T) {
 	req := relaycommon.TaskSubmitReq{
+		// prime 直连不受「标准版仅 reference_image」新闸约束（见 validateMedia），
+		// 合并逻辑用 prime 验证。
+		Model: primeModel,
 		Media: []relaycommon.TaskMedia{
 			{Type: "reference_video", URL: "https://example.com/ref.mp4"},
 			{Type: "reference_audio", URL: "https://example.com/a.mp3"},
@@ -47,6 +50,7 @@ func TestBuildMediaMergesLegacyImagesWithMedia(t *testing.T) {
 // 任务 1194 / 1197 就是这种形态（2 段音频 + 3 张图）。
 func TestBuildMediaMergesImagesWithAudioOnly(t *testing.T) {
 	req := relaycommon.TaskSubmitReq{
+		Model: primeModel,
 		Media: []relaycommon.TaskMedia{
 			{Type: "reference_audio", URL: "https://example.com/a.mp3"},
 			{Type: "reference_audio", URL: "https://example.com/b.mp3"},
@@ -100,6 +104,7 @@ func TestBuildMediaLegacyFieldsDoNotStack(t *testing.T) {
 // 空白 legacy 值要被过滤，不能生成空 URL 的 media 条目去撞上游。
 func TestBuildMediaSkipsBlankLegacyURLs(t *testing.T) {
 	req := relaycommon.TaskSubmitReq{
+		Model:  primeModel,
 		Media:  []relaycommon.TaskMedia{{Type: "reference_audio", URL: "https://example.com/a.mp3"}},
 		Images: []string{"   ", "", "https://example.com/1.png"},
 	}
@@ -112,6 +117,7 @@ func TestBuildMediaSkipsBlankLegacyURLs(t *testing.T) {
 // metadata.input.media 仍是 media 为空时的第二来源，且与 legacy 合并。
 func TestBuildMediaMergesMetadataMediaWithLegacy(t *testing.T) {
 	req := relaycommon.TaskSubmitReq{
+		Model: primeModel,
 		Metadata: map[string]any{
 			"input": map[string]any{
 				"media": []any{

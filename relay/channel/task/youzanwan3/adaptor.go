@@ -215,6 +215,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if genErr := validateGenerationSecondsWithReferenceVideo(c, media, resolveDurationForModel(req, req.Model)); genErr != nil {
 		return genErr
 	}
+	// 2026-11-15 上游切换后的显式时长/分辨率硬边界（prime 仅 30 秒仅 720P、
+	// 标准版最低 10 秒）必须在**校验阶段**拒掉 —— 夹紧会造成按秒计费的静默改档。
+	if taskErr := validateExplicitDurationForModel(req); taskErr != nil {
+		return taskErr
+	}
 	// 按次档（seedance2.5-活动）的档位锁定必须在**校验阶段**拒掉，
 	// 不能等到计费或建单之后 —— 否则会走完「建单 → 预扣 → 上游拒绝 → 退款」，
 	// 客户白占一次余额还要等退款。
@@ -231,12 +236,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // validatePerCallFixedTier 校验「按次档」的固定时长与固定分辨率。
 //
-// 按次档（seedance2.5-活动）：**时长 2-30 秒逐秒可选、售价恒 ¥4.5/条**
-// （2026-11-11 起放开时长；此前固定 30 秒），分辨率固定 720P。
+// 按次档（seedance2.5-活动）：**时长 10-30 秒逐秒可选、售价恒 ¥4.5/条**
+// （2026-11-11 起放开时长；2026-11-15 随上游切换从 2-30 收窄为 10-30 ——
+// 上游执行模型换成标准版 wan3.0-video，它最低只接 10 秒），分辨率固定 720P。
 //
 // 两条硬约束，都必须 fail-loud：
-//   - **时长**：2-30 秒都合法；<2 或 >30 → 400。**不做就近夹紧** ——
-//     客户要 60 秒却只出 30 秒、或要 1 秒却按 2 秒跑，都是「付了钱拿不到
+//   - **时长**：10-30 秒都合法；<10 或 >30 → 400。**不做就近夹紧** ——
+//     客户要 60 秒却只出 30 秒、或要 8 秒却按 10 秒跑，都是「付了钱拿不到
 //     想要的片」。不传 → 由 resolveDurationForModel 补默认值 30 秒。
 //   - **分辨率**：只接受 720P。1080P 的上游成本是 720P 的 1.33 倍
 //     （¥0.20/秒 vs ¥0.15/秒），卖同一个价就在 1080P 上倒挂；
@@ -275,7 +281,7 @@ func validatePerCallFixedTier(req relaycommon.TaskSubmitReq) *dto.TaskError {
 // parseRequestedDuration 解析客户端**显式传入**的时长。
 //
 // 第二个返回值 ok=false 表示没传（duration 会被归一到固定值，不报错）。
-// 与 resolveDurationForModel 的区别：那个函数会**夹紧**（<2 提到 2、>30 压到 30），
+// 与 resolveDurationForModel 的区别：那个函数会**夹紧**（<10 提到 10、>30 压到 30），
 // 这里必须拿到客户端的**原值** —— 只有原值才能判断「客户是不是要了别的档位」。
 func parseRequestedDuration(req relaycommon.TaskSubmitReq) (int, error) {
 	duration := req.Duration
@@ -289,6 +295,84 @@ func parseRequestedDuration(req relaycommon.TaskSubmitReq) (int, error) {
 		}
 	}
 	return duration, nil
+}
+
+// validateExplicitDurationForModel 校验客户端**显式传入**的时长与分辨率
+//（2026-11-15 上游切换后的新硬边界）。
+//
+// 两条 fail-loud 边界，夹紧替代不了：
+//   - prime 直连：只接受 30 秒、只接受 720P。旧协议的「2-30 逐秒 / 1080P」
+//     已失效，非 30 秒或 1080P 的请求上游一律拒 —— 与其让上游回一句
+//     看不懂的参数错误，不如本地 400 把能接受的值直接写清楚。
+//   - 标准版系（促销族 / wan3.0-video 直连 / smart）：<10 秒 400。
+//     客户要 8 秒却被夹到 10 秒，按秒计费下等于「付 10 秒的钱」的静默改档 ——
+//     与按次档 2026-11-11 定下的「越界不吸附」口径一致。
+//
+// >30 秒维持既有口径（resolveDurationForModel 夹紧到 30），不在这里拒；
+// 按次档自己的 >30 拒单在 validatePerCallFixedTier。
+//
+// ⚠️ 报错文案**刻意不带模型名**：促销族在脱敏名单里（model/upstream_redact.go）。
+func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskError {
+	duration, err := parseRequestedDuration(req)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+	}
+	if duration == 0 {
+		// prime 直连的显式分辨率检查与时长无关，没传时长也要查。
+		if taskErr := validatePrimeExplicitResolution(req); taskErr != nil {
+			return taskErr
+		}
+		return nil
+	}
+	if isPrimeOnlyModel(req.Model) {
+		if taskErr := validatePrimeExplicitResolution(req); taskErr != nil {
+			return taskErr
+		}
+		if duration != primeFixedDuration {
+			return service.TaskErrorWrapperLocal(
+				errors.Errorf("duration must be exactly %d seconds for this model, got %d",
+					primeFixedDuration, duration),
+				"invalid_duration", http.StatusBadRequest)
+		}
+		return nil
+	}
+	if duration < minDuration {
+		return service.TaskErrorWrapperLocal(
+			errors.Errorf("duration must be between %d and %d seconds, got %d",
+				minDuration, maxDuration, duration),
+			"invalid_duration", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// validatePrimeExplicitResolution 校验 prime 直连请求显式要的分辨率。
+//
+// 2026-11-15 上游切换后 prime 仅 720P（尺寸只有 1280x720 / 720x1280），
+// 旧协议支持的 1080P 已下架。显式要 1080P 必须 400，不能走
+// normalizeResolutionForModel 的静默回落（那等于「要 1080P 给 720P」）。
+func validatePrimeExplicitResolution(req relaycommon.TaskSubmitReq) *dto.TaskError {
+	if !isPrimeOnlyModel(req.Model) {
+		return nil
+	}
+	if isPrimeExplicit1080P(req.Resolution) {
+		return primeResolutionError(req.Resolution)
+	}
+	if req.Metadata != nil {
+		if raw, ok := req.Metadata["resolution"].(string); ok && isPrimeExplicit1080P(raw) {
+			return primeResolutionError(raw)
+		}
+	}
+	return nil
+}
+
+func isPrimeExplicit1080P(raw string) bool {
+	return strings.TrimSpace(raw) != "" && normalizeResolution(raw) == "1080P"
+}
+
+func primeResolutionError(raw string) *dto.TaskError {
+	return service.TaskErrorWrapperLocal(
+		errors.Errorf("resolution %q is not supported, only 720P is available", strings.TrimSpace(raw)),
+		"invalid_resolution", http.StatusBadRequest)
 }
 
 // validateGenerationSecondsWithReferenceVideo 校验「有参考视频时的生成时长上限」。
@@ -362,13 +446,32 @@ func isR2VModel(model string) bool {
 }
 
 func isPrimeModel(model string) bool {
-	// seedance2.5 促销族（母本 + 活动版）都由 prime 执行：档位校验、
-	// 默认分辨率、素材上限全部走 prime 那一套。
+	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起由**标准版**执行：
+	// 分辨率档位与默认值仍与 prime 旧口径一致（720P/1080P、缺省 720P），
+	// 所以 here 保留在 isPrimeModel 里；时长/素材的 prime 新边界只对
+	// **直连** prime 生效，见 isPrimeOnlyModel。
 	//
 	// ⚠️ 判定一律走 constant 的**能力组**，不要在这里逐个列模型名 ——
 	// 逐个列名正是「母本加了能力、活动版没同步」的根源。
 	if constant.IsSeedance25Family(model) {
 		return true
+	}
+	switch strings.TrimSpace(model) {
+	case primeModel, legacyPrimeModel:
+		return true
+	default:
+		return false
+	}
+}
+
+// isPrimeOnlyModel 判断是不是「prime 直连」请求（**不含**促销族）。
+//
+// 2026-11-15 上游切换后 prime 收窄为「仅 30 秒、仅 720P」，这套新边界只该
+// 卡直连 prime 的请求；促销族（特惠/活动）同日改由标准版 wan3.0-video 执行，
+// 适用的是标准版的 10-30 秒区间 —— 不能被 prime 的新边界误伤。
+func isPrimeOnlyModel(model string) bool {
+	if constant.IsSeedance25Family(model) {
+		return false
 	}
 	switch strings.TrimSpace(model) {
 	case primeModel, legacyPrimeModel:
@@ -408,10 +511,12 @@ func isPerCallModel(model string) bool {
 // IDs exposed by the current Youzan API.  The mapping is explicit so the
 // public name remains stable while the upstream protocol can evolve.
 func upstreamModelFor(model string) (string, error) {
-	// seedance2.5 促销族（母本 + 活动版）上游恒为 wan3.0-video-prime。
-	// 判定走能力组 —— 新增族成员时这里自动跟着生效。
+	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起由**标准版**执行。
+	// 背景：上游 api.youzan666.vip 切换上游后，prime 收窄为「仅 30 秒、仅 720P」，
+	// 而促销族按秒卖（特惠）/按时长可选（活动），必须落到 10-30 秒区间完整的
+	// 标准版 wan3.0-video 上。判定走能力组 —— 新增族成员时这里自动跟着生效。
 	if constant.IsSeedance25Family(model) {
-		return primeModel, nil
+		return videoModel, nil
 	}
 	switch strings.TrimSpace(model) {
 	case videoModel, smartLegacyModel:
@@ -443,6 +548,9 @@ func normalizeResolutionForModel(model, resolution string) string {
 	if isPrimeModel(model) {
 		// 上游 prime 只提供 720P / 1080P：480P 请求按最低档 720P 执行，
 		// 既不静默升到更贵的 1080P，也让请求能够成功。
+		// 2026-11-15 起 prime 收窄为仅 720P，显式 1080P 的直连请求在
+		// validatePrimeExplicitResolution 阶段 400（促销族仍支持 1080P ——
+		// 它们的上游已换成 720P/1080P 两档齐全的标准版）。
 		switch resolution {
 		case "720P", "1080P":
 			return resolution
@@ -453,6 +561,12 @@ func normalizeResolutionForModel(model, resolution string) string {
 		}
 	}
 	if !isR2VModel(model) {
+		// 2026-11-15 上游切换后标准版（wan3.0-video / smart）也只有
+		// 720P/1080P 两档（480P 下架）：480P 请求按最低档 720P 执行，
+		// 与 prime 同口径；其余写法原样透传（含小写等历史形态）。
+		if resolution == "480P" {
+			return defaultResolution
+		}
 		return resolution
 	}
 	// 上游 wan2.7-r2v 只接受小写 720p / 1080p，且不支持 480P。
@@ -501,21 +615,26 @@ func resolveDuration(req relaycommon.TaskSubmitReq) int {
 	return resolveDurationForModel(req, req.Model)
 }
 
-// resolveDurationForModel 解析时长。2026-10-28 起上游 prime 也改为按秒计费
-// （supportsSmartDuration=false，但 2—30 秒逐秒可选），不再固定 30 秒；
-// 两个在售模型因此共用同一套夹紧规则。
+// resolveDurationForModel 解析时长。2026-11-15 上游切换后的口径：
+//   - 标准版 wan3.0-video（促销族/直连/smart 都落它）：10—30 秒逐秒可选；
+//   - prime（直连）：仅 30 秒。
+//
+// 夹紧规则只对「标准版系」生效；prime 的非 30 秒请求在
+// validateExplicitDurationForModel 阶段就已 400，走不到这里。
 //
 // ⚠️ 按次档（seedance2.5-活动）**不在这里固定**：2026-11-11 起时长放开为
-// 2-30 秒逐秒可选（售价恒 ¥4.5/条，与时长无关）。只有「没传」才补默认 30 秒 ——
-// 保持旧客户不传时长时拿到的片长不变。越界已在 validatePerCallFixedTier 400 拒掉。
+// 逐秒可选（售价恒 ¥4.5/条，与时长无关）；2026-11-15 起随上游收窄为 10-30。
+// 只有「没传」才补默认 30 秒 —— 保持旧客户不传时长时拿到的片长不变。
+// 越界已在 validateExplicitDurationForModel / validatePerCallFixedTier 400 拒掉。
 func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	duration := req.Duration
 	if duration <= 0 {
 		duration, _ = strconv.Atoi(req.Seconds)
 	}
 	if duration <= 0 {
-		// 按次档没传 → 30 秒（保持旧客户拿到的片长）；其余模型默认 5 秒。
-		if isPerCallModel(model) {
+		// 按次档没传 → 30 秒（保持旧客户拿到的片长）；prime 直连没传 →
+		// 30 秒（它只接 30 秒）；其余模型默认标准版最低档 10 秒。
+		if isPerCallModel(model) || isPrimeOnlyModel(model) {
 			return perCallFixedDuration
 		}
 		return defaultDuration
@@ -526,6 +645,12 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 			return r2vMinDuration
 		}
 		return r2vMaxDuration
+	}
+	if isPrimeOnlyModel(model) {
+		// 2026-11-15 起 prime 只接 30 秒：显式时长一律落到 30
+		//（非 30 的显式请求已在 validateExplicitDurationForModel 400，
+		// 这里只是兜底，比如路由层改写进来的秒数）。
+		return primeFixedDuration
 	}
 	if duration < minDuration {
 		return minDuration
@@ -718,6 +843,15 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	}
 	if counts["reference_image"] > maxReferenceImages {
 		return errors.Errorf("youzan wan3 accepts at most %d reference images", maxReferenceImages)
+	}
+	// 2026-11-15 上游切换：标准版 wan3.0-video 的 media **仅接受 reference_image**
+	// （上游文档原话「wan3.0-video 当前路由的 media 素材仅接受 reference_image 类型」）。
+	// 促销族 2026-11-15 起也落标准版执行，所以除 prime 直连外的所有请求都按这条闸拦。
+	// 不拦的后果：请求透传给上游 → 上游按它自己的文案拒单 → 客户对着
+	// 「参数或参考素材不符合要求」反复重试。参考视频/音频的诉求应改走
+	// CapCut 链路（cp-seedance-2.5flash 支持参考音视频直链）。
+	if !isPrimeOnlyModel(model) && (counts["reference_video"] > 0 || counts["reference_audio"] > 0) {
+		return errors.New("参考视频/参考音频已不再支持：上游 2026-11-15 切换后该链路仅接受 reference_image 参考图，请去掉视频/音频素材后重试（需要参考音视频请改用支持它们的模型）")
 	}
 	if counts["reference_video"] > maxReferenceVideos {
 		return errors.Errorf("youzan wan3 accepts at most %d reference videos", maxReferenceVideos)

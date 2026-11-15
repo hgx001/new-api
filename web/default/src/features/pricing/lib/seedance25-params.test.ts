@@ -25,7 +25,7 @@ For commercial licensing, please contact support@quantumnous.com
  *
  * 历史偏差（均已修复，保留作回归背景）：
  *   1. seedance2.5-活动 原先落到通用 VIDEO_PARAMS → 显示「duration 1~60」，
- *      实际当时锁死 30 秒（2026-11-11 起放开 2-30 秒逐秒可选）。
+ *      实际当时锁死 30 秒（2026-11-11 起放开逐秒可选、2026-11-15 起区间为 10-30 秒）。
  *   2. seedance2.5-特惠 原先落到通用 wan3 表 → 显示「resolution 480P/720P/1080P，
  *      默认 480P」，实际它是 prime 别名，只接受 **720P/1080P，默认 720P**。
  */
@@ -63,7 +63,7 @@ function parametersByName(modelName: string) {
 }
 
 describe('seedance2.5 促销族的参数表', () => {
-  // 活动版：按次档。duration 2-30 秒可选（默认 30），resolution 只有 720P。
+  // 活动版：按次档。duration 10-30 秒可选（默认 30；2026-11-15 起随上游收窄），resolution 只有 720P。
   test('活动版的 duration 是 2~30 秒可选、默认 30 秒', () => {
     const params = parametersByName(SEEDANCE25_HUODONG)
     const duration = params.duration
@@ -75,8 +75,8 @@ describe('seedance2.5 促销族的参数表', () => {
     )
     assert.equal(
       duration.range,
-      '2 ~ 30',
-      '2026-11-11 起活动版时长放开 2-30 秒 —— 参数表必须显示区间，否则客户不知道能传短时长'
+      '10 ~ 30',
+      '2026-11-15 起活动版时长区间为 10-30 秒 —— 参数表必须显示区间，否则客户不知道能传哪些时长'
     )
     assert.equal(
       duration.enumValues,
@@ -102,7 +102,7 @@ describe('seedance2.5 促销族的参数表', () => {
     const params = parametersByName(SEEDANCE25_TEHUI)
     assert.equal(
       params.duration?.range,
-      '2 ~ 30',
+      '10 ~ 30',
       '母本按秒计费、时长可选，不能写成固定 30'
     )
     assert.equal(params.duration?.defaultValue, undefined)

@@ -597,6 +597,25 @@ func TestShortCapcutReadSidePrefersXinbi(t *testing.T) {
 
 // 心笔与有赞都开、心笔无渠道 → 落有赞标准版（不是 CapCut）。
 func TestShortCapcutPrefersYouzanOverCapcut(t *testing.T) {
+	// 2026-11-15 起标准版最低 10 秒：恰 10 秒仍由有赞标准版优先；
+	// <10 秒的请求会跳过它落 CapCut（见 TestShortCapcutTakesOverBelowTenSeconds）。
+	enableShortCapcut(t, true, true, true)
+	stubChannelAvailableByModel(t, map[string]bool{
+		testShortTargetModel:    false,
+		testYouzanStandardModel: true,
+		testShortCapcutTarget:   true,
+	})
+
+	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`)
+	body := decodeBody(t, seen)
+
+	if body["model"] != testYouzanStandardModel {
+		t.Fatalf("有赞标准版优先于 CapCut，实际 model=%v", body["model"])
+	}
+}
+
+// <10 秒的短请求标准版接不住（2026-11-15 上游切换后最低 10 秒）→ 落 CapCut 快速档。
+func TestShortCapcutTakesOverBelowTenSeconds(t *testing.T) {
 	enableShortCapcut(t, true, true, true)
 	stubChannelAvailableByModel(t, map[string]bool{
 		testShortTargetModel:    false,
@@ -607,8 +626,8 @@ func TestShortCapcutPrefersYouzanOverCapcut(t *testing.T) {
 	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
 
-	if body["model"] != testYouzanStandardModel {
-		t.Fatalf("有赞标准版优先于 CapCut，实际 model=%v", body["model"])
+	if body["model"] != testShortCapcutTarget {
+		t.Fatalf("<10 秒的短请求应落 CapCut 快速档，实际 model=%v", body["model"])
 	}
 }
 

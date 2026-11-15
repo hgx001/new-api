@@ -768,15 +768,16 @@ const VIDEO_PARAMS: SupportedParameter[] = [
   },
 ]
 
-const WAN3_RESOLUTIONS = ['480P', '720P', '1080P']
+// 2026-11-15 上游切换后标准版只有 720P/1080P 两档（480P 下架）。
+const WAN3_RESOLUTIONS = ['720P', '1080P']
 
 /**
  * wan3 系（官网 + 有赞）视频模型：smart/官网/标准版共享档位参数表，
  * prime 固定 1080P/30 秒，r2v 另有一套参数。
  *
  * ⚠️ 促销族（seedance2.5-特惠 / seedance2.5-活动）**不在**这个通用表里：
- * 母本是 prime 别名（只有 720P/1080P、默认 720P），活动版是固定档
- * （固定 30 秒、固定 720P）。两者都各有专属参数表，见下方。
+ * 母本 2026-11-15 起由标准版执行（10—30 秒、720P/1080P、默认 720P），
+ * 活动版是按次档（10—30 秒可选、固定 720P）。两者都各有专属参数表，见下方。
  */
 function isWan3VideoModel(modelName: string): boolean {
   return (
@@ -792,23 +793,25 @@ function buildWan3VideoParameters(): SupportedParameter[] {
     VIDEO_PARAMS[0],
     {
       name: 'duration',
+      // 2026-11-15 上游切换：标准版 10—30 秒（480P 同步下架）。
       type: 'integer',
-      range: '2 ~ 30',
+      range: '10 ~ 30',
       descriptionKey: 'Video length in seconds',
     },
     {
       name: 'resolution',
       type: 'enum',
       enumValues: WAN3_RESOLUTIONS,
-      defaultValue: '480P',
+      defaultValue: '720P',
       descriptionKey: 'Output video resolution',
     },
   ]
 }
 
 /**
- * wan3.0-video-prime：2026-10-28 起上游改为 720P / 1080P 分档按秒计价，
- * 时长 2—30 秒逐秒可选（不再固定 1080P / 30 秒），缺省取最低档 720P。
+ * wan3.0-video-prime：2026-11-15 上游切换后收窄为「仅 30 秒、仅 720P」
+ *（尺寸只剩 1280x720 / 720x1280）。旧协议的 2—30 秒逐秒与 1080P 已失效，
+ * 显式传其它时长/1080P 会被后端 400。
  */
 function buildWan3PrimeVideoParameters(): SupportedParameter[] {
   return [
@@ -816,7 +819,32 @@ function buildWan3PrimeVideoParameters(): SupportedParameter[] {
     {
       name: 'duration',
       type: 'integer',
-      range: '2 ~ 30',
+      range: '30',
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: ['720P'],
+      defaultValue: '720P',
+      descriptionKey: 'Output video resolution',
+    },
+  ]
+}
+
+/**
+ * seedance2.5-特惠（按秒计费的促销母本）：2026-11-15 起上游执行模型换成
+ * 标准版 wan3.0-video —— 时长 10—30 秒、720P/1080P 两档、缺省 720P。
+ * 不能再复用 prime 表（prime 已收窄为仅 30 秒仅 720P），也不能落进通用表
+ * （通用表会显示 480P —— 上游已下架，传了被后端归到 720P）。
+ */
+function buildSeedance25TehuiVideoParameters(): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      type: 'integer',
+      range: '10 ~ 30',
       descriptionKey: 'Video length in seconds',
     },
     {
@@ -830,7 +858,7 @@ function buildWan3PrimeVideoParameters(): SupportedParameter[] {
 }
 
 /**
- * seedance2.5-活动：**按次档**参数表（按次 ¥4.5/条、时长 2-30 秒、固定 720P）。
+ * seedance2.5-活动：**按次档**参数表（按次 ¥4.5/条、时长 10-30 秒、固定 720P）。
  *
  * 为什么必须单列，不能落进通用表：
  *   - 落进通用 VIDEO_PARAMS → 显示「resolution 480P/720P/1080P」，客户传 1080P；
@@ -839,7 +867,8 @@ function buildWan3PrimeVideoParameters(): SupportedParameter[] {
  *   - 落进 prime 表 → 显示「resolution 720P,1080P」，同样会被后端拒
  *     （活动版锁死 720P）。
  *
- * 时长写 range='2 ~ 30' + defaultValue=30（2026-11-11 起放开；此前锁死 30）。
+ * 时长写 range='10 ~ 30' + defaultValue=30（2026-11-11 起放开逐秒可选；
+ * 2026-11-15 起随上游切换从 2-30 收窄为 10-30 —— 上游执行模型换成标准版）。
  * default 只是「不传时按 30 秒跑」，不是唯一合法值。
  */
 function buildSeedance25FixedTierVideoParameters(
@@ -850,9 +879,10 @@ function buildSeedance25FixedTierVideoParameters(
     {
       name: 'duration',
       type: 'integer',
-      // 2026-11-11 起活动版时长放开为 2-30 秒（售价仍恒 ¥4.5/条），
+      // 2026-11-11 起活动版时长放开逐秒可选（售价仍恒 ¥4.5/条）；
+      // 2026-11-15 起区间随上游收窄为 10-30 秒（执行模型换标准版）。
       // spec.seconds 只是**默认值**（不传时按它跑），不再是唯一合法取值。
-      range: '2 ~ 30',
+      range: '10 ~ 30',
       defaultValue: spec.seconds,
       descriptionKey: 'Video length in seconds',
     },
@@ -867,9 +897,10 @@ function buildSeedance25FixedTierVideoParameters(
 }
 
 /**
- * wan3.0-720p-特惠：输出档位固定 720P，时长 2—30 秒。
+ * wan3.0-720p-特惠：输出档位固定 720P，时长 10—30 秒
+ *（2026-11-15 起与促销母本同链路 —— 标准版 wan3.0-video，最低 10 秒）。
  * 名字不以 `wan3.0-video` 开头，必须单列 —— 否则会落进通用 wan3 表
- * （把 480P/1080P 也列成可选，等于告诉客户可以传 480P 拿到 480P）。
+ *（把 1080P 也列成可选，等于告诉客户可以传 1080P 拿到 1080P）。
  */
 function buildWan3Official720PVideoParameters(): SupportedParameter[] {
   return [
@@ -877,7 +908,7 @@ function buildWan3Official720PVideoParameters(): SupportedParameter[] {
     {
       name: 'duration',
       type: 'integer',
-      range: '2 ~ 30',
+      range: '10 ~ 30',
       descriptionKey: 'Video length in seconds',
     },
     {
@@ -1161,7 +1192,9 @@ export function buildSupportedParameters(
       return buildSeedance25FixedTierVideoParameters(seedance25FixedTier)
     }
     if (model.model_name === SEEDANCE25_TEHUI) {
-      return buildWan3PrimeVideoParameters()
+      // 2026-11-15 起母本由标准版执行（10—30 秒、720P/1080P），
+      // 不能再沿用 prime 表（prime 已收窄为仅 30 秒仅 720P）。
+      return buildSeedance25TehuiVideoParameters()
     }
     if (
       model.model_name === 'wan3.0-video-prime' ||

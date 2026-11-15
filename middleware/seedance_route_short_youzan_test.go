@@ -49,7 +49,7 @@ func enableShortToggles(t *testing.T, xinbi, youzan bool) {
 func TestShortYouzanRoutesWhenXinbiOff(t *testing.T) {
 	enableShortToggles(t, false, true)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
 	if body["model"] != testYouzanStandardModel {
@@ -61,8 +61,8 @@ func TestShortYouzanRoutesWhenXinbiOff(t *testing.T) {
 	if rec.originModel != testSourceModel {
 		t.Fatalf("计费原点必须是源模型 %s，实际 %s", testSourceModel, rec.originModel)
 	}
-	if !rec.hasBillingSec || rec.billingSeconds != 5 {
-		t.Fatalf("计费秒数应为 5，实际 has=%v value=%v", rec.hasBillingSec, rec.billingSeconds)
+	if !rec.hasBillingSec || rec.billingSeconds != 10 {
+		t.Fatalf("计费秒数应为 10，实际 has=%v value=%v", rec.hasBillingSec, rec.billingSeconds)
 	}
 	if !rec.hasBillingSize || rec.billingSizeRatio != 1.0 {
 		t.Fatalf("720P 应按源模型倍率 1.0 计费，实际 has=%v value=%v", rec.hasBillingSize, rec.billingSizeRatio)
@@ -73,7 +73,7 @@ func TestShortYouzanRoutesWhenXinbiOff(t *testing.T) {
 func TestShortYouzanPrefersXinbiWhenBothOn(t *testing.T) {
 	enableShortToggles(t, true, true)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
 	if body["model"] != testShortTargetModel {
@@ -92,7 +92,7 @@ func TestShortYouzanFallsBackWhenXinbiChannelUnavailable(t *testing.T) {
 		testYouzanStandardModel: true,
 	})
 
-	seen, origin := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	seen, origin := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
 
 	if body["model"] != testYouzanStandardModel {
@@ -107,7 +107,7 @@ func TestShortYouzanFallsBackWhenXinbiChannelUnavailable(t *testing.T) {
 func TestShortYouzanTakesOverWhenXinbiIncompatible(t *testing.T) {
 	enableShortToggles(t, true, true)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"metadata":{"ratio":"21:9"},"prompt":"a cat"}`)
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"metadata":{"ratio":"21:9"},"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
 
 	if body["model"] != testYouzanStandardModel {
@@ -123,7 +123,7 @@ func TestShortYouzanTakesOverWhenXinbiIncompatible(t *testing.T) {
 func TestShortYouzanBothOffKeepsSourceChain(t *testing.T) {
 	enableShortToggles(t, false, false)
 
-	seen, origin := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	seen, origin := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`)
 	if decodeBody(t, seen)["model"] != testSourceModel {
 		t.Fatalf("两个按钮都关闭时短请求必须留在源链路，实际 model=%v", decodeBody(t, seen)["model"])
 	}
@@ -136,25 +136,26 @@ func TestShortYouzanBothOffKeepsSourceChain(t *testing.T) {
 func TestShortYouzanSkipsFramesMedia(t *testing.T) {
 	enableShortToggles(t, false, true)
 
-	body := `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
+	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
 	seen, _ := runRoute(t, body)
 	if decodeBody(t, seen)["model"] != testSourceModel {
 		t.Fatalf("带首尾帧的短请求不该走有赞标准版，实际 model=%v", decodeBody(t, seen)["model"])
 	}
 }
 
-// 参考视频/音频必须原样带过去：有赞标准版与源链路同一个 adaptor，契约一致。
-func TestShortYouzanPreservesReferenceVideoAndAudio(t *testing.T) {
+// 2026-11-15 上游切换后标准版仅收 reference_image：带参考视频/音频的请求
+// 必须跳过标准版兜底，留在源链路 fail-loud（只有标准版开关打开时）。
+func TestShortYouzanSkipsReferenceVideoAndAudio(t *testing.T) {
 	enableShortToggles(t, false, true)
 
-	body := `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat","media":[
+	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","media":[
 		{"type":"reference_video","url":"https://x/a.mp4"},
 		{"type":"reference_audio","url":"https://x/a.mp3"}]}`
 	seen, _ := runRoute(t, body)
 	out := decodeBody(t, seen)
 
-	if out["model"] != testYouzanStandardModel {
-		t.Fatalf("带参考视频/音频的短请求应改派有赞标准版，实际 model=%v", out["model"])
+	if out["model"] != testSourceModel {
+		t.Fatalf("带参考视频/音频的短请求不该改派标准版（它已不收），实际 model=%v", out["model"])
 	}
 	media, _ := out["media"].([]interface{})
 	if len(media) != 2 {
@@ -175,19 +176,19 @@ func TestShortYouzanPinsSourceResolutionAndBillsSourceTier(t *testing.T) {
 	}{
 		{
 			name:      "未指定分辨率按源链路 720P 执行",
-			body:      `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`,
+			body:      `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`,
 			wantRes:   "720P",
 			wantRatio: 1.0,
 		},
 		{
 			name:      "显式 480P 按源链路 720P 执行",
-			body:      `{"model":"seedance2.5-特惠","seconds":5,"resolution":"480P","prompt":"a cat"}`,
+			body:      `{"model":"seedance2.5-特惠","seconds":10,"resolution":"480P","prompt":"a cat"}`,
 			wantRes:   "720P",
 			wantRatio: 1.0,
 		},
 		{
 			name:      "1080P 原样保留并按 1.5 倍计费",
-			body:      `{"model":"seedance2.5-特惠","seconds":5,"resolution":"1080P","prompt":"a cat"}`,
+			body:      `{"model":"seedance2.5-特惠","seconds":10,"resolution":"1080P","prompt":"a cat"}`,
 			wantRes:   "1080P",
 			wantRatio: 1.5,
 		},
@@ -214,28 +215,28 @@ func TestShortYouzanSkipsWhenTargetChannelUnavailable(t *testing.T) {
 		testYouzanStandardModel: false,
 	})
 
-	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
+	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`)
 	if decodeBody(t, seen)["model"] != testSourceModel {
 		t.Fatalf("有赞标准版无可用渠道时不该改派，实际 model=%v", decodeBody(t, seen)["model"])
 	}
 }
 
 // metadata 里的秒数必须落成顶层 seconds：youzanwan3 adaptor 只读顶层，
-// 不补的话请求会按缺省 5 秒执行，而计费却按 metadata 里的 8 秒 —— 多扣钱。
+// 不补的话请求会按缺省时长执行，而计费却按 metadata 里的 8 秒 —— 多扣钱。
 func TestShortYouzanWritesSecondsForMetadataOnlyRequests(t *testing.T) {
 	enableShortToggles(t, false, true)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","metadata":{"seconds":"8"},"prompt":"a cat"}`)
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","metadata":{"seconds":"10"},"prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
 	if body["model"] != testYouzanStandardModel {
-		t.Fatalf("metadata.seconds=8 应触发有赞兜底，实际 model=%v", body["model"])
+		t.Fatalf("metadata.seconds=10 应触发有赞兜底，实际 model=%v", body["model"])
 	}
-	if body["seconds"] != "8" {
-		t.Fatalf("metadata.seconds=8 必须落成顶层字符串 8，实际 %v", body["seconds"])
+	if body["seconds"] != "10" {
+		t.Fatalf("metadata.seconds=10 必须落成顶层字符串 10，实际 %v", body["seconds"])
 	}
-	if !rec.hasBillingSec || rec.billingSeconds != 8 {
-		t.Fatalf("计费秒数应为 8，实际 has=%v value=%v", rec.hasBillingSec, rec.billingSeconds)
+	if !rec.hasBillingSec || rec.billingSeconds != 10 {
+		t.Fatalf("计费秒数应为 10，实际 has=%v value=%v", rec.hasBillingSec, rec.billingSeconds)
 	}
 }
 

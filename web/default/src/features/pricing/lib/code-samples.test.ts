@@ -137,9 +137,10 @@ describe('按次档模型的示例代码', () => {
     }
   })
 
-  // 母本**不能**被误伤：它按秒计费、时长 2—30 秒可选，
-  // 示例写 5 秒是对的（示例取各自模型的代表档位，不是活动版的默认档）。
-  test('seedance2.5-特惠 的示例保持 5 秒（母本时长可选）', () => {
+  // 母本**不能**被误伤：它按秒计费、2026-11-15 起时长 10—30 秒可选
+  //（上游执行模型换标准版 wan3.0-video，最低 10 秒），
+  // 示例写 10 秒（各 wan3 系模型的合法最低档，不是活动版的默认档）。
+  test('seedance2.5-特惠 的示例保持 10 秒（母本时长可选）', () => {
     for (const lang of VIDEO_LANGS) {
       const sample = videoSample(SEEDANCE25_TEHUI, lang)
       const values = extractSeconds(sample)
@@ -150,18 +151,18 @@ describe('按次档模型的示例代码', () => {
       )
       assert.equal(
         values[0],
-        '5',
-        `${lang} 母本示例写的是 ${values[0]} 秒 —— 母本时长可选，应保持 5 秒：\n${sample}`
+        '10',
+        `${lang} 母本示例写的是 ${values[0]} 秒 —— 2026-11-15 起最低 10 秒：\n${sample}`
       )
     }
   })
 
-  // 其它视频模型的示例不受影响（回归守卫）。
-  test('其它模型示例保持 5 秒', () => {
+  // 其它 wan3 视频模型的示例同步 10 秒（2026-11-15 上游切换，最低 10 秒）。
+  test('wan3 系模型示例保持 10 秒', () => {
     const curl = videoSample('wan3.0-video', 'curl')
     assert.ok(
-      curl.includes('-F "seconds=5"'),
-      `wan3.0-video 示例应保持 seconds=5：\n${curl}`
+      curl.includes('-F "seconds=10"'),
+      `wan3.0-video 示例应保持 seconds=10：\n${curl}`
     )
   })
 })
