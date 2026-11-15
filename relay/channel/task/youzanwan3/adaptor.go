@@ -1190,16 +1190,23 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		result.Status = model.TaskStatusInProgress
 		result.Progress = progressString(response.Progress)
 	case "succeeded", "success", "completed", "done":
-		// 完成态的成片地址在 metadata.url（New API 惯例），顶层 url 是变体；
-		// 地址还没落下来时不能提前收尾，否则客户拿到 SUCCESS 却取不到片。
-		if resolved := a.resolveResultURL(firstNonEmpty(response.Metadata.URL, response.URL)); resolved == "" {
-			result.Status = model.TaskStatusInProgress
-			result.Progress = progressString(response.Progress)
-		} else {
-			result.Status = model.TaskStatusSuccess
-			result.Progress = taskcommon.ProgressComplete
-			result.Url = resolved
-		}
+		// 完成态的成片地址有两种形态：
+		//
+		// 1. 旧协议：地址在 metadata.url（New API 惯例）或顶层 url，
+		//    相对路径按 API 根解析成绝对地址 —— 直接透传给客户。
+		// 2. 2026-11-15 上游切换后的新协议：completed 响应**不再携带任何地址**
+		//    （实测 {"status":"completed","progress":100} 就是不带 url/metadata），
+		//    成片改由 /v1/videos/{upstream_task_id}/content 端点提供，且必须带
+		//    渠道密钥才能取。这时返回 Success 且 Url 留空，由轮询层落成
+		//    站内代理地址（service/task_polling.go：Success + 空 URL →
+		//    BuildProxyURL），取片时由 controller/video_proxy.go 带渠道密钥回源。
+		//
+		// ⚠️ 这里不能再「completed 但无地址就保持 IN_PROGRESS」：新协议下
+		// completed 永远不会补发地址，等下去就是任务永远卡在处理中、
+		// 客户的钱卡在预扣里（2026-11-15 生产实测 task 2997 卡死 15 分钟）。
+		result.Status = model.TaskStatusSuccess
+		result.Progress = taskcommon.ProgressComplete
+		result.Url = a.resolveResultURL(firstNonEmpty(response.Metadata.URL, response.URL))
 	case "failed", "failure", "canceled", "cancelled", "error", "refunded":
 		// refunded 等终态必须收敛为失败，否则任务会落进 default 一直 IN_PROGRESS，
 		// 客户的钱卡在预扣里拿不回来。

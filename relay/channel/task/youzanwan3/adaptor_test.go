@@ -266,10 +266,15 @@ func TestParseTaskResultReadsOpenAIVideoShape(t *testing.T) {
 	require.Equal(t, model.TaskStatusSuccess, topLevel.Status)
 	require.Equal(t, "https://oss.example/v2.mp4", topLevel.Url)
 
-	// completed 但还没有地址：不能提前收尾，继续轮询。
-	pending, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"completed","metadata":{}}`))
+	// completed 但没有地址：2026-11-15 上游切换后的新协议常态
+	// （{"status":"completed"} 不再带 url/metadata，成片走 /content 端点）。
+	// 必须收敛为 Success 且 Url 留空，由轮询层落成站内代理地址；
+	// 再保持 IN_PROGRESS 就会永远卡死（生产 task 2997 实测）。
+	newProto, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","object":"video","status":"completed","progress":100,"error":null}`))
 	require.NoError(t, err)
-	require.Equal(t, model.TaskStatusInProgress, pending.Status)
+	require.Equal(t, model.TaskStatusSuccess, newProto.Status)
+	require.Equal(t, "100%", newProto.Progress)
+	require.Equal(t, "", newProto.Url, "无地址时留空，让轮询落代理地址")
 
 	failed, err := adaptor.ParseTaskResult([]byte(`{"id":"task_1","status":"failed","error":{"code":"CONTENT_REJECTED","message":"生成结果疑似包含真人面部，未通过内容安全审核，请更换或风格化相关素材后重试"}}`))
 	require.NoError(t, err)
