@@ -57,9 +57,10 @@ func TestFixedTier_归一后的时长就是固定档(t *testing.T) {
 	}
 }
 
-// 按次档 2026-11-11 起支持逐秒可选；2026-11-15 起区间随上游收窄为 10–30
-//（上游执行模型换标准版 wan3.0-video）。区间内显式时长必须原样保留，
-// 不能被归一成 30 秒（静默改档），越界时长必须放弃路由（交给源链路报错）。
+// 按次档 2026-11-11 起支持逐秒可选；2026-11-15 起区间为 **5–30**
+//（老板口径：<10 秒改派 CapCut 满血档，≥10 秒留有赞标准版）。
+// 区间内显式时长必须原样保留，不能被归一成 30 秒（静默改档），
+// 越界时长必须放弃路由（交给源链路报错）。
 func TestFixedTier_时长区间归一(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -67,12 +68,13 @@ func TestFixedTier_时长区间归一(t *testing.T) {
 		wantOK     bool
 		wantSecond int
 	}{
+		{name: "下限 5 秒", body: map[string]interface{}{"seconds": float64(5)}, wantOK: true, wantSecond: 5},
 		{name: "下限 10 秒", body: map[string]interface{}{"seconds": float64(10)}, wantOK: true, wantSecond: 10},
 		{name: "区间内 12 秒", body: map[string]interface{}{"seconds": float64(12)}, wantOK: true, wantSecond: 12},
 		{name: "语义边界 20 秒", body: map[string]interface{}{"seconds": float64(20)}, wantOK: true, wantSecond: 20},
 		{name: "上限 30 秒", body: map[string]interface{}{"seconds": float64(30)}, wantOK: true, wantSecond: 30},
 		{name: "字符串 25", body: map[string]interface{}{"seconds": "25"}, wantOK: true, wantSecond: 25},
-		{name: "9 秒越界", body: map[string]interface{}{"seconds": float64(9)}, wantOK: false},
+		{name: "4 秒越界", body: map[string]interface{}{"seconds": float64(4)}, wantOK: false},
 		{name: "1 秒越界", body: map[string]interface{}{"seconds": float64(1)}, wantOK: false},
 		{name: "31 秒越界", body: map[string]interface{}{"seconds": float64(31)}, wantOK: false},
 	}

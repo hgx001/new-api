@@ -844,7 +844,7 @@ function buildSeedance25TehuiVideoParameters(): SupportedParameter[] {
     {
       name: 'duration',
       type: 'integer',
-      range: '10 ~ 30',
+      range: '5 ~ 30',
       descriptionKey: 'Video length in seconds',
     },
     {
@@ -858,7 +858,7 @@ function buildSeedance25TehuiVideoParameters(): SupportedParameter[] {
 }
 
 /**
- * seedance2.5-活动：**按次档**参数表（按次 ¥4.5/条、时长 10-30 秒、固定 720P）。
+ * seedance2.5-活动：**按次档**参数表（按次 ¥4.5/条、时长 5-30 秒、固定 720P）。
  *
  * 为什么必须单列，不能落进通用表：
  *   - 落进通用 VIDEO_PARAMS → 显示「resolution 480P/720P/1080P」，客户传 1080P；
@@ -867,8 +867,8 @@ function buildSeedance25TehuiVideoParameters(): SupportedParameter[] {
  *   - 落进 prime 表 → 显示「resolution 720P,1080P」，同样会被后端拒
  *     （活动版锁死 720P）。
  *
- * 时长写 range='10 ~ 30' + defaultValue=30（2026-11-11 起放开逐秒可选；
- * 2026-11-15 起随上游切换从 2-30 收窄为 10-30 —— 上游执行模型换成标准版）。
+ * 时长写 range='5 ~ 30' + defaultValue=30（2026-11-11 起放开逐秒可选；
+ * 2026-11-15 起区间为 5-30 —— 老板口径，<10 秒改派 CapCut 满血档）。
  * default 只是「不传时按 30 秒跑」，不是唯一合法值。
  */
 function buildSeedance25FixedTierVideoParameters(
@@ -880,9 +880,9 @@ function buildSeedance25FixedTierVideoParameters(
       name: 'duration',
       type: 'integer',
       // 2026-11-11 起活动版时长放开逐秒可选（售价仍恒 ¥4.5/条）；
-      // 2026-11-15 起区间随上游收窄为 10-30 秒（执行模型换标准版）。
+      // 2026-11-15 起区间为 5-30 秒（<10 秒改派 CapCut 满血档）。
       // spec.seconds 只是**默认值**（不传时按它跑），不再是唯一合法取值。
-      range: '10 ~ 30',
+      range: '5 ~ 30',
       defaultValue: spec.seconds,
       descriptionKey: 'Video length in seconds',
     },

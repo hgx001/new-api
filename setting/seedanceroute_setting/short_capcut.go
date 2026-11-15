@@ -32,11 +32,38 @@
 // 升级当天线上流量逐字节不变（与 ShortYouzanEnabled 同一口径）。
 package seedanceroute_setting
 
-// DefaultShortCapcutTargetModel 是规则六第三分支的目标模型（CapCut Seedance 2.0 Fast 档）。
+// DefaultShortCapcutTargetModel 是规则六第三分支的目标模型（CapCut Seedance 2.0 满血档）。
 //
-// 为什么是 2.0 Fast 而不是 2.5 Flash：2.0 Fast 更便宜（¥0.08/秒 vs ¥0.15/秒），
-// 且时长上界 15 秒 —— 规则六只处理 ≤10 秒的请求，天然落在 15 秒内。
-const DefaultShortCapcutTargetModel = "cp-seedance-2.0fast"
+// 2026-11-15 老板口径：<10 秒的请求改派 **cp-seedance-2.0**（满血档），不是 2.0fast。
+//
+// 为什么换档：
+//   - 2.0 满血 ¥0.0205/秒，2.0fast ¥0.011/秒。老板选满血档是要更好的出片质量
+//     （2.0fast 是「快速档」，定位是便宜不是好）；
+//   - 两档的时长上界相同（4–15 秒），5–9 秒都在区间内，换档不损失时长覆盖；
+//   - 两档的 720p 倍率不同（2.0 是 ×2.0，2.0fast 是 ×1.5）—— 但改派后计费
+//     **按源模型口径**算（setRouteBillingContext 覆盖 adaptor 的 size 倍率），
+//     换档不会改变对客价格。
+//
+// ⚠️ 换档不影响超分：capcutUpscaleDeliveryOrigin 按「计费原点是促销族」判定，
+//   五档 CapCut 商品共用同一条超分前提（见 manwu 的 isCapcutVideoExecutionModel）。
+const DefaultShortCapcutTargetModel = "cp-seedance-2.0"
+
+// ShortCapcutMinSeconds 是规则六第三分支的**时长下界**（秒）。
+//
+// 2026-11-15 老板口径：<10 秒的走 CapCut 满血档，10 秒及以上留给有赞标准版。
+//
+// 为什么是这个分界：
+//   - 上游有赞标准版 wan3.0-video 的下界就是 10 秒（2026-11-15 切换后），
+//     10 秒及以上它能跑，且同渠道同 adaptor、最不容易失败；
+//   - <10 秒有赞标准版接不住（会被上游 400），CapCut 满血档 4–15 秒能接住，
+//     属于「标准版的能力缺口，CapCut 来补」。
+//
+// ⚠️ 这条门槛与「规则六的 ≤10 秒触发阈值」是两件事：
+//   触发阈值决定「哪些请求进规则六」（≤ short_trigger_seconds，当前 10），
+//   本下界决定「进规则六后走哪条分支」（<10 → CapCut，≥10 → 有赞标准版）。
+//   两条线都在 10 这个点上对齐，是刻意选的：规则六的阈值改成 15 秒时，
+//   10–15 秒仍由有赞标准版接住，不会掉进 CapCut。
+const ShortCapcutMinSeconds = 10
 
 // IsShortCapcutEnabled 判断规则六第三分支（CapCut 快速档）开关当前是否开启。
 func IsShortCapcutEnabled() bool {

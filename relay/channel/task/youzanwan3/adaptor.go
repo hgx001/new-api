@@ -259,10 +259,10 @@ func validatePerCallFixedTier(req relaycommon.TaskSubmitReq) *dto.TaskError {
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 	}
-	if duration != 0 && (duration < minDuration || duration > maxDuration) {
+	if duration != 0 && (duration < promoMinDuration || duration > maxDuration) {
 		return service.TaskErrorWrapperLocal(
 			errors.Errorf("duration must be between %d and %d seconds, got %d",
-				minDuration, maxDuration, duration),
+				promoMinDuration, maxDuration, duration),
 			"invalid_duration", http.StatusBadRequest)
 	}
 	// 分辨率：只在客户端**显式**给了非 720P 时报错。
@@ -336,10 +336,25 @@ func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskEr
 		}
 		return nil
 	}
-	if duration < minDuration {
+	// 促销族下界 5 秒（2026-11-15 老板口径），标准版直连仍是 10 秒。
+	//
+	// ⚠️ 促销族 <10 秒的请求正常会被路由层改派到 CapCut 满血档；这里放行 5 秒
+	//   是兜底（路由层那档开关关掉时不应该直接 400 —— 那是「本来能跑的请求
+	//   在源链路被拒」，不是「上游不支持」）。
+	lowerBound := minDuration
+	if isPromoFamilyModel(req.Model) {
+		lowerBound = promoMinDuration
+	}
+	if duration < lowerBound {
 		return service.TaskErrorWrapperLocal(
 			errors.Errorf("duration must be between %d and %d seconds, got %d",
-				minDuration, maxDuration, duration),
+				lowerBound, maxDuration, duration),
+			"invalid_duration", http.StatusBadRequest)
+	}
+	if duration > maxDuration {
+		return service.TaskErrorWrapperLocal(
+			errors.Errorf("duration must be between %d and %d seconds, got %d",
+				lowerBound, maxDuration, duration),
 			"invalid_duration", http.StatusBadRequest)
 	}
 	return nil
@@ -507,6 +522,14 @@ func isPerCallModel(model string) bool {
 	return constant.IsSeedance25PerCall(model)
 }
 
+// isPromoFamilyModel 判断是不是 seedance2.5 促销族（母本 + 活动版）。
+//
+// 判定走 constant 的**能力组** —— 新增族成员时这里自动跟着生效，
+// 不用逐个列模型名（逐个列名正是「母本加了、活动版没同步」的根源）。
+func isPromoFamilyModel(model string) bool {
+	return constant.IsSeedance25Family(model)
+}
+
 // upstreamModelFor maps the public aliases retained by new-api to the model
 // IDs exposed by the current Youzan API.  The mapping is explicit so the
 // public name remains stable while the upstream protocol can evolve.
@@ -651,6 +674,21 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 		//（非 30 的显式请求已在 validateExplicitDurationForModel 400，
 		// 这里只是兜底，比如路由层改写进来的秒数）。
 		return primeFixedDuration
+	}
+	// 促销族（特惠/活动）下界是 5 秒（2026-11-15 老板口径），其余标准版直连
+	// 下界仍是 10 秒。
+	//
+	// ⚠️ 促销族的 <10 秒请求正常会被路由层改派到 CapCut 满血档；这里允许 5 秒
+	//   是**兜底**（路由层那档开关关掉、或者路由层没生效时），
+	//   避免把「本来能跑的 5 秒单」在源链路就拒掉。
+	if isPromoFamilyModel(model) {
+		if duration < promoMinDuration {
+			return promoMinDuration
+		}
+		if duration > maxDuration {
+			return maxDuration
+		}
+		return duration
 	}
 	if duration < minDuration {
 		return minDuration

@@ -21,7 +21,9 @@ import (
 
 const (
 	testEcommerceTarget   = "cp-seedance-2.5flash"
-	testShortCapcutTarget = "cp-seedance-2.0fast"
+	// 2026-11-15 老板口径：<10 秒改派 CapCut **满血档** cp-seedance-2.0
+	// （不是快速档 2.0fast）。与 setting 层的 DefaultShortCapcutTargetModel 同源。
+	testShortCapcutTarget = "cp-seedance-2.0"
 	// testSourceModelAlt 是促销族的活动版（按次固定档）。
 	//
 	// 必须与母本一起写进 source_models：中间件入口的 IsSourceModel 早退
@@ -627,7 +629,7 @@ func TestShortCapcutTakesOverBelowTenSeconds(t *testing.T) {
 	body := decodeBody(t, seen)
 
 	if body["model"] != testShortCapcutTarget {
-		t.Fatalf("<10 秒的短请求应落 CapCut 快速档，实际 model=%v", body["model"])
+		t.Fatalf("<10 秒的短请求应落 CapCut 满血档 %s，实际 model=%v", testShortCapcutTarget, body["model"])
 	}
 }
 
@@ -644,7 +646,7 @@ func TestShortCapcutFallsBackWhenOthersUnavailable(t *testing.T) {
 	body := decodeBody(t, seen)
 
 	if body["model"] != testShortCapcutTarget {
-		t.Fatalf("心笔与有赞都接不住时应落 CapCut 快速档 %s，实际 model=%v", testShortCapcutTarget, body["model"])
+		t.Fatalf("心笔与有赞都接不住时应落 CapCut 满血档 %s，实际 model=%v", testShortCapcutTarget, body["model"])
 	}
 }
 

@@ -476,9 +476,14 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 				// 契约不兼容）时才会走到这里。
 				//
 				// ⚠️ 2026-11-15 上游切换后标准版最低 10 秒：<10 秒的短请求
-				// 落到它会 400，必须跳过这条分支让 CapCut 快速档（4-15 秒）接住。
+				// 落到它会 400，必须跳过这条分支让 CapCut 满血档（4-15 秒）接住。
 				// 恰好 10 秒的请求标准版能跑，照常兜底。
-				if youzanReady && seconds >= 10 {
+				//
+				// ⚠️ 下界用 ShortCapcutMinSeconds（=10）而不是写死 10：
+				//   那是「CapCut 满血档的接管门槛」的**同一个常量** ——
+				//   两条分支的分界线必须是一个数，否则会出现
+				//   「5 秒既不被 CapCut 接、也不被有赞接」的空洞。
+				if youzanReady && seconds >= seedanceroute_setting.ShortCapcutMinSeconds {
 					target := seedanceroute_setting.DefaultShortYouzanTargetModel
 					if newBody, sizeRatio, routed := prepareShortYouzanRoute(c, body, target, sourceModel, seconds); routed {
 						if applyRewrittenBody(c, newBody, billingOriginModel) {
@@ -497,12 +502,19 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 					}
 				}
 
-				// 第三优先：CapCut 快速档（cp-seedance-2.0fast）。
+				// 第三优先：CapCut 满血档（cp-seedance-2.0）。
 				//
-				// 心笔与有赞标准版都没接住时，短请求改派 CapCut 快速档 ——
+				// 心笔与有赞标准版都没接住时，短请求改派 CapCut 满血档 ——
 				// 这是跨渠道改派（youzanwan3 → manwu），入参契约完全不同，
 				// 必须走 prepareShortCapcutRoute 的准入与改写，不能按有赞契约改写。
-				if capcutReady {
+				//
+				// ⚠️ 2026-11-15 老板口径：<10 秒走 CapCut 满血档（cp-seedance-2.0）。
+				// 上游有赞标准版 wan3.0-video 的下界是 10 秒，<10 秒它接不住，
+				// 而 CapCut 满血档区间 4–15 秒正好补上这个缺口。
+				// ≥10 秒的请求由**第二优先**的有赞标准版接住（同渠道同 adaptor，
+				// 最不容易失败），所以这里必须挡掉 —— 否则 10 秒单会被降级到
+				// 跨渠道的 CapCut，白白多一跳、也多一次素材转码风险。
+				if capcutReady && seconds < seedanceroute_setting.ShortCapcutMinSeconds {
 					target := seedanceroute_setting.DefaultShortCapcutTargetModel
 					if newBody, routed := prepareShortCapcutRoute(c, body, target, seconds); routed {
 						if applyRewrittenBody(c, newBody, billingOriginModel) {
@@ -510,17 +522,17 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
 							//
 							// ⚠️ 必须覆盖 CapCut adaptor 自己给的 size 倍率
-							// （480p=1.0 / 720p=×1.5）—— 那是 CapCut 的档位差价，
+							// （480p=1.0 / 720p=×2.0）—— 那是 CapCut 的档位差价，
 							// 与源模型的档位差价不是同一个维度，不覆盖就是超收。
 							//
 							// 档位取**源链路实际执行的档**（shortRouteResolution）：
-							// prime 只提供 720P/1080P，客户传 480P 时源链路也跑 720P，
+							// 源链路执行标准版时缺省 720P，客户传 480P 时源链路也跑 720P，
 							// 用原始请求档算倍率会取不到值。
 							setRouteBillingContext(c, seconds,
 								sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
 							logger.LogInfo(c, fmt.Sprintf(
-								"条件路由：命中短时长 %d 秒（≤ %d 秒），心笔与有赞均未接住，改派 %s → %s（CapCut 快速档）",
-								seconds, policy.ShortTriggerSecondsOrDefault(), sourceModel, target))
+								"条件路由：命中短时长 %d 秒（< %d 秒，有赞标准版下界），心笔与有赞均未接住，改派 %s → %s（CapCut 满血档）",
+								seconds, seedanceroute_setting.ShortCapcutMinSeconds, sourceModel, target))
 							c.Next()
 							return
 						}
@@ -661,13 +673,19 @@ func isDoubaoTarget(targetModel string) bool {
 // 「实际跑多久」在客户侧悄悄脱节。派生关系把这个失败模式彻底消除。
 const perCallFixedTierSeconds = constant.Seedance25PerCallFixedSeconds
 
-// 按次档允许的时长区间。2026-11-11 起活动版与 wan3.0-720p-按次
-// 都放开 2–30 秒（此前锁死 30 秒），按次价格仍不随时长变化。
+// 按次档允许的时长区间。
+//
+// 2026-11-15 老板口径：促销族对外统一支持 **5-30 秒**。
+//
+// 5 秒这条下限对应的是「<10 秒走 CapCut 满血档」：
+//   - 5–9 秒：路由层改派 cp-seedance-2.0（CapCut 满血档，区间 4–15 秒）；
+//   - ≥10 秒：留在有赞标准版源链路（同渠道同 adaptor，最不容易失败）。
+//
+// ⚠️ 这里放行 5 秒**不代表**有赞能跑 5 秒 —— 有赞标准版下界是 10 秒。
+//   5 秒请求能过这一关，靠的是它先被规则六第三分支改派走了；
+//   万一漏过路由层，源 adaptor 的 validateExplicitDurationForModel 会 fail-loud。
 const (
-	// 2026-11-15 上游切换后按次档（上游执行模型换标准版 wan3.0-video）
-	// 时长区间从 2-30 收窄为 10-30，这里的路由层放行口径随之同步：
-	// <10 秒的按次请求在源链路会 400，提前放弃路由让它 fail-loud。
-	perCallMinSeconds = 10
+	perCallMinSeconds = 5
 	perCallMaxSeconds = 30
 )
 

@@ -522,7 +522,11 @@ func TestTehuiAliasMirrorsPrime(t *testing.T) {
 		{"default", relaycommon.TaskSubmitReq{Model: tehuiModel}, "720P", 10, "adaptive"},
 		{"1080p", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "1080p"}, "1080P", 10, "adaptive"},
 		{"480p falls back to 720P", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "480P"}, "720P", 10, "adaptive"},
-		{"duration clamped low", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 1}, "720P", 10, "adaptive"},
+		// 促销族下界 5 秒（2026-11-15 老板口径）：<5 秒夹到 5，
+		// ≥5 秒原样透传（<10 秒正常会被路由层改派到 CapCut 满血档）。
+		{"duration clamped low", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 1}, "720P", 5, "adaptive"},
+		{"duration 5 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 5}, "720P", 5, "adaptive"},
+		{"duration 8 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 8}, "720P", 8, "adaptive"},
 		{"duration clamped high", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 99}, "720P", 30, "adaptive"},
 		{"21:9 allowed", relaycommon.TaskSubmitReq{
 			Model:    tehuiModel,

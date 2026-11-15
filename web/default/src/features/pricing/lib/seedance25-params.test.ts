@@ -63,8 +63,8 @@ function parametersByName(modelName: string) {
 }
 
 describe('seedance2.5 促销族的参数表', () => {
-  // 活动版：按次档。duration 10-30 秒可选（默认 30；2026-11-15 起随上游收窄），resolution 只有 720P。
-  test('活动版的 duration 是 2~30 秒可选、默认 30 秒', () => {
+  // 活动版：按次档。duration 5-30 秒可选（默认 30；2026-11-15 老板口径），resolution 只有 720P。
+  test('活动版的 duration 是 5~30 秒可选、默认 30 秒', () => {
     const params = parametersByName(SEEDANCE25_HUODONG)
     const duration = params.duration
     assert.ok(duration, '活动版必须列出 duration 参数')
@@ -75,8 +75,8 @@ describe('seedance2.5 促销族的参数表', () => {
     )
     assert.equal(
       duration.range,
-      '10 ~ 30',
-      '2026-11-15 起活动版时长区间为 10-30 秒 —— 参数表必须显示区间，否则客户不知道能传哪些时长'
+      '5 ~ 30',
+      '2026-11-15 起活动版时长区间为 5-30 秒（<10 秒改派 CapCut 满血档）—— 参数表必须显示区间，否则客户不知道能传哪些时长'
     )
     assert.equal(
       duration.enumValues,
@@ -98,11 +98,11 @@ describe('seedance2.5 促销族的参数表', () => {
   })
 
   // 母本：按秒计费、时长可选、分辨率 720P/1080P 可选。
-  test('母本的 duration 是 2~30 秒可选', () => {
+  test('母本的 duration 是 5~30 秒可选', () => {
     const params = parametersByName(SEEDANCE25_TEHUI)
     assert.equal(
       params.duration?.range,
-      '10 ~ 30',
+      '5 ~ 30',
       '母本按秒计费、时长可选，不能写成固定 30'
     )
     assert.equal(params.duration?.defaultValue, undefined)

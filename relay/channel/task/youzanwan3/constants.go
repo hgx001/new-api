@@ -114,11 +114,28 @@ const (
 	// 2026-11-15 上游切换后的时长口径（见 api.youzan666.vip/docs）：
 	//   - 标准版 wan3.0-video：10—30 秒逐秒可选（480P 同步下架，仅 720P/1080P）；
 	//   - prime：仅 30 秒、仅 720P。
-	// 促销族（特惠/活动）2026-11-15 起由标准版执行，时长区间随之从 2-30
-	// 收窄为 10-30；prime 直连请求的「恰好 30 秒」见 primeFixedDuration。
+	//
+	// ⚠️ minDuration / maxDuration 是**有赞标准版直连**（wan3.0-video）的硬边界：
+	//   上游 10 秒起才收，<10 秒一律拒单。直连客户（自己买 wan3.0-video 的）
+	//   必须按这个边界 fail-loud —— 夹紧到 10 秒等于「客户要 5 秒拿到 10 秒」。
 	minDuration     = 10
 	maxDuration     = 30
 	defaultDuration = 10
+
+	// promoMinDuration 是**促销族**（seedance2.5-特惠 / -活动）的时长下界（秒）。
+	//
+	// 2026-11-15 老板口径：促销族对外支持 **5-30 秒**。
+	//
+	// 为什么促销族能低于标准版的 10 秒：促销族 <10 秒的请求**不会**走到有赞 ——
+	// 路由层（middleware/seedance_route.go 规则六第三分支）会把它们改派到
+	// CapCut 满血档 cp-seedance-2.0（区间 4–15 秒），正好覆盖 5–9 秒。
+	// 有赞标准版只接 **≥10 秒**。
+	//
+	// ⚠️ 所以这里的 5 秒**不是**「有赞能跑 5 秒」—— 5 秒请求必须先被路由层
+	//   改派走 CapCut；任何漏过路由层、直接落到有赞标准版的 5-9 秒请求，
+	//   都会被上游拒（fail-loud，不夹紧）。
+	//   路由层那道门槛就是 seedanceroute_setting.ShortCapcutMinSeconds。
+	promoMinDuration = 5
 
 	// primeFixedDuration 是 2026-11-15 上游切换后 prime 唯一接受的时长。
 	// 旧协议的「2-30 逐秒」已失效：非 30 秒的 prime 请求上游一律拒单。
