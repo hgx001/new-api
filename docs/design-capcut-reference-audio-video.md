@@ -128,6 +128,20 @@
 
 ## 4. 三端改造清单
 
+> **实施状态（2026-11-15 收尾）**：三端代码已全部落地并各自提交，**未部署、未跑任何真实生成任务**。
+>
+> | 仓 | 提交 | 状态 |
+> |---|---|---|
+> | new-api | `4dad953c1`（capcut 透传）、`978804ed6`（路由准入放开） | ✅ 代码完成，`go test` 全绿 |
+> | ArcReel | `93e15c2b` | ✅ 代码完成，`pytest -k remote` 758 passed |
+> | Worker | `3f35e3f`、`f4fbf2f`（音频发布开关） | ✅ 代码完成，`tests/unit/platforms/capcut` + `tests/unit/electron` 全绿（除 5 条既有失败，见文末） |
+>
+> 与本文档的**一处偏离**：4.3 第 1 条写的 `supports.referenceAudio: <switch>` 已按 R5 落实为
+> `isCapcutReferenceAudioEnabled()`，**默认关**（`CAPCUT_REFERENCE_AUDIO_ENABLED=1` 打开）。
+> 关着时带音频的订单在 Worker 提交前**明确失败**（零额度），不是静默丢 —— 见 §5 第 1 步。
+>
+> 尚未完成：4.3 第 6 条的**真机标定**（需用户授权；零额度只上传不生成），以及 §5 的破坏性变更公告。
+
 ### 4.1 new-api（Go）
 
 1. `relay/channel/task/taskcommon/refvideo.go`
@@ -214,4 +228,14 @@
 5. **音频与「生成音频」开关的叠加语义**：参考音频是内容参考，不是输出音轨；需在交付说明中写清「成片声音仍由官网生成/客户开关决定」。
 6. **客户端提示词分布未知**：存量提示词可能只写 `@audioNN` 而从不带音频素材（本次事故单即如此）。D4 的「无素材 → 字面保留」保证不误杀，但这类单的音频引用永远不会生效，应在上游提示词组装端修正（另行排期）。
 7. **旧注释与文档存在「视频显式 400 / 音频静默丢」的过时口径**，实施时一并清理，避免下一位维护者按旧注释改回去。（new-api 侧已清；Worker / ArcReel 待各自发布时清。）
-8. ~~**电商总兜底路由仍按旧口径挡音频**~~ —— **已处理（2026-11-15）**：`middleware/seedance_route_ecommerce.go` 的音视频两道拦截已删除，素材改为抬到顶层 `videos` / `audios` 透传（见 §8）。连带影响：`prepareCapcutRoute` 是规则六第三分支 / 规则七 / 规则八共用的唯一准入入口，所以三条规则一起放开，测试三条各有一组用例（`TestEcommerceRoutes*` / `TestTotalFallbackRoutes*`）。
+8. ~~**电商总兜底路由仍按旧口径挡音频**~~ —— **已处理（2026-11-15）**：`middleware/seedance_route_ecommerce.go` 的音视频两道拦截已删除，素材改为抬到顶层 `videos` / `audios` 透传（见 4.1 与 §5）。连带影响：`prepareCapcutRoute` 是规则六第三分支 / 规则七 / 规则八共用的唯一准入入口，所以三条规则一起放开，测试三条各有一组用例（`TestEcommerceRoutes*` / `TestTotalFallbackRoutes*`）。
+9. **第 7 条口径清理已完成**（2026-11-15）：new-api（`adaptor.go` 的 `capcutMaxReferenceVideos` / 审计日志 / `kindCapcutVideo` 分支）、ArcReel（`_filter_capcut_reference_inputs` 包头）、Worker（`params.ts` / `mentionPlan.ts` / `bootstrap.ts` / `docs/agent-guides/capcut.md`）三处旧注释全部改掉。
+
+## 附：Worker 侧既有失败（与本方案无关，发布前不必处理）
+
+`cron_video_brach` 全量 `npm test` 有 5 条失败，**在本次改动之前的 HEAD 上就已存在**（已用 `git stash` 逐条验证）：
+
+- `tests/unit/electron/compositeGateAndSwitch.test.ts`（3 条）：dola 周额度封禁文案对齐官网公告；
+- `tests/unit/electron/DomPlatformScheduler.circuitWake.test.ts`（2 条）：熔断到期自动唤醒后的封号时长。
+
+另有几条在**全量并行**时偶发失败、单跑通过（共享临时目录/端口）：`geminiAccountStore.persistence`、`youzanWan3VideoClient`、`ipc/index.test`、`modelProviderPresets`（后两条是全量基线也红的既有漂移：注册器数量、出厂 seedance 模型数）。
