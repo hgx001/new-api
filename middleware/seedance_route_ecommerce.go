@@ -24,10 +24,17 @@ package middleware
 //	  并把 media / metadata.media / metadata.input.media **摘掉** ——
 //	  留着就是同图投两次（与 rewriteBodyForXinbiPerCall 同一个坑）。
 //
-//	· 参考视频：源链路收，CapCut 也收（2026-11-14 放开，限 1 个），
-//	  但**老板明确要求「有视频参考的不路由」** → 直接挡。
+//	· 参考视频：源链路收，CapCut 也收 → **透传**（2026-11-15 放开）。
+//	  改派时抬到顶层 `videos`；条数上限 5 个、合计时长 ≤15 秒由目标链路的
+//	  adaptor 校验（网关这里不重复判，判两遍只会让两处口径漂）。
 //
-//	· 参考音频：CapCut 静默丢弃 → 改派过去等于把客户的音频悄悄扔了 → 挡。
+//	· 参考音频：CapCut 旧实现静默丢弃音频，所以旧口径是「带音频不路由」。
+//	  现在音频会下发到 Worker 并上传到 CapCut 素材槽 → **透传**（2026-11-15），
+//	  抬到顶层 `audios`；上限 5 个。
+//
+//	⚠️ 音视频是**改写责任**，不是「删掉拦截就行」：rewriteBodyForCapcut
+//	  会整块摘掉 metadata 与 media（防止同一素材投两次），素材不显式抬到
+//	  顶层就是静默丢 —— 比「不路由」更坏，因为客户看不到任何报错。
 //
 //	· 分辨率：源链路支持 480P/720P/1080P，CapCut **只卖 480p/720p**
 //	  （1080p 官网有但未定价，显式 400）。1080P 的请求改派过去必 400 → 挡。
@@ -146,8 +153,11 @@ func prepareTotalFallbackRoute(c *gin.Context, body map[string]interface{}, targ
 // label 只进日志，用于区分是哪条规则放行的（电商规则七 / 短时长CapCut分支）。
 //
 // 准入检查的顺序按**「越便宜的检查越先做」**排列：
-// 参考视频/音频 → 首尾帧 → 分辨率 → 时长 → 参考图 → 比例 → 渠道可用性。
+// 首尾帧 → 分辨率 → 时长 → 素材形态 → 参考图张数 → 比例 → 渠道可用性。
 // 前面的检查都是纯内存判定（零开销），渠道可用性要走缓存查询放最后。
+//
+// ⚠️ 参考视频 / 参考音频**不再是一道准入检查**（2026-11-15 放开），
+// 但它们仍然是「素材形态」的一部分 —— 见 ⑤。
 func prepareCapcutRoute(
 	c *gin.Context,
 	body map[string]interface{},
@@ -156,37 +166,25 @@ func prepareCapcutRoute(
 	maxDuration int,
 	label string,
 ) (map[string]interface{}, bool) {
-	// ① 参考视频：老板明确要求「有视频参考的不路由」。
+	// ① 参考视频 / 参考音频：**照常路由**（2026-11-15 放开）。
 	//
-	// ⚠️ 为什么不能像 CapCut 链路那样「支持参考视频」就放行：
-	// CapCut 确实收参考视频（2026-11-14 放开，限 1 个），但：
-	//   - 源链路有赞的参考视频有**总量 ≤15 秒 + 生成 ≤15 秒**的硬限制，
-	//     CapCut 那边是另一套限制（单条 ≤? 秒，探测口径不同）；
-	//   - 老板的口径是明确的「有视频参考的不路由」——
-	//     这是**产品决策**（视频参考的成片质量与素材一致性没验证过），
-	//     不是能力缺口。能力够不等于产品上要放。
+	// 旧口径（2026-10-30 ~ 2026-11-14）是「带音视频一律不路由」，两条理由现在
+	// 都不成立了：
+	//   - 视频：当初的理由是「视频参考的成片质量与素材一致性没验证过」——
+	//     那是产品担忧而非能力缺口。2026-11-14 真机标定确认 CapCut 多模态参考
+	//     模式接受视频，2026-11-15 决定放开；
+	//   - 音频：当初的理由是「CapCut 会静默丢弃音频」——那是旧实现的事实。
+	//     new-api 的 capcut 分支现在会把音频下发到 Worker（adaptor 的
+	//     InputTypeAudio → inputs.reference_audio），转发链路已经通了。
 	//
-	// 所以这里一律挡，不做「够短就放行」的自作主张。
+	// 继续挡不再产生任何保护效果，只会把客户留在源链路上白等。
 	//
-	// ⚠️ 判定口径覆盖**顶层 videos / video**：源链路（有赞）不消费这两个字段，
-	// 但目标链路（CapCut）会消费 —— 源链路忽略、目标链路认，
-	// 改派过去就变成「客户按带参考视频下单、拿到一条没有参考视频的成片」。
-	// 统一按「任何形态出现视频 = 带参考视频」挡掉，不去猜哪条链路会真的送上去。
-	if hasReferenceVideo(body) {
-		logger.LogInfo(c, fmt.Sprintf("条件路由跳过%s：请求带参考视频（该规则只接纯文生/图生）", label))
-		return nil, false
-	}
+	// ⚠️ 「不挡」只是第一步，不是全部：素材必须在 rewriteBodyForCapcut 里被
+	// **抬到顶层** videos / audios。只删这两段拦截而不改改写函数，音视频会在
+	// 摘 metadata/media 时被一起丢掉 —— 那是比「不路由」更坏的静默丢素材：
+	// 客户按「带音频」下单，拿到一条既没有音频也没有任何告警的成片。
 
-	// ② 参考音频：CapCut 会**静默丢弃**音频。
-	//
-	// 静默丢 = 客户按「带音频参考」下单却拿到没音频参考的成片（错交付），
-	// 且没有任何报错。与其让它悄悄丢，不如不路由。
-	if hasUnsupportedMedia(body) {
-		logger.LogInfo(c, fmt.Sprintf("条件路由跳过%s：请求带参考视频/音频（该链路不支持）", label))
-		return nil, false
-	}
-
-	// ③ 首尾帧：CapCut 只收参考图，没有首尾帧语义。
+	// ② 首尾帧：CapCut 只收参考图，没有首尾帧语义。
 	//
 	// 源链路早已把首尾帧降级成参考图（上游 2026-10-28 取消入参），
 	// 这里挡住是为了不制造「看起来带首尾帧、其实只是参考图」的错交付。
@@ -195,7 +193,7 @@ func prepareCapcutRoute(
 		return nil, false
 	}
 
-	// ④ 分辨率：CapCut 只卖 480p / 720p，1080P 改派过去必被上游 400。
+	// ③ 分辨率：CapCut 只卖 480p / 720p，1080P 改派过去必被上游 400。
 	//
 	// 与规则二（wan3 目标只交付 720P）的处理**不同**：那里是「降级交付」，
 	// 这里源链路本来就能给 1080P，改派过去是「直接失败」—— 宁可交回源链路。
@@ -210,7 +208,7 @@ func prepareCapcutRoute(
 		}
 	}
 
-	// ⑤ 时长：CapCut 的区间是 [4, maxDuration] 秒。
+	// ④ 时长：CapCut 的区间是 [4, maxDuration] 秒。
 	//
 	// 源链路 2–30 秒，所以 2–3 秒的请求改派过去必被上游拒 → 挡。
 	// 2.0 Fast 的上界只有 15 秒 —— 规则六只接 ≤10 秒，天然落在里面。
@@ -229,14 +227,21 @@ func prepareCapcutRoute(
 		return nil, false
 	}
 
-	// ⑥ 参考图：必须全是公网 http(s) 直链。
+	// ⑤ 素材：三类分别收集，**都必须全是公网 http(s) 直链**。
 	//
 	// ⚠️ allowDataURL=false：CapCut（manwu）的 assertHTTPURL 只收 http(s)，
-	// data URI 参考图改派过去必 400（error 里会回显整段 base64 ——
+	// data URI 素材改派过去必 400（error 里会回显整段 base64 ——
 	// 那是日志与响应体的双重事故，见 manwu 的 RedactMaterialURL）。
-	images, hasUnsupported := collectReferenceImages(body, false)
-	if hasUnsupported {
-		logger.LogInfo(c, fmt.Sprintf("条件路由跳过%s：素材无法安全转换（参考视频/音频或非 http(s) 参考图）", label))
+	//
+	// ⚠️ tolerateAV=true：这里是**唯一**允许「请求里有音视频但图片收集照常
+	// 返回」的调用点。音视频由下面两个函数单独收，混进 collectReferenceImages
+	// 会让 mp4 落进 input_reference（CapCut 那边按图片解码 → 直接失败）。
+	images, hasUnsupported := collectReferenceImagesInternal(body, false, true)
+	videos := collectRouteReferenceVideos(body)
+	audios := collectRouteReferenceAudios(body)
+	if hasUnsupported || !allHTTPURL(videos) || !allHTTPURL(audios) {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过%s：素材无法安全转换（参考音视频或参考图不是 http(s) 直链）", label))
 		return nil, false
 	}
 	if len(images) > capcutMaxReferenceImages {
@@ -245,8 +250,21 @@ func prepareCapcutRoute(
 			label, len(images), capcutMaxReferenceImages))
 		return nil, false
 	}
+	// 条数上限与 adaptor 同口径（视频/音频各 5）。超限**不在这里挡** ——
+	// adaptor 会显式 400 并给出准确条数，比这里「悄悄留在源链路」更容易让
+	// 客户发现是自己传多了。这里只做日志留痕，方便排查「为什么改派后报 400」。
+	if maxRefVideos := 5; len(videos) > maxRefVideos {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由提示%s：参考视频 %d 个超过该链路上限 %d 个（交由 adaptor 显式拒绝）",
+			label, len(videos), maxRefVideos))
+	}
+	if maxRefAudios := 5; len(audios) > maxRefAudios {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由提示%s：参考音频 %d 个超过该链路上限 %d 个（交由 adaptor 显式拒绝）",
+			label, len(audios), maxRefAudios))
+	}
 
-	// ⑦ 比例：必须在 CapCut 的候选档位里。
+	// ⑥ 比例：必须在 CapCut 的候选档位里。
 	//
 	// ⚠️ 客户**没传**比例时源链路用 adaptive（跟随输入图比例）：
 	//   - **有参考图** → adaptive 的画幅取决于那张图，我们推不出来 →
@@ -268,7 +286,7 @@ func prepareCapcutRoute(
 		return nil, false
 	}
 
-	// ⑧ 目标模型没有可用渠道 → 不路由。
+	// ⑦ 目标模型没有可用渠道 → 不路由。
 	//
 	// 与其它规则同一理由：改写 body 之后重试只会用同一个模型名重选渠道，
 	// 不会退回源模型。预检能让请求自然落回源链路，客户完全无感。
@@ -301,29 +319,17 @@ func sourceModelSizeRatio(sourceModel, resolution string) float64 {
 	return youzanwan3.RouteBillingSizeRatio(sourceModel, resolution)
 }
 
-// hasReferenceVideo 判断请求里是否带了参考视频。
+// hasReferenceVideo 已删除（2026-11-15 放开音视频准入）。
 //
-// 口径分两段：
+// 它原本用来回答「要不要因为这个请求带视频而拒绝改派」。现在不拒了，
+// 「带不带视频」变成「怎么把视频透传下去」的问题，答案在
+// collectRouteReferenceVideos / rewriteBodyForCapcut 里。
 //
-//	① collectReferenceVideos：顶层 media > metadata.media > legacy 图片字段里的
-//	  .mp4/.mov（与源链路 buildWan3Media 的推断口径一致）；
-//	② 顶层 videos / video 字段：**任何非空值**都算带参考视频。
-//
-// 为什么 ② 要单独判：collectReferenceVideos 不看顶层 videos/video
-// （源链路 youzanwan3 也不消费这两个字段），但**目标链路 CapCut 会消费**
-// （manwu 的 resolveCapcutReferenceMaterials 收 req.Videos / req.Video）。
-// 源链路忽略、目标链路认 —— 这是两条链路契约不一致的地方，
-// 一旦改派过去，客户会拿到一条「源链路根本没跑的参考视频」，
-// 与「不带参考视频」的成片一模一样，但客户是按带参考视频下单的。
-//
-// 所以规则七一律挡：口径统一成「请求里任何形态出现视频 = 带参考视频」，
-// 不去猜哪条链路会真的把它送上去。
-func hasReferenceVideo(body map[string]interface{}) bool {
-	if len(collectReferenceVideos(body)) > 0 {
-		return true
-	}
-	return len(topLevelReferenceVideos(body)) > 0
-}
+// ⚠️ 保留这段说明是因为它记录的**契约差异**依然成立且重要：
+// 源链路（有赞 youzanwan3）**不消费**顶层 videos / video 字段，
+// 而目标链路（CapCut manwu）**会消费**（resolveCapcutReferenceMaterials）。
+// 所以任何「从源链路改派到 CapCut」的路径都必须显式处理这两个字段 ——
+// 忽略它们不会再造成错交付（因为现在会透传），但漏抬会造成**丢素材**。
 
 // topLevelReferenceVideos 返回顶层 videos / video 字段里的参考视频地址。
 //
@@ -334,6 +340,104 @@ func topLevelReferenceVideos(body map[string]interface{}) []string {
 	videos = append(videos, stringListValue(body["videos"])...)
 	videos = append(videos, stringListValue(body["video"])...)
 	return videos
+}
+
+// collectRouteReferenceVideos 收集改派到 CapCut 时要下发的**全部**参考视频。
+//
+// 三个来源合并去重（缺一个就是静默丢素材）：
+//
+//	① media / metadata.media / legacy 图片字段里的 .mp4（collectReferenceVideos，
+//	   与源链路 buildWan3Media 的推断口径一致）；
+//	② 顶层 videos / video（源链路不消费，但 CapCut 会消费）；
+//	③ 顶层 input_reference 里的 .mp4（legacyReferenceVideos 已覆盖）。
+//
+// 去重是必须的：客户端把同一条视频同时放 media 和 videos 是常见形态
+// （「保险起见两边都写」），不去重就是同一条视频占两个槽位，而 CapCut 的
+// 槽位是有上限的 —— 会挤掉真正的新素材。
+func collectRouteReferenceVideos(body map[string]interface{}) []string {
+	videos := collectReferenceVideos(body)
+	videos = append(videos, topLevelReferenceVideos(body)...)
+	return dedupeURLs(videos)
+}
+
+// collectRouteReferenceAudios 收集改派到 CapCut 时要下发的**全部**参考音频。
+//
+// 与视频不同，音频**没有 legacy 推断**：源链路（有赞）根本不消费音频字段，
+// 不存在「图片字段里放了 mp3 按扩展名推断」这种历史形态 ——
+// 硬加推断只会把某些奇怪命名的图片误判成音频。
+//
+// 扫的落点与 CapCut adaptor 的 resolveCapcutReferenceMaterials 严格对齐
+// （media / metadata.media / metadata.input.media / 顶层 audios / audio），
+// 少读一处 = 「准入说有音频、改写后没了」的静默丢素材。
+func collectRouteReferenceAudios(body map[string]interface{}) []string {
+	var audios []string
+	audios = append(audios, referenceAudiosFromMedia(body["media"])...)
+	if metadata, ok := body["metadata"].(map[string]interface{}); ok {
+		audios = append(audios, referenceAudiosFromMedia(metadata["media"])...)
+		if input, ok := metadata["input"].(map[string]interface{}); ok {
+			audios = append(audios, referenceAudiosFromMedia(input["media"])...)
+		}
+	}
+	audios = append(audios, stringListValue(body["audios"])...)
+	audios = append(audios, stringListValue(body["audio"])...)
+	return dedupeURLs(audios)
+}
+
+// referenceAudiosFromMedia 从 media 数组里挑出 reference_audio 的 url。
+func referenceAudiosFromMedia(value interface{}) []string {
+	media, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	var audios []string
+	for _, item := range media {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		mediaType, _ := entry["type"].(string)
+		if strings.TrimSpace(mediaType) != "reference_audio" {
+			continue
+		}
+		if url, ok := entry["url"].(string); ok && strings.TrimSpace(url) != "" {
+			audios = append(audios, strings.TrimSpace(url))
+		}
+	}
+	return audios
+}
+
+// dedupeURLs 按首次出现顺序去重（保序，槽位顺序不能乱）。
+func dedupeURLs(urls []string) []string {
+	if len(urls) <= 1 {
+		return urls
+	}
+	seen := make(map[string]struct{}, len(urls))
+	out := make([]string, 0, len(urls))
+	for _, url := range urls {
+		if url == "" {
+			continue
+		}
+		if _, ok := seen[url]; ok {
+			continue
+		}
+		seen[url] = struct{}{}
+		out = append(out, url)
+	}
+	return out
+}
+
+// allHTTPURL 判断一组 URL 是否全为公网 http(s) 直链。
+//
+// CapCut（manwu）的 assertHTTPURL 只收 http(s)：data URI / 本地路径改派过去必 400，
+// 而 400 的响应体会回显整段 base64（日志与响应体的双重事故）。
+// 所以形态不合格时放弃改派，让请求自然留在源链路 —— 与参考图同一处理。
+func allHTTPURL(urls []string) bool {
+	for _, url := range urls {
+		if !isHTTPURL(url) {
+			return false
+		}
+	}
+	return true
 }
 
 // rewriteBodyForCapcut 组装改派到 CapCut 链路的请求体。
@@ -369,8 +473,11 @@ func rewriteBodyForCapcut(body map[string]interface{}, target, ratio, resolution
 			// 原样透传会被当成比例误读（"1080P" 不在候选里 → 400）。
 			continue
 		case "audio", "audios", "video", "videos":
-			// 参考音视频已在准入检查里挡掉了，这里再摘一次是双保险：
-			// 万一将来放宽了准入条件，漏摘会让上游拿到它不认的字段。
+			// 统一在函数末尾**重写回顶层**（videos / audios 复数形式）。
+			//
+			// 这里 continue 是必须的：单数键 audio / video 与复数键混在一起
+			// 透传会让 manwu 的 resolveCapcutReferenceMaterials 读到两份
+			// （它同时读单复数）→ 同一条素材占两个槽位。
 			continue
 		}
 		out[key] = value
@@ -378,9 +485,24 @@ func rewriteBodyForCapcut(body map[string]interface{}, target, ratio, resolution
 	out["model"] = target
 
 	// 参考图：统一收到顶层 input_reference。
-	images, _ := collectReferenceImages(body, false)
+	//
+	// ⚠️ tolerateAV=true 与准入阶段同一口径：false 时带视频的请求会拿到
+	// (nil, true)，图片被整个丢掉 —— 改成「挡掉视频」之后这里就成了
+	// 「带视频 = 连图片一起丢」的静默丢图。
+	images, _ := collectReferenceImagesInternal(body, false, true)
 	if len(images) > 0 {
 		out["input_reference"] = images
+	}
+
+	// 参考视频 / 参考音频：抬到顶层（2026-11-15 放开）。
+	//
+	// 键名固定用**复数**（videos / audios）：单数键已在 switch 里 continue 掉，
+	// 只留复数就不会被 manwu 读成两份。
+	if videos := collectRouteReferenceVideos(body); len(videos) > 0 {
+		out["videos"] = videos
+	}
+	if audios := collectRouteReferenceAudios(body); len(audios) > 0 {
+		out["audios"] = audios
 	}
 
 	// 时长：字符串形态最通用（与规则一一致）。

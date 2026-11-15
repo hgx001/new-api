@@ -289,11 +289,12 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// （它只有参考图语义），会被准入挡回来、自然落到规则三 ——
 		// 放在这里只是让「先试全量出口」这个决定在代码里只有一处。
 		//
-		// 「无条件」去掉的是业务触发条件，**不是**准入检查：下面这些一律不改派，
-		// 因为改派过去必 400，且会把「链路挂了」伪装成「你的参数不合法」：
-		// 1080P / 2–3 秒 / 带参考视频音频 / 自适应比例带参考图。
-		// 判定与规则六/七共用同一份 prepareCapcutRoute，逐条理由见
-		// setting/seedanceroute_setting/total_fallback.go 的包头注释。
+		// 「无条件」去掉的是业务触发条件，**不是**准入检查：
+		// 1080P / 2–3 秒 / 自适应比例带参考图 一律不改派（目标链路物理接不住，
+		// 改派必 400）。参考音视频**不再挡**（2026-11-15 放开，与规则六/七
+		// 共用同一份准入 prepareCapcutRoute），但素材形态仍要合格：
+		// 非 http(s) 直链的图/视频/音频一律不改派（CapCut 只收公网直链）。
+		// 逐条理由见 setting/seedanceroute_setting/total_fallback.go 包头注释。
 		if seedanceroute_setting.TotalFallbackEnabledFor(sourceModel) {
 			target := seedanceroute_setting.TotalFallbackTargetModel()
 			// 时长口径：客户传了就用**原值**（45 秒就该按 45 秒判越界，
@@ -1958,6 +1959,19 @@ func doubaoResolutionTier(body map[string]interface{}) string {
 //     撞上有赞 prime 的 <10 秒保护（PRIME_DURATION_TOO_SHORT）；
 //   - 漫屋/豆包链路只收公网 http(s) URL，改派它们的路径传 false。
 func collectReferenceImages(body map[string]interface{}, allowDataURL bool) ([]string, bool) {
+	return collectReferenceImagesInternal(body, allowDataURL, false)
+}
+
+// collectReferenceImagesInternal 是 collectReferenceImages 的实现体。
+//
+// tolerateAV=true 时**忽略**参考视频/音频而不是判 unsupported ——
+// 只给「目标链路自己也收音视频」的改派路径用（目前只有 CapCut，见
+// prepareCapcutRoute）。音视频由 collectCapcutReferenceMedia 单独收集，
+// 本函数只负责把图片挑干净：混在一起收集会让 mp4 落进 input_reference。
+//
+// ⚠️ 不要给规则一~六的调用点传 true：那几条的目标链路（豆包/心笔/有赞）
+// 确实不收音视频，忽略 = 静默丢素材 = 错交付。
+func collectReferenceImagesInternal(body map[string]interface{}, allowDataURL, tolerateAV bool) ([]string, bool) {
 	var images []string
 
 	// 1) 顶层 media（源链路优先级最高）
@@ -1972,7 +1986,9 @@ func collectReferenceImages(body map[string]interface{}, allowDataURL bool) ([]s
 			case "reference_image":
 				images = appendImageURL(images, entry["url"])
 			case "reference_video", "reference_audio":
-				return nil, true
+				if !tolerateAV {
+					return nil, true
+				}
 			}
 		}
 		if len(images) > 0 {
@@ -1994,7 +2010,9 @@ func collectReferenceImages(body map[string]interface{}, allowDataURL bool) ([]s
 				case "reference_image", "first_frame", "last_frame":
 					images = appendImageURL(images, entry["url"])
 				case "reference_video", "reference_audio":
-					return nil, true
+					if !tolerateAV {
+						return nil, true
+					}
 				}
 			}
 		}
@@ -2032,7 +2050,9 @@ func collectReferenceImages(body map[string]interface{}, allowDataURL bool) ([]s
 					}
 					images = append(images, urls...)
 				case "reference_video", "reference_audio":
-					return nil, true
+					if !tolerateAV {
+						return nil, true
+					}
 				}
 			}
 			if len(images) > 0 {

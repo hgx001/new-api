@@ -9,10 +9,10 @@ import (
 
 // 规则七（电商/产品推荐内容 → CapCut 快速档 cp-seedance-2.5flash）的中间件测试。
 //
-// 老板口径（2026-11-14）：
+// 老板口径（2026-11-14，音视频准入于 2026-11-15 打开）：
 //   - seedance2.5-特惠 / seedance2.5-活动 识别到电商类或产品推荐提示词 → 改派
 //     cp-seedance-2.5flash；
-//   - **带参考视频的请求不路由**；
+//   - 带参考视频 / 参考音频的请求**照常路由**，素材抬到顶层 videos / audios 透传；
 //   - 9:16 也路由过去（独立开关，运营可勾选）；
 //   - 还可勾选「时长大于 N 秒」作为额外触发入口。
 //
@@ -271,12 +271,19 @@ func enableEcommerceWithShortCapcut(t *testing.T) {
 	})
 }
 
-// ⚠️ 带参考视频的请求**一律不路由**（老板明确要求）。
+// 带参考视频的请求**改派并透传**（2026-11-15 决策变更）。
 //
-// 三种形态都要挡：media 数组 / metadata.media / 顶层 videos。
-func TestEcommerceDoesNotRouteReferenceVideo(t *testing.T) {
+// 旧口径是「一律不路由」（老板 2026-10-30 拍板，理由是视频参考的成片质量与
+// 素材一致性没验证过）。2026-11-15 放开：CapCut 链路已具备视频参考能力，
+// 继续挡只会把客户留在源链路上白等。
+//
+// ⚠️ 透传的关键**不是「不挡」**，而是把素材抬到顶层 `videos`：
+// 改派后 `rewriteBodyForCapcut` 会整块丢掉 metadata 与 media（防止同一素材
+// 投递两次），漏抬 = 客户按「带参考视频」下单、拿到没有参考视频的成片。
+func TestEcommerceRoutesReferenceVideo(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
+	const want = "https://example.com/a.mp4"
 	cases := []struct {
 		name string
 		body string
@@ -290,22 +297,90 @@ func TestEcommerceDoesNotRouteReferenceVideo(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			seen, _ := runRoute(t, tc.body)
 			body := decodeBody(t, seen)
-			if body["model"] != testSourceModel {
-				t.Fatalf("带参考视频的请求不该改派，实际 model=%v", body["model"])
+			if body["model"] != testEcommerceTarget {
+				t.Fatalf("带参考视频的请求应改派到 %s，实际 model=%v", testEcommerceTarget, body["model"])
+			}
+			if got := stringListValue(body["videos"]); len(got) != 1 || got[0] != want {
+				t.Fatalf("参考视频必须抬到顶层 videos=%q，实际 %#v", want, body["videos"])
+			}
+			if _, ok := body["media"]; ok {
+				t.Fatalf("media 必须摘掉（否则同一视频投两次），实际 %#v", body["media"])
+			}
+			if _, ok := body["metadata"]; ok {
+				t.Fatalf("metadata 必须摘掉（否则同一视频投两次），实际 %#v", body["metadata"])
 			}
 		})
 	}
 }
 
-// 带参考音频也不路由：CapCut 会静默丢音频 = 错交付。
-func TestEcommerceDoesNotRouteReferenceAudio(t *testing.T) {
+// 带参考音频的请求**改派并透传**（2026-11-15 决策变更）。
+//
+// 旧口径「不路由」的理由是 CapCut 静默丢弃音频 —— 那个前提已经不存在：
+// new-api 的 capcut 分支现在会把音频下发到 Worker，Worker 也会上传到素材槽。
+// 现在丢掉音频的是「不路由」这个动作本身（留在源链路反而可能不支持）。
+func TestEcommerceRoutesReferenceAudio(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐","audios":["https://example.com/a.mp3"]}`)
-	body := decodeBody(t, seen)
+	const want = "https://example.com/a.mp3"
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"顶层 audios", `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐","audios":["https://example.com/a.mp3"]}`},
+		{"顶层 audio 单值", `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐","audio":"https://example.com/a.mp3"}`},
+		{"media 数组", `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐","media":[{"type":"reference_audio","url":"https://example.com/a.mp3"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, _ := runRoute(t, tc.body)
+			body := decodeBody(t, seen)
+			if body["model"] != testEcommerceTarget {
+				t.Fatalf("带参考音频的请求应改派到 %s，实际 model=%v", testEcommerceTarget, body["model"])
+			}
+			if got := stringListValue(body["audios"]); len(got) != 1 || got[0] != want {
+				t.Fatalf("参考音频必须抬到顶层 audios=%q，实际 %#v", want, body["audios"])
+			}
+			// 单数键不能留副本：manwu 的 resolveCapcutReferenceMaterials 同时读
+			// audios 与 audio，两个都留着 = 同一条音频投两次。
+			if got := stringListValue(body["audio"]); len(got) != 0 {
+				t.Fatalf("audio 单数键必须被摘掉（否则同一音频投两次），实际 %#v", body["audio"])
+			}
+		})
+	}
+}
 
-	if body["model"] != testSourceModel {
-		t.Fatalf("带参考音频的请求不该改派，实际 model=%v", body["model"])
+// 图 + 视频 + 音频同时出现：三类各归各的顶层字段，不交叉、不重复。
+//
+// 这是改动风险最高的一条 —— 三条收集路径（图片 / 视频 / 音频）如果各读一遍
+// media，很容易把同一条素材塞进两个顶层字段，上游就会看到「图里有 mp4」。
+//
+// ⚠️ body 里必须带 ratio：带参考图且未指定比例时准入会挡（CapCut 没有
+// adaptive 档，替客户挑画幅 = 替客户改需求，见 prepareCapcutRoute 的比例段）。
+func TestEcommerceRoutesMixedReferenceMedia(t *testing.T) {
+	enableEcommerce(t, true, true, 20)
+
+	const body = `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐","ratio":"9:16","media":[` +
+		`{"type":"reference_image","url":"https://example.com/a.png"},` +
+		`{"type":"reference_video","url":"https://example.com/b.mp4"},` +
+		`{"type":"reference_audio","url":"https://example.com/c.mp3"}]}`
+
+	seen, _ := runRoute(t, body)
+	decoded := decodeBody(t, seen)
+
+	if decoded["model"] != testEcommerceTarget {
+		t.Fatalf("混合素材应改派到 %s，实际 model=%v", testEcommerceTarget, decoded["model"])
+	}
+	images := stringListValue(decoded["input_reference"])
+	if len(images) != 1 || images[0] != "https://example.com/a.png" {
+		t.Fatalf("input_reference 只能有图片，实际 %#v", decoded["input_reference"])
+	}
+	videos := stringListValue(decoded["videos"])
+	if len(videos) != 1 || videos[0] != "https://example.com/b.mp4" {
+		t.Fatalf("videos 只能有视频，实际 %#v", decoded["videos"])
+	}
+	audios := stringListValue(decoded["audios"])
+	if len(audios) != 1 || audios[0] != "https://example.com/c.mp3" {
+		t.Fatalf("audios 只能有音频，实际 %#v", decoded["audios"])
 	}
 }
 

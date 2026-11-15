@@ -153,28 +153,33 @@ func TestTotalFallbackSkipsTooShortRequest(t *testing.T) {
 	assert.Equal(t, body, rewritten)
 }
 
-// 带参考视频不改派：现口径（与规则六/七一致）一律不路由。
+// 带参考视频照常改派，素材抬到顶层 videos（2026-11-15 放开）。
 //
-// 理由见 prepareCapcutRoute 的准入段：源链路忽略顶层 videos、CapCut 会消费，
-// 改派过去可能变成「按带参考视频下单、拿到没有参考视频的成片」。
-func TestTotalFallbackSkipsReferenceVideo(t *testing.T) {
+// 与规则七同一套准入（共用 prepareCapcutRoute），所以准入口径不会漂 ——
+// 这条用例存在的意义是：全量兜底的调用点也吃到了放开后的行为。
+func TestTotalFallbackRoutesReferenceVideo(t *testing.T) {
 	enableTotalFallback(t)
 
-	const body = `{"model":"seedance2.5-特惠","seconds":5,
-		"media":[{"type":"reference_video","url":"https://x/a.mp4"}],"prompt":"a cat"}`
-	rewritten, _ := runRoute(t, body)
+	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,
+		"media":[{"type":"reference_video","url":"https://x/a.mp4"}],"prompt":"a cat"}`)
+	decoded := decodeBody(t, rewritten)
 
-	assert.Equal(t, body, rewritten)
+	assert.Equal(t, totalFallbackTarget, decoded["model"], "带参考视频应改派")
+	assert.Equal(t, []interface{}{"https://x/a.mp4"}, decoded["videos"],
+		"参考视频必须抬到顶层 videos")
+	assert.NotContains(t, decoded, "media", "media 必须摘掉，否则同一视频投两次")
 }
 
-// 带参考音频不改派：同一份准入（CapCut 旧实现静默丢音频 → 不路由）。
-func TestTotalFallbackSkipsReferenceAudio(t *testing.T) {
+// 带参考音频照常改派，素材抬到顶层 audios（2026-11-15 放开）。
+func TestTotalFallbackRoutesReferenceAudio(t *testing.T) {
 	enableTotalFallback(t)
 
-	const body = `{"model":"seedance2.5-特惠","seconds":5,"audios":["https://x/a.mp3"],"prompt":"a cat"}`
-	rewritten, _ := runRoute(t, body)
+	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"audios":["https://x/a.mp3"],"prompt":"a cat"}`)
+	decoded := decodeBody(t, rewritten)
 
-	assert.Equal(t, body, rewritten)
+	assert.Equal(t, totalFallbackTarget, decoded["model"], "带参考音频应改派")
+	assert.Equal(t, []interface{}{"https://x/a.mp3"}, decoded["audios"],
+		"参考音频必须抬到顶层 audios")
 }
 
 // 首尾帧不改派：CapCut 只有参考图语义，改派过去等于把首尾帧降级成参考图。
