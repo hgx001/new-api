@@ -64,12 +64,13 @@ type EcommerceRouteCardProps = {
  *
  * ⚠️ 三条必须写在界面上的事实（否则运营一定会误判）：
  *
- *  1. **带参考视频的请求永远不路由**，与本开关无关 —— 上游对参考视频的
- *     处理与源链路不一致，改派过去等于给客户换了一种素材语义。
+ *  1. **默认留在有赞**：命中后 10–30 秒的请求继续跑有赞（30 秒由 adaptor
+ *     逐条映射 prime）；只有 <10 秒或带参考音视频才改派 CapCut
+ *     （有赞标准版下界 10 秒、prime 只接 30 秒、两者都只收参考图）。
  *  2. **计费不变**：客户仍按源模型（seedance2.5-特惠 / 活动）付费，
  *     改派只是内部调度。
  *  3. **规则七优先于规则一**：勾上「时长超过阈值」后，超长请求会被规则七
- *     先接走（改派 CapCut 快档），不会再走规则一的豆包链路。这不是 bug，
+ *     先接住并留在有赞，不会再走规则一的豆包链路。这不是 bug，
  *     是刻意的优先级 —— 否则「时长超过阈值」这个入口永远轮不到，
  *     后台看着勾着的、代码里是死配置。
  */
@@ -291,7 +292,8 @@ export function EcommerceRouteCard({ channelModels }: EcommerceRouteCardProps) {
         </div>
       </div>
 
-      {/* 参数入口。两个勾选框是并列的进料口，命中任意一个即改派。 */}
+      {/* 参数入口。两个勾选框是并列的进料口，命中任意一个即归本规则管
+          （2026-11-16 起「归本规则管」= 留在有赞，只有接不住才改派 CapCut）。 */}
       <div className='border-border/50 mt-3 flex flex-col gap-3 border-t pt-3'>
         <div className='flex items-start gap-2'>
           <Checkbox
@@ -372,7 +374,7 @@ export function EcommerceRouteCard({ channelModels }: EcommerceRouteCardProps) {
                 规则七先接。不写清楚，运营会以为「勾了也没生效」。 */}
             <p className='mt-2 text-[11px] text-amber-600'>
               {t(
-                'This entry takes priority over the duration rule: long requests are rerouted here first and will not reach the Doubao link.'
+                'This entry takes priority over the duration rule: long requests stay on the Youzan link and will not reach the Doubao link.'
               )}
             </p>
           </div>
@@ -436,7 +438,7 @@ export function EcommerceRouteCard({ channelModels }: EcommerceRouteCardProps) {
         )}
       </p>
       <p className='text-muted-foreground mt-1 text-[11px]'>
-        {t('Requests with a reference video are never rerouted by this rule.')}
+        {t('Requests with reference audio or video go to CapCut: the Youzan upstream only accepts reference images.')}
       </p>
     </div>
   )

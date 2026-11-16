@@ -1,6 +1,12 @@
 package middleware
 
-// 规则七：电商/产品推荐内容 → CapCut 快速档（cp-seedance-2.5flash）。
+// 规则七：电商/产品推荐内容 → **有赞优先**，有赞接不住才 CapCut 快速档。
+//
+// 2026-11-16 老板口径（覆盖 2026-11-14/15 的「电商一律 CapCut」）：
+// 命中电商内容后直接用常驻的有赞链路 —— 10–29 秒走标准版 wan3.0-video、
+// 30 秒由 adaptor 逐条映射到 prime（画质增强）；只有有赞物理接不住的
+// <10 秒与「带参考音视频」才改派 cp-seedance-2.5flash。
+// 判定入口是 ecommerceYouzanGap，改派出口是 prepareEcommerceRoute。
 //
 // 触发源是**提示词内容**（电商类 / 产品推荐），外加两个可选的参数入口
 //（9:16 比例、时长超阈值）。详见 setting/seedanceroute_setting/ecom_route.go
@@ -127,9 +133,57 @@ const capcutDefaultRatio = "16:9"
 
 // prepareEcommerceRoute 组装「规则七（电商内容 → CapCut 快速档）」的改派请求体。
 //
+// ⚠️ 2026-11-16 起规则七的**默认动作是留在有赞**，只有 ecommerceYouzanGap 判定
+// 有赞接不住（<10 秒 / 带参考音视频）时才会走到这里。所以本函数现在只负责
+// 「有赞接不住的那部分请求」的准入与改写，不是「所有电商请求」的出口。
+//
 // 返回的第二个值 false = 放弃路由（放行原请求走源链路）。
 func prepareEcommerceRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
 	return prepareCapcutRoute(c, body, targetModel, seconds, capcutMaxDuration25, "电商规则七")
+}
+
+// ecommerceYouzanGap 返回「有赞链路接不住这条电商请求」的原因；空串表示能接。
+//
+// 2026-11-16 老板口径：电商命中后**默认就用常驻有赞**，所以这里判的是
+// 「有赞的硬边界」，而不是「CapCut 的准入」：
+//
+//	① 参考音视频：2026-11-15 上游切换后，标准版 wan3.0-video 的 media 只收
+//	   reference_image，prime 同样只收参考图 —— 带音视频打过去必 400；
+//	② 时长 <10 秒：标准版下界 10 秒、prime 只接 30 秒，两条上游都接不住。
+//
+// 30 秒**不算缺口**：特惠的 30 秒由 adaptor 的 upstreamModelForRequest 逐条
+// 映射到 prime（仅 720P；1080P 仍留标准版，不静默降档），路由层不插手。
+// 时长未知（seconds ≤ 0）也不算缺口 —— 源链路缺省 10 秒（标准版下界），
+// 拿缺省值判「接不住」等于替客户改档。
+//
+// 下界用 seedanceroute_setting.ShortCapcutMinSeconds 而不是写死 10：它与规则六
+// 第二/第三分支的分界线是**同一个常量**，两处一旦分叉就会出现
+// 「9 秒既不被有赞接、也不被 CapCut 接」的空洞。
+func ecommerceYouzanGap(body map[string]interface{}, seconds int) string {
+	if requestHasReferenceAudioVideo(body) {
+		return "带参考视频/音频（有赞标准版与 prime 都只收参考图）"
+	}
+	if seconds > 0 && seconds < seedanceroute_setting.ShortCapcutMinSeconds {
+		return fmt.Sprintf("时长 %d 秒低于有赞标准版下界 %d 秒",
+			seconds, seedanceroute_setting.ShortCapcutMinSeconds)
+	}
+	return ""
+}
+
+// requestHasReferenceAudioVideo 判断请求是否带参考视频/音频（两种素材形态都算）。
+//
+//	· media 数组里的 reference_video / reference_audio（含 metadata.media 等别名位置，
+//	  由 collectMediaItems 统一读出）；
+//	· 顶层 videos / video / audios / audio（源链路不消费，但改派目标会消费）。
+//
+// 规则七（有赞接不住 → CapCut）与规则九（音视频参考改派）共用这一个判定：
+// 两处口径分叉就会出现「规则七认为带音视频、规则九认为没有」的漏派 ——
+// 而漏派的后果是请求留在有赞吃 400。
+func requestHasReferenceAudioVideo(body map[string]interface{}) bool {
+	if hasRefAudioVideoMedia(body) {
+		return true
+	}
+	return len(collectRouteReferenceVideos(body)) > 0 || len(collectRouteReferenceAudios(body)) > 0
 }
 
 // prepareShortCapcutRoute 组装「规则六第三分支（≤10 秒 → CapCut 快速档）」的改派请求体。
@@ -178,9 +232,8 @@ func tryRefAVCapcutRoute(c *gin.Context, body map[string]interface{}, sourceMode
 	//   - 顶层 audios / audio / videos / video 字段（collectRouteReference*）。
 	// 源链路 adaptor 的闸对两种形态都会拦（请求解析层统一归到 media），
 	// 中间件漏判任何一种 = 「该改派的请求被留在源链路吃 400」。
-	if !hasRefAudioVideoMedia(body) &&
-		len(collectRouteReferenceVideos(body)) == 0 &&
-		len(collectRouteReferenceAudios(body)) == 0 {
+	// 判定与规则七共用 requestHasReferenceAudioVideo，两处口径不允许分叉。
+	if !requestHasReferenceAudioVideo(body) {
 		return false
 	}
 

@@ -1,23 +1,26 @@
 package middleware
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 )
 
-// 规则七（电商/产品推荐内容 → CapCut 快速档 cp-seedance-2.5flash）的中间件测试。
+// 规则七（电商/产品推荐内容 → **有赞优先**，接不住才 CapCut）的中间件测试。
 //
-// 老板口径（2026-11-14，音视频准入于 2026-11-15 打开）：
-//   - seedance2.5-特惠 / seedance2.5-活动 识别到电商类或产品推荐提示词 → 改派
-//     cp-seedance-2.5flash；
-//   - 带参考视频 / 参考音频的请求**照常路由**，素材抬到顶层 videos / audios 透传；
-//   - 9:16 也路由过去（独立开关，运营可勾选）；
-//   - 还可勾选「时长大于 N 秒」作为额外触发入口。
+// 老板口径（2026-11-16，覆盖 11-14/15 的「一律 CapCut」）：
+//   - seedance2.5-特惠 / seedance2.5-活动 识别到电商类/产品推荐提示词 →
+//     **留在常驻有赞链路**（10–29 秒标准版；30 秒由 adaptor 逐条映射 prime）；
+//   - 只有有赞物理接不住的请求才改派 cp-seedance-2.5flash：
+//     时长 <10 秒（标准版下界，prime 又只接 30 秒）或带参考视频/音频
+//     （2026-11-15 上游切换后标准版与 prime 都只收 reference_image）；
+//   - 9:16 与「时长大于 N 秒」是**并列的触发入口**，命中后同样走「有赞优先」；
+//   - 带首尾帧的电商请求规则七不接管，交给规则三的直连目标。
 //
-// 与规则六第三分支（≤10 秒 → cp-seedance-2.0fast）共用准入逻辑，
-// 那边也有独立的一组用例（见 TestShortCapcut* 系列）。
+// 改派到 CapCut 时与规则八/九共用准入逻辑，
+// 规则六（≤10 秒 → cp-seedance-2.0）也有一组独立用例（见 TestShortCapcut* 系列）。
 
 const (
 	testEcommerceTarget   = "cp-seedance-2.5flash"
@@ -63,36 +66,39 @@ func enableEcommerce(t *testing.T, ratioEnabled, secondsEnabled bool, triggerSec
 	})
 }
 
-// 提示词命中电商关键词 → 改派 CapCut 2.5 Flash，且计费原点不变。
-func TestEcommerceRoutesOnKeywordPrompt(t *testing.T) {
+// 提示词命中电商关键词、时长 10 秒（有赞标准版能接）→ **留在有赞**，不改派。
+//
+// 这是 2026-11-16 口径的核心：电商命中 = 「优先用常驻有赞」，不是「一定改派」。
+func TestEcommerceStaysOnYouzanForKeywordPrompt(t *testing.T) {
 	enableEcommerce(t, false, false, 20)
 
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"双11 好物推荐 种草文案"}`)
 	body := decodeBody(t, rec.body)
 
-	if body["model"] != testEcommerceTarget {
-		t.Fatalf("电商提示词应改派 %s，实际 model=%v", testEcommerceTarget, body["model"])
+	if body["model"] != testSourceModel {
+		t.Fatalf("10 秒电商请求应留在有赞源模型 %s，实际 model=%v", testSourceModel, body["model"])
 	}
-	if rec.originModel != testSourceModel {
-		t.Fatalf("计费原点必须是源模型 %s，实际 %s", testSourceModel, rec.originModel)
+	if rec.originModel != "" && rec.originModel != testSourceModel {
+		t.Fatalf("留在有赞时计费原点不得被改写成 %s", rec.originModel)
 	}
-	if !rec.hasBillingSec || rec.billingSeconds != 10 {
-		t.Fatalf("计费秒数应为 10，实际 has=%v value=%v", rec.hasBillingSec, rec.billingSeconds)
-	}
-	if !rec.hasBillingSize || rec.billingSizeRatio != 1.0 {
-		t.Fatalf("720P 应按源模型倍率 1.0 计费，实际 has=%v value=%v", rec.hasBillingSize, rec.billingSizeRatio)
+	// 留在有赞时不做任何 CapCut 改写 —— 出现 resolution 就说明被误改派了。
+	if _, ok := body["resolution"]; ok {
+		t.Fatalf("留在有赞时不得注入 resolution（那是 CapCut 契约的改写），实际 %#v", body["resolution"])
 	}
 }
 
 // 大小写不敏感：英文电商词（sale / discount）也要命中。
+//
+// 这里用 6 秒：有赞标准版接不住（<10 秒）→ 改派 CapCut，正好用「改派发生了」
+// 反证「关键词命中判定生效了」。
 func TestEcommerceMatchesKeywordsCaseInsensitively(t *testing.T) {
 	enableEcommerce(t, false, false, 20)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"Black Friday SALE promotion"}`)
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"Black Friday SALE promotion"}`)
 	body := decodeBody(t, seen)
 
 	if body["model"] != testEcommerceTarget {
-		t.Fatalf("英文电商词应命中并改派 %s，实际 model=%v", testEcommerceTarget, body["model"])
+		t.Fatalf("英文电商词应命中，且 6 秒有赞接不住 → 应改派 %s，实际 model=%v", testEcommerceTarget, body["model"])
 	}
 }
 
@@ -125,15 +131,19 @@ func TestEcommerceDisabledDoesNotRoute(t *testing.T) {
 	}
 }
 
-// 「9:16 比例」勾选后，9:16 的请求即使不是电商内容也要改派。
+// 「9:16 比例」勾选后，9:16 的请求即使不是电商内容也归规则七管。
+//
+// 这里用 6 秒：有赞接不住（<10 秒）→ 改派 CapCut，用「改派发生了」反证
+// 参数入口生效；10 秒以上的 9:16 请求则留在有赞（见
+// TestEcommerceBeatsRatioRuleOnVerticalRequests）。
 func TestEcommerceRoutesOnRatioConditionWhenChecked(t *testing.T) {
 	enableEcommerce(t, true, false, 20)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
 
 	if body["model"] != testEcommerceTarget {
-		t.Fatalf("勾选 9:16 条件后应改派 %s，实际 model=%v", testEcommerceTarget, body["model"])
+		t.Fatalf("勾选 9:16 条件后 6 秒请求应改派 %s，实际 model=%v", testEcommerceTarget, body["model"])
 	}
 	if body["ratio"] != "9:16" {
 		t.Fatalf("比例必须原样落到顶层 ratio，实际 %v", body["ratio"])
@@ -141,10 +151,12 @@ func TestEcommerceRoutesOnRatioConditionWhenChecked(t *testing.T) {
 }
 
 // 「9:16 比例」**没勾选**时，9:16 请求不该命中参数入口（配置项形同虚设是最难查的故障）。
+//
+// 同样用 6 秒做对照：若参数入口被误判命中，这条会改派 CapCut 而不是留在源模型。
 func TestEcommerceRatioConditionOffDoesNotRoute(t *testing.T) {
 	enableEcommerce(t, false, false, 20)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
 
 	if body["model"] != testSourceModel {
@@ -152,82 +164,121 @@ func TestEcommerceRatioConditionOffDoesNotRoute(t *testing.T) {
 	}
 }
 
-// 「时长超过阈值」勾选后，超阈值请求改派；不超的不改派。
+// 「时长超过阈值」勾选后，超阈值的请求归规则七管 —— 命中后**留在有赞**，
+// 而不是像旧口径那样改派 CapCut。
 //
-// 关键回归点：**桶口与规则一重叠时规则七必须赢**。
-// 规则七排在规则一之前（见 middleware/seedance_route.go 的顺序说明）——
-// 一条 25 秒的电商请求如果先被规则一改派豆包按次档，运营勾选的
-// 「时长大于 20 秒」就成了一份永远轮不到的**死配置**：
-// 后台看着是勾着的，代码里永远到不了。这正是最难查的那类故障。
-func TestEcommerceRoutesOnSecondsConditionWhenChecked(t *testing.T) {
+// 关键回归点：**桶口与规则一重叠时规则七必须赢**。25 秒电商请求如果先被
+// 规则一改派豆包按次，运营勾的「时长大于 20 秒」就成了一份把电商流量
+// 从有赞赶走的配置 —— 与老板 2026-11-16 口径正好相反。
+func TestEcommerceSecondsConditionKeepsLongRequestsOnYouzan(t *testing.T) {
 	enableEcommerce(t, false, true, 20)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
-	if body["model"] != testEcommerceTarget {
-		t.Fatalf("时长 %d 秒超过阈值 20 秒应改派 %s（且优先于规则一的豆包按次档），实际 model=%v",
-			25, testEcommerceTarget, body["model"])
-	}
-
-	seen, _ = runRoute(t, `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat"}`)
-	body = decodeBody(t, seen)
 	if body["model"] != testSourceModel {
-		t.Fatalf("时长 15 秒未超阈值不该改派，实际 model=%v", body["model"])
+		t.Fatalf("25 秒命中电商时长条件后必须留在有赞 %s（不能被规则一改派 %s），实际 model=%v",
+			testSourceModel, testTargetModel, body["model"])
 	}
 }
 
-// 规则七必须排在规则一**之前** —— 否则「时长大于 N 秒」这个入口是死配置。
+// 对照：不勾「时长超过阈值」时，25 秒请求照旧被规则一改派。
 //
-// 回归意义（2026-11-14 修掉的真实缺陷）：
-// 规则七原先排在规则一之后，而规则一的阈值也是 20 秒。运营在后台勾上
-// 「时长大于 20 秒」后，一条 25 秒的电商请求会**先**被规则一接走改派豆包，
-// 规则七永远轮不到 —— 后台看着勾着的，代码里是死配置。
-//
-// 这条用例把「25 秒 + 阈值 20 + 命中时长条件」钉死到 cp-seedance-2.5flash，
-// 且**不依赖提示词**（用「a cat」这种不含电商词的）—— 纯参数入口也要生效。
-func TestEcommerceBeatsSecondsRuleOnLongRequests(t *testing.T) {
-	enableEcommerce(t, false, true, 20)
+// 这条证明上一条确实是被规则七接住的，而不是规则一本来就不生效 ——
+// 没有这组对照，「留在源模型」的断言可能因为规则一被误关而假通过。
+func TestEcommerceSecondsConditionOffFallsToDurationRule(t *testing.T) {
+	enableEcommerce(t, false, false, 20)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
-	if body["model"] != testEcommerceTarget {
-		t.Fatalf("25 秒 + 阈值 20 应命中规则七（%s），实际 model=%v", testEcommerceTarget, body["model"])
+	if body["model"] != testTargetModel {
+		t.Fatalf("未勾电商时长条件时 25 秒请求应照旧走规则一 %s，实际 model=%v",
+			testTargetModel, body["model"])
 	}
 }
 
-// 电商内容路由（规则七）是**最高优先级**（老板口径 2026-11-15）：
-// 识别到电商/产品推荐内容的请求不被任何其它路由条件限制 ——
-// 短时长、长时长、非 9:16 都先走规则七。
+// 规则七必须排在规则二（比例）之前且命中后短路：9:16 的电商请求留在有赞，
+// 不被比例规则改派到比例目标链路。
+func TestEcommerceBeatsRatioRuleOnVerticalRequests(t *testing.T) {
+	enableEcommerceWithRatioRule(t)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":15,"metadata":{"ratio":"9:16"},"prompt":"好物推荐"}`)
+	body := decodeBody(t, seen)
+	if body["model"] != testSourceModel {
+		t.Fatalf("9:16 电商请求应留在有赞 %s，实际 model=%v", testSourceModel, body["model"])
+	}
+}
+
+// 对照：非电商的 9:16 请求照旧被规则二改派（证明上一条不是规则二失效）。
+func TestEcommerceRatioRuleAppliesWhenNotEcommerce(t *testing.T) {
+	enableEcommerceWithRatioRule(t)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":15,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
+	body := decodeBody(t, seen)
+	if body["model"] != testRatioTargetModel {
+		t.Fatalf("非电商 9:16 请求应照旧走规则二 %s，实际 model=%v", testRatioTargetModel, body["model"])
+	}
+}
+
+// enableEcommerceWithRatioRule 同时打开规则七与规则二（比例），用来验证优先级。
 //
-// 这条用例锁顺序：8 秒的电商请求必须走规则七（CapCut 2.5 Flash），
-// 不能被规则六的短时长分流抢走。
-func TestEcommerceBeatsShortRouteOnShortRequests(t *testing.T) {
-	// 开规则七（内容入口）+ 规则六的 CapCut 快速档分支。
+// 两个 helper（enableEcommerce / enableBothRules）会互相覆盖策略，所以这里
+// 直接构造一份合并后的策略 —— 与 enableEcommerceWithShortCapcut 同一做法。
+func enableEcommerceWithRatioRule(t *testing.T) {
+	t.Helper()
+	previous := seedanceroute_setting.Get()
+	payload := map[string]interface{}{
+		"enabled":            true,
+		"source_models":      []string{testSourceModel, testSourceModelAlt},
+		"target_model":       testTargetModel,
+		"trigger_seconds":    20,
+		"ratio_target_model": testRatioTargetModel,
+		"trigger_ratio":      "9:16",
+		"ecommerce_enabled":  true,
+	}
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+}
+
+// 8 秒的电商请求：有赞标准版接不住（下界 10 秒）、prime 只接 30 秒 →
+// 改派 CapCut 2.5 Flash。
+//
+// 规则六的短时长 CapCut 分支同时开着也不影响结论：两条路径目标一致，
+// 但规则七先判（顺序在规则六之前），日志里留下的是「电商 + 有赞接不住」。
+func TestEcommerceShortRequestGoesCapcutNotShortRoute(t *testing.T) {
+	// 开规则七（内容入口）+ 规则六的 CapCut 分支。
 	// 两次配置要合并成一份策略，所以这里直接构造一份完整策略。
 	enableEcommerceWithShortCapcut(t)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"好物推荐 种草文案"}`)
 	body := decodeBody(t, seen)
 	if body["model"] != testEcommerceTarget {
-		t.Fatalf("8 秒的电商请求应优先走规则七（%s），实际 model=%v",
+		t.Fatalf("8 秒的电商请求应改派 %s（有赞接不住 <10 秒），实际 model=%v",
 			testEcommerceTarget, body["model"])
 	}
 }
 
-// 10–20 秒、非 9:16 的电商请求也要路由：内容命中不受比例/时长参数限制。
-func TestEcommerceRoutesMidDurationNonVertical(t *testing.T) {
+// 10–20 秒、非 9:16 的电商请求：**留在有赞**（内容命中不等于改派）。
+func TestEcommerceMidDurationStaysOnYouzan(t *testing.T) {
 	enableEcommerce(t, false, false, 20)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":15,"resolution":"720P","prompt":"双11 好物推荐 种草文案"}`)
 	body := decodeBody(t, seen)
-	if body["model"] != testEcommerceTarget {
-		t.Fatalf("15 秒非 9:16 的电商请求应改派 %s，实际 model=%v",
-			testEcommerceTarget, body["model"])
+	if body["model"] != testSourceModel {
+		t.Fatalf("15 秒电商请求应留在有赞 %s，实际 model=%v", testSourceModel, body["model"])
 	}
 }
 
-// 电商请求带首尾帧时不能被规则七强行改派：CapCut 链路没有首尾帧语义，
-// 改过去就是错交付。应落到规则三（首尾帧目标）或留在源链路。
+// 电商请求带首尾帧时规则七既不短路也不改派：有赞 2026-10-28 起不收首尾帧，
+// CapCut 也没有首尾帧语义 —— 只有规则三的直连目标能跑，交给它。
 func TestEcommerceWithFramesDoesNotRouteToCapcut(t *testing.T) {
 	enableEcommerce(t, false, false, 20)
 
@@ -386,19 +437,23 @@ func TestEcommerceRoutesMixedReferenceMedia(t *testing.T) {
 	}
 }
 
-// 1080P 不路由：CapCut 只卖 480p/720p，改派过去必被上游 400。
+// 1080P 不交给 CapCut：它只卖 480p/720p，改派过去必被上游 400。
+//
+// 用 6 秒做构造（本来该因 <10 秒改派）：1080P 被准入挡住 → 留在有赞。
+// 有赞标准版两档齐全，留源链路是 fail-loud，不是降档。
 func TestEcommerceDoesNotRoute1080P(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐","resolution":"1080P"}`)
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐","resolution":"1080P"}`)
 	body := decodeBody(t, seen)
 
 	if body["model"] != testSourceModel {
-		t.Fatalf("1080P 请求不该改派，实际 model=%v", body["model"])
+		t.Fatalf("1080P 请求不该改派 CapCut，实际 model=%v", body["model"])
 	}
 }
 
-// 时长下界：CapCut 最少 4 秒，2–3 秒的请求改派过去必被拒。
+// 时长两侧都接不住：有赞下界 10 秒、CapCut 下界 4 秒 —— 2–3 秒留在源链路
+// fail-loud（报「时长越界」），不伪装改派。
 func TestEcommerceDoesNotRouteBelowCapcutMinDuration(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
@@ -419,7 +474,7 @@ func TestEcommerceDoesNotRouteBelowCapcutMinDuration(t *testing.T) {
 func TestEcommerceLiftsReferenceImagesToInputReference(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐","ratio":"16:9",
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐","ratio":"16:9",
 		"metadata":{"media":[{"type":"reference_image","url":"https://example.com/a.png"}]}}`)
 	body := decodeBody(t, seen)
 
@@ -444,7 +499,8 @@ func TestEcommercePinsGenerationResolutionTo480p(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 	stubSuperResolution(t, true)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐"}`)
+	// 6 秒：有赞接不住才会改派 CapCut，480p 钉档只对改派路径有意义。
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐"}`)
 	body := decodeBody(t, seen)
 
 	if body["resolution"] != "480p" {
@@ -458,7 +514,7 @@ func TestEcommerceKeeps720pWhenSuperResolutionUnavailable(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 	stubSuperResolution(t, false)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐"}`)
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐"}`)
 	body := decodeBody(t, seen)
 
 	if body["resolution"] != "720p" {
@@ -466,27 +522,32 @@ func TestEcommerceKeeps720pWhenSuperResolutionUnavailable(t *testing.T) {
 	}
 }
 
-// data URI 参考图不路由：CapCut 只收公网 http(s) 直链。
+// data URI 参考图不交给 CapCut：它只收公网 http(s) 直链。
+//
+// 用 6 秒做构造（本来该因 <10 秒改派）：素材形态不合格 → 留在有赞
+// （有赞收 data URI），而不是打过去吃一段 base64 回显的 400。
 func TestEcommerceDoesNotRouteDataUriReferenceImage(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐",
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐",
 		"images":["data:image/png;base64,iVBORw0KGgo="]}`)
 	body := decodeBody(t, seen)
 
 	if body["model"] != testSourceModel {
-		t.Fatalf("data URI 参考图不该改派，实际 model=%v", body["model"])
+		t.Fatalf("data URI 参考图不该改派 CapCut，实际 model=%v", body["model"])
 	}
 }
 
 // 目标没有可用渠道 → 不路由（请求自然落回源链路）。
+//
+// 用 6 秒：这条请求本来会因有赞接不住而改派，靠渠道预检退回源链路。
 func TestEcommerceSkipsWhenTargetChannelUnavailable(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 	stubChannelAvailableByModel(t, map[string]bool{
 		testEcommerceTarget: false,
 	})
 
-	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"好物推荐"}`)
+	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐"}`)
 	body := decodeBody(t, seen)
 
 	if body["model"] != testSourceModel {
@@ -501,18 +562,19 @@ func TestEcommerceSkipsWhenTargetChannelUnavailable(t *testing.T) {
 func TestEcommerceContentOrParameterSemantics(t *testing.T) {
 	enableEcommerce(t, true, false, 20)
 
-	// 只有内容命中（非 9:16）→ 仍要改派。
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"metadata":{"ratio":"16:9"},"prompt":"产品推荐 卖点"}`)
+	// 只有内容命中（非 9:16）→ 归规则七管。用 6 秒让「归它管」可观察
+	// （有赞接不住 <10 秒 → 改派 CapCut）。
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"metadata":{"ratio":"16:9"},"prompt":"产品推荐 卖点"}`)
 	body := decodeBody(t, seen)
 	if body["model"] != testEcommerceTarget {
-		t.Fatalf("内容命中即应改派（与参数条件是或关系），实际 model=%v", body["model"])
+		t.Fatalf("内容命中即归规则七管（与参数条件是或关系），实际 model=%v", body["model"])
 	}
 
-	// 只有参数命中（9:16、非电商）→ 也要改派。
-	seen, _ = runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
+	// 只有参数命中（9:16、非电商）→ 同样归规则七管。
+	seen, _ = runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
 	body = decodeBody(t, seen)
 	if body["model"] != testEcommerceTarget {
-		t.Fatalf("参数命中即应改派，实际 model=%v", body["model"])
+		t.Fatalf("参数命中即归规则七管，实际 model=%v", body["model"])
 	}
 }
 
@@ -521,11 +583,96 @@ func TestEcommerceAppliesToBothSourceModels(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
 
 	for _, source := range []string{"seedance2.5-特惠", "seedance2.5-活动"} {
-		seen, _ := runRoute(t, `{"model":"`+source+`","seconds":10,"prompt":"好物推荐"}`)
+		seen, _ := runRoute(t, `{"model":"`+source+`","seconds":6,"prompt":"好物推荐"}`)
 		body := decodeBody(t, seen)
 		if body["model"] != testEcommerceTarget {
 			t.Fatalf("源模型 %s 应改派 %s，实际 model=%v", source, testEcommerceTarget, body["model"])
 		}
+	}
+}
+
+// ── 2026-11-16 新口径的核心用例 ──────────────────────────────────
+
+// 有赞能接的标准时长区间（10–29 秒）：全部留在有赞，一个都不改派。
+//
+// 这是新口径的主路径 —— 旧口径下这里每一条都会被改派到 CapCut。
+func TestEcommerceStaysOnYouzanAcrossStandardDurations(t *testing.T) {
+	enableEcommerce(t, false, false, 20)
+
+	for _, seconds := range []int{10, 11, 15, 20, 25, 29} {
+		seen, _ := runRoute(t, fmt.Sprintf(
+			`{"model":"seedance2.5-特惠","seconds":%d,"prompt":"好物推荐 种草文案"}`, seconds))
+		body := decodeBody(t, seen)
+		if body["model"] != testSourceModel {
+			t.Fatalf("%d 秒电商请求应留在有赞 %s，实际 model=%v",
+				seconds, testSourceModel, body["model"])
+		}
+	}
+}
+
+// 30 秒：路由层**不动**模型名，交给 adaptor 的 upstreamModelForRequest
+// 逐条映射到 prime（仅 720P）。路由层改模型名会丢掉计费原点与逐秒判定。
+func TestEcommerceThirtySecondsStaysOnYouzanForAdaptorPrimeMapping(t *testing.T) {
+	enableEcommerce(t, false, false, 20)
+
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":30,"prompt":"好物推荐"}`)
+	body := decodeBody(t, rec.body)
+
+	if body["model"] != testSourceModel {
+		t.Fatalf("30 秒电商请求应留在源模型 %s（prime 映射由 adaptor 做），实际 model=%v",
+			testSourceModel, body["model"])
+	}
+	// 留在源模型时中间件不写 RouteOriginModel（只有改派才需要记计费原点）——
+	// 计费本来就走客户请求的模型名，这里断言「没被写成别的模型」即可。
+	if rec.originModel != "" && rec.originModel != testSourceModel {
+		t.Fatalf("计费原点不得被改成 %s（留在有赞时就是源模型）", rec.originModel)
+	}
+}
+
+// 客户没传时长：不判「有赞接不住」（源链路缺省 10 秒 = 标准版下界，能接）。
+func TestEcommerceMissingSecondsStaysOnYouzan(t *testing.T) {
+	enableEcommerce(t, false, false, 20)
+
+	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","prompt":"好物推荐"}`)
+	body := decodeBody(t, seen)
+	if body["model"] != testSourceModel {
+		t.Fatalf("未传时长的电商请求应留在有赞 %s，实际 model=%v", testSourceModel, body["model"])
+	}
+}
+
+// <10 秒：有赞标准版（下界 10 秒）与 prime（只接 30 秒）都接不住 → CapCut。
+func TestEcommerceBelowTenSecondsGoesCapcut(t *testing.T) {
+	enableEcommerce(t, false, false, 20)
+
+	for _, seconds := range []int{5, 6, 8, 9} {
+		seen, _ := runRoute(t, fmt.Sprintf(
+			`{"model":"seedance2.5-特惠","seconds":%d,"prompt":"好物推荐"}`, seconds))
+		body := decodeBody(t, seen)
+		if body["model"] != testEcommerceTarget {
+			t.Fatalf("%d 秒电商请求有赞接不住，应改派 %s，实际 model=%v",
+				seconds, testEcommerceTarget, body["model"])
+		}
+	}
+}
+
+// 带参考音视频：与时长无关，一律不走有赞（标准版与 prime 都只收参考图）→ CapCut。
+func TestEcommerceAudioVideoGoesCapcutRegardlessOfDuration(t *testing.T) {
+	enableEcommerce(t, false, false, 20)
+
+	cases := []struct{ name, body string }{
+		{"20 秒 + 顶层 audios", `{"model":"seedance2.5-特惠","seconds":20,"prompt":"好物推荐","audios":["https://example.com/a.mp3"]}`},
+		{"30 秒 + 顶层 videos", `{"model":"seedance2.5-特惠","seconds":30,"prompt":"好物推荐","videos":["https://example.com/a.mp4"]}`},
+		{"12 秒 + media 音频", `{"model":"seedance2.5-特惠","seconds":12,"prompt":"好物推荐","ratio":"16:9","media":[{"type":"reference_audio","url":"https://example.com/a.mp3"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen, _ := runRoute(t, tc.body)
+			body := decodeBody(t, seen)
+			if body["model"] != testEcommerceTarget {
+				t.Fatalf("带参考音视频的电商请求必须改派 %s（有赞只收参考图），实际 model=%v",
+					testEcommerceTarget, body["model"])
+			}
+		})
 	}
 }
 

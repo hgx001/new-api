@@ -102,8 +102,9 @@ func RouteOriginModel(c *gin.Context) string {
 //	规则八（全量兜底）：源模型收到的**所有**请求 → cp-seedance-2.5flash
 //	                    （2026-11-15 起；有赞链路彻底不可用时的逃生口，无触发条件）
 //	规则七（电商内容）：源模型 + 提示词命中电商/产品推荐关键词（或勾选的比例/时长条件命中）
-//	                    → CapCut 快速档 cp-seedance-2.5flash；带参考视频一律不路由
-//	                    2026-11-15 起为**最高业务优先级**：短时长/长时长/非 9:16 都不限制它
+//	                    → **留在常驻有赞链路**（2026-11-16 口径；30 秒由 adaptor 逐条映射 prime）
+//	                    只有有赞接不住时才改派 CapCut 快速档 cp-seedance-2.5flash：
+//	                    时长 <10 秒（标准版下界）或带参考音视频（两个上游都只收参考图）
 //	规则三（首尾帧）：  源模型 + media 含 first_frame/last_frame → frames_target_model
 //	规则九（音视频）：  源模型（及 wan3.0-video 直连）+ 带参考视频/音频
 //	                    → cp-seedance-2.5flash（2026-11-16 起；有赞 11-15 切换后
@@ -127,8 +128,8 @@ func RouteOriginModel(c *gin.Context) string {
 // 参考图、不搬运首尾帧语义（首尾帧被降级成参考图 —— 拿到的不是客户要的首尾帧成片）。
 // 「带首尾帧」的请求只有 wan3 直连能跑 —— 这是能力约束，优先级高于时长/比例的成本优化。
 // 排在规则一之后就漏了「30 秒 + 首尾帧」这个组合（会被规则一改写、丢掉首尾帧语义）。
-// 规则七在前不冲突：带首尾帧的电商请求会被规则七的 CapCut 准入挡住（无首尾帧语义），
-// 自然落到这里。
+// 规则七在前不冲突：带首尾帧的电商请求规则七**显式不接管**（有赞 2026-10-28 起不收
+// 首尾帧、CapCut 也没有首尾帧语义），直接放行到这里。
 //
 // 规则一/二之间仍是**时长优先**（老板 2026-10-30 拍板「30 秒优先，豆包仍接 9:16」），
 // 所以规则二实际只接「未超过时长阈值」的 9:16 请求。
@@ -351,26 +352,31 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			}
 		}
 
-		// ── 规则七（电商/产品推荐内容）：最高优先级 ──
+		// ── 规则七（电商/产品推荐内容）：有赞优先，接不住才 CapCut ──
 		//
-		// 2026-11-15 老板口径：识别到电商/产品推荐内容的请求**不被任何其它
-		// 路由条件限制** —— 短时长（≤10 秒）、长时长（>20 秒）、非 9:16
-		// 都先走规则七，改派 CapCut 快速档 cp-seedance-2.5flash。
+		// 2026-11-16 老板口径（取代 2026-11-15「电商一律 CapCut」）：
+		// **命中电商内容后直接用常驻的有赞链路**，只有有赞物理接不住时才改派
+		// CapCut。有赞接不住的情形只有两类：
+		//   · 时长 < 10 秒 —— 标准版 wan3.0-video 的下界是 10 秒，
+		//     prime 又只接 30 秒，两条上游都接不住；
+		//   · 带参考视频/音频 —— 2026-11-15 上游切换后标准版 media 只收
+		//     reference_image，prime 同样只收参考图。
+		// 30 秒**不是**缺口：adaptor 的 upstreamModelForRequest 会把
+		// 「特惠 30 秒 + 非 1080P」逐条映射到 prime（画质增强），路由层不需要
+		// 也不应该改模型名 —— 改了反而丢掉计费原点与 prime 的逐条判定。
 		//
-		// 触发语义是「内容 **或** 参数」（见 setting/seedanceroute_setting/
-		// ecom_route.go 的包头注释）：内容命中是电商流量，参数命中是竖屏/长视频。
+		// 触发语义不变（内容 **或** 参数，见 setting/seedanceroute_setting/
+		// ecom_route.go 的包头注释）：内容命中是电商流量，参数命中是竖屏/长视频，
+		// 两类都归这条规则管 —— 「电商优先」优先的是**链路**（有赞），
+		// 不是「一定改派」。
 		//
-		// 为什么必须排在最前（规则三/六/一/二之前）：
-		//   · 排在规则一之后：25 秒的电商请求会被规则一先接走改派豆包，
-		//     运营勾选的「时长 > 20 秒」入口变成死配置；
-		//   · 排在规则六之后：8 秒的电商请求会被短时长分流抢走 ——
-		//     2026-11-15 老板明确要求电商优先，不再按「短请求优先」处理；
-		//   · 规则二（比例）也是盯 9:16 的，规则七在前，内容驱动优先于参数兜底。
+		// 为什么「留在有赞」也必须在这里显式短路：规则七排在规则六/一/二之前，
+		// 不短路的话 25 秒电商请求会被规则一改派豆包按次、9:16 电商请求会被
+		// 规则二改派比例目标 ——「电商优先」就成了空话，运营勾的入口也变成
+		// 「把电商流量从有赞赶走」的开关，正好与老板口径相反。
 		//
-		// 能力约束仍然生效（不是被别的路由规则限制，而是目标链路接不住）：
-		//   · 带参考视频/音频一律不路由（老板明确要求；CapCut 参考视频限 1 个）；
-		//   · 带首尾帧不路由（CapCut 没有首尾帧语义）→ 落规则三；
-		//   · 1080P / adaptive 比例 / 2–3 秒 / 非 CapCut 比例档不路由（上游会 400）。
+		// 带首尾帧的电商请求既不短路也不改派：有赞 2026-10-28 起不收首尾帧、
+		// CapCut 没有首尾帧语义 —— 只有规则三的直连目标能跑，交给它。
 		// 准入细节见 middleware/seedance_route_ecommerce.go。
 		if seedanceroute_setting.EcommerceEnabledFor(sourceModel) {
 			// 时长口径与规则六一致：extractRequestSeconds 读得到就用它，
@@ -381,26 +387,50 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 				seconds = 0
 			}
 			if triggered, reason, contentMatched := ecommerceRouteTriggered(body, policy, seconds); triggered {
-				ecomTarget := policy.EcommerceTargetModelFor(sourceModel)
-				if newBody, routed := prepareEcommerceRoute(c, body, ecomTarget, seconds); routed {
-					if applyRewrittenBody(c, newBody, billingOriginModel) {
-						// 计费按**源模型**算：秒数按触发判定拿到的值，
-						// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
-						//
-						// ⚠️ 必须覆盖 CapCut adaptor 自己给的 size 倍率
-						// （480p=1.0 / 720p=×2.0）—— 那是 CapCut 的档位差价，
-						// 与源模型的档位差价不是同一个维度，不覆盖就是超收。
-						// 改派生成的档位是 480p（2026-11-15，交付前超分到 720P），
-						// 这里仍按源模型的 720P 档算价 —— 降档省的是成本，不是售价。
-						setRouteBillingContext(c, seconds,
-							sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
-						logger.LogInfo(c, fmt.Sprintf(
-							"条件路由：命中规则七（%s），改派 %s → %s",
-							reason, sourceModel, ecomTarget))
-						_ = contentMatched
-						c.Next()
-						return
+				switch youzanGap := ecommerceYouzanGap(body, seconds); {
+				case youzanGap != "":
+					// 有赞接不住 → 改派 CapCut（准入与改写见 seedance_route_ecommerce.go）。
+					ecomTarget := policy.EcommerceTargetModelFor(sourceModel)
+					capcutSeconds := seconds
+					if !hasSeconds || capcutSeconds <= 0 {
+						// 与规则八/九同一口径：没传时长才按源链路与 CapCut
+						// 共同的缺省。传了就必须用原值，越界由准入挡。
+						capcutSeconds = totalFallbackDefaultSeconds
 					}
+					if newBody, routed := prepareEcommerceRoute(c, body, ecomTarget, capcutSeconds); routed {
+						if applyRewrittenBody(c, newBody, billingOriginModel) {
+							// 计费按**源模型**算：秒数按触发判定拿到的值，
+							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
+							//
+							// ⚠️ 必须覆盖 CapCut adaptor 自己给的 size 倍率
+							// （480p=1.0 / 720p=×2.0）—— 那是 CapCut 的档位差价，
+							// 与源模型的档位差价不是同一个维度，不覆盖就是超收。
+							// 改派生成的档位是 480p（2026-11-15，交付前超分到 720P），
+							// 这里仍按源模型的 720P 档算价 —— 降档省的是成本，不是售价。
+							setRouteBillingContext(c, capcutSeconds,
+								sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
+							logger.LogInfo(c, fmt.Sprintf(
+								"条件路由：命中规则七（%s），有赞接不住（%s），改派 %s → %s",
+								reason, youzanGap, sourceModel, ecomTarget))
+							_ = contentMatched
+							c.Next()
+							return
+						}
+					}
+					// CapCut 也接不住（1080P / 非 http(s) 素材 / 比例档位…）：
+					// 放行给后续规则，最终留在源链路 fail-loud。
+				case hasFrameMedia(body):
+					// 首尾帧：有赞与 CapCut 都接不住 → 交给规则三的直连目标。
+					logger.LogInfo(c, fmt.Sprintf(
+						"条件路由：命中规则七（%s）但带首尾帧，有赞与 CapCut 均无首尾帧语义，交由首尾帧规则处理",
+						reason))
+				default:
+					// 有赞能接：留在源模型（10–29 秒标准版；30 秒由 adaptor 映射 prime）。
+					logger.LogInfo(c, fmt.Sprintf(
+						"条件路由：命中规则七（%s），留在常驻有赞链路 %s（跳过后续时长/比例改派）",
+						reason, sourceModel))
+					c.Next()
+					return
 				}
 			}
 		}

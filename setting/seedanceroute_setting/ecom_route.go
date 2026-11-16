@@ -1,10 +1,17 @@
-// Package seedanceroute_setting 的「规则七：电商/条件 → CapCut 快速档」。
+// Package seedanceroute_setting 的「规则七：电商/条件 → 有赞优先，接不住才 CapCut」。
 //
-// 背景（2026-11-14 老板需求）：
+// 背景（2026-11-14 老板需求，2026-11-16 改口径）：
 //
 //	seedance2.5-特惠 与 seedance2.5-活动 这两个对外模型名，
-//	当请求的提示词是**电商类 / 产品推荐**类内容时，改派到
-//	cp-seedance-2.5flash（CapCut 剪映国际版 Seedance 2.5 Flash 档）。
+//	当请求的提示词是**电商类 / 产品推荐**类内容时 ——
+//
+//	  · 2026-11-14 口径：一律改派 cp-seedance-2.5flash；
+//	  · 2026-11-16 口径：**直接留在常驻的有赞链路**（标准版 10–29 秒 /
+//	    prime 30 秒，由 adaptor 逐条映射），只有有赞物理接不住的请求
+//	    （时长 <10 秒、带参考音视频）才改派 cp-seedance-2.5flash。
+//
+//	所以 EcommerceTargetModel 现在描述的是**兜底目标**，不是默认路径 ——
+//	默认路径是「什么都不改」，媒体与时长都交给源链路自己跑。
 //
 // 为什么单独一个包文件而不是塞进 setting.go：
 //
@@ -41,18 +48,24 @@ import (
 	"strings"
 )
 
-// DefaultEcommerceTargetModel 是规则七的目标模型（CapCut Seedance 2.5 Flash 档）。
+// DefaultEcommerceTargetModel 是规则七的**兜底**目标模型（CapCut Seedance 2.5 Flash 档）。
 //
-// 为什么选 2.5 Flash 而不是 2.0：2.5 Flash 时长 4–30 秒、参考图 ≤30 张，
-// 能覆盖源链路（有赞 prime 2–30 秒）的大部分请求；2.0 系列时长上界只有 15 秒，
+// 2026-11-16 起规则七默认留在有赞，只有「有赞接不住」的请求（<10 秒 /
+// 带参考音视频）才落到这里 —— 所以它是兜底目标，不是默认路径。
+//
+// 为什么兜底选 2.5 Flash 而不是 2.0：2.5 Flash 时长 4–30 秒、参考图 ≤30 张，
+// 能覆盖源链路（有赞促销族 5–30 秒）全部时长区间；2.0 系列上界只有 15 秒，
 // 超过 15 秒的请求改派过去必被上游 400。
 const DefaultEcommerceTargetModel = "cp-seedance-2.5flash"
 
 // DefaultEcommerceTriggerSeconds 是规则七「时长条件」的默认阈值（秒）。
 //
 // 语义与规则一**相反**：这里是「时长**超过**阈值才命中」。
-// 默认 20 秒 —— 与规则一（>20 秒改派豆包）同一阈值，
-// 老板可以理解成「长视频优先走快档」。
+// 默认 20 秒 —— 与规则一（>20 秒改派豆包）同一阈值。
+//
+// ⚠️ 2026-11-16 起命中后的动作是「留在常驻有赞链路」，不再改派 CapCut：
+// 所以这个入口的实际作用是**把长视频从规则一（豆包按次）手里接回来**，
+// 让电商长视频继续按秒跑有赞标准版。
 const DefaultEcommerceTriggerSeconds = 20
 
 // DefaultEcommerceRatioCondition 是规则七「比例条件」对应的比例。
