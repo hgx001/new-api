@@ -117,3 +117,21 @@ func TestFormatUserLogs_退款日志不暴露CapCut(t *testing.T) {
 	assert.Contains(t, logs[0].Other, "参考音频",
 		"失败原因要保留，客户得知道为什么被退款")
 }
+
+// capcutCamelRefundReason 是 2026-11-15 深夜真实测试单（task_u3Niwtf5M3o5sGS02y93XrL4uDboQZKi，
+// mini 4 秒音频、1x1 参考图被官网拒）的退款 reason 原文 —— 大小写驼峰 "CapCut"，
+// 与守卫 2 的全小写 "capcut" 是两种形态。词表匹配 (?i)，两种都该遮。
+const capcutCamelRefundReason = "CapCut 的参考图素材「asset-47f30677e2d68ae219a554b1-1794756376237.png」不符合官网上限（短边 1px 低于下限 300px），任务未提交、未消耗额度；换账号无效，请换一个合规的素材后重做任务"
+
+// 守卫 6：驼峰 "CapCut" 与素材文件名混排的真实文案也不残留平台名。
+func TestRedactUpstreamText_驼峰CapCut真实文案不残留(t *testing.T) {
+	for _, modelName := range []string{"cp-seedance-2.0mini", "seedance2.5-活动"} {
+		redacted := RedactUpstreamText(capcutCamelRefundReason, modelName)
+		assert.NotContains(t, redacted, "capcut",
+			"模型 %q：驼峰 CapCut 必须被遮（(?i) 大小写不敏感匹配）", modelName)
+		assert.Contains(t, redacted, "上游 的参考图素材",
+			"模型 %q：平台名换成「上游」，素材描述保留", modelName)
+		assert.Contains(t, redacted, "300px",
+			"模型 %q：失败原因细节保留，客户得知道该怎么换素材", modelName)
+	}
+}
