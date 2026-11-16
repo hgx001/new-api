@@ -8,7 +8,9 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/tencentmps_setting"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -124,4 +126,64 @@ func TestResolveManwuResultURLResolvesAbsoluteOwnedAssetViaJob(t *testing.T) {
 	assert.Equal(t, "Bearer sk-secret", gotAuth)
 	assert.Equal(t, srv.URL+"/api/v1/remote-generation/jobs/job-1/outputs/output.mp4", url)
 	assert.True(t, needsAuth)
+}
+
+// ⚠️ 2026-11-16 生产实测（规则九音视频改派 e2e）：CapCut 超分任务落库的
+// ResultURL 是 cos-proxy:// 占位符，manwu 分支不认它 → resolveManwuResultURL
+// 回查上游 job 拿 sourceUrl，客户按 720P 买到手的却是 480p **原片**
+// （md5 与原片完全一致，MPS 超分出的 720P 产物从未交付）。
+//
+// 这里锁两件事：
+//  1. 占位符必须被认领（302 到 COS 预签名直链，而不是回查 job）；
+//  2. 非占位符的普通任务不受影响（helper 放行，走原有回源逻辑）。
+func TestServeCOSProxyRedirectIfMarked(t *testing.T) {
+	// 给 tencentmps_setting 灌一组测试凭据：PresignCOSURL 是纯本地签名
+	//（GetPresignedURL 不发网络请求），假 AK/SK 也能签出结构合法的 URL。
+	saved := tencentmps_setting.MarshalJSONString()
+	require.NoError(t, tencentmps_setting.UpdateFromJSONString(
+		`{"secret_id":"AKIDtest","secret_key":"secrettest"}`))
+	t.Cleanup(func() { _ = tencentmps_setting.UpdateFromJSONString(saved) })
+
+	gin.SetMode(gin.TestMode)
+
+	t.Run("cos-proxy 占位符 302 预签名直链", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/task_x/content", nil)
+
+		marker := "cos-proxy://mps-test-1397292858/ap-guangzhou/mps_api_test/sr_task_abc.mp4"
+		handled := serveCOSProxyRedirectIfMarked(c, "task_x", marker)
+
+		require.True(t, handled, "占位符必须被认领")
+		// gin 的 WriteHeader 延迟到引擎收尾（WriteHeaderNow）才落到 recorder，
+		// 单测里手动补一次 —— 与真实请求生命周期等价。
+		c.Writer.WriteHeaderNow()
+		require.Equal(t, http.StatusFound, w.Code, "应为 302 直链")
+		loc := w.Header().Get("Location")
+		require.NotEmpty(t, loc)
+		assert.Contains(t, loc, "mps-test-1397292858", "签名地址指向占位符里的桶")
+		assert.Contains(t, loc, "mps_api_test/sr_task_abc.mp4", "签名地址指向占位符里的对象")
+		assert.Contains(t, loc, "q-signature=", "必须是带签名的临时直链（COS 签名体系）")
+	})
+
+	t.Run("普通 ResultURL 放行", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/task_x/content", nil)
+
+		handled := serveCOSProxyRedirectIfMarked(c, "task_x", "https://v19-dola.dola.com/v/clip.mp4")
+
+		assert.False(t, handled, "非占位符必须放行给渠道回源逻辑")
+		assert.Equal(t, http.StatusOK, w.Code, "放行时不得写出任何响应")
+	})
+
+	t.Run("大小写不敏感（与 ParseCOSProxyMarker 同口径）", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/task_x/content", nil)
+
+		handled := serveCOSProxyRedirectIfMarked(c, "task_x",
+			"COS-PROXY://mps-test-1397292858/ap-guangzhou/mps_api_test/sr_task_abc.mp4")
+		assert.True(t, handled, "大写形态同样要认领（历史数据可能大小写漂移）")
+	})
 }

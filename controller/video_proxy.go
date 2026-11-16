@@ -312,6 +312,25 @@ func VideoProxy(c *gin.Context) {
 		// adaptor 因此不透传，ResultURL 落成 /v1/videos/{task}/content 代理地址。
 		// 这里回查一次 job 拿真实 sourceUrl 再下载；只有 ArcReel 自己的 /api 路径才带
 		// 渠道密钥，避免把凭证泄露给 dola 等第三方 CDN。
+		//
+		// ── cos-proxy:// 占位符（2026-11-16 补）──
+		//
+		// CapCut 链路开了「交付前超分」后（2026-11-14/15 起，规则六 CapCut 分支 /
+		// 规则七 / 规则八 / 规则九改派到 cp-seedance-* 的促销族任务），MPS 超分成功
+		// 时 PollPostProcess 会把 ResultURL 改写成 cos-proxy://bucket/region/path
+		// —— 客户按 720P 买的片，真正的 720P 产物在那个对象里。
+		//
+		// ⚠️ 这个分支漏判 cos-proxy:// 的后果（2026-11-16 真机实测）：
+		// resolveManwuResultURL 见到非 http 开头的 stored 就回查上游 job、拿
+		// sourceUrl 回源 —— 那是 480p **原片**。任务照常 SUCCESS、账单按 720P 收，
+		// 客户拿到的却是超分前的原片（md5 与原片完全一致）——
+		// 正是 capcut_upscale.go 里反复强调要避免的「按 720P 价交付 480P」。
+		//
+		// 修法与 wan3 / 心笔 / 车站三个分支同构：先认占位符、现签临时直链 302。
+		// 认不出占位符（普通 manwu 任务）再走原有回查逻辑，行为不变。
+		if serveCOSProxyRedirectIfMarked(c, taskID, task.GetResultURL()) {
+			return
+		}
 		resolved, needsAuth, rerr := resolveManwuResultURL(baseURL, channel.Key, channel.GetSetting().Proxy, task)
 		if rerr != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve manwu result URL for task %s: %s", taskID, rerr.Error()))
@@ -426,6 +445,37 @@ func VideoProxy(c *gin.Context) {
 	if err = writeVideoProxyContent(c.Writer, resp); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
 	}
+}
+
+// serveCOSProxyRedirectIfMarked 认领 cos-proxy://bucket/region/path 占位符：
+// 命中就现签 COS 临时直链并 302，返回 true（响应已写出，调用方直接 return）。
+//
+// 适用渠道：wan3 / 心笔 / 车站（yuanmeng）/ 漫屋（manwu）。四条链路的
+// 「产物落 COS + 取片时实时签名」是同一套协议（见 wan3/relocate.go 与
+// capcut_upscale.go），任何分支漏判占位符，客户拿到的都会是**超分/转存前**
+// 的原始产物 —— 2026-11-16 在 manwu 分支实测：客户按 720P 买的 CapCut 超分
+// 任务，/content 交付的却是 480p 原片（md5 与原片完全一致）。
+//
+// 返回 false = 不是占位符，调用方继续走各自渠道的回源逻辑；
+// 预签名失败时写 502 并返回 true（与三个既有分支同一口径，不回落 ——
+// 回落会把降级产物当成交付，比显式失败更难被发现）。
+func serveCOSProxyRedirectIfMarked(c *gin.Context, taskID, stored string) bool {
+	bucket, region, objectPath, ok := taskwan3.ParseCOSProxyMarker(stored)
+	if !ok {
+		return false
+	}
+	signed, err := taskwan3.PresignCOSURL(c.Request.Context(), bucket, region, objectPath)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf(
+			"Failed to presign COS url for task %s: %s", taskID, err.Error()))
+		videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
+		return true
+	}
+	// 302 直连 COS：字节不经过本机 3Mbps 出口。
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Location", signed)
+	c.Writer.WriteHeader(http.StatusFound)
+	return true
 }
 
 // resolveManwuResultURL 解析漫屋任务的真实结果地址，返回（地址, 是否需要渠道密钥）。
