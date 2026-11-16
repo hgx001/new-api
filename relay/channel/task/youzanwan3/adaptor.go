@@ -463,12 +463,12 @@ func isR2VModel(model string) bool {
 }
 
 func isPrimeModel(model string) bool {
-	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起由**标准版**执行：
+	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起**默认**由标准版执行：
 	// 分辨率档位与默认值仍与 prime 旧口径一致（720P/1080P、缺省 720P），
 	// 所以 here 保留在 isPrimeModel 里；时长/素材的 prime 新边界只对
 	// **直连** prime 生效，见 isPrimeOnlyModel。
 	//
-	// ⚠️ 特惠母本的 **30 秒**是例外：走 prime（见 upstreamModelForRequest），
+	// ⚠️ 促销族的 **30 秒**是例外：走 prime（见 upstreamModelForRequest），
 	// 但那只是**上游模型**的选择，对客的档位口径不变，所以这里仍判 true。
 	//
 	// ⚠️ 判定一律走 constant 的**能力组**，不要在这里逐个列模型名 ——
@@ -487,8 +487,9 @@ func isPrimeModel(model string) bool {
 // isPrimeOnlyModel 判断是不是「prime 直连」请求（**不含**促销族）。
 //
 // 2026-11-15 上游切换后 prime 收窄为「仅 30 秒、仅 720P」，这套新边界只该
-// 卡直连 prime 的请求；促销族（特惠/活动）同日改由标准版 wan3.0-video 执行，
-// 适用的是标准版的 10-30 秒区间 —— 不能被 prime 的新边界误伤。
+// 卡直连 prime 的请求；促销族（特惠/活动）默认由标准版 wan3.0-video 执行、
+// 只有 30 秒逐条映射到 prime，适用的是标准版的 10-30 秒区间 —— 不能被
+// prime 的新边界误伤。
 func isPrimeOnlyModel(model string) bool {
 	if constant.IsSeedance25Family(model) {
 		return false
@@ -540,15 +541,15 @@ func isPromoFamilyModel(model string) bool {
 // public name remains stable while the upstream protocol can evolve.
 //
 // ⚠️ 这个函数**只看模型名**，不看时长/分辨率 —— 它回答的是「这个对外名对应
-// 哪个上游模型」。特惠 30 秒落 prime 的逐秒判断在 upstreamModelForRequest 里
+// 哪个上游模型」。促销族 30 秒落 prime 的逐秒判断在 upstreamModelForRequest 里
 // （那条路径还要同时看时长与分辨率档位）。
 func upstreamModelFor(model string) (string, error) {
-	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起由**标准版**执行。
+	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起**默认**由标准版执行。
 	// 背景：上游 api.youzan666.vip 切换上游后，prime 收窄为「仅 30 秒、仅 720P」，
 	// 而促销族按秒卖（特惠）/按时长可选（活动），必须落到 10-30 秒区间完整的
 	// 标准版 wan3.0-video 上。判定走能力组 —— 新增族成员时这里自动跟着生效。
 	//
-	// ⚠️ 特惠母本的**30 秒**是例外：走 prime（见 upstreamModelForRequest）。
+	// ⚠️ 促销族的**30 秒**是例外：走 prime（见 upstreamModelForRequest）。
 	// 这里返回标准版是「默认档」，逐秒例外在上一层的请求级判断里做。
 	if constant.IsSeedance25Family(model) {
 		return videoModel, nil
@@ -571,15 +572,23 @@ func upstreamModelFor(model string) (string, error) {
 // 因为上游 prime 的能力边界是「仅 30 秒、仅 720P」—— 只有两者都落在
 // prime 的边界内，才能把请求交给它，否则上游一律拒单。
 //
-// 2026-11-16 老板口径：**特惠母本的 30 秒请求走 prime**（画质增强、上游更便宜），
-// 其余秒数走标准版 wan3.0-video。
+// 2026-11-16 老板口径：**促销族（特惠母本 + 活动版）的 30 秒请求走 prime**
+// （画质增强、上游更便宜），其余秒数走标准版 wan3.0-video。
+//
+// 活动版为什么也在内（2026-11-16 晚追加）：活动按次卖 ¥4.5/条，测算基准就是
+// prime ¥0.15/秒 × 30 秒 = ¥4.50；落到标准版（¥0.18/秒 → ¥5.40）每单倒挂
+// ¥0.90。它固定 30 秒 / 固定 720P，正好落在 prime 边界内，不存在降档风险。
+//
+// ⚠️ 判定用 isPromoFamilyModel（能力组）而不是 isTehuiModel：族里再成员化
+// （比如加「活动 Pro」）时这里自动跟着生效，不会重演「母本改了、活动版没改」。
+// 但**秒数边界仍只认 primeFixedDuration（30）**，放宽范围不等于放宽边界。
 //
 // ⚠️ **1080P 不能走 prime**：prime 只提供 720P（上游文档原话「Prime 只接受
 // 以下两种尺寸。其他时长、480P、1080P 或其他尺寸均不接受」）。客户显式要了
 // 1080P 时静默降到 720P = 「收 1080P 的钱给 720P 的片」——
 // 所以 1080P 留在标准版（它两档齐全），而不是降档进 prime。
 func upstreamModelForRequest(req relaycommon.TaskSubmitReq) (string, error) {
-	if isTehuiModel(req.Model) {
+	if isPromoFamilyModel(req.Model) {
 		duration := resolveDurationForModel(req, req.Model)
 		resolution := resolveResolutionForModel(req, req.Model)
 		if duration == tehuiPrimeSeconds && resolution != "1080P" {

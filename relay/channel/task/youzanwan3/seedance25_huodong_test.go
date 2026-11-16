@@ -5,12 +5,16 @@ package youzanwan3
 // ════════════════════════════════════════════════════════════════════════════
 //
 // 母本（seedance2.5-特惠）按秒 ¥0.20/秒、活动版（seedance2.5-活动）按次 ¥4.5/次
-// 固定 30 秒。两者**能力完全相同**（同一上游 wan3.0-video-prime、同样的素材上限、
+// 固定 30 秒。两者**能力完全相同**（同一套上游映射、同样的素材上限、
 // 同样的路由规则），**只有计费口径不同**。
 //
+// 上游映射按秒数分档（2026-11-16 口径）：30 秒 → wan3.0-video-prime，
+// 其余 10–29 秒 → 标准版 wan3.0-video。两个族成员走**同一条**判定
+// （upstreamModelForRequest 的 isPromoFamilyModel 分支），见 tehui_prime_test.go。
+//
 // 本文件守三件事：
-//   1. 活动版确实由 prime 执行、确实按次结算；
-//   2. 固定 30 秒 / 固定 720P 是 **fail-loud**（传别的值报错，不静默改档）；
+//   1. 活动版的默认上游是标准版、确实按次结算；
+//   2. 固定 720P / 时长 5-30 秒是 **fail-loud**（传别的值报错，不静默改档）；
 //   3. EstimateBilling 返回 nil —— 否则 30 秒会被**乘进** ¥4.5，收成 ¥135。
 
 import (
@@ -38,6 +42,11 @@ const huoDongModel = "seedance2.5-活动"
 func TestHuoDong_上游已是标准版(t *testing.T) {
 	// 2026-11-15 上游把 prime 收窄为「仅 30 秒、仅 720P」，促销族按秒卖
 	// 必须落到 10-30 秒区间完整的标准版 wan3.0-video（发中文别名上游会 404）。
+	//
+	// ⚠️ 这里测的是**模型名维度**的默认档，不含逐秒例外：活动版恰好 30 秒
+	// 会由 upstreamModelForRequest 映射到 prime（见 tehui_prime_test.go 的
+	// TestTehuiPrime_HuoDongThirtySecondsUsesPrime）。两者不矛盾 ——
+	// upstreamModelFor 回答「这个对外名默认是谁」，请求级判断才看秒数。
 	got, err := upstreamModelFor(huoDongModel)
 	require.NoError(t, err)
 	require.Equal(t, "wan3.0-video", got,
