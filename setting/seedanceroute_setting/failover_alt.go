@@ -27,6 +27,15 @@ import "strings"
 // 为什么是这一档而不是 2.0 Fast：规则五要接住的是**豆包 2.5 的原单**
 // （2.5 的时长/比例/参考图能力最宽），2.5 Flash 与它同一代；
 // 2.0 Fast 时长上界只有 15 秒，接不住 30 秒的降级单。
+//
+// ⚠️ 2026-11-16 晚：促销族（特惠/活动）的 CapCut 出口已升到
+// cp-seedance-2.5（见 DefaultEcommerceTargetModel / DefaultTotalFallbackTargetModel /
+// DefaultRefAVTargetModel），**本常量刻意不动** —— 老板当天口径是
+// 「seedance-2-5 这个模型的路由还是不变，还是路由到 cp-seedance-2.5flash」。
+//
+// 两条链路的取舍不同：促销族是对客口碑商品（质量优先），豆包 2.5 的降级
+// 是「原单已按 ¥3.50/次 收过钱」的兜底（价格优先，2.5 Flash 更便宜）。
+// **不要因为「统一目标模型」把这里一起改掉** —— 那会让降级单的成本结构失衡。
 const DefaultFailoverAltModel = "cp-seedance-2.5flash"
 
 // IsFailoverAltEnabled 判断规则五的备选备胎开关当前是否开启。

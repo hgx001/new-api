@@ -923,7 +923,7 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	// 促销族 2026-11-15 起也落标准版执行，所以除 prime 直连外的所有请求都按这条闸拦。
 	// 不拦的后果：请求透传给上游 → 上游按它自己的文案拒单 → 客户对着
 	// 「参数或参考素材不符合要求」反复重试。参考视频/音频的诉求应改走
-	// CapCut 链路（cp-seedance-2.5flash 支持参考音视频直链）。
+	// CapCut 链路（cp-seedance-2.5 支持参考音视频直链）。
 	if !isPrimeOnlyModel(model) && (counts["reference_video"] > 0 || counts["reference_audio"] > 0) {
 		return errors.New("参考视频/参考音频已不再支持：上游 2026-11-15 切换后该链路仅接受 reference_image 参考图，请去掉视频/音频素材后重试（需要参考音视频请改用支持它们的模型）")
 	}

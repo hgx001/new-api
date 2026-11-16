@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 规则八（全量兜底 → cp-seedance-2.5flash）的中间件测试。
+// 规则八（全量兜底 → cp-seedance-2.5）的中间件测试。
 //
 // 语义（2026-11-15 老板需求）：seedance2.5-特惠 / seedance2.5-活动 的常驻链路
 // 是有赞。有赞**彻底不能用**时，前七条规则全部失效（它们都假设源链路还能跑
@@ -23,7 +23,7 @@ import (
 //     自适应比例带参考图）—— 那几类改派过去必 400，会把「链路挂了」
 //     伪装成「你的参数不合法」。
 
-const totalFallbackTarget = "cp-seedance-2.5flash"
+const totalFallbackTarget = "cp-seedance-2.5"
 
 // enableTotalFallback 只打开规则八（前七条都不配），测试结束恢复原状。
 //
@@ -338,5 +338,5 @@ func TestTotalFallbackNeverWritesEmptyModel(t *testing.T) {
 // 编译期保证：目标模型常量与 CapCut 2.5 Flash 的对外名一致。
 // 改错这个名字的后果是「改派到一个不存在的模型」→ Distribute 503。
 func TestTotalFallbackTargetMatchesCapcutFlash(t *testing.T) {
-	assert.Equal(t, "cp-seedance-2.5flash", seedanceroute_setting.TotalFallbackTargetModel())
+	assert.Equal(t, "cp-seedance-2.5", seedanceroute_setting.TotalFallbackTargetModel())
 }

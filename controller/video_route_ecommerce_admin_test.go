@@ -32,7 +32,7 @@ func TestDoubaoRouteAdminStateReportsEcommerceFields(t *testing.T) {
 	state := doubaoRouteAdminState()
 
 	assert.Equal(t, true, state["ecommerce_enabled"])
-	assert.Equal(t, "cp-seedance-2.5flash", state["ecommerce_target_model"])
+	assert.Equal(t, "cp-seedance-2.5", state["ecommerce_target_model"])
 	assert.Equal(t, true, state["ecommerce_ratio_condition"])
 	assert.Equal(t, true, state["ecommerce_seconds_condition"])
 	assert.Equal(t, 25, state["ecommerce_trigger_seconds"])

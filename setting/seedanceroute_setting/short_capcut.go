@@ -1,15 +1,15 @@
-// Package seedanceroute_setting 的「规则六第三分支：短时长 → CapCut 快速档」。
+// Package seedanceroute_setting 的「规则六第三分支：短时长 → CapCut 满血档」。
 //
 // 背景（2026-11-14 老板需求）：
 //
 //	目前 ≤10 秒的请求走有赞标准版（wan3.0-video）。老板要再加一条路：
-//	≤10 秒的请求改派到 cp-seedance-2.0fast（CapCut 剪映国际版 Seedance 2.0 Fast 档）。
+//	≤10 秒的请求改派到 cp-seedance-2.0（CapCut 剪映国际版 Seedance 2.0 满血档）。
 //
 // ⚠️ **三条短时长分支同时只能有一条生效**：
 //
 //  1. 心笔内链（short_link_enabled）—— wan3.0-720p-特惠-内链，480P 生成 + 超分 720P；
 //  2. 有赞标准版（short_youzan_enabled）—— wan3.0-video，绕开 prime 的 <10 秒保护；
-//  3. CapCut 快速档（short_capcut_enabled）—— cp-seedance-2.0fast。
+//  3. CapCut 满血档（short_capcut_enabled）—— cp-seedance-2.0。
 //
 // 为什么必须互斥：三条是**同一个时长区间的三个出口**。
 // 同时开着两三条时，同一个短请求会按优先级落到其中一条 ——
@@ -20,11 +20,11 @@
 // 所以互斥在**写入口**保证（controller 侧开一个自动关另两个），
 // 读侧再做一次**显式优先级兜底**（万一配置被 SQL 手改过也不会两条同时生效）。
 //
-// 优先级（读侧兜底）：心笔内链 > 有赞标准版 > CapCut 快速档。
+// 优先级（读侧兜底）：心笔内链 > 有赞标准版 > CapCut 满血档。
 //
 // 为什么心笔排第一：它是**成本最低**的一条（480P 生成 + 超分），
 // 且能力边界最宽（不挑素材形态）。有赞标准版次之（同渠道同 adaptor，最不容易失败）。
-// CapCut 快速档排最后：它是**跨渠道**的（ch20 manwu），契约限制最多
+// CapCut 满血档排最后：它是**跨渠道**的（ch20 manwu），契约限制最多
 // （只收 http(s) 参考图、只卖 480p/720p、时长 4–15 秒）。
 //
 // ⚠️ 用 bool 而不是三态指针：这是**全新**的分支开关，旧的生产 option JSON 里
@@ -65,25 +65,25 @@ const DefaultShortCapcutTargetModel = "cp-seedance-2.0"
 //   10–15 秒仍由有赞标准版接住，不会掉进 CapCut。
 const ShortCapcutMinSeconds = 10
 
-// IsShortCapcutEnabled 判断规则六第三分支（CapCut 快速档）开关当前是否开启。
+// IsShortCapcutEnabled 判断规则六第三分支（CapCut 满血档）开关当前是否开启。
 func IsShortCapcutEnabled() bool {
 	mu.RLock()
 	defer mu.RUnlock()
 	return current.ShortCapcutEnabled
 }
 
-// IsShortCapcutEnabledFor 判断「CapCut 快速档分支对某个源模型是否生效」。
+// IsShortCapcutEnabledFor 判断「CapCut 满血档分支对某个源模型是否生效」。
 //
 // 上层闸门与另外两条短时长分支共用按源模型的 short_rule_enabled：
 // 活动版的规则六本来就被关掉（按次档没有短时长成本问题），
-// 不能因为运营打开 CapCut 按钮就被带进快速档链路。
+// 不能因为运营打开 CapCut 按钮就被带进满血档链路。
 func IsShortCapcutEnabledFor(sourceModel string) bool {
 	mu.RLock()
 	defer mu.RUnlock()
 	return shortCapcutReadyFor(current, sourceModel)
 }
 
-// shortCapcutReadyFor 判断「CapCut 快速档分支对某个源模型是否生效」。
+// shortCapcutReadyFor 判断「CapCut 满血档分支对某个源模型是否生效」。
 func shortCapcutReadyFor(p Policy, sourceModel string) bool {
 	return p.Enabled &&
 		p.hasSourceModel() &&
@@ -91,7 +91,7 @@ func shortCapcutReadyFor(p Policy, sourceModel string) bool {
 		p.shortRuleEnabledFor(sourceModel)
 }
 
-// WithShortCapcutEnabled 返回「把 CapCut 快速档分支开关设成 enabled」的策略副本。
+// WithShortCapcutEnabled 返回「把 CapCut 满血档分支开关设成 enabled」的策略副本。
 //
 // 纯函数，**不落库** —— 落库由调用方用 model.UpdateOption 完成，
 // 与 WithShortYouzanEnabled / WithShortLinkEnabled 同一套做法。
@@ -109,7 +109,7 @@ func WithShortCapcutEnabled(enabled bool) Policy {
 	return out
 }
 
-// ApplyShortCapcutEnabled 把「CapCut 快速档分支开关」设到**给定策略**上，返回新副本。
+// ApplyShortCapcutEnabled 把「CapCut 满血档分支开关」设到**给定策略**上，返回新副本。
 //
 // 与 WithShortCapcutEnabled 的区别：后者从全局状态取基底，
 // 这个从调用方给的策略取基底 —— 三路互斥需要**一次性**改三个字段，
@@ -147,7 +147,7 @@ func ApplyShortYouzanEnabled(p Policy, enabled bool) Policy {
 // 用途：管理后台展示（运营要能看到「现在到底哪条分支在生效」），
 // 以及中间件的兜底判定（见 ActiveShortRouteTarget）。
 //
-// 优先级：心笔内链 > 有赞标准版 > CapCut 快速档。
+// 优先级：心笔内链 > 有赞标准版 > CapCut 满血档。
 func ShortRouteTargets() []string {
 	mu.RLock()
 	defer mu.RUnlock()

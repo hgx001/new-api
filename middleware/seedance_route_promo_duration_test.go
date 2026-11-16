@@ -210,14 +210,14 @@ func TestPromoDuration_TotalFallbackTakesEverything(t *testing.T) {
 		testShortTargetModel:    false,
 		testYouzanStandardModel: true,
 		testShortCapcutTarget:   true,
-		"cp-seedance-2.5flash":  true,
+		"cp-seedance-2.5":       true,
 	})
 
 	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
 
-	if body["model"] != "cp-seedance-2.5flash" {
-		t.Fatalf("规则八是无条件全量兜底，8 秒也应落 2.5 Flash，实际 model=%v", body["model"])
+	if body["model"] != "cp-seedance-2.5" {
+		t.Fatalf("规则八是无条件全量兜底，8 秒也应落 2.5 满血档，实际 model=%v", body["model"])
 	}
 }
 
@@ -231,7 +231,7 @@ func TestPromoDuration_ShortGoesCapcutWhenTotalFallbackOff(t *testing.T) {
 		testShortTargetModel:    false,
 		testYouzanStandardModel: true,
 		testShortCapcutTarget:   true,
-		"cp-seedance-2.5flash":  true,
+		"cp-seedance-2.5":       true,
 	})
 
 	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)

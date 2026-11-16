@@ -44,7 +44,7 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 //
 // 目前有**八条独立规则**，其中规则一~七共用 Enabled 总开关与 SourceModel：
 //
-//	规则八（全量兜底）：源模型收到的**所有**请求 → cp-seedance-2.5flash（最优先，
+//	规则八（全量兜底）：源模型收到的**所有**请求 → cp-seedance-2.5（最优先，
 //	                   不依赖 Enabled，是「源链路彻底不可用」时的逃生口）
 //	规则五（故障转移）：FailoverSourceModel 源链路不可用 → FailoverTargetModel（独立字段）
 //	规则三（首尾帧）：SourceModel + media 含 first_frame/last_frame → FramesTargetModel
@@ -183,9 +183,9 @@ type Policy struct {
 	// 升级当天线上流量逐字节不变（与 FailoverEnabled 同一口径）。
 	ShortYouzanEnabled bool `json:"short_youzan_enabled,omitempty"`
 
-	// ShortCapcutEnabled 是规则六第三分支「CapCut 快速档」的开关（2026-11-14 起）。
+	// ShortCapcutEnabled 是规则六第三分支「CapCut 满血档」的开关（2026-11-14 起）。
 	//
-	// 目标模型固定为 DefaultShortCapcutTargetModel（cp-seedance-2.0fast）——
+	// 目标模型固定为 DefaultShortCapcutTargetModel（cp-seedance-2.0）——
 	// 与另外两条分支一样是可配置的运营决策，但**互斥**：三条短时长分支同时
 	// 只能有一条生效（写入口在 controller 侧保证，见 short_capcut.go）。
 	//
@@ -194,7 +194,7 @@ type Policy struct {
 	// 升级当天线上流量逐字节不变（与 ShortYouzanEnabled 同一口径）。
 	ShortCapcutEnabled bool `json:"short_capcut_enabled,omitempty"`
 
-	// ─────────────────── 规则七：电商内容 → CapCut 快速档 ───────────────────
+	// ────────────── 规则七：电商内容 → 有赞优先（接不住才 CapCut）──────────────
 	//
 	// 触发源与前六条都不同：前六条看的是**请求的客观参数**（时长/比例/首尾帧），
 	// 这条看的是**提示词的内容**（电商类 / 产品推荐）。
@@ -210,7 +210,7 @@ type Policy struct {
 	EcommerceEnabled bool `json:"ecommerce_enabled,omitempty"`
 
 	// EcommerceTargetModel 是规则七的目标模型名。空 = 用 DefaultEcommerceTargetModel
-	//（cp-seedance-2.5flash）。
+	//（cp-seedance-2.5）。
 	//
 	// 同样支持按源模型覆盖（source_overrides[模型].ecommerce_target_model）。
 	EcommerceTargetModel string `json:"ecommerce_target_model,omitempty"`
@@ -321,7 +321,7 @@ type Policy struct {
 	// TotalFallbackEnabled 是规则八的开关（2026-11-15 起）。
 	//
 	// 打开：seedance2.5-特惠 / seedance2.5-活动 收到的**所有**请求
-	// 无条件改派 cp-seedance-2.5flash（不看时长/比例/内容/首尾帧）；
+	// 无条件改派 cp-seedance-2.5（不看时长/比例/内容/首尾帧）；
 	// 关闭（默认）：规则八不参与调度，行为与改造前逐字节一致。
 	//
 	// 目的是「有赞链路彻底不可用」时的逃生口 —— 前七条规则都建立在
@@ -340,7 +340,7 @@ type Policy struct {
 	// RefAVCapcutEnabled 是规则九的开关（2026-11-16 起）。
 	//
 	// 打开：带参考视频/音频的请求（youzanwan3 adaptor 对 prime 外的所有模型
-	// 都会 400 拒单）改派 cp-seedance-2.5flash，不再拒单；
+	// 都会 400 拒单）改派 cp-seedance-2.5，不再拒单；
 	// 关闭：恢复拒单行为（请求留在源链路吃 400）。
 	//
 	// ⚠️ 用三态指针且 **nil = 默认开启**：与其它规则的「默认不生效」相反。
@@ -866,9 +866,9 @@ func (p Policy) anyRuleReady() bool {
 			framesRuleReadyFor(p, source) ||
 			shortRuleConfiguredFor(p, source) ||
 			// 规则七（电商内容 → CapCut）：只配总开关就算配全 ——
-			// 目标模型有默认值（cp-seedance-2.5flash），不需要运营先配目标名。
+			// 目标模型有默认值（cp-seedance-2.5），不需要运营先配目标名。
 			ecommerceConfiguredFor(p, source) ||
-			// 规则六第三分支（CapCut 快速档）：与前两条分支独立 ——
+			// 规则六第三分支（CapCut 满血档）：与前两条分支独立 ——
 			// 只打开它而心笔/有赞都关着时，中间件不能被短路。
 			shortCapcutReadyFor(p, source) ||
 			// 有赞兜底不依赖 short_target_model（心笔目标）：两个按钮独立配置，
@@ -1004,7 +1004,7 @@ func IsAnyRouteEnabled() bool {
 			// 与上面几条同口径：只看公共字段会误判成「没有规则生效」，
 			// 把中间件整个跳过 —— 运营会看到「开关打开了但一点反应都没有」。
 			ecommerceReadyFor(current, source) ||
-			// 规则六第三分支（CapCut 快速档）：独立于前两条分支，
+			// 规则六第三分支（CapCut 满血档）：独立于前两条分支，
 			// 只打开它时必须单独判一次，否则中间件早退、按钮看起来没反应。
 			shortCapcutReadyFor(current, source) ||
 			// 有赞兜底与心笔开关相互独立：只打开有赞按钮时，

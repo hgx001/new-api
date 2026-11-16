@@ -1,10 +1,10 @@
 package controller
 
-// 规则七（电商/产品推荐内容 → CapCut 快速档）与规则六第三分支
-// （≤10 秒 → CapCut 快速档）的管理端接口。
+// 规则七（电商/产品推荐内容 → CapCut 满血档）与规则六第三分支
+// （≤10 秒 → CapCut 满血档）的管理端接口。
 //
 // 为什么单独一个文件：这两个功能是同一批需求（2026-11-14 老板要的
-// 「电商内容路由」+「短时长路由到 cp-seedance-2.0fast」），
+// 「电商内容路由」+「短时长路由到 cp-seedance-2.0」），
 // 与既有 controller/video_route_maintenance.go 里的规则一~五互不重叠，
 // 独立成文件能让「这条规则为什么这么写」的上下文集中在一处。
 
@@ -17,7 +17,7 @@ import (
 )
 
 // ══════════════════════════════════════════════════════════════════
-// 规则七：电商/产品推荐内容 → cp-seedance-2.5flash
+// 规则七：电商/产品推荐内容 → cp-seedance-2.5
 // ══════════════════════════════════════════════════════════════════
 
 // ecommerceSwitchRequest 是规则七总开关的请求体。
@@ -32,7 +32,7 @@ type ecommerceSwitchRequest struct {
 // SetEcommerceRouteAdmin 切换规则七的总开关（2026-11-14）。
 //
 //   - 开启：seedance2.5-特惠 / seedance2.5-活动 的请求，只要提示词命中
-//     电商/产品推荐关键词（或勾选的参数条件命中），就改派 cp-seedance-2.5flash；
+//     电商/产品推荐关键词（或勾选的参数条件命中），就改派 cp-seedance-2.5；
 //   - 关闭：规则七停用，这类请求留在源链路。
 //
 // 带参考视频的请求**永远不路由**（老板明确要求），与开关无关。
@@ -215,21 +215,21 @@ func setEcommerceKeywordsAdmin(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 规则六第三分支：≤10 秒 → cp-seedance-2.0fast（CapCut 快速档）
+// 规则六第三分支：≤10 秒 → cp-seedance-2.0（CapCut 满血档）
 // ══════════════════════════════════════════════════════════════════
 
 // shortCapcutSwitchRequest 是规则六第三分支开关的请求体。
 type shortCapcutSwitchRequest struct {
-	// Enabled true = ≤阈值的短请求改派 cp-seedance-2.0fast；false = 不走这条。
+	// Enabled true = ≤阈值的短请求改派 cp-seedance-2.0；false = 不走这条。
 	//
 	// 用指针收：不传（nil）必须报错 —— 少写一个字段会把这条分支静默关掉。
 	Enabled *bool `json:"enabled"`
 }
 
-// SetShortCapcutLinkAdmin 切换规则六第三分支（CapCut 快速档）开关。
+// SetShortCapcutLinkAdmin 切换规则六第三分支（CapCut 满血档）开关。
 //
 // ⚠️ **三条短时长分支同时只能有一条生效**：心笔内链 / 有赞标准版 /
-// CapCut 快速档。这三条是**同一个时长区间的三个出口** ——
+// CapCut 满血档。这三条是**同一个时长区间的三个出口** ——
 // 同时开着两三条时，同一个短请求会按优先级落到其中一条，
 // 但「落到哪一条」必须是**明确的经营意图**，而不是「谁写在配置里靠前」。
 //
@@ -318,7 +318,7 @@ func appendEcommerceRouteState(state gin.H) {
 	state["ecommerce_keywords"] = policy.EcommerceKeywords()
 	state["ecommerce_keywords_default"] = seedanceroute_setting.DefaultEcommerceKeywords
 
-	// 规则六第三分支：CapCut 快速档。
+	// 规则六第三分支：CapCut 满血档。
 	state["short_capcut_enabled"] = seedanceroute_setting.IsShortCapcutEnabled()
 	state["short_capcut_target_model"] = seedanceroute_setting.DefaultShortCapcutTargetModel
 

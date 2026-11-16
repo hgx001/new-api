@@ -1,6 +1,6 @@
 package controller
 
-// 规则八（全量兜底 → cp-seedance-2.5flash）的管理端接口。
+// 规则八（全量兜底 → cp-seedance-2.5）的管理端接口。
 //
 // 为什么单独一个文件：这条规则解决的问题与前七条**不是一类** ——
 // 前七条是「怎么调度更省 / 更适配」，这条是「源链路彻底不可用时的逃生口」。
@@ -19,13 +19,13 @@ import (
 )
 
 // ══════════════════════════════════════════════════════════════════
-// 规则八：全量兜底 → cp-seedance-2.5flash
+// 规则八：全量兜底 → cp-seedance-2.5
 // ══════════════════════════════════════════════════════════════════
 
 // totalFallbackSwitchRequest 是规则八开关的请求体。
 type totalFallbackSwitchRequest struct {
 	// Enabled true = seedance2.5-特惠 / seedance2.5-活动 的所有请求
-	// 无条件改派 cp-seedance-2.5flash；false = 规则八不参与调度。
+	// 无条件改派 cp-seedance-2.5；false = 规则八不参与调度。
 	//
 	// 用指针收：不传（nil）必须报错，不能默认成 false ——
 	// 少写一个字段就把应急开关静默关掉，而这种开关「关了」的表现是
@@ -36,7 +36,7 @@ type totalFallbackSwitchRequest struct {
 // SetTotalFallbackRouteAdmin 切换规则八（全量兜底）开关。
 //
 // 语义：打开后**不看任何请求条件**（时长/比例/提示词/首尾帧），
-// 这两个模型名收到的请求全部改派 cp-seedance-2.5flash。
+// 这两个模型名收到的请求全部改派 cp-seedance-2.5。
 //
 // ⚠️ 唯一例外是目标链路的**物理能力边界**（1080P / 2–3 秒 /
 // 带参考视频音频 / 自适应比例带参考图）—— 那几类改派过去必 400，

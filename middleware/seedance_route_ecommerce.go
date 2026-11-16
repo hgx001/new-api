@@ -1,11 +1,11 @@
 package middleware
 
-// 规则七：电商/产品推荐内容 → **有赞优先**，有赞接不住才 CapCut 快速档。
+// 规则七：电商/产品推荐内容 → **有赞优先**，有赞接不住才 CapCut 满血档。
 //
 // 2026-11-16 老板口径（覆盖 2026-11-14/15 的「电商一律 CapCut」）：
 // 命中电商内容后直接用常驻的有赞链路 —— 10–29 秒走标准版 wan3.0-video、
 // 30 秒由 adaptor 逐条映射到 prime（画质增强）；只有有赞物理接不住的
-// <10 秒与「带参考音视频」才改派 cp-seedance-2.5flash。
+// <10 秒与「带参考音视频」才改派 cp-seedance-2.5。
 // 判定入口是 ecommerceYouzanGap，改派出口是 prepareEcommerceRoute。
 //
 // 触发源是**提示词内容**（电商类 / 产品推荐），外加两个可选的参数入口
@@ -48,7 +48,7 @@ package middleware
 //	  CapCut 720p 是 480p 的 2 倍 credits，超分比这半个档位便宜。
 //	  超分链路没配时退回 720p 直接生成，绝不按 720P 价交付 480P。
 //
-//	· 时长：源链路 2–30 秒，CapCut 2.5 Flash **4–30 秒**、2.0 Fast **4–15 秒**。
+//	· 时长：源链路 2–30 秒，CapCut 2.5 系列 **4–30 秒**、2.0 Fast **4–15 秒**。
 //	  2–3 秒的请求改派过去必被上游拒 → 挡。
 //
 //	· 比例：源链路的 adaptive 档，CapCut 不认（它的候选是 16:9/9:16/1:1/
@@ -58,10 +58,10 @@ package middleware
 //
 //	· 参考图上限：源链路 ≤10 张，CapCut ≤30 张 → 源链路上限更严，不挡。
 //
-// ⚠️ 这份准入逻辑同时被**规则六第三分支**（≤10 秒 → cp-seedance-2.0fast）
-// 与**规则八**（全量兜底 → cp-seedance-2.5flash）复用 —— 三条规则的目标都在
+// ⚠️ 这份准入逻辑同时被**规则六第三分支**（≤10 秒 → cp-seedance-2.0）
+// 与**规则八**（全量兜底 → cp-seedance-2.5）复用 —— 三条规则的目标都在
 // 同一条 CapCut 链路（ch20），契约完全一致，只有「时长上界」与「触发条件」不同
-// （2.5 Flash 30 秒 / 2.0 Fast 15 秒；规则六/七有条件、规则八无条件）。
+// （2.5 系列 30 秒 / 2.0 Fast 15 秒；规则六/七有条件、规则八无条件）。
 // 同一套准入逻辑写三遍 = 迟早漂，所以抽成 prepareCapcutRoute。
 
 import (
@@ -93,7 +93,7 @@ const capcutMaxDuration25 = 30
 // capcutMaxDurationFast 是 CapCut 2.0 系列的时长上界（秒）。
 //
 // 与 relay/channel/task/manwu 的 capcutMaxDuration 同值（15 秒）。
-// 规则六第三分支的目标（cp-seedance-2.0fast）走这个上界。
+// 规则六第三分支的目标（cp-seedance-2.0）走这个上界。
 const capcutMaxDurationFast = 15
 
 // capcutMaxReferenceImages 是 CapCut 的参考图张数上限。
@@ -131,7 +131,7 @@ var capcutAllowedRatios = map[string]bool{
 // 但显式写出来更可控（不会因为上游哪天改了缺省就跟着漂）。
 const capcutDefaultRatio = "16:9"
 
-// prepareEcommerceRoute 组装「规则七（电商内容 → CapCut 快速档）」的改派请求体。
+// prepareEcommerceRoute 组装「规则七（电商内容 → CapCut 满血档）」的改派请求体。
 //
 // ⚠️ 2026-11-16 起规则七的**默认动作是留在有赞**，只有 ecommerceYouzanGap 判定
 // 有赞接不住（<10 秒 / 带参考音视频）时才会走到这里。所以本函数现在只负责
@@ -186,14 +186,14 @@ func requestHasReferenceAudioVideo(body map[string]interface{}) bool {
 	return len(collectRouteReferenceVideos(body)) > 0 || len(collectRouteReferenceAudios(body)) > 0
 }
 
-// prepareShortCapcutRoute 组装「规则六第三分支（≤10 秒 → CapCut 快速档）」的改派请求体。
+// prepareShortCapcutRoute 组装「规则六第三分支（≤10 秒 → CapCut 满血档）」的改派请求体。
 //
-// 与规则七共用准入逻辑，唯一差别是时长上界（2.0 Fast 只有 15 秒）。
+// 与规则七共用准入逻辑，唯一差别是时长上界（2.0 系列只有 15 秒）。
 func prepareShortCapcutRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
 	return prepareCapcutRoute(c, body, targetModel, seconds, capcutMaxDurationFast, "短时长CapCut分支")
 }
 
-// prepareTotalFallbackRoute 组装「规则八（全量兜底 → CapCut 2.5 Flash）」的改派请求体。
+// prepareTotalFallbackRoute 组装「规则八（全量兜底 → CapCut 2.5）」的改派请求体。
 //
 // 与规则七共用 prepareCapcutRoute 的**全部**准入与改写：目标链路是同一条，
 // 它的契约限制不会因为「这次是应急改派」就消失。
@@ -208,8 +208,8 @@ func prepareTotalFallbackRoute(c *gin.Context, body map[string]interface{}, targ
 // prepareRefAVRoute 组装「规则九（音视频参考改派）」的改派请求体。
 //
 // 与规则七/八共用同一份 CapCut 准入与改写（prepareCapcutRoute），
-// 目标固定 cp-seedance-2.5flash（理由见 DefaultRefAVTargetModel），
-// 时长上界与规则八同为 2.5 Flash 的 30 秒。
+// 目标固定 cp-seedance-2.5（理由见 DefaultRefAVTargetModel），
+// 时长上界与规则八同为 2.5 系列的 30 秒。
 func prepareRefAVRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
 	return prepareCapcutRoute(c, body, targetModel, seconds, capcutMaxDuration25, "音视频参考改派规则九")
 }
@@ -656,7 +656,7 @@ const (
 // 2026-11-15 老板口径：促销族（seedance2.5-特惠 / seedance2.5-活动）改派 CapCut 时
 // **统一按 480p 生成、交付前超分到 720P**，不再直接买 720p 档。
 //
-// 理由纯成本：CapCut 2.5 Flash 的 720p 是 480p 的 **2 倍 credits**
+// 理由纯成本：CapCut 2.5 系列的 720p 是 480p 的 **2 倍 credits**
 // （30 秒：720p=510 / 480p=240，见 App 侧 capcutCreditsPerSecond），
 // 而 MPS 超分的单价远低于半个档位的差价。交付档位不变 —— 客户买的是源链路
 // 的 720P，超分后交付的仍是 720P（超分在 relay/channel/task/manwu 的

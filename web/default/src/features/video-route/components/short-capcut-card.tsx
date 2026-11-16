@@ -35,19 +35,19 @@ type ShortCapcutCardProps = {
    * 当前渠道绑定的模型（逗号分隔）。
    *
    * 与心笔卡 / 有赞卡同口径：只在承载 CapCut 目标模型
-   * （cp-seedance-2.0fast）的渠道抽屉里渲染 —— 别的渠道里显示这个
+   * （cp-seedance-2.0）的渠道抽屉里渲染 —— 别的渠道里显示这个
    * 开关会让人以为按了会停掉整条渠道。
    */
   channelModels: string
 }
 
 /**
- * 「CapCut 快速档」开关 —— 规则六的第三条短时长分支。
+ * 「CapCut 满血档」开关 —— 规则六的第三条短时长分支。
  *
  * 规则六把 ≤阈值（默认 10 秒）的短请求改派出去，三个可选出口：
  *   1. 心笔内链（wan3.0-720p-特惠-内链）—— 480P 生成 + 超分 720P；
  *   2. 有赞标准版（wan3.0-video）—— 绕开 prime 的 <10 秒保护；
- *   3. CapCut 快速档（cp-seedance-2.0fast）—— 本卡片。
+ *   3. CapCut 满血档（cp-seedance-2.0）—— 本卡片。
  *
  * ⚠️ **三条同时只能有一条生效**：它们是同一个时长区间的三个出口。
  * 同时开着时，「落到哪一条」必须是**明确的经营意图**，而不是
@@ -97,8 +97,8 @@ export function ShortCapcutCard({ channelModels }: ShortCapcutCardProps) {
         toast.success(
           t(
             nextOn
-              ? 'CapCut fast lane is on'
-              : 'CapCut fast lane is off'
+              ? 'CapCut full-quality tier is on'
+              : 'CapCut full-quality tier is off'
           )
         )
       } catch (error) {
@@ -150,7 +150,7 @@ export function ShortCapcutCard({ channelModels }: ShortCapcutCardProps) {
           </span>
           <div className='min-w-0'>
             <h4 className='text-foreground text-sm font-semibold'>
-              {t('CapCut fast lane (short requests)')}
+              {t('CapCut full-quality tier (short requests)')}
             </h4>
             <p className='text-muted-foreground mt-0.5 text-xs leading-relaxed'>
               {detail}
@@ -162,14 +162,14 @@ export function ShortCapcutCard({ channelModels }: ShortCapcutCardProps) {
           <span
             className={cn('text-xs font-semibold whitespace-nowrap', toneText)}
           >
-            {t(on ? 'CapCut fast lane is on' : 'CapCut fast lane is off')}
+            {t(on ? 'CapCut full-quality tier is on' : 'CapCut full-quality tier is off')}
           </span>
           <Switch
             checked={on}
             disabled={busy}
             onCheckedChange={handleToggle}
             className='h-6! w-11! data-checked:bg-amber-600! data-[size=default]:h-6! data-[size=default]:w-11!'
-            aria-label={t('CapCut fast lane (short requests)')}
+            aria-label={t('CapCut full-quality tier (short requests)')}
           />
           {busy ? (
             <Loader2 className='text-muted-foreground h-3.5 w-3.5 animate-spin' />

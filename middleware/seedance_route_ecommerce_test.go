@@ -13,7 +13,7 @@ import (
 // 老板口径（2026-11-16，覆盖 11-14/15 的「一律 CapCut」）：
 //   - seedance2.5-特惠 / seedance2.5-活动 识别到电商类/产品推荐提示词 →
 //     **留在常驻有赞链路**（10–29 秒标准版；30 秒由 adaptor 逐条映射 prime）；
-//   - 只有有赞物理接不住的请求才改派 cp-seedance-2.5flash：
+//   - 只有有赞物理接不住的请求才改派 cp-seedance-2.5：
 //     时长 <10 秒（标准版下界，prime 又只接 30 秒）或带参考视频/音频
 //     （2026-11-15 上游切换后标准版与 prime 都只收 reference_image）；
 //   - 9:16 与「时长大于 N 秒」是**并列的触发入口**，命中后同样走「有赞优先」；
@@ -23,7 +23,7 @@ import (
 // 规则六（≤10 秒 → cp-seedance-2.0）也有一组独立用例（见 TestShortCapcut* 系列）。
 
 const (
-	testEcommerceTarget   = "cp-seedance-2.5flash"
+	testEcommerceTarget   = "cp-seedance-2.5"
 	// 2026-11-15 老板口径：<10 秒改派 CapCut **满血档** cp-seedance-2.0
 	// （不是快速档 2.0fast）。与 setting 层的 DefaultShortCapcutTargetModel 同源。
 	testShortCapcutTarget = "cp-seedance-2.0"

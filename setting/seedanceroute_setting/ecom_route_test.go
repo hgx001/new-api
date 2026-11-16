@@ -11,7 +11,7 @@ import (
 //
 // 老板口径：
 //   - seedance2.5-特惠 / seedance2.5-活动 识别到电商类或产品推荐提示词 → 改派
-//     cp-seedance-2.5flash；
+//     cp-seedance-2.5；
 //   - 带参考视频的请求不路由（中间件层的事，这里不涉及）；
 //   - 9:16 也路由过去（独立勾选）；
 //   - 还可勾选「时长大于 N 秒」作为额外触发入口。
@@ -147,12 +147,12 @@ func TestEcommerceTargetModelPrecedence(t *testing.T) {
 	assert.Equal(t, "专属目标", policy.EcommerceTargetModelFor("seedance2.5-活动"))
 }
 
-// 没配目标模型时用默认值 cp-seedance-2.5flash。
+// 没配目标模型时用默认值 cp-seedance-2.5。
 func TestEcommerceTargetModelDefaults(t *testing.T) {
 	applyPolicy(t, ecommercePolicy())
 
 	assert.Equal(t, DefaultEcommerceTargetModel, Get().EcommerceTargetModelFor("seedance2.5-特惠"))
-	assert.Equal(t, "cp-seedance-2.5flash", DefaultEcommerceTargetModel)
+	assert.Equal(t, "cp-seedance-2.5", DefaultEcommerceTargetModel)
 }
 
 // 时长阈值：0 = 没配 = 用默认 20 秒。

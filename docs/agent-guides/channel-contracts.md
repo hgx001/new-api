@@ -73,7 +73,7 @@
 
 - 有赞上游 2026-11-15 切换后，标准版 wan3.0-video 的 media 仅接受 reference_image（上游文档原话）；促销族（seedance2.5-特惠/活动）落标准版执行，同样受限。**prime 直连不受此限**（有赞 prime 路由仍收音视频）。首尾帧更早（2026-10-28）已取消。
 - youzanwan3 adaptor 对 prime 外的所有模型主动拦参考视频/音频，报错文案明确指向「去掉素材或改用支持的模型」——这是设计内拒单，不是缺陷。
-- 2026-11-16 起规则九把这类请求改派 cp-seedance-2.5flash（CapCut 链路 2026-11-15 起音视频可透传）：触发面 = 促销族源模型 + wan3.0-video 直连；准入与改写复用 prepareCapcutRoute（1080P / 2–3 秒 / 首尾帧 / data URI 素材仍留源链路吃 400，原因准确）；三态开关 ref_av_capcut_enabled 默认开、不受规则总开关连坐（IsAnyRouteEnabled 单独判定）。
+- 2026-11-16 起规则九把这类请求改派 cp-seedance-2.5（CapCut 链路 2026-11-15 起音视频可透传；促销族三个 CapCut 出口统一 2.5 满血档，豆包 seedance-2-5 的备胎仍是 2.5flash）：触发面 = 促销族源模型 + wan3.0-video 直连；准入与改写复用 prepareCapcutRoute（1080P / 2–3 秒 / 首尾帧 / data URI 素材仍留源链路吃 400，原因准确）；三态开关 ref_av_capcut_enabled 默认开、不受规则总开关连坐（IsAnyRouteEnabled 单独判定）。
 
 ## wan3.0-720p-特惠 按能力分流到心笔（2026-11-06，⚠️ 2026-11-16 已下线）
 

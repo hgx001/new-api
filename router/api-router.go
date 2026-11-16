@@ -137,19 +137,19 @@ func SetApiRouter(router *gin.Engine) {
 			// 与心笔开关并列时心笔优先，两个都关闭走原链路。
 			videoRouteAdmin.POST("/policy/short-youzan-link", controller.SetShortYouzanLinkAdmin)
 
-			// 规则六的第三条分支「CapCut 快速档」开关（2026-11-14）：
-			// 打开后短请求改派 cp-seedance-2.0fast。
+			// 规则六的第三条分支「CapCut 满血档」开关（2026-11-14）：
+			// 打开后短请求改派 cp-seedance-2.0。
 			// ⚠️ 三条分支同时只能有一条生效 —— 打开本条时自动关掉心笔与有赞。
 			videoRouteAdmin.POST("/policy/short-capcut-link", controller.SetShortCapcutLinkAdmin)
 
-			// 规则七（电商/产品推荐内容 → cp-seedance-2.5flash，2026-11-14）：
+			// 规则七（电商/产品推荐内容 → 有赞优先，接不住才 cp-seedance-2.5）：
 			// 总开关 + 参数条件勾选（9:16 / 时长阈值）+ 关键词表。
-			// 带参考视频的请求一律不路由（老板明确要求），与开关无关。
+			// 命中后默认留在有赞链路；只有 <10 秒或带参考音视频才改派 CapCut。
 			videoRouteAdmin.POST("/policy/ecommerce", controller.SetEcommerceRouteAdmin)
 			videoRouteAdmin.POST("/policy/ecommerce/conditions", controller.SetEcommerceConditionsAdmin)
 			videoRouteAdmin.POST("/policy/ecommerce/keywords", controller.SetEcommerceKeywordsAdmin)
 
-			// 规则八（全量兜底 → cp-seedance-2.5flash，2026-11-15）：
+			// 规则八（全量兜底 → cp-seedance-2.5，2026-11-15）：
 			// 一个开关 = 「有赞这条源链路彻底不能用了，全量改派 CapCut」。
 			// 打开后不看时长/比例/内容/首尾帧，只受目标链路的物理能力约束
 			// （1080P / 2–3 秒 / 参考视频音频 仍留原链路）。

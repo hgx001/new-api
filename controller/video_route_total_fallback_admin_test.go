@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 规则八（全量兜底 → cp-seedance-2.5flash）的管理端测试（2026-11-15）。
+// 规则八（全量兜底 → cp-seedance-2.5）的管理端测试（2026-11-15）。
 //
 // 重点锁三件事：
 //  1. 状态字段完整（前端要按这两个字段渲染开关与目标模型）；
@@ -28,7 +28,7 @@ func TestDoubaoRouteAdminStateReportsTotalFallbackFields(t *testing.T) {
 	state := doubaoRouteAdminState()
 
 	assert.Equal(t, true, state["total_fallback_enabled"])
-	assert.Equal(t, "cp-seedance-2.5flash", state["total_fallback_target_model"])
+	assert.Equal(t, "cp-seedance-2.5", state["total_fallback_target_model"])
 }
 
 // 旧生产 option 的形状（没有该字段）：默认关闭，升级当天行为不变。
@@ -38,7 +38,7 @@ func TestDoubaoRouteAdminStateTotalFallbackDefaultsOff(t *testing.T) {
 	state := doubaoRouteAdminState()
 
 	assert.Equal(t, false, state["total_fallback_enabled"])
-	assert.Equal(t, "cp-seedance-2.5flash", state["total_fallback_target_model"])
+	assert.Equal(t, "cp-seedance-2.5", state["total_fallback_target_model"])
 }
 
 func TestSetTotalFallbackRouteAdminRejectsMissingEnabled(t *testing.T) {

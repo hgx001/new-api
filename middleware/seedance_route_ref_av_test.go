@@ -7,7 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 )
 
-// 规则九（音视频参考改派 → cp-seedance-2.5flash）的中间件测试。
+// 规则九（音视频参考改派 → cp-seedance-2.5）的中间件测试。
 //
 // 背景（2026-11-16 老板需求）：有赞上游 2026-11-15 切换后标准版 wan3.0-video
 // 的 media 仅收 reference_image，带参考视频/音频的请求打到促销族与 wan3.0-video
@@ -19,7 +19,7 @@ import (
 //   - wan3.0-video 直连（不在源清单里，但同被该闸拦截）。
 //   prime 直连不在此列 —— 有赞 prime 路由仍收音视频，adaptor 的闸对它豁免。
 
-const testRefAVTarget = "cp-seedance-2.5flash"
+const testRefAVTarget = "cp-seedance-2.5"
 
 // enableRefAVRoute 配置一个只开规则九所需最小项的策略，测试结束恢复。
 //

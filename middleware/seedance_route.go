@@ -99,21 +99,21 @@ func RouteOriginModel(c *gin.Context) string {
 // 规则，**顺序即优先级**：
 //
 //	规则五（故障转移）：seedance-2-5 源链路不可用 → 备胎（最优先，独立字段判定）
-//	规则八（全量兜底）：源模型收到的**所有**请求 → cp-seedance-2.5flash
+//	规则八（全量兜底）：源模型收到的**所有**请求 → cp-seedance-2.5
 //	                    （2026-11-15 起；有赞链路彻底不可用时的逃生口，无触发条件）
 //	规则七（电商内容）：源模型 + 提示词命中电商/产品推荐关键词（或勾选的比例/时长条件命中）
 //	                    → **留在常驻有赞链路**（2026-11-16 口径；30 秒由 adaptor 逐条映射 prime）
-//	                    只有有赞接不住时才改派 CapCut 快速档 cp-seedance-2.5flash：
+//	                    只有有赞接不住时才改派 CapCut 满血档 cp-seedance-2.5：
 //	                    时长 <10 秒（标准版下界）或带参考音视频（两个上游都只收参考图）
 //	规则三（首尾帧）：  源模型 + media 含 first_frame/last_frame → frames_target_model
 //	规则九（音视频）：  源模型（及 wan3.0-video 直连）+ 带参考视频/音频
-//	                    → cp-seedance-2.5flash（2026-11-16 起；有赞 11-15 切换后
+//	                    → cp-seedance-2.5（2026-11-16 起；有赞 11-15 切换后
 //	                    标准版仅收参考图，这类请求留在源链路就是 400 拒单）；
 //	                    排在规则三之后（首尾帧+音视频宁可 400 也不伪装参考图）、
 //	                    规则六/一/二之前（那三条的准入会因音视频跳过）
 //	规则六（短时长）：  源模型 + 时长 ≤ 阈值（默认 10 秒）→ 心笔内链；
 //	                    心笔接不住且 short_youzan_enabled 打开 → 有赞标准版 wan3.0-video；
-//	                    再接不住且 short_capcut_enabled 打开 → CapCut 快速档 cp-seedance-2.0fast
+//	                    再接不住且 short_capcut_enabled 打开 → CapCut 满血档 cp-seedance-2.0
 //	规则一（时长）：    源模型 + 时长 > 阈值（生产 20 秒）→ target_model（seedance-2-5 按次）
 //	规则二（比例）：    源模型 + 命中 trigger_ratio → ratio_target_model
 //	                    生产配 9:16 → wan3.0-720p-特惠-内链（心笔 480P 链路，ch25）
@@ -300,7 +300,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// （渠道被关 / 账号封 / 上游大面积失败），前七条规则全部失效 ——
 		// 它们都建立在「源链路至少能跑一部分请求」这个前提上。
 		// 这条是唯一的逃生口：打开开关后，请求**无条件**改派
-		// cp-seedance-2.5flash，不看时长/比例/提示词内容/首尾帧。
+		// cp-seedance-2.5，不看时长/比例/提示词内容/首尾帧。
 		//
 		// 为什么排在规则七之前：规则八开着时「全量都走同一条链路」，
 		// 规则七再判一次关键词/比例/时长纯属白算；更糟的是日志里会出现
@@ -488,7 +488,7 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 的 <10 秒保护（PRIME_DURATION_TOO_SHORT）。
 		//
 		// 2026-11-14 再加第三条分支（short_capcut_enabled）：短请求改派
-		// cp-seedance-2.0fast（CapCut 快速档）。
+		// cp-seedance-2.0（CapCut 满血档）。
 		//
 		// ⚠️ **三条分支同时只能有一条生效**：心笔 > 有赞 > CapCut。
 		// 写入口（controller）保证互斥（开一个自动关另两个），
@@ -1163,7 +1163,7 @@ func prepareShortYouzanRoute(c *gin.Context, body map[string]interface{}, target
 	}
 
 	// 2026-11-15 上游切换：标准版仅收 reference_image，带参考视频/音频的
-	// 请求落到它必 400 —— 跳过，让 CapCut 快速档（收 http 直链音视频）或
+	// 请求落到它必 400 —— 跳过，让 CapCut 满血档（收 http 直链音视频）或
 	// 源链路 fail-loud 接手。
 	if hasRefAudioVideoMedia(body) {
 		logger.LogInfo(c, "条件路由跳过短时长有赞兜底：请求带参考视频/音频（标准版已不收）")
@@ -1319,7 +1319,7 @@ func hasFrameMedia(body map[string]interface{}) bool {
 //
 // 2026-11-15 上游切换后标准版 wan3.0-video 的 media 仅接受 reference_image
 //（上游文档原话），参考视频/音频落在它身上必 400。规则六的标准版兜底
-// 分支必须跳过这类请求 —— CapCut 快速档还收 http(s) 直链的音视频，
+// 分支必须跳过这类请求 —— CapCut 满血档还收 http(s) 直链的音视频，
 // 跳过才能让它们落到能接的链路；全都不接时留在源链路 fail-loud。
 func hasRefAudioVideoMedia(body map[string]interface{}) bool {
 	for _, item := range collectMediaItems(body) {

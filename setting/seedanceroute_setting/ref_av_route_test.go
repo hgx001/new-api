@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// 规则九（音视频参考改派 → cp-seedance-2.5flash）的设置层测试。
+// 规则九（音视频参考改派 → cp-seedance-2.5）的设置层测试。
 //
 // 契约要点见 ref_av_route.go 包头注释。与其它规则最大的差别是
 // **三态默认开启**（nil = enabled）：其它规则是成本优化（默认关、升级当天

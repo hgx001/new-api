@@ -1,4 +1,4 @@
-// Package seedanceroute_setting 的「规则九：音视频参考改派 → cp-seedance-2.5flash」。
+// Package seedanceroute_setting 的「规则九：音视频参考改派 → cp-seedance-2.5」。
 //
 // 背景（2026-11-16 老板需求）：
 //
@@ -8,7 +8,7 @@
 //	而 CapCut 链路 2026-11-15 起参考音视频均可透传（prepareCapcutRoute ①，
 //	音视频下发 Worker 上传素材槽）。
 //
-//	所以带音视频参考的请求不再拒单，改派 CapCut 快速档 —— 客户的诉求
+//	所以带音视频参考的请求不再拒单，改派 CapCut 满血档 —— 客户的诉求
 //	（多模态参考出片）在另一条链路上仍然被满足，且 fail-loud 变成
 //	fail-over：拒单退款 → 正常交付。
 //
@@ -22,7 +22,7 @@
 // ── 与规则七/八的关系 ──
 //
 //	目标模型、准入与改写与规则七/八完全同源（prepareCapcutRoute，
-//	固定 cp-seedance-2.5flash，理由与 DefaultTotalFallbackTargetModel 相同：
+//	固定 cp-seedance-2.5，理由与 DefaultTotalFallbackTargetModel 相同：
 //	该准入只适配了这一条契约，开放成可配置 = 配错即静默挂）。
 //	区别只在触发条件：
 //
@@ -35,12 +35,17 @@
 //	接不住首尾帧语义，宁可留在源链路吃 400（原因准确），也不伪装成参考图。
 package seedanceroute_setting
 
-// DefaultRefAVTargetModel 是规则九的目标模型（CapCut Seedance 2.5 Flash 档）。
+// DefaultRefAVTargetModel 是规则九的目标模型（CapCut Seedance 2.5 满血档）。
+//
+// 2026-11-16 晚口径（老板）：「特惠 / 活动这两个模型路由到 CapCut 时用
+// cp-seedance-2.5，保证质量、做口碑」。规则九的触发面正是这两个促销族
+// 源模型（外加 wan3.0-video 直连），所以它跟着规则七/八一起换。
+// 豆包的备胎（DefaultFailoverAltModel）**不跟着换**，那边仍是 2.5 Flash。
 //
 // 固定成常量、不给 Policy 字段的理由与 DefaultTotalFallbackTargetModel 一致：
 // prepareCapcutRoute 只适配了这一条契约（480p/720p、4–30 秒、CapCut 比例表、
 // 参考视频/音频各 ≤5 个）。要换目标时改这一行（并补对应准入），不要加配置项。
-const DefaultRefAVTargetModel = "cp-seedance-2.5flash"
+const DefaultRefAVTargetModel = "cp-seedance-2.5"
 
 // refAVCapcutEnabled 是三态开关的纯判定（供 IsAnyRouteEnabled 复用，
 // 后者持锁调用，不能再走带锁的 IsRefAVRouteEnabled）。
