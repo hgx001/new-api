@@ -1,6 +1,8 @@
 package youzanwan3
 
 import (
+	"time"
+
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -150,6 +152,18 @@ const (
 	// 所以「特惠 30 秒走 prime」是**逐秒判断**而不是模型级映射：
 	// 只有恰好 30 秒才落 prime，其余秒数仍走标准版 wan3.0-video。
 	tehuiPrimeSeconds = 30
+
+	// failureRecheckDelay 是上游报 failed 后、我方退款前的**复核窗口**。
+	//
+	// 2026-11-16 生产实锤：上游余额耗尽时把任务标成 failed 并非真终态 ——
+	// 充值后会把**同一个任务**复活继续执行并计费（当时 HTTP 402 挂起的请求
+	// 在充值后被执行计费）。轮询层若立即退款，就会形成「上游扣了成本、
+	// 我方没收客户钱」的纯亏损。
+	//
+	// 10 分钟的取值：上游充值后复活任务在几分钟内开始跑；轮询间隔约 60 秒，
+	// 窗口内会问上游约 10 次，足以观察到复活；再长会明显拖慢客户退款时效。
+	// 详见 service.TaskFailureRechecker 的语义约定。
+	failureRecheckDelay = 10 * time.Minute
 
 	// 上游 media 上限（2026-10-28 口径）：图片 10 + 视频 5 + 音频 5，
 	// 三类合计不得超过 20 项。两个模型同一口径（旧版 prime 的 8 张限制已取消）。

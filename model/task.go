@@ -103,6 +103,14 @@ type TaskPrivateData struct {
 	Key            string `json:"key,omitempty"`
 	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
 	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
+	// FirstFailedAt 是上游首次报 failed 的 Unix 时间戳（秒），0 表示从未失败过。
+	//
+	// 供轮询层的「上游失败复核」使用（service.TaskFailureRechecker）：部分上游
+	// （有赞 2026-11-16 实证）余额耗尽时把任务标成 failed 并非真终态，充值后
+	// 会复活继续执行并计费。轮询层把首次失败时间记在这里，窗口内不退款、
+	// 继续轮询；窗口过后仍是 failed 才收敛失败退款。窗口判定必须以**落库**
+	// 的值为准（Snapshot 不含 PrivateData，挂起分支自己负责持久化）。
+	FirstFailedAt int64 `json:"first_failed_at,omitempty"`
 	// ResultText 文本类交付物（如即梦视频反解的提示词）。JSON 列，无需 DB 迁移。
 	ResultText string `json:"result_text,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）

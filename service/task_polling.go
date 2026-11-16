@@ -74,6 +74,25 @@ func postProcessorFor(adaptor TaskPollingAdaptor) TaskPostProcessor {
 	return nil
 }
 
+// TaskFailureRechecker 是**可选**的上游失败复核接口（2026-11-16）。
+//
+// 背景（有赞实锤）：上游「积分不足」类故障**不是真终态** —— 余额耗尽时上游
+// 把任务标成 failed，充值后却又把同一个任务复活继续执行并计费（2026-11-16
+// 生产实测：HTTP 402 被拒的请求在上游充值后被执行计费）。我方轮询一旦立即
+// 退款，就会形成「上游扣了成本、我方没收客户钱」的纯亏损。
+//
+// 语义：实现该接口的渠道，上游首次报 failed 后**不立即终态化**，挂起
+// FailureRecheckDelay 的复核窗口；窗口内上游复活 → 正常走成功交付与结算；
+// 窗口过后上游仍是 failed → 才收敛失败并退款。窗口期间客户看到的是
+// 「处理中」，退款最多延迟一个窗口时长。
+//
+// 与 TaskPostProcessor 一样用类型断言探测：实现了就生效，
+// 其余 adaptor **零改动**、维持「failed 即退款」的原语义。
+type TaskFailureRechecker interface {
+	// FailureRecheckDelay 返回上游失败后的复核窗口时长；0 表示不复核。
+	FailureRecheckDelay() time.Duration
+}
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -724,6 +743,59 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	// postProcessPending 表示「第一跳成功但成片还在后处理中」。
 	// 置 true 时不能置 SUCCESS、不结算，任务保持处理中。
 	postProcessPending := false
+
+	// ── 上游失败复核闸（2026-11-16，详见 TaskFailureRechecker）─────────────
+	//
+	// 有赞实证：余额耗尽时上游把任务标成 failed 并非真终态，充值后会把**同一个
+	// 任务**复活继续执行并计费。若这里立即退款 → 上游扣成本、我方没收客户钱
+	// → 纯亏损。所以对实现 TaskFailureRechecker 的渠道：首次 failed 先落
+	// FirstFailedAt 并挂起；窗口内复活 → 走正常成功结算；窗口过后仍是
+	// failed → 才落到下面 switch 的失败分支收敛退款。
+	//
+	// ⚠️ 挂起分支必须**自己持久化** FirstFailedAt 后再 return：Snapshot 不含
+	// PrivateData，走主流程的「无变化跳过更新」会把时间戳丢掉，导致下一轮
+	// 又被当成首次失败、任务永远出不了复核窗口。
+	if taskResult.Status == model.TaskStatusFailure {
+		if rechecker, ok := adaptor.(TaskFailureRechecker); ok {
+			if delay := rechecker.FailureRecheckDelay(); delay > 0 {
+				firstFailedAt := task.PrivateData.FirstFailedAt
+				switch {
+				case firstFailedAt == 0:
+					// 首次失败：记录时间戳并挂起。持久化失败则退回立即失败的
+					// 原语义 —— 时间戳落不了库就意味着窗口状态不可靠，宁可
+					// 保守退款也不能让任务无限挂起。
+					task.PrivateData.FirstFailedAt = now
+					if _, err := task.UpdateWithStatus(task.Status); err != nil {
+						logger.LogWarn(ctx, fmt.Sprintf(
+							"Task %s persist first_failed_at failed (%s), fail immediately instead of holding",
+							taskId, err.Error()))
+					} else {
+						logger.LogInfo(ctx, fmt.Sprintf(
+							"Task %s upstream reported failed, holding for recheck window %s before refunding",
+							taskId, delay))
+						model.AddTaskLog(task.TaskID, task.GetUpstreamTaskID(), model.TaskLogStagePoll,
+							model.TaskLogLevelWarn, "upstream failed, inside failure recheck window", map[string]any{
+								"reason":         taskResult.Reason,
+								"recheck_window": delay.String(),
+							})
+						return nil
+					}
+				case now-firstFailedAt < int64(delay.Seconds()):
+					// 复核窗口内：继续等上游（每轮轮询都会重新问一次，
+					// 复活即走成功分支）。状态无变化，无需写库。
+					logger.LogDebug(ctx, fmt.Sprintf(
+						"Task %s still inside failure recheck window (%s/%s), keep in progress",
+						taskId, time.Duration(now-firstFailedAt)*time.Second, delay))
+					return nil
+				default:
+					// 窗口已过仍是 failed：按真终态处理，落到下面的失败分支。
+					logger.LogInfo(ctx, fmt.Sprintf(
+						"Task %s upstream still failed after recheck window %s, settling as failure",
+						taskId, delay))
+				}
+			}
+		}
+	}
 
 	task.Status = model.TaskStatus(taskResult.Status)
 	switch taskResult.Status {

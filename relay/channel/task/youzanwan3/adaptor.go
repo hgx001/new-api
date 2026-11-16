@@ -3,6 +3,7 @@ package youzanwan3
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
@@ -19,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -1316,6 +1318,15 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		// 先把上游的真实错误透出去：失败响应里没有 task id，
 		// 直接报「空 task id」会掩盖真实原因（入参非法 / 积分不足 / 上游故障）。
 		if upstreamMsg := parsed.Error.text(); upstreamMsg != "" {
+			// 上游账户余额耗尽 ≠ 普通失败：实测（2026-11-16）上游此时会把请求
+			// **挂起**而非丢弃，充值后复活执行并计费。我方不建单、不收费，
+			// 上游每复活一笔就是一笔纯亏 —— 必须尽快充值或临时停用渠道止损。
+			if service.IsUpstreamAccountBalanceError(resp.StatusCode, upstreamMsg) {
+				logger.LogWarn(c, fmt.Sprintf(
+					"[SYS] youzan wan3 上游账户余额不足（%s），请求已被上游挂起：充值后上游会复活执行并计费。"+
+						"请立即给上游充值，或临时停用该渠道止损，期间该渠道新请求会持续产生挂起负债",
+					upstreamMsg))
+			}
 			return "", nil, service.TaskErrorWrapper(
 				errors.New("youzan wan3 rejected the request: "+upstreamMsg),
 				"upstream_error",
@@ -1437,6 +1448,16 @@ func firstNonEmpty(values ...string) string {
 
 func (a *TaskAdaptor) GetModelList() []string { return ModelList }
 func (a *TaskAdaptor) GetChannelName() string { return ChannelName }
+
+// 编译期断言：本渠道参与轮询层的「上游失败复核」（service.TaskFailureRechecker）。
+var _ service.TaskFailureRechecker = (*TaskAdaptor)(nil)
+
+// FailureRecheckDelay 实现可选接口 service.TaskFailureRechecker。
+//
+// 上游余额耗尽时把任务标成 failed 并非真终态：充值后会把**同一个任务**复活
+// 继续执行并计费（2026-11-16 生产实锤，见 failureRecheckDelay 注释）。轮询层
+// 依据本窗口延迟退款：窗口内复活 → 正常交付结算；窗口过后仍是 failed 才退款。
+func (a *TaskAdaptor) FailureRecheckDelay() time.Duration { return failureRecheckDelay }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	result := &dto.OpenAIVideo{
