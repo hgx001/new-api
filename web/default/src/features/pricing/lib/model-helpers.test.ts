@@ -236,11 +236,12 @@ describe('AutoDL H3 resolution tier note', () => {
   })
 
   // 有赞/官网 wan3 系模型都接受 resolution 参数，示例值按模型给：
-  // video/官网 默认 480P，r2v 只能 720p/1080p（上游要小写），
-  // prime 只有 720P/1080P，默认取最低档 720P。
+  // 有赞标准版 2026-11-15 上游切换后仅 720P/1080P（480P 下架），示例取 720P；
+  // 官网（DashScope）不受影响，默认 480P。r2v 只能 720p/1080p（上游要小写），
+  // prime 2026-11-15 起仅 720P。
   test('returns the wan3 sample resolution per model', () => {
-    assert.equal(getWan3SampleResolution('wan3.0-smart'), '480P')
-    assert.equal(getWan3SampleResolution('wan3.0-video'), '480P')
+    assert.equal(getWan3SampleResolution('wan3.0-smart'), '720P')
+    assert.equal(getWan3SampleResolution('wan3.0-video'), '720P')
     assert.equal(getWan3SampleResolution('wan3.0-video-官网'), '480P')
     assert.equal(getWan3SampleResolution('wan2.7-r2v'), '720p')
     assert.equal(getWan3SampleResolution('wan3.0-video-prime'), '720P')

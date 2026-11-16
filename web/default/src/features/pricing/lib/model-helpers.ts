@@ -59,10 +59,13 @@ export function isTokenBasedModel(model: PricingModel): boolean {
  * Sample `resolution` value for wan3-family video models, or null when the
  * model takes no resolution parameter (callers then skip the field).
  *
- * - `wan3.0-video` / `wan3.0-smart` / `wan3.0-video-官网`: 480P is the default,
+ * - `wan3.0-video` / `wan3.0-smart`（有赞标准版）: 2026-11-15 上游切换后仅
+ *   720P / 1080P（480P 下架，后端对显式 480P 静默回落 720P），示例取最低档 720P。
+ * - `wan3.0-video-官网`（DashScope 通道，不走有赞）: 480P is the default,
  *   720P and 1080P are also accepted.
  * - `wan2.7-r2v`: only 720p/1080p, and the upstream expects lowercase.
- * - `wan3.0-video-prime`: only 720P/1080P, 720P is the default (and cheapest).
+ * - `wan3.0-video-prime`（有赞）: 2026-11-15 起**仅 720P**（1080P 已下架），
+ *   示例取 720P。
  * - `wan3.0-720p-特惠`: fixed 720P output.
  * - `seedance2.5-活动`: fixed 720P output (按次档，锁死 720P).
  */
@@ -91,7 +94,26 @@ export function getWan3SampleResolution(modelName: string): string | null {
   if (modelName === 'wan3.0-720p-特惠') {
     return '720P'
   }
-  if (modelName === 'wan3.0-smart' || modelName.startsWith('wan3.0-video')) {
+  // 有赞 prime（wan3.0-video-prime / 历史别名 wan3.0-video-prime-1080p）：
+  // 2026-11-15 上游切换后**仅 720P**（1080P 已下架），示例取 720P。
+  //
+  // ⚠️ 必须排在下面的 `startsWith('wan3.0-video')` **之前** ——
+  //   prime 的名字以 "wan3.0-video" 开头，被那条前缀规则先吃掉的话
+  //   会返回 480P，而 prime 根本不接受 480P（示例照抄就被后端 400）。
+  if (
+    modelName === 'wan3.0-video-prime' ||
+    modelName === 'wan3.0-video-prime-1080p'
+  ) {
+    return '720P'
+  }
+  // 有赞标准版（直连 wan3.0-video 与历史别名 wan3.0-smart）：
+  // 2026-11-15 上游切换后仅 720P/1080P（480P 下架，后端对显式 480P 静默
+  // 回落 720P），示例取最低档 720P。
+  if (modelName === 'wan3.0-video' || modelName === 'wan3.0-smart') {
+    return '720P'
+  }
+  // 官网 DashScope 通道（wan3.0-video-官网）不受有赞切换影响，仍三档齐全。
+  if (modelName.startsWith('wan3.0-video')) {
     return '480P'
   }
   return null
