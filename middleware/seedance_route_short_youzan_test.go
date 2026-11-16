@@ -147,6 +147,7 @@ func TestShortYouzanSkipsFramesMedia(t *testing.T) {
 // 必须跳过标准版兜底，留在源链路 fail-loud（只有标准版开关打开时）。
 func TestShortYouzanSkipsReferenceVideoAndAudio(t *testing.T) {
 	enableShortToggles(t, false, true)
+	disableRefAVRoute(t) // 规则九默认开会接走带音视频的请求，这里隔离有赞兜底守卫
 
 	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","media":[
 		{"type":"reference_video","url":"https://x/a.mp4"},

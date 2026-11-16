@@ -151,6 +151,67 @@ func prepareTotalFallbackRoute(c *gin.Context, body map[string]interface{}, targ
 	return prepareCapcutRoute(c, body, targetModel, seconds, capcutMaxDuration25, "全量兜底规则八")
 }
 
+// prepareRefAVRoute 组装「规则九（音视频参考改派）」的改派请求体。
+//
+// 与规则七/八共用同一份 CapCut 准入与改写（prepareCapcutRoute），
+// 目标固定 cp-seedance-2.5flash（理由见 DefaultRefAVTargetModel），
+// 时长上界与规则八同为 2.5 Flash 的 30 秒。
+func prepareRefAVRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
+	return prepareCapcutRoute(c, body, targetModel, seconds, capcutMaxDuration25, "音视频参考改派规则九")
+}
+
+// tryRefAVCapcutRoute 是规则九的完整判定与改派：带参考视频/音频的请求 → CapCut。
+//
+// 背景（2026-11-16 老板需求）：有赞上游 2026-11-15 切换后标准版仅收
+// reference_image，这类请求打过去必被 youzanwan3 adaptor 400 拒单；
+// CapCut 链路同日起音视频可透传 —— 改派过去，fail-loud 变 fail-over。
+//
+// 返回 true = 已改派并写好计费上下文，调用方应 c.Next() 并 return；
+// 返回 false = 不归规则九管（没带音视频 / 开关关闭 / 准入没过），
+// 请求保持原样继续走后续规则或源链路。
+func tryRefAVCapcutRoute(c *gin.Context, body map[string]interface{}, sourceModel string) bool {
+	if !seedanceroute_setting.IsRefAVRouteEnabled() {
+		return false
+	}
+	// 触发判定必须**两种素材形态都收**：
+	//   - media 数组里的 reference_video / reference_audio（hasRefAudioVideoMedia）；
+	//   - 顶层 audios / audio / videos / video 字段（collectRouteReference*）。
+	// 源链路 adaptor 的闸对两种形态都会拦（请求解析层统一归到 media），
+	// 中间件漏判任何一种 = 「该改派的请求被留在源链路吃 400」。
+	if !hasRefAudioVideoMedia(body) &&
+		len(collectRouteReferenceVideos(body)) == 0 &&
+		len(collectRouteReferenceAudios(body)) == 0 {
+		return false
+	}
+
+	// 计费原点：客户请求的源模型（改派不改变对客价格，与规则七/八同一口径）。
+	billingOriginModel := RouteOriginModel(c)
+	if billingOriginModel == "" {
+		billingOriginModel = sourceModel
+	}
+
+	// 时长口径与规则八一致：客户传了就用**原值**（越界由准入挡），
+	// 没传才按源链路与 CapCut 共同的缺省 5 秒。
+	seconds, hasSeconds := extractRequestSeconds(body)
+	if !hasSeconds || seconds <= 0 {
+		seconds = totalFallbackDefaultSeconds
+	}
+
+	if newBody, routed := prepareRefAVRoute(c, body, seedanceroute_setting.DefaultRefAVTargetModel, seconds); routed {
+		if applyRewrittenBody(c, newBody, billingOriginModel) {
+			// 计费按**源模型**算：秒数 + 源模型口径的 size 倍率。
+			// 生成档 480p 交付 720P 是成本侧的事，售价不吃降档。
+			setRouteBillingContext(c, seconds,
+				sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
+			logger.LogInfo(c, fmt.Sprintf(
+				"条件路由：命中规则九（音视频参考），改派 %s → %s（%d 秒）",
+				sourceModel, seedanceroute_setting.DefaultRefAVTargetModel, seconds))
+			return true
+		}
+	}
+	return false
+}
+
 // prepareCapcutRoute 是「改派到 CapCut 链路」的**唯一**准入与改写入口。
 //
 // label 只进日志，用于区分是哪条规则放行的（电商规则七 / 短时长CapCut分支）。

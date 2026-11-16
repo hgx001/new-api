@@ -229,10 +229,10 @@ func TestRatioRuleIncompleteDisablesEverything(t *testing.T) {
 		name string
 		json string
 	}{
-		{"ratio target missing", `{"enabled":true,"source_model":"a","trigger_ratio":"9:16"}`},
-		{"trigger ratio missing", `{"enabled":true,"source_model":"a","ratio_target_model":"b"}`},
-		{"source missing", `{"enabled":true,"ratio_target_model":"b","trigger_ratio":"9:16"}`},
-		{"both incomplete", `{"enabled":true,"source_model":"a","target_model":"b","ratio_target_model":"c"}`},
+		{"ratio target missing", `{"enabled":true,"source_model":"a","trigger_ratio":"9:16","ref_av_capcut_enabled":false}`},
+		{"trigger ratio missing", `{"enabled":true,"source_model":"a","ratio_target_model":"b","ref_av_capcut_enabled":false}`},
+		{"source missing", `{"enabled":true,"ratio_target_model":"b","trigger_ratio":"9:16","ref_av_capcut_enabled":false}`},
+		{"both incomplete", `{"enabled":true,"source_model":"a","target_model":"b","ratio_target_model":"c","ref_av_capcut_enabled":false}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -335,8 +335,11 @@ func TestSeedanceRouteNormalizesPaddedModelName(t *testing.T) {
 }
 
 func TestSeedanceRouteSkipsUnsupportedMedia(t *testing.T) {
-	// 老板 2026-10-30 拍板：带参考视频/音频 → 不路由，走源模型继续跑（不是报错）。
+	// 老板 2026-10-30 拍板：带参考视频/音频 → 规则一不路由（它的改写不搬音视频，
+	// 改派即静默丢素材）。2026-11-16 起这类请求由规则九改派 CapCut（默认开），
+	// 这里关掉规则九，隔离出规则一自己的守卫。
 	enableRoute(t, testSourceModel, testTargetModel, 20)
+	disableRefAVRoute(t)
 
 	cases := []struct {
 		name string
@@ -440,8 +443,10 @@ func TestSeedanceRouteUsesTopLevelMediaBeforeMetadataMedia(t *testing.T) {
 }
 
 func TestSeedanceRouteSkipsTopLevelAudio(t *testing.T) {
-	// 顶层 audio / audios 是参考音频，目标链路不支持 → 不路由。
+	// 顶层 audio / audios 是参考音频，规则一的目标链路不支持 → 规则一不路由
+	// （2026-11-16 起改由规则九接走，这里关掉它隔离规则一的守卫）。
 	enableRoute(t, testSourceModel, testTargetModel, 20)
+	disableRefAVRoute(t)
 
 	cases := []struct {
 		name string
@@ -539,6 +544,7 @@ func TestSeedanceRouteSkipsRerouteWhenWan3InputMediaIsNotHTTP(t *testing.T) {
 // metadata.input.media 里的参考视频同样不能改派到豆包（豆包链路不收）。
 func TestSeedanceRouteSkipsRerouteWhenWan3InputMediaHasVideo(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
+	disableRefAVRoute(t) // 规则九默认开会接走带视频的请求，这里隔离规则一守卫
 
 	body := `{"model":"seedance2.5-特惠","seconds":"26","metadata":{"input":{"media":[{"type":"reference_video","url":"https://x/1.mp4"}]}}}`
 	seen, origin := runRoute(t, body)
@@ -1549,6 +1555,7 @@ func TestRatioRuleXinbiSkipsFrameMedia(t *testing.T) {
 
 func TestRatioRuleXinbiSkipsReferenceVideo(t *testing.T) {
 	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	disableRefAVRoute(t) // 规则九默认开会接走带视频的请求，这里隔离规则二守卫
 
 	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"9:16"},` +
 		`"media":[{"type":"reference_video","url":"https://example.com/ref.mp4"}]}`

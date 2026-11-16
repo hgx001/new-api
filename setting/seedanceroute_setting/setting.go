@@ -335,6 +335,24 @@ type Policy struct {
 	// total_fallback.go 包头注释：应急救援开关不能被「规则全停」连坐。
 	TotalFallbackEnabled bool `json:"total_fallback_enabled,omitempty"`
 
+	// ─────────────────── 规则九：音视频参考改派（ref AV）───────────────────
+	//
+	// RefAVCapcutEnabled 是规则九的开关（2026-11-16 起）。
+	//
+	// 打开：带参考视频/音频的请求（youzanwan3 adaptor 对 prime 外的所有模型
+	// 都会 400 拒单）改派 cp-seedance-2.5flash，不再拒单；
+	// 关闭：恢复拒单行为（请求留在源链路吃 400）。
+	//
+	// ⚠️ 用三态指针且 **nil = 默认开启**：与其它规则的「默认不生效」相反。
+	// 其它规则是成本优化（不改派也能跑，只是贵），默认关闭符合「升级当天
+	// 行为不变」；规则九是能力补位 —— 不改派就是拒单退款，不存在「留在
+	// 源链路」这个可用选项，默认关闭等于把已修好的洞继续敞着。
+	//
+	// ⚠️ 与规则八相同，它**不依赖 Enabled**（规则总开关）：IsAnyRouteEnabled
+	// 早退在中间件最前面，若依赖 Enabled，运营关总开关时会顺带复活拒单问题。
+	// 详见 ref_av_route.go 包头注释。
+	RefAVCapcutEnabled *bool `json:"ref_av_capcut_enabled,omitempty"`
+
 	// FailoverEnabled 规则五的总开关。默认 false（不改派）。
 	//
 	// 用三态指针还是 bool：这里用 bool 即可，理由与 SecondsRuleEnabled 不同 ——
@@ -963,6 +981,12 @@ func IsAnyRouteEnabled() bool {
 	// 它是「源链路彻底不可用」时唯一的逃生口，只打开它时规则一~七
 	// 全部返回 false，早退会让这个开关静默失效。
 	if totalFallbackConfigured(current) {
+		return true
+	}
+	// 规则九（音视频参考改派）同理：它服务的是「源链路物理接不住」的请求
+	//（有赞 2026-11-15 切换后标准版仅收参考图），不路由即拒单退款。
+	// 只打开它时其它规则全部未配置，早退会让规则九静默失效、拒单复活。
+	if refAVCapcutEnabled(current) {
 		return true
 	}
 	if secondsRuleActive(current, nowUnix()) ||

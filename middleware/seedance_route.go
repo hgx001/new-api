@@ -105,6 +105,11 @@ func RouteOriginModel(c *gin.Context) string {
 //	                    → CapCut 快速档 cp-seedance-2.5flash；带参考视频一律不路由
 //	                    2026-11-15 起为**最高业务优先级**：短时长/长时长/非 9:16 都不限制它
 //	规则三（首尾帧）：  源模型 + media 含 first_frame/last_frame → frames_target_model
+//	规则九（音视频）：  源模型（及 wan3.0-video 直连）+ 带参考视频/音频
+//	                    → cp-seedance-2.5flash（2026-11-16 起；有赞 11-15 切换后
+//	                    标准版仅收参考图，这类请求留在源链路就是 400 拒单）；
+//	                    排在规则三之后（首尾帧+音视频宁可 400 也不伪装参考图）、
+//	                    规则六/一/二之前（那三条的准入会因音视频跳过）
 //	规则六（短时长）：  源模型 + 时长 ≤ 阈值（默认 10 秒）→ 心笔内链；
 //	                    心笔接不住且 short_youzan_enabled 打开 → 有赞标准版 wan3.0-video；
 //	                    再接不住且 short_capcut_enabled 打开 → CapCut 快速档 cp-seedance-2.0fast
@@ -221,6 +226,22 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 
 		modelName := requestedModel
 		if !policy.IsSourceModel(modelName) {
+			// ── 规则九（音视频参考改派）对 youzan 标准版直连同样生效 ──
+			//
+			// wan3.0-video 不在促销族源清单里（它是规则六有赞兜底的**目标**，
+			// 塞进 source_models 会让改派指向自己形成循环），但它同样被
+			// youzanwan3 adaptor 的「仅收 reference_image」闸拦截 ——
+			// 在早退之前先给它一次规则九出口，否则 wan3.0-video 直连带
+			// 音视频的请求还是拒单退款。
+			//
+			// prime 直连不触发：有赞 prime 路由仍收音视频，闸对它豁免；
+			// wan3.0-smart 是不展示的历史别名，不在售，不接（真有流量再补）。
+			if trimmed := strings.TrimSpace(modelName); trimmed == "wan3.0-video" {
+				if tryRefAVCapcutRoute(c, body, trimmed) {
+					c.Next()
+					return
+				}
+			}
 			c.Next()
 			return
 		}
@@ -405,6 +426,25 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 					return
 				}
 			}
+		}
+
+		// ── 规则九（音视频参考改派）：排在规则三之后、规则六/一/二之前 ──
+		//
+		// 2026-11-16 老板需求：有赞上游 2026-11-15 切换后标准版 wan3.0-video
+		// 仅收 reference_image，促销族（落标准版执行）带参考视频/音频的请求
+		// 打过去必被 youzanwan3 adaptor 400 拒单。CapCut 链路同日起音视频
+		// 可透传 —— 这类请求改派 CapCut，fail-loud 变 fail-over。
+		//
+		// 为什么排在规则三（首尾帧）之后：带首尾帧 + 音视频的请求 CapCut
+		// 接不住首尾帧语义（准入 ② 会挡回来），宁可留在源链路吃 400
+		// （报错原因准确），也不伪装成普通参考图交付。
+		//
+		// 为什么排在规则六/一/二之前：那三条规则的准入都会因音视频跳过
+		// （hasUnsupportedMedia —— 它们的改写不搬音视频，改派就是静默丢素材），
+		// 音视频请求落在它们那里只会白白走到源链路拒单。
+		if tryRefAVCapcutRoute(c, body, sourceModel) {
+			c.Next()
+			return
 		}
 
 		// ── 规则六（短时长分流）：排在规则一与规则二之前 ──

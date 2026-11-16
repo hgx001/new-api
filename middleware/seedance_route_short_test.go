@@ -172,6 +172,7 @@ func TestShortRouteSkipsFramesMedia(t *testing.T) {
 // 没有他要参考的内容，比 400 更糟。
 func TestShortRouteSkipsReferenceVideoAndAudio(t *testing.T) {
 	enableShortRoute(t, testShortTargetModel, 10)
+	disableRefAVRoute(t) // 规则九默认开会接走带音视频的请求，这里隔离规则六守卫
 
 	for name, media := range map[string]string{
 		"参考视频": `{"type":"reference_video","url":"https://x/a.mp4"}`,

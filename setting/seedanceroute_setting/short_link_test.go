@@ -85,6 +85,8 @@ func TestShortLinkOffKeepsPolicyReady(t *testing.T) {
 func TestShortLinkOffAloneShortCircuitsAnyRoute(t *testing.T) {
 	payload := shortLinkPolicy()
 	payload["short_link_enabled"] = false
+	// 规则九默认开启（2026-11-16 起），不显式关掉它会撑起 IsAnyRouteEnabled。
+	payload["ref_av_capcut_enabled"] = false
 	applyPolicy(t, payload)
 
 	if IsAnyRouteEnabled() {

@@ -171,6 +171,7 @@ func TestDoubaoRouteWritesTriggerDuration(t *testing.T) {
 // 可读的错误原因。
 func TestDoubaoRouteRejectsUnsupportedMedia(t *testing.T) {
 	enableDoubaoFallbackRoute(t)
+	disableRefAVRoute(t) // 规则九默认开会接走带音视频的请求，这里隔离豆包守卫
 
 	cases := []struct {
 		name string
