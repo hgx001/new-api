@@ -20,11 +20,9 @@ func SetVideoRouter(router *gin.Engine) {
 	videoV1Router.Use(middleware.RouteTag("relay"))
 	// ⚠️ 顺序是「豆包优先 → 压缩兜底 → 特惠分流」的实现：
 	//   · Seedance25TeHuiRoute 先按故障转移 / 首尾帧 / 时长 / 比例改派
-	//     （2026-11-11 起 9:16 直接改派到心笔 480P 内链；原「超长提示词改派豆包」已删除）；
-	//   · Wan3PromptCompress 处理「没被改派到豆包」且仍超过 5000 字符的请求；
-	//   · Wan3TehuiXinbiRoute 再把 wan3.0-720p-特惠 里心笔能跑的请求分流过去
-	//     （480P 生成 + 交付 720P，成本更低）；带首尾帧/参考视频/音频的留在 Wan3。
-	// 三者都必须早于 Distribute()：渠道是读 body 的 model 字段选定的。
+	//     （原「9:16 直接改派到心笔 480P 内链」与「超长提示词改派豆包」均已删除）；
+	//   · Wan3PromptCompress 处理「没被改派到豆包」且仍超过 5000 字符的请求。
+	// 两者都必须早于 Distribute()：渠道是读 body 的 model 字段选定的。
 	// 任何一步不确定都「放弃/放行」，不会挡客户的请求。
 	//
 	// 2026-11-11：活动版常驻链路已从心笔切回有赞原生 720P，
@@ -37,6 +35,12 @@ func SetVideoRouter(router *gin.Engine) {
 	// 必须排在 Seedance25TeHuiRoute **之前**：一是别名先改名、规则再分流；
 	// 二是规则二/三内部改派到 wan3.0-720p-特惠 时本中间件已执行完，
 	// 不会把内部改派（首尾帧仍需 wan3 直连）再打回特惠链路。
+	//
+	// 2026-11-16：Wan3TehuiXinbiRoute 中间件下线（心笔不稳定，用户要求特惠
+	// 全部走 Wan3 官网链路 480P 生成 + 超分交付 720P）。2026-11-14 别名上线后
+	// 它本就只剩死分支；条件路由配置里的 内链 目标同步改回官网特惠、ch25
+	// 心笔渠道停用。middleware/wan3_tehui_xinbi_route.go 保留为历史参考，
+	// 不再挂载。
 	videoV1Router.Use(
 		middleware.TokenAuth(),
 		// 必须在所有条件路由之前：它们会改写 body 的 model/seconds，
@@ -45,7 +49,6 @@ func SetVideoRouter(router *gin.Engine) {
 		middleware.Wan3TehuiAliasRoute(),
 		middleware.Seedance25TeHuiRoute(),
 		middleware.Wan3PromptCompress(),
-		middleware.Wan3TehuiXinbiRoute(),
 		middleware.Distribute(),
 	)
 	{
