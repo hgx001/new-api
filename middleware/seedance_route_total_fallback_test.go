@@ -182,20 +182,25 @@ func TestTotalFallbackSkips1080P(t *testing.T) {
 	assert.Empty(t, origin, "没改派就不该留计费原点")
 }
 
-// <10 秒的请求**跳过规则八**（2026-11-15 老板口径）。
+// <10 秒的请求**也**走规则八（2026-11-16 老板口径：规则八是真无条件）。
 //
-// 老板要求「特惠/活动支持 5-30 秒，<10 秒的路由到 cp-seedance-2.0」。
-// 规则八的目标是 cp-seedance-2.5flash —— 与 cp-seedance-2.0 是不同档位。
-// 规则八排在规则六之前，不显式跳过的话 <10 秒会被它先接走，
-// 落到 2.5 Flash 而不是 2.0 满血档（2026-11-15 22:14 线上探针实测过）。
-func TestTotalFallbackSkipsBelowTenSeconds(t *testing.T) {
+// 老板原话：「这个只要勾选了全量无条件后全部到 2.5 Flash 是没问题的，不用管」。
+//
+// 早先这里曾断言 <10 秒跳过规则八去落 cp-seedance-2.0 满血档
+// （2026-11-15 的临时口径），现已撤销 —— 规则八是**逃生口**，它的语义是
+// 「打开就全量」，任何时长特判都会把它变成「看情况的开关」，
+// 运营按下按钮时的心智模型被破坏。
+//
+// ⚠️ 要让 <10 秒落满血档，正确做法是**关掉规则八**（规则六是默认路径），
+// 而不是给规则八内部加时长特判。
+func TestTotalFallbackTakesBelowTenSecondsToo(t *testing.T) {
 	enableTotalFallback(t)
 
 	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
 	decoded := decodeBody(t, rewritten)
 
-	assert.NotEqual(t, totalFallbackTarget, decoded["model"],
-		"<10 秒不该被规则八接走 —— 那是规则六 CapCut 满血档的活")
+	assert.Equal(t, totalFallbackTarget, decoded["model"],
+		"规则八是无条件全量兜底，<10 秒同样改派")
 }
 
 // 2–3 秒不改派：CapCut 时长下界 4 秒。
@@ -274,8 +279,10 @@ func TestTotalFallbackDefaultsMissingSecondsToFive(t *testing.T) {
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
-	assert.NotEqual(t, totalFallbackTarget, body["model"],
-		"没传时长（缺省 5 秒）属于 <10 秒，不该被规则八接走")
+	assert.Equal(t, totalFallbackTarget, body["model"],
+		"规则八是无条件全量兜底，没传时长（缺省 5 秒）同样改派")
+	assert.Equal(t, "5", body["seconds"],
+		"缺省时长必须按 5 秒下发 —— 与源链路、CapCut 的共同缺省一致")
 }
 
 // 45 秒不改派：CapCut 上界 30 秒。

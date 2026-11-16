@@ -466,6 +466,9 @@ func isPrimeModel(model string) bool {
 	// 所以 here 保留在 isPrimeModel 里；时长/素材的 prime 新边界只对
 	// **直连** prime 生效，见 isPrimeOnlyModel。
 	//
+	// ⚠️ 特惠母本的 **30 秒**是例外：走 prime（见 upstreamModelForRequest），
+	// 但那只是**上游模型**的选择，对客的档位口径不变，所以这里仍判 true。
+	//
 	// ⚠️ 判定一律走 constant 的**能力组**，不要在这里逐个列模型名 ——
 	// 逐个列名正是「母本加了能力、活动版没同步」的根源。
 	if constant.IsSeedance25Family(model) {
@@ -533,11 +536,18 @@ func isPromoFamilyModel(model string) bool {
 // upstreamModelFor maps the public aliases retained by new-api to the model
 // IDs exposed by the current Youzan API.  The mapping is explicit so the
 // public name remains stable while the upstream protocol can evolve.
+//
+// ⚠️ 这个函数**只看模型名**，不看时长/分辨率 —— 它回答的是「这个对外名对应
+// 哪个上游模型」。特惠 30 秒落 prime 的逐秒判断在 upstreamModelForRequest 里
+// （那条路径还要同时看时长与分辨率档位）。
 func upstreamModelFor(model string) (string, error) {
 	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起由**标准版**执行。
 	// 背景：上游 api.youzan666.vip 切换上游后，prime 收窄为「仅 30 秒、仅 720P」，
 	// 而促销族按秒卖（特惠）/按时长可选（活动），必须落到 10-30 秒区间完整的
 	// 标准版 wan3.0-video 上。判定走能力组 —— 新增族成员时这里自动跟着生效。
+	//
+	// ⚠️ 特惠母本的**30 秒**是例外：走 prime（见 upstreamModelForRequest）。
+	// 这里返回标准版是「默认档」，逐秒例外在上一层的请求级判断里做。
 	if constant.IsSeedance25Family(model) {
 		return videoModel, nil
 	}
@@ -551,6 +561,30 @@ func upstreamModelFor(model string) (string, error) {
 	default:
 		return "", errors.Errorf("unsupported Youzan Wan3 model %q", model)
 	}
+}
+
+// upstreamModelForRequest 返回「这条请求实际该用哪个上游模型」。
+//
+// 与 upstreamModelFor（只看模型名）的差别：这里同时看**时长与分辨率档位**，
+// 因为上游 prime 的能力边界是「仅 30 秒、仅 720P」—— 只有两者都落在
+// prime 的边界内，才能把请求交给它，否则上游一律拒单。
+//
+// 2026-11-16 老板口径：**特惠母本的 30 秒请求走 prime**（画质增强、上游更便宜），
+// 其余秒数走标准版 wan3.0-video。
+//
+// ⚠️ **1080P 不能走 prime**：prime 只提供 720P（上游文档原话「Prime 只接受
+// 以下两种尺寸。其他时长、480P、1080P 或其他尺寸均不接受」）。客户显式要了
+// 1080P 时静默降到 720P = 「收 1080P 的钱给 720P 的片」——
+// 所以 1080P 留在标准版（它两档齐全），而不是降档进 prime。
+func upstreamModelForRequest(req relaycommon.TaskSubmitReq) (string, error) {
+	if isTehuiModel(req.Model) {
+		duration := resolveDurationForModel(req, req.Model)
+		resolution := resolveResolutionForModel(req, req.Model)
+		if duration == tehuiPrimeSeconds && resolution != "1080P" {
+			return primeModel, nil
+		}
+	}
+	return upstreamModelFor(req.Model)
 }
 
 func normalizeResolutionForModel(model, resolution string) string {
@@ -1047,7 +1081,7 @@ func getHTTPClient(proxy string) (*http.Client, error) {
 // （2026-11-15 探针实测：body 只带 seconds:"2"，查询响应回显 seconds=2）。
 // 构建过程纯本地、无网络调用 —— 客户 60 秒的提交超时不再受素材体积影响。
 func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, error) {
-	upstreamModel, err := upstreamModelFor(req.Model)
+	upstreamModel, err := upstreamModelForRequest(req)
 	if err != nil {
 		return nil, err
 	}

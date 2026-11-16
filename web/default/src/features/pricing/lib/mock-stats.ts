@@ -834,9 +834,17 @@ function buildWan3PrimeVideoParameters(): SupportedParameter[] {
 
 /**
  * seedance2.5-特惠（按秒计费的促销母本）：2026-11-15 起上游执行模型换成
- * 标准版 wan3.0-video —— 时长 10—30 秒、720P/1080P 两档、缺省 720P。
+ * 标准版 wan3.0-video —— 时长 5—30 秒、720P/1080P 两档、缺省 720P。
  * 不能再复用 prime 表（prime 已收窄为仅 30 秒仅 720P），也不能落进通用表
  * （通用表会显示 480P —— 上游已下架，传了被后端归到 720P）。
+ *
+ * ⚠️ **30 秒走 prime（2026-11-16 老板口径）**：母本的 30 秒请求由
+ * 有赞的 wan3.0-video-prime 执行（画质增强、上游更便宜），因为 prime
+ * 目前只支持 30 秒。这是**后端 adaptor 内部**的上游模型映射，
+ * 对客的模型名、时长区间、分辨率档位都不变 —— 所以参数表不需要改，
+ * 只在这里留注释说明真实执行链路。
+ *
+ * ⚠️ 30 秒 + 1080P 仍走标准版（prime 只提供 720P，不能静默降档）。
  */
 function buildSeedance25TehuiVideoParameters(): SupportedParameter[] {
   return [
@@ -1192,8 +1200,9 @@ export function buildSupportedParameters(
       return buildSeedance25FixedTierVideoParameters(seedance25FixedTier)
     }
     if (model.model_name === SEEDANCE25_TEHUI) {
-      // 2026-11-15 起母本由标准版执行（10—30 秒、720P/1080P），
+      // 2026-11-15 起母本由标准版执行（5—30 秒、720P/1080P），
       // 不能再沿用 prime 表（prime 已收窄为仅 30 秒仅 720P）。
+      // 30 秒落 prime 是后端 adaptor 内部的上游映射，对客参数不变。
       return buildSeedance25TehuiVideoParameters()
     }
     if (
