@@ -541,6 +541,13 @@ func doubaoRouteAdminState() gin.H {
 	// 运营要能看出「两个按钮都开时心笔优先」。
 	state["short_youzan_enabled"] = seedanceroute_setting.IsShortYouzanEnabled()
 	state["short_youzan_target_model"] = seedanceroute_setting.DefaultShortYouzanTargetModel
+	// 规则六两个短时长出口的**分界线**（秒）：< 该值走 CapCut 满血档，
+	// ≥ 该值走有赞标准版。
+	//
+	// 为什么要透出给前端：两个开关的界面文案必须写出「各自接哪一段秒数」，
+	// 否则运营看到「≤10 秒」的短请求有两个按钮亮着，会以为两个都在跑同一批单。
+	// 前端硬编码一份 10 迟早会与后端漂（改阈值时只改一处），所以由后端给值。
+	state["short_capcut_min_seconds"] = seedanceroute_setting.ShortCapcutMinSeconds
 	// 按源模型的改派开关：运营要知道「现在哪个模型被单独关掉了」。
 	// 只给公共 target_model 不够 —— 两个源模型的目标可以不同。
 	state["source_switches"] = seedanceroute_setting.SourceSwitchStates()

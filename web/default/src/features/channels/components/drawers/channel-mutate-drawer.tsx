@@ -3606,16 +3606,18 @@ export function ChannelMutateDrawer({
 
                           {/* 规则六（短时长分流）的有赞标准版兜底开关：
                               心笔接不住（余额耗尽 / AutoBan / 契约不兼容）时，
-                              ≤阈值短请求改派 wan3.0-video，绕开 prime 的
-                              PRIME_DURATION_TOO_SHORT。心笔开关优先，两个都
-                              关闭走原链路。只在本渠道承载目标模型时渲染。 */}
+                              **分界线及以上**那一段（默认 10 秒）改派 wan3.0-video。
+                              2026-11-15 上游把标准版下界收到 10 秒，<10 秒它接不住，
+                              那段归 CapCut 满血档 —— 两个开关是互补区间，不是同一批请求。
+                              心笔开关优先，关闭走原链路。只在本渠道承载目标模型时渲染。 */}
                           <ShortYouzanCard
                             channelModels={currentModels ?? ''}
                           />
 
                           {/* 规则六（短时长分流）的第三条分支 —— CapCut 满血档
-                              cp-seedance-2.0。心笔与有赞标准版都接不住时
-                              的退路。⚠️ 三条短时长分支同时只能有一条生效：
+                              cp-seedance-2.0。接**分界线以下**那一段（默认
+                              4–9 秒）：有赞标准版下界是 10 秒，这段只有它能接。
+                              ⚠️ 三条短时长分支同时只能有一条生效：
                               打开本条会自动关掉另外两条（后端写入口保证），
                               读侧还有「心笔 > 有赞 > CapCut」的优先级兜底。 */}
                           <ShortCapcutCard channelModels={currentModels ?? ''} />

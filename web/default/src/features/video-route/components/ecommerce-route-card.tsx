@@ -65,8 +65,8 @@ type EcommerceRouteCardProps = {
  * ⚠️ 三条必须写在界面上的事实（否则运营一定会误判）：
  *
  *  1. **默认留在有赞**：命中后 10–30 秒的请求继续跑有赞（30 秒由 adaptor
- *     逐条映射 prime）；只有 <10 秒或带参考音视频才改派 CapCut
- *     （有赞标准版下界 10 秒、prime 只接 30 秒、两者都只收参考图）。
+ *     逐条映射 prime，促销族两个成员同一口径）；只有 <10 秒或带参考音视频
+ *     才改派 CapCut（有赞标准版下界 10 秒、prime 只接 30 秒、两者都只收参考图）。
  *  2. **计费不变**：客户仍按源模型（seedance2.5-特惠 / 活动）付费，
  *     改派只是内部调度。
  *  3. **规则七优先于规则一**：勾上「时长超过阈值」后，超长请求会被规则七
@@ -248,12 +248,11 @@ export function EcommerceRouteCard({ channelModels }: EcommerceRouteCardProps) {
 
   const detail = on
     ? t(
-        'E-commerce or product-recommendation prompts are routed to {{target}}; requests with a reference video are never rerouted',
+        'E-commerce and product-recommendation prompts stay on the resident Youzan link; only requests Youzan cannot take (below its duration floor, or with reference audio/video) go to {{target}}',
         { target: targetModel }
       )
     : t(
-        'Turn on to route e-commerce or product-recommendation prompts to {{target}}',
-        { target: targetModel }
+        'Turn on to keep e-commerce and product-recommendation prompts on the resident Youzan link instead of letting the duration or ratio rules reroute them'
       )
 
   return (
@@ -314,7 +313,7 @@ export function EcommerceRouteCard({ channelModels }: EcommerceRouteCardProps) {
             </Label>
             <p className='text-muted-foreground mt-0.5 text-[11px] leading-relaxed'>
               {t(
-                'When checked, requests specifying {{ratio}} are rerouted even if the prompt is not e-commerce content',
+                'When checked, requests specifying {{ratio}} also stay on the Youzan link, even if the prompt is not e-commerce content',
                 { ratio: ratioValue }
               )}
             </p>
@@ -342,7 +341,7 @@ export function EcommerceRouteCard({ channelModels }: EcommerceRouteCardProps) {
             </Label>
             <p className='text-muted-foreground mt-0.5 text-[11px] leading-relaxed'>
               {t(
-                'When checked, requests over the threshold are rerouted even if the prompt is not e-commerce content'
+                'When checked, requests over the threshold also stay on the Youzan link, even if the prompt is not e-commerce content'
               )}
             </p>
 

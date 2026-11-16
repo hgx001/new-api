@@ -48,7 +48,11 @@ type ShortYouzanCardProps = {
  * PRIME_DURATION_TOO_SHORT 直接失败。打开本开关后，短请求改派有赞标准版
  * wan3.0-video（同一渠道同一 adaptor，只换 model 并钉住分辨率档）。
  *
- * 优先级：心笔内链开关 > 本开关；两个都关闭 = 不路由，走原链路。
+ * ⚠️ 本开关**只接分界线及以上**那一段（short_capcut_min_seconds，默认 10）：
+ * 2026-11-15 上游把标准版下界收到 10 秒，<10 秒打过去必 400，
+ * 所以那段归 CapCut 满血档（另一张卡）。两个开关的文案必须写出各自区段。
+ *
+ * 优先级：心笔内链开关 > 本开关 > CapCut 满血档；三个都关闭 = 不路由，走原链路。
  */
 export function ShortYouzanCard({ channelModels }: ShortYouzanCardProps) {
   const { t } = useTranslation()
@@ -110,17 +114,21 @@ export function ShortYouzanCard({ channelModels }: ShortYouzanCardProps) {
     ? 'border-sky-500/40 bg-sky-500/[0.05]'
     : 'border-slate-500/40 bg-slate-500/[0.05]'
   const toneText = on ? 'text-sky-600' : 'text-slate-600'
+  // 分界线：< 该值有赞标准版接不住（上游下界），归 CapCut 满血档。
+  const minSeconds = policy.short_capcut_min_seconds ?? 10
   const detail = on
     ? t(
-        'When the Xinbi link cannot take it, requests up to {{seconds}}s route to {{target}}; the Xinbi link takes priority when both are on',
+        'When the Xinbi link cannot take it, requests from {{min}}s up to {{seconds}}s route to {{target}}; the Xinbi link takes priority when both are on',
         {
+          min: minSeconds,
           seconds: policy.short_trigger_seconds,
           target: targetModel,
         }
       )
     : t(
-        'Short requests (up to {{seconds}}s) stay on the source chain when the Xinbi link cannot take them; turn on to reroute them to {{target}}',
+        'Short requests from {{min}}s up to {{seconds}}s stay on the source chain when the Xinbi link cannot take them; turn on to reroute them to {{target}}',
         {
+          min: minSeconds,
           seconds: policy.short_trigger_seconds,
           target: targetModel,
         }

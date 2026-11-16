@@ -83,6 +83,16 @@ export type VideoRoutePolicy = {
   /** CapCut 满血档的目标模型。 */
   short_capcut_target_model: string
   /**
+   * 两个短时长出口的**分界线**（秒，后端给值，默认 10）。
+   *
+   * < 该值 → CapCut 满血档；≥ 该值（且 ≤ short_trigger_seconds）→ 有赞标准版。
+   * 卡片文案必须写出这条分界，否则运营看到两个按钮都亮着，会以为
+   * 两个开关在跑同一批请求。
+   *
+   * 可选：老版本后端没有该字段时前端回退到 10（见两个短时长卡片的取值）。
+   */
+  short_capcut_min_seconds?: number
+  /**
    * 当前生效的短时长分支（读侧优先级兜底后的结果）。
    * 空串 = 三条都没开 = 短请求走原链路。
    */

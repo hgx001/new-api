@@ -67,9 +67,10 @@ type TotalFallbackCardProps = {
  *  1. **只在救火时开**：开着就等于把这两个模型的全部流量挪到另一条上游，
  *     成本结构与交付形态都变了。所以打开要二次确认，关闭则即时生效
  *     （关掉是安全方向，不该也拦一道）。
- *  2. **物理能力边界仍然生效**：1080P / 2–3 秒 / 带参考视频音频 /
+ *  2. **物理能力边界仍然生效**：1080P / 2–3 秒 / 带首尾帧 /
  *     自适应比例带参考图 仍留在原链路 —— 改派过去必 400，
  *     那会把「链路挂了」伪装成「你的参数不合法」。
+ *     （参考音视频 2026-11-15 起**不再**属于边界，CapCut 链路可透传。）
  *  3. **计费不变**：客户仍按他请求的模型（特惠/活动）付费。
  */
 export function TotalFallbackCard({ channelModels }: TotalFallbackCardProps) {
@@ -206,12 +207,15 @@ export function TotalFallbackCard({ channelModels }: TotalFallbackCardProps) {
 
       {/* 不改派的几类必须在界面上说清，否则运营会以为「开了就全都过去了」，
           然后在客户拿到 400/503 时以为是开关没生效。
-          ⚠️ 措辞是「仍留在原链路」而不是「CapCut 接不住」：参考音视频上游
-          2026-11-15 已放开，只是**路由层**仍按老口径挡（见
-          docs/design-capcut-reference-audio-video.md 的待办）。 */}
+          ⚠️ 措辞是「仍留在原链路」而不是「CapCut 接不住」：这几类都是
+          CapCut 链路的**物理边界**，不是运营意志能绕过的。
+          ⚠️ 2026-11-16 修正：参考音视频已不在列表里 —— 2026-11-15 起
+          CapCut 链路放开音视频透传（见 middleware/seedance_route_ecommerce.go
+          的 prepareCapcutRoute ①），带参考音视频的请求照常改派；
+          反过来**首尾帧**才是真的接不住（CapCut 只有参考图语义）。 */}
       <p className='text-muted-foreground mt-2 text-[11px]'>
         {t(
-          'These requests still stay on the source chain: 1080P, 2–3s, reference video/audio, and adaptive ratio with reference images.'
+          'These requests still stay on the source chain: 1080P, 2–3s, requests with first/last frames, and adaptive ratio combined with reference images.'
         )}
       </p>
       <p className='text-muted-foreground mt-1 text-[11px]'>

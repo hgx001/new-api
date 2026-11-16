@@ -46,10 +46,17 @@ type ShortCapcutCardProps = {
  *
  * 规则六把 ≤阈值（默认 10 秒）的短请求改派出去，三个可选出口：
  *   1. 心笔内链（wan3.0-720p-特惠-内链）—— 480P 生成 + 超分 720P；
- *   2. 有赞标准版（wan3.0-video）—— 绕开 prime 的 <10 秒保护；
- *   3. CapCut 满血档（cp-seedance-2.0）—— 本卡片。
+ *   2. 有赞标准版（wan3.0-video）—— 接**分界线及以上**那一段；
+ *   3. CapCut 满血档（cp-seedance-2.0）—— 本卡片，接**分界线以下**那一段。
  *
- * ⚠️ **三条同时只能有一条生效**：它们是同一个时长区间的三个出口。
+ * ⚠️ 2026-11-16 修正：三个出口**不是同一段秒数**。2026-11-15 上游把有赞
+ * 标准版的下界收到 10 秒，于是规则六内部又分了一次：
+ *   · < short_capcut_min_seconds（默认 10）→ 只有 CapCut 满血档能接；
+ *   · ≥ 分界线且 ≤ 阈值 → 优先有赞标准版（同渠道同 adaptor，最稳）。
+ * 所以严格说，本卡片和「有赞兜底」是**互补**的两段，不是抢同一批请求。
+ * 界面文案必须写出各自那一段，否则运营会以为两个按钮在跑同一批单。
+ *
+ * ⚠️ 三条分支**同时只能有一条生效**：它们是同一个时长区间的三个出口。
  * 同时开着时，「落到哪一条」必须是**明确的经营意图**，而不是
  * 「谁写在配置里靠前」—— 两条都开着，运营看着两个按钮都亮着，
  * 却只有一条真正生效，这是最难排查的静默失效型故障。
@@ -125,17 +132,21 @@ export function ShortCapcutCard({ channelModels }: ShortCapcutCardProps) {
 
   // 三条分支的当前生效方：运营必须一眼看出「现在短请求到底走哪条」。
   const activeTarget = policy.short_active_target || ''
+  // 分界线：< 该值归 CapCut，≥ 该值归有赞标准版。后端给值，兜底 10。
+  const minSeconds = policy.short_capcut_min_seconds ?? 10
   const detail = on
     ? t(
-        'Requests up to {{seconds}}s route to {{target}}; the Xinbi link and the Youzan fallback are turned off automatically',
+        'Requests from {{min}}s to just under {{seconds}}s route to {{target}}; the Xinbi link and the Youzan fallback are turned off automatically',
         {
+          min: minSeconds,
           seconds: policy.short_trigger_seconds,
           target: targetModel,
         }
       )
     : t(
-        'Turn on to route requests up to {{seconds}}s to {{target}} when the Xinbi link cannot take them',
+        'Turn on to route requests from {{min}}s to just under {{seconds}}s to {{target}} when neither the Xinbi link nor the Youzan fallback can take them',
         {
+          min: minSeconds,
           seconds: policy.short_trigger_seconds,
           target: targetModel,
         }
