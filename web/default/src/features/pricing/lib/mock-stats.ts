@@ -909,6 +909,13 @@ function buildSeedance25FixedTierVideoParameters(
  *（2026-11-15 起与促销母本同链路 —— 标准版 wan3.0-video，最低 10 秒）。
  * 名字不以 `wan3.0-video` 开头，必须单列 —— 否则会落进通用 wan3 表
  *（把 1080P 也列成可选，等于告诉客户可以传 1080P 拿到 1080P）。
+ *
+ * 2026-11-17 起**只支持 9:16**：
+ * 这个模型是「两跳」链路 —— 官网按 480P 生成，成片再超分到 720P。
+ * 超分输出按长边/短边给，于是比例不同 → 交付像素完全不同
+ *（9:16 → 720×1280 竖屏；16:9 → 1280×720 横屏）。
+ * 收窄到单一比例后「模型名 → 交付尺寸」一一对应，客户不会拿到预期外的画幅。
+ * 非 9:16 的请求由后端 400 明确拒单（不静默改比例）。
  */
 function buildWan3Official720PVideoParameters(): SupportedParameter[] {
   return [
@@ -925,6 +932,13 @@ function buildWan3Official720PVideoParameters(): SupportedParameter[] {
       enumValues: ['720P'],
       defaultValue: '720P',
       descriptionKey: 'Output video resolution',
+    },
+    {
+      name: 'aspect_ratio',
+      type: 'enum',
+      enumValues: ['9:16'],
+      defaultValue: '9:16',
+      descriptionKey: 'Output aspect ratio',
     },
   ]
 }

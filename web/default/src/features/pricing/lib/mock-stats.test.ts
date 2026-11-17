@@ -192,16 +192,23 @@ describe('Wan3 Model Square API parameters', () => {
   // 回归守卫：wan3.0-720p-特惠 的名字不以 `wan3.0-video` 开头，
   // 漏登记会被归类成 chat 模型（参数表整张错），或者落进通用 wan3 表
   // （把 480P/1080P 也列成可选，客户传 480P 会以为拿到 480P）。
-  test('gives wan3.0-720p-特惠 a fixed 720P tier and 10-30 seconds', () => {
+  //
+  // 2026-11-17 起该模型只支持 9:16（比例收窄）—— 参数表必须显式列出
+  // aspect_ratio 的唯一枚举值，否则前端等于告诉客户「比例随便传」，
+  // 而后端会对非 9:16 直接 400 拒单 → 客户拿到的是「文档说能用、实际报错」。
+  test('gives wan3.0-720p-特惠 a fixed 720P tier, 10-30 seconds and 9:16 only', () => {
     const params = parametersByName('wan3.0-720p-特惠')
     assert.deepEqual(parameterNames('wan3.0-720p-特惠'), [
       'prompt',
       'duration',
       'resolution',
+      'aspect_ratio',
     ])
     assert.deepEqual(params.resolution.enumValues, ['720P'])
     assert.equal(params.resolution.defaultValue, '720P')
     assert.equal(params.duration.range, '10 ~ 30')
+    assert.deepEqual(params.aspect_ratio.enumValues, ['9:16'])
+    assert.equal(params.aspect_ratio.defaultValue, '9:16')
   })
 
   test('describes wan2.7-r2v limits including the required reference images', () => {

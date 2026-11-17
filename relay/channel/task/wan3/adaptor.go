@@ -98,6 +98,25 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return nil
 	}
+	// ── 特惠档的比例闸门（2026-11-17 老板口径：只支持 9:16）──────────────
+	//
+	// 放在**最前面**（素材探测/转存之前）：比例不合规的请求本来就不该建单，
+	// 早拒单省掉素材下载与转存的全部开销。
+	//
+	// 为什么必须拒单而不是静默改比例：客户传 16:9 是有明确诉求的，
+	// 拿到 9:16 的片属于**静默降级**（钱按 16:9 付、片是 9:16）。
+	//
+	// ⚠️ 只对特惠档生效：官网原生（wan3.0-video-官网）与标准版
+	// （wan3.0-video）仍支持全比例，不受这条收窄影响。
+	if info != nil && isOfficial720PModel(info.OriginModelName) {
+		ratio := resolveRatio(req)
+		if !isRatioAllowedForOfficial720P(ratio) {
+			return service.TaskErrorWrapper(
+				errors.Errorf("wan3.0-720p-特惠 只支持 %s 画幅，当前请求为 %s；请改用 %s 或改传 %s",
+					official720PAllowedRatio, ratio, OfficialModelName, official720PAllowedRatio),
+				"invalid_parameter", http.StatusBadRequest)
+		}
+	}
 	media, err := buildWan3Media(req)
 	if err != nil {
 		return service.TaskErrorWrapper(err, "invalid_input_reference", http.StatusBadRequest)

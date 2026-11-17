@@ -55,6 +55,59 @@ const official720PGenerationResolution = "480P"
 // official720POutputResolution 是 Official720PModelName 最终交付的分辨率档位。
 const official720POutputResolution = "720P"
 
+// official720PAllowedRatio 是 Official720PModelName 唯一允许的画幅比例。
+//
+// 为什么收窄到单一比例（2026-11-17 老板口径）：
+//
+//	这个模型是「两跳」链路 —— 官网按 480P 生成，成片再交给云端超分到 720P。
+//	超分输出尺寸按**长边/短边**给（1280×720），于是：
+//	  · 9:16 的 480P 原片（540×960）→ 超分成 **720×1280**（竖屏）
+//	  · 16:9 的 480P 原片（854×480）→ 超分成 **1280×720**（横屏）
+//
+//	也就是说**同一个模型名，比例不同 → 交付像素完全不同**，
+//	而对外只有一个「720P」标签，客户无法预期自己会拿到哪一档。
+//	收窄到 9:16 后「模型名 → 交付尺寸」是一一对应的，不再有歧义。
+//
+//	该模型的真实使用场景就是竖屏带货视频（生产库 2026-11-14 之前
+//	渠道 12 的 21/21 条订单全是 9:16），收窄不影响真实业务。
+//
+// ⚠️ 为什么是**拒单**而不是静默改比例：
+//	客户传 16:9 是有明确诉求的，拿到 9:16 的片属于**静默降级**
+//	（钱按 16:9 付、片是 9:16）。必须 400 明确报错。
+//
+// ⚠️ 为什么 adaptive 也不放行：adaptive 让上游自选画幅，
+//	等于把「模型名 → 交付尺寸」的唯一性又还回去了。
+const official720PAllowedRatio = "9:16"
+
+// isRatioAllowedForOfficial720P 判断画幅比例是否被 Official720PModelName 放行。
+//
+// 只认单一的 9:16：其余比例（含 adaptive）一律拒单。
+func isRatioAllowedForOfficial720P(ratio string) bool {
+	return strings.TrimSpace(ratio) == official720PAllowedRatio
+}
+
+// SupportsFullRatio 判断某个对外模型名是否支持**全部**画幅比例。
+//
+// 用途：条件路由的规则三（首尾帧）会把**任意比例**的请求改派到目标模型
+// —— 首尾帧请求的画幅由用户自己定（16:9 / 9:16 / 1:1 都可能），
+// 规则三明确「不改比例」（见 middleware/seedance_route.go 的
+// rewriteBodyForFramesRoute）。
+//
+// ⚠️ 因此规则三的目标模型**不能**是特惠档（wan3.0-720p-特惠）：
+// 特惠档只放行 9:16（见 isRatioAllowedForOfficial720P），
+// 首尾帧的 16:9 请求改派过去会被 400 拒掉 —— 首尾帧能力直接废掉。
+//
+// 这个函数是给配置侧做**回归守卫**用的：规则三的目标一旦被改成
+// 比例受限的模型，守卫会立刻报出来，而不是等到线上首尾帧请求集体失败。
+func SupportsFullRatio(modelName string) bool {
+	switch strings.TrimSpace(modelName) {
+	case OfficialModelName, "wan3.0-video", "wan3.0-video-prime", "wan3.0-smart":
+		return true
+	default:
+		return false
+	}
+}
+
 // upstreamModelFor 把「对外模型名」映射成上游真正认识的模型名。
 //
 // 为什么必须有这个兜底（2026-10-30 修）：

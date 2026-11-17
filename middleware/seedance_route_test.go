@@ -1041,9 +1041,14 @@ func TestSeedanceRouteExpiredPauseRoutesAgain(t *testing.T) {
 // （2026-10-28 上游取消 firstFrameAssetId/lastFrameAssetId），带首尾帧的请求
 // 打到源模型必然 400；规则一的目标（漫屋）也不支持首尾帧。所以带首尾帧的请求
 // 只能走 wan3 直连。
+//
+// ⚠️ 2026-11-17：目标从 wan3.0-720p-特惠 改成 wan3.0-video-官网 ——
+// 特惠档只放行 9:16（比例收窄），而首尾帧请求的画幅由用户定（16:9/1:1 都可能），
+// 规则三不改比例 → 改派过去会被目标链路的比例闸门 400 拒掉，首尾帧能力废掉。
+// 官网原生（wan3.0-video-官网）同在 ch12、支持全比例、不走超分，是正确目标。
 // ─────────────────────────────────────────────────────────────
 
-const testFramesTargetModel = "wan3.0-720p-特惠"
+const testFramesTargetModel = "wan3.0-video-官网"
 
 // enableAllRules 打开全部三条规则，测试结束时恢复原状。
 func enableAllRules(t *testing.T, secondsTarget string, seconds int, ratioTarget, ratio, framesTarget string) {
@@ -1690,4 +1695,30 @@ func TestRatioRuleSwitchKeepsRerouteForOtherSource(t *testing.T) {
 	assert.Equal(t, testXinbiRatioTargetModel, out["model"],
 		"活动版没被关开关，9:16 必须照旧改派到心笔内链")
 	assert.Equal(t, "seedance2.5-活动", originModel)
+}
+
+// ── 规则三目标的比例能力守卫（2026-11-17）───────────────────────────────
+//
+// 首尾帧请求的画幅由**用户**定（16:9 / 9:16 / 1:1 都可能），规则三不改比例。
+// 若规则三的目标模型是比例受限的（特惠档只放行 9:16），首尾帧的 16:9 请求
+// 改派过去会被目标链路的比例闸门 400 拒掉 —— 首尾帧能力直接废掉，
+// 而且报错来自下游链路，客户看到的错误信息与「首尾帧不支持」完全无关。
+//
+// 正确行为：**不改派**（留在源链路），让请求走它自己的失败路径，
+// 报错原因准确；绝不静默送过去再被拒。
+func TestSeedanceRouteFramesSkipsRatioLimitedTarget(t *testing.T) {
+	// 故意把规则三目标配成比例受限的特惠档（错误配置）。
+	enableAllRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", "wan3.0-720p-特惠")
+
+	// 16:9 + 首帧：比例规则不命中，规则三本该接住 —— 但目标只支持 9:16，不能接。
+	body := `{"model":"seedance2.5-特惠","seconds":"10","prompt":"a cat","media":[{"type":"first_frame","url":"https://x/a.png"}]}`
+	seen, _ := runRoute(t, body)
+	out := decodeBody(t, seen)
+
+	if out["model"] == "wan3.0-720p-特惠" {
+		t.Fatalf("model = %v —— 比例受限的目标不能接首尾帧（会把非 9:16 首尾帧送过去被拒）", out["model"])
+	}
+	if out["model"] != testSourceModel {
+		t.Fatalf("model = %v, want %s（不改派就留在源模型）", out["model"], testSourceModel)
+	}
 }

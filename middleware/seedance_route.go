@@ -1260,6 +1260,22 @@ func prepareFramesRoute(c *gin.Context, body map[string]interface{}, policy seed
 	if !channelAvailabilityProbe(c, targetModel) {
 		return nil, false
 	}
+	// ── 规则三目标的**比例能力**闸门（2026-11-17）──────────────────────────
+	//
+	// 首尾帧请求的画幅由**用户**定（16:9 / 9:16 / 1:1 都可能），
+	// 规则三明确「不改比例」（见 rewriteBodyForFramesRoute）。
+	// 所以目标模型必须支持全比例 ——
+	// 特惠档（wan3.0-720p-特惠）只放行 9:16，首尾帧的 16:9 请求
+	// 改派过去会被 wan3 adaptor 的比例闸门 400 拒掉，**首尾帧能力直接废掉**。
+	//
+	// 不拦而放行 = 让请求带着错画幅去交付；拦下来 = 留在源链路吃 400，
+	// 报错原因准确（源链路已不收首尾帧，但至少不会静默交付错画幅）。
+	if !wan3.SupportsFullRatio(targetModel) {
+		logger.LogWarn(c, fmt.Sprintf(
+			"条件路由：首尾帧目标 %s 不支持全比例，跳过规则三改派（否则非 9:16 首尾帧会被目标链路拒单）",
+			targetModel))
+		return nil, false
+	}
 	if wants1080P(body) {
 		// 不挡，但要留痕：降级交付是可观测的，不是静默的。
 		logger.LogInfo(c, "条件路由：首尾帧请求指定 1080P，目标链路只交付 720P")
