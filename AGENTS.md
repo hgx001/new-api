@@ -61,6 +61,7 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 | 账号池上游 | GPT-Pool = 容器 `sub2api`（`172.18.0.1:8080`，库容器 `sub2api-postgres`，psql 用户/库均 `sub2api`） |
 
 - 路由 = `channels` × `abilities`（group×model×channel_id 笛卡尔积）。**直接改 channels.models 不会同步 abilities**，须手动 INSERT abilities 行；`MEMORY_CACHE_ENABLED=true` 下 SyncChannelCache 每 60s 重建路由，改完等 60s 生效、无需重启。key 一律库内 INSERT...SELECT 复制，不走终端明文。
+- **真机测试统一令牌（2026-11-16 用户拍板）**：所有真机视频测试一律用 token **id=144**（user 28 `admin`，status=1，`unlimited_quota=false`，key 前缀 `rYvWwh`、后缀 `mapC0P`），不再各脚本自建/另取令牌。完整 key 由用户提供、不落仓库；用时从生产库 `SELECT key FROM tokens WHERE id=144` 取，按脚本惯例拼 `sk-` 前缀（或直接用用户提供的完整值）。余额随测随耗，提交前查 `users.quota`（id=28）。既有 `scripts/_probe_seedance_route_real.py` 取 admin 无限额度令牌的写法已不符合本口径。
 - **m3only 沙箱组**（视频优先级饿死图片时的服务器侧兜底路由，2026-11-07 配置）：用户 id=53 `m3only_user` / token id=166 `m3only受限令牌`（key 前缀 `FOd34WzRQY`），model_limits=`MiniMax-M3.1,Seedream 4.5,Nano Banana Pro,Seedream 5.0 Flash,gpt-image-2.5-官方`，unlimited_quota=t、cross_group_retry=f。专属通道 ch26 MiniMax-M3.1(type 35)、ch29 GPT-Pool-image(type 1，克隆 ch13)、ch30 漫屋ArcReel-image(type 66，克隆 ch20)；改动前备份表 `bak_20261107_img_channels`/`bak_20261107_img_abilities`。
 - **四图片模型调用协议**（真机台账 `scripts/prod-ledger-img4-20261107.sql`，commit `7bae1e06d`；两轨不可混用）：
 

@@ -238,13 +238,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // validatePerCallFixedTier 校验「按次档」的固定时长与固定分辨率。
 //
-// 按次档（seedance2.5-活动）：**时长 10-30 秒逐秒可选、售价恒 ¥4.5/条**
-// （2026-11-11 起放开时长；2026-11-15 随上游切换从 2-30 收窄为 10-30 ——
-// 上游执行模型换成标准版 wan3.0-video，它最低只接 10 秒），分辨率固定 720P。
+// 按次档（seedance2.5-活动）：**时长 4-30 秒逐秒可选、售价恒 ¥4.5/条**
+// （2026-11-11 起放开时长；2026-11-17 老板口径下界统一收为 4 秒 ——
+// 4-9 秒由路由层改派 CapCut 满血档执行，≥10 秒留标准版 wan3.0-video），
+// 分辨率固定 720P。
 //
 // 两条硬约束，都必须 fail-loud：
-//   - **时长**：10-30 秒都合法；<10 或 >30 → 400。**不做就近夹紧** ——
-//     客户要 60 秒却只出 30 秒、或要 8 秒却按 10 秒跑，都是「付了钱拿不到
+//   - **时长**：4-30 秒都合法；<4 或 >30 → 400。**不做就近夹紧** ——
+//     客户要 60 秒却只出 30 秒、或要 3 秒却按 4 秒跑，都是「付了钱拿不到
 //     想要的片」。不传 → 由 resolveDurationForModel 补默认值 30 秒。
 //   - **分辨率**：只接受 720P。1080P 的上游成本是 720P 的 1.33 倍
 //     （¥0.20/秒 vs ¥0.15/秒），卖同一个价就在 1080P 上倒挂；
@@ -263,7 +264,7 @@ func validatePerCallFixedTier(req relaycommon.TaskSubmitReq) *dto.TaskError {
 	}
 	if duration != 0 && (duration < promoMinDuration || duration > maxDuration) {
 		return service.TaskErrorWrapperLocal(
-			errors.Errorf("duration must be between %d and %d seconds, got %d",
+			errors.Errorf("视频时长必须在 %d 到 %d 秒之间，当前传入 %d 秒",
 				promoMinDuration, maxDuration, duration),
 			"invalid_duration", http.StatusBadRequest)
 	}
@@ -338,9 +339,9 @@ func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskEr
 		}
 		return nil
 	}
-	// 促销族下界 5 秒（2026-11-15 老板口径），标准版直连仍是 10 秒。
+	// 促销族下界 4 秒（2026-11-17 老板口径），标准版直连仍是 10 秒。
 	//
-	// ⚠️ 促销族 <10 秒的请求正常会被路由层改派到 CapCut 满血档；这里放行 5 秒
+	// ⚠️ 促销族 <10 秒的请求正常会被路由层改派到 CapCut 满血档；这里放行 4 秒
 	//   是兜底（路由层那档开关关掉时不应该直接 400 —— 那是「本来能跑的请求
 	//   在源链路被拒」，不是「上游不支持」）。
 	lowerBound := minDuration
@@ -349,13 +350,13 @@ func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskEr
 	}
 	if duration < lowerBound {
 		return service.TaskErrorWrapperLocal(
-			errors.Errorf("duration must be between %d and %d seconds, got %d",
+			errors.Errorf("视频时长必须在 %d 到 %d 秒之间，当前传入 %d 秒",
 				lowerBound, maxDuration, duration),
 			"invalid_duration", http.StatusBadRequest)
 	}
 	if duration > maxDuration {
 		return service.TaskErrorWrapperLocal(
-			errors.Errorf("duration must be between %d and %d seconds, got %d",
+			errors.Errorf("视频时长必须在 %d 到 %d 秒之间，当前传入 %d 秒",
 				lowerBound, maxDuration, duration),
 			"invalid_duration", http.StatusBadRequest)
 	}
@@ -720,12 +721,12 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 		// 这里只是兜底，比如路由层改写进来的秒数）。
 		return primeFixedDuration
 	}
-	// 促销族（特惠/活动）下界是 5 秒（2026-11-15 老板口径），其余标准版直连
+	// 促销族（特惠/活动）下界是 4 秒（2026-11-17 老板口径），其余标准版直连
 	// 下界仍是 10 秒。
 	//
-	// ⚠️ 促销族的 <10 秒请求正常会被路由层改派到 CapCut 满血档；这里允许 5 秒
+	// ⚠️ 促销族的 <10 秒请求正常会被路由层改派到 CapCut 满血档；这里允许 4 秒
 	//   是**兜底**（路由层那档开关关掉、或者路由层没生效时），
-	//   避免把「本来能跑的 5 秒单」在源链路就拒掉。
+	//   避免把「本来能跑的 4 秒单」在源链路就拒掉。
 	if isPromoFamilyModel(model) {
 		if duration < promoMinDuration {
 			return promoMinDuration

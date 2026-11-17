@@ -14,7 +14,7 @@ package youzanwan3
 //
 // 本文件守三件事：
 //   1. 活动版的默认上游是标准版、确实按次结算；
-//   2. 固定 720P / 时长 5-30 秒是 **fail-loud**（传别的值报错，不静默改档）；
+//   2. 固定 720P / 时长 4-30 秒是 **fail-loud**（传别的值报错，不静默改档）；
 //   3. EstimateBilling 返回 nil —— 否则 30 秒会被**乘进** ¥4.5，收成 ¥135。
 
 import (
@@ -95,40 +95,40 @@ func TestHuoDong_母本仍是按秒(t *testing.T) {
 // 守卫 2：时长 2-30 秒自由 / 固定 720P（fail-loud）
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestHuoDong_时长5到30秒可选 守的是「按次档时长自由、价格不变」。
-// 2026-11-15 起区间为 5-30（老板口径：<10 秒改派 CapCut 满血档）。
+// TestHuoDong_时长4到30秒可选 守的是「按次档时长自由、价格不变」。
+// 2026-11-17 起区间为 4-30（老板口径：<10 秒改派 CapCut 满血档，最低 4 秒）。
 //
-// 2026-11-11 老板改口：活动版不再固定 30 秒，**2-30 秒逐秒可选**，
+// 2026-11-11 老板改口：活动版不再固定 30 秒，**逐秒可选**，
 // 但售价恒为 ¥4.5/条（不随时长变化）。所以这里守两件事：
-//  1. 2-30 秒都能过校验，且下发时长等于客户要的值；
-//  2. 越界（<2 / >30）必须 400，不能静默夹紧 —— 客户要 60 秒却只出 30 秒，
-//     或者要 1 秒却按 2 秒跑，都是「付了钱拿不到想要的片」。
+//  1. 4-30 秒都能过校验，且下发时长等于客户要的值；
+//  2. 越界（<4 / >30）必须 400，不能静默夹紧 —— 客户要 60 秒却只出 30 秒，
+//     或者要 3 秒却按 4 秒跑，都是「付了钱拿不到想要的片」。
 //
 // ⚠️ 计费不受时长影响：EstimateBilling 仍返回 nil（见 TestHuoDong_EstimateBilling返回nil），
-// 客户传 2 秒和 30 秒都扣 ¥4.5。这条是**有意为之**，不是 bug。
-func TestHuoDong_时长5到30秒可选(t *testing.T) {
+// 客户传 4 秒和 30 秒都扣 ¥4.5。这条是**有意为之**，不是 bug。
+func TestHuoDong_时长4到30秒可选(t *testing.T) {
 	// 不传时长 → 30 秒（默认值，与旧行为一致：不传的客户仍拿最长片）。
 	assert.Equal(t, 30, resolveDurationForModel(relaycommon.TaskSubmitReq{Model: huoDongModel}, huoDongModel))
 	// 显式传 30（字符串形态）→ 30。
 	assert.Equal(t, 30, resolveDurationForModel(relaycommon.TaskSubmitReq{Model: huoDongModel, Seconds: "30"}, huoDongModel))
 
-	// 5-30 秒逐秒可选（2026-11-15 老板口径）：
+	// 4-30 秒逐秒可选（2026-11-17 老板口径）：
 	// 校验通过，且下发的 duration 与客户请求一致。
-	for _, sec := range []int{5, 8, 10, 15, 29, 30} {
+	for _, sec := range []int{4, 5, 8, 10, 15, 29, 30} {
 		req := relaycommon.TaskSubmitReq{Model: huoDongModel, Duration: sec}
 		require.Nil(t, validatePerCallFixedTier(req),
-			"时长 %d 秒必须允许 —— 活动版区间为 5-30 秒", sec)
+			"时长 %d 秒必须允许 —— 活动版区间为 4-30 秒", sec)
 		assert.Equal(t, sec, resolveDurationForModel(req, huoDongModel),
 			"下发的时长必须等于客户请求的 %d 秒", sec)
 	}
 
-	// ⚠️ 越界必须 400（不是夹紧）。<5 秒是 2026-11-15 的新下限。
-	for _, bad := range []int{1, 2, 4, 31, 60} {
+	// ⚠️ 越界必须 400（不是夹紧）。<4 秒是 2026-11-17 的新下限。
+	for _, bad := range []int{1, 2, 3, 31, 60} {
 		req := relaycommon.TaskSubmitReq{Model: huoDongModel, Duration: bad}
 		taskErr := validatePerCallFixedTier(req)
 		require.NotNil(t, taskErr, "时长 %d 秒必须被拒 —— 静默夹紧会让客户拿到不是自己点的那一档", bad)
 	}
-	// 母本不受影响：10 秒是合法的（按秒档 5—30 秒逐秒可选，2026-11-15 起）。
+	// 母本不受影响：10 秒是合法的（按秒档 4—30 秒逐秒可选，2026-11-17 起）。
 	assert.Nil(t, validatePerCallFixedTier(relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 10}),
 		"母本必须仍然允许 10 秒 —— 按秒档本来就可以逐秒选")
 }

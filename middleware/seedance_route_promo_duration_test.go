@@ -1,15 +1,15 @@
 package middleware
 
-// 促销族（seedance2.5-特惠 / -活动）**5-30 秒**的端到端路由口径。
+// 促销族（seedance2.5-特惠 / -活动）**4-30 秒**的端到端路由口径。
 //
-// 2026-11-15 老板口径：
+// 2026-11-17 老板口径：
 //
-//	· 特惠与活动都支持 5-30 秒；
+//	· 特惠与活动都支持 4-30 秒，低于 4 秒 fail-loud 报错；
 //	· <10 秒的请求改派 **cp-seedance-2.0**（CapCut 满血档，区间 4-15 秒）；
 //	· ≥10 秒的请求留在有赞标准版 wan3.0-video（上游下界 10 秒）。
 //
-// 这份测试锁住的是**分流分界线**：5-9 秒必须落 CapCut、10 秒必须不落 CapCut。
-// 两边错一格就是「5 秒单被上游拒」或「10 秒单白白降级到跨渠道链路」。
+// 这份测试锁住的是**分流分界线**：4-9 秒必须落 CapCut、10 秒必须不落 CapCut。
+// 两边错一格就是「4 秒单被上游拒」或「10 秒单白白降级到跨渠道链路」。
 
 import (
 	"strconv"
@@ -19,9 +19,9 @@ import (
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 )
 
-// 5-9 秒 → CapCut 满血档（有赞标准版接不住这个区间）。
+// 4-9 秒 → CapCut 满血档（有赞标准版接不住这个区间）。
 func TestPromoDuration_BelowTenGoesCapcut20(t *testing.T) {
-	for _, seconds := range []int{5, 6, 8, 9} {
+	for _, seconds := range []int{4, 5, 6, 8, 9} {
 		t.Run(strconv.Itoa(seconds), func(t *testing.T) {
 			enableShortCapcut(t, false, false, true)
 			stubChannelAvailableByModel(t, map[string]bool{
@@ -62,7 +62,7 @@ func TestPromoDuration_TenAndAboveStayOnYouzan(t *testing.T) {
 	}
 }
 
-// 活动版（按次档）同样适用 5-30 秒口径。
+// 活动版（按次档）同样适用 4-30 秒口径。
 //
 // ⚠️ 活动版默认关闭规则六（source_overrides 里的 short_rule_enabled=false），
 // 那是运营口径（按次档没有短时长成本问题）。这里显式打开，验证**规则本身**
@@ -75,12 +75,14 @@ func TestPromoDuration_HuoDongSameBoundary(t *testing.T) {
 		testShortCapcutTarget:   true,
 	})
 
-	seen, _ := runRouteRaw(t, `{"model":"seedance2.5-活动","seconds":5,"prompt":"a cat"}`)
-	body := decodeBody(t, seen)
+	for _, seconds := range []int{4, 5} {
+		seen, _ := runRouteRaw(t, `{"model":"seedance2.5-活动","seconds":`+strconv.Itoa(seconds)+`,"prompt":"a cat"}`)
+		body := decodeBody(t, seen)
 
-	if body["model"] != testShortCapcutTarget {
-		t.Fatalf("活动版 5 秒同样应落 CapCut 满血档 %s，实际 model=%v",
-			testShortCapcutTarget, body["model"])
+		if body["model"] != testShortCapcutTarget {
+			t.Fatalf("活动版 %d 秒同样应落 CapCut 满血档 %s，实际 model=%v",
+				seconds, testShortCapcutTarget, body["model"])
+		}
 	}
 }
 
@@ -175,7 +177,7 @@ func enablePromoPolicy(t *testing.T, p promoPolicy) {
 }
 
 // 分界常量必须与「有赞标准版下界」一致 —— 两边不是同一个数就会出现
-// 「5 秒既不被 CapCut 接、也不被有赞接」的空洞。
+// 「4 秒既不被 CapCut 接、也不被有赞接」的空洞。
 func TestPromoDuration_BoundaryConstantsAligned(t *testing.T) {
 	if seedanceroute_setting.ShortCapcutMinSeconds != 10 {
 		t.Fatalf("CapCut 接管门槛应为 10 秒，实际 %d", seedanceroute_setting.ShortCapcutMinSeconds)

@@ -752,17 +752,17 @@ const perCallFixedTierSeconds = constant.Seedance25PerCallFixedSeconds
 
 // 按次档允许的时长区间。
 //
-// 2026-11-15 老板口径：促销族对外统一支持 **5-30 秒**。
+// 2026-11-17 老板口径：促销族对外统一支持 **4-30 秒**，低于 4 秒 fail-loud 报错。
 //
-// 5 秒这条下限对应的是「<10 秒走 CapCut 满血档」：
-//   - 5–9 秒：路由层改派 cp-seedance-2.0（CapCut 满血档，区间 4–15 秒）；
+// 4 秒这条下限对应的是「<10 秒走 CapCut 满血档」：
+//   - 4–9 秒：路由层改派 cp-seedance-2.0（CapCut 满血档，区间 4–15 秒）；
 //   - ≥10 秒：留在有赞标准版源链路（同渠道同 adaptor，最不容易失败）。
 //
-// ⚠️ 这里放行 5 秒**不代表**有赞能跑 5 秒 —— 有赞标准版下界是 10 秒。
-//   5 秒请求能过这一关，靠的是它先被规则六第三分支改派走了；
+// ⚠️ 这里放行 4 秒**不代表**有赞能跑 4 秒 —— 有赞标准版下界是 10 秒。
+//   4 秒请求能过这一关，靠的是它先被规则六第三分支改派走了；
 //   万一漏过路由层，源 adaptor 的 validateExplicitDurationForModel 会 fail-loud。
 const (
-	perCallMinSeconds = 5
+	perCallMinSeconds = 4
 	perCallMaxSeconds = 30
 )
 

@@ -522,9 +522,11 @@ func TestTehuiAliasMirrorsPrime(t *testing.T) {
 		{"default", relaycommon.TaskSubmitReq{Model: tehuiModel}, "720P", 10, "adaptive"},
 		{"1080p", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "1080p"}, "1080P", 10, "adaptive"},
 		{"480p falls back to 720P", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "480P"}, "720P", 10, "adaptive"},
-		// 促销族下界 5 秒（2026-11-15 老板口径）：<5 秒夹到 5，
-		// ≥5 秒原样透传（<10 秒正常会被路由层改派到 CapCut 满血档）。
-		{"duration clamped low", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 1}, "720P", 5, "adaptive"},
+		// 促销族下界 4 秒（2026-11-17 老板口径）：<4 秒夹到 4（兜底夹紧；
+		// 显式越界请求在 validate 阶段已 fail-loud 400，不会走到这里），
+		// ≥4 秒原样透传（<10 秒正常会被路由层改派到 CapCut 满血档）。
+		{"duration clamped low", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 1}, "720P", 4, "adaptive"},
+		{"duration 4 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 4}, "720P", 4, "adaptive"},
 		{"duration 5 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 5}, "720P", 5, "adaptive"},
 		{"duration 8 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 8}, "720P", 8, "adaptive"},
 		{"duration clamped high", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 99}, "720P", 30, "adaptive"},
