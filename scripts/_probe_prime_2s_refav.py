@@ -23,9 +23,13 @@ if not KEY.startswith("sk-"):
 BUCKET, REGION = "mps-test-1397292858", "ap-guangzhou"
 # 用今天上午验证过的超分产物（对象确认存在，1280x720/30s）
 OBJ = "/mps_api_test/sr_task_vjORy3ND43b76fQqcr2foOAM73wGO0ip.mp4"
+# 直接指定公网素材 URL 时优先（COS 桶域名在腾讯云内网解析会被 SSRF 防护拦）
+REF_URL = os.environ.get("REF_URL", "").strip()
 
 
 def presign(obj: str) -> str:
+    if REF_URL:
+        return REF_URL
     out = subprocess.run(
         ["python3", "/tmp/_sign_cos_url.py", BUCKET, REGION, obj],
         capture_output=True, text=True, timeout=30,
@@ -47,7 +51,6 @@ def main() -> None:
         "prompt": "测试：2 秒任务，带参考视频与参考音频（负向验证，预期本地 400）",
         "duration": 2,
         "media": [
-            {"type": "reference_video", "url": ref},
             {"type": "reference_audio", "url": ref},
         ],
     }
