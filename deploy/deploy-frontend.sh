@@ -117,7 +117,23 @@ else
 fi
 
 SSH_OPTS=(-p "$REMOTE_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=3)
-REMOTE="$REMOTE_USER@$REMOTE_HOST"
+# REMOTE_HOST 可以是裸 IP/别名（登录用户取 REMOTE_USER）或已含 user@ 的完整写法。
+# ⚠️ ssh 的 Host 别名不能写成 user@alias —— 别名场景必须保持裸的，
+#    由 REMOTE_USER 单独拼进 ssh 的 user@host 参数。
+if [[ "$REMOTE_HOST" == *@* ]]; then
+  REMOTE="$REMOTE_HOST"
+else
+  REMOTE="$REMOTE_USER@$REMOTE_HOST"
+fi
+
+# 构建身份：前端源码目录属 ubuntu，用 root 跑 bun install 会把 node_modules
+# 变成 root 所有，之后以 ubuntu 身份部署就会撞权限问题。
+# 新机只能 root 登录 → REMOTE_BUILD_USER=ubuntu 表示「root 连入，但用 sudo -u ubuntu 跑构建」。
+BUILD_USER="${REMOTE_BUILD_USER:-}"
+
+# bun 的位置：新机 bun 装在 ubuntu 家目录（/home/ubuntu/.bun/bin），
+# 而部署以 root 执行，$HOME/.bun 不存在 → 用 REMOTE_BUN_DIR 显式指定。
+BUN_DIR="${REMOTE_BUN_DIR:-}"
 
 log "deploying $COMMIT_SHA to $REMOTE"
 if [[ "$DRY_RUN" == true ]]; then
@@ -127,10 +143,16 @@ if [[ "$DRY_RUN" == true ]]; then
   exit 0
 fi
 
-REMOTE_COMMAND="COMMIT_SHA=$(printf '%q' "$COMMIT_SHA") REMOTE_APP_DIR=$(printf '%q' "$REMOTE_APP_DIR") REMOTE_FRONTEND_DIR=$(printf '%q' "$REMOTE_FRONTEND_DIR") SERVER_GIT_REMOTE=$(printf '%q' "$SERVER_GIT_REMOTE") BRANCH=$(printf '%q' "$BRANCH") HEALTHCHECK_URL=$(printf '%q' "$HEALTHCHECK_URL") bash -s"
+REMOTE_COMMAND="COMMIT_SHA=$(printf '%q' "$COMMIT_SHA") REMOTE_APP_DIR=$(printf '%q' "$REMOTE_APP_DIR") REMOTE_FRONTEND_DIR=$(printf '%q' "$REMOTE_FRONTEND_DIR") SERVER_GIT_REMOTE=$(printf '%q' "$SERVER_GIT_REMOTE") BRANCH=$(printf '%q' "$BRANCH") HEALTHCHECK_URL=$(printf '%q' "$HEALTHCHECK_URL") BUN_DIR=$(printf '%q' "$BUN_DIR") BUILD_USER=$(printf '%q' "$BUILD_USER") bash -s"
 ssh "${SSH_OPTS[@]}" "$REMOTE" "$REMOTE_COMMAND" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
-export PATH="$HOME/.bun/bin:$PATH"
+# BUN_DIR 显式指定时优先用它（新机 bun 装在 /home/ubuntu/.bun/bin，
+# 而部署以 root 执行，$HOME/.bun 不存在 → 必须显式传路径）。
+if [ -n "${BUN_DIR:-}" ]; then
+  export PATH="$BUN_DIR:$PATH"
+else
+  export PATH="$HOME/.bun/bin:$PATH"
+fi
 
 log() {
   printf '[remote-deploy] %s\n' "$*"
@@ -171,10 +193,19 @@ git checkout --detach --quiet "$COMMIT_SHA"
 [[ -f VERSION ]] || die 'VERSION file is missing'
 
 log 'installing frontend dependencies'
-(cd web && bun install --frozen-lockfile)
+# 构建以 BUILD_USER 身份执行：源码目录属 ubuntu，用 root 跑 bun install 会把
+# node_modules 变成 root 所有，之后以 ubuntu 身份部署就会撞权限问题。
+build_as() {
+  if [ -n "${BUILD_USER:-}" ] && [ "$(id -un)" != "$BUILD_USER" ]; then
+    sudo -n -u "$BUILD_USER" -H env PATH="$PATH" "$@"
+  else
+    "$@"
+  fi
+}
+(cd web && build_as bun install --frozen-lockfile)
 
 log 'building default frontend'
-(cd web/default && DISABLE_ESLINT_PLUGIN=true VITE_REACT_APP_VERSION="$(cat ../../VERSION)" bun run build)
+(cd web/default && build_as env DISABLE_ESLINT_PLUGIN=true VITE_REACT_APP_VERSION="$(cat ../../VERSION)" bun run build)
 [[ -f web/default/dist/index.html ]] || die 'frontend build did not produce dist/index.html'
 
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
