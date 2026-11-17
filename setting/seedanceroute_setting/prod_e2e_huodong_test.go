@@ -18,6 +18,14 @@ import (
 //   - 规则二 9:16 从 wan3.0-720p-特惠 改为直连心笔 480P 内链
 //     wan3.0-720p-特惠-内链（ch25）。
 //
+// 2026-11-17 一处变更：
+//   - frames_target_model 从 wan3.0-720p-特惠 改为 wan3.0-video-官网。
+//     原因：特惠档已收窄为**只支持 9:16**，而规则三（首尾帧）**不改比例**
+//     —— 客户传 16:9 首尾帧时若仍改派到特惠档，会被特惠档的比例闸门 400 拒掉，
+//     首尾帧能力直接废掉。官网原生（wan3.0-video-官网）同渠道 12、支持全比例、
+//     原生 720P/1080P 不走超分，是唯一合适的目标。
+//     配套：middleware 的 wan3.SupportsFullRatio 守卫（目标不支持全比例则不改派）。
+//
 // ⚠️ 夹具里**不放** seconds_rule_paused_until / updated_at 这类随时间漂移的
 // 字段：它们是运维状态而非配置，放进来会让断言随当前时间变化而假红。
 // 改动生产 option 的稳定字段时必须同步改这里。
@@ -28,8 +36,8 @@ const prodRouteOptionJSON = `{
   "source_models": ["seedance2.5-特惠", "seedance2.5-活动"],
   "trigger_ratio": "9:16",
   "trigger_seconds": 20,
-  "ratio_target_model": "wan3.0-720p-特惠-内链",
-  "frames_target_model": "wan3.0-720p-特惠",
+  "ratio_target_model": "wan3.0-720p-特惠",
+  "frames_target_model": "wan3.0-video-官网",
   "failover_source_model": "seedance-2-5",
   "failover_target_model": "wan3.0-班车",
   "failover_enabled": true,
@@ -45,8 +53,10 @@ func TestProdOption_活动版命中源模型判定(t *testing.T) {
 	require.Equal(t, 20, p.TriggerSeconds, "规则一触发时长必须是 20 秒（严格大于）")
 	require.Equal(t, "seedance-2-5", p.TargetModel, "规则一目标模型")
 	require.Equal(t, "9:16", p.TriggerRatio, "规则二触发比例")
-	require.Equal(t, "wan3.0-720p-特惠-内链", p.RatioTargetModel, "规则二目标模型：心笔 480P 内链")
-	require.Equal(t, "wan3.0-720p-特惠", p.FramesTargetModel, "规则三目标模型")
+	require.Equal(t, "wan3.0-720p-特惠", p.RatioTargetModel,
+		"规则二目标模型：特惠档（生产实际值；规则二本身只钉 9:16，与特惠档的画幅收窄一致）")
+	require.Equal(t, "wan3.0-video-官网", p.FramesTargetModel,
+		"规则三目标模型：必须是支持全比例的官网原生（特惠档只支持 9:16，带首尾帧会被拒单）")
 
 	// 母本与活动版都必须命中（并集口径）
 	require.True(t, p.IsSourceModel(constant.Seedance25TeHuiModel),
