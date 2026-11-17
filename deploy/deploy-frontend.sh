@@ -135,6 +135,10 @@ BUILD_USER="${REMOTE_BUILD_USER:-}"
 # 而部署以 root 执行，$HOME/.bun 不存在 → 用 REMOTE_BUN_DIR 显式指定。
 BUN_DIR="${REMOTE_BUN_DIR:-}"
 
+# 并发锁文件：/tmp 带 sticky 位，root 无法打开 ubuntu 建的同名文件
+# （Permission denied，2026-11-17 实测）→ 新机用 REMOTE_LOCK_FILE 指到 /root。
+REMOTE_LOCK_FILE="${REMOTE_LOCK_FILE:-/tmp/new-api-frontend.deploy.lock}"
+
 log "deploying $COMMIT_SHA to $REMOTE"
 if [[ "$DRY_RUN" == true ]]; then
   log "would run remote deployment in $REMOTE_APP_DIR"
@@ -143,7 +147,7 @@ if [[ "$DRY_RUN" == true ]]; then
   exit 0
 fi
 
-REMOTE_COMMAND="COMMIT_SHA=$(printf '%q' "$COMMIT_SHA") REMOTE_APP_DIR=$(printf '%q' "$REMOTE_APP_DIR") REMOTE_FRONTEND_DIR=$(printf '%q' "$REMOTE_FRONTEND_DIR") SERVER_GIT_REMOTE=$(printf '%q' "$SERVER_GIT_REMOTE") BRANCH=$(printf '%q' "$BRANCH") HEALTHCHECK_URL=$(printf '%q' "$HEALTHCHECK_URL") BUN_DIR=$(printf '%q' "$BUN_DIR") BUILD_USER=$(printf '%q' "$BUILD_USER") bash -s"
+REMOTE_COMMAND="COMMIT_SHA=$(printf '%q' "$COMMIT_SHA") REMOTE_APP_DIR=$(printf '%q' "$REMOTE_APP_DIR") REMOTE_FRONTEND_DIR=$(printf '%q' "$REMOTE_FRONTEND_DIR") SERVER_GIT_REMOTE=$(printf '%q' "$SERVER_GIT_REMOTE") BRANCH=$(printf '%q' "$BRANCH") HEALTHCHECK_URL=$(printf '%q' "$HEALTHCHECK_URL") BUN_DIR=$(printf '%q' "$BUN_DIR") BUILD_USER=$(printf '%q' "$BUILD_USER") REMOTE_LOCK_FILE=$(printf '%q' "$REMOTE_LOCK_FILE") bash -s"
 ssh "${SSH_OPTS[@]}" "$REMOTE" "$REMOTE_COMMAND" <<'REMOTE_SCRIPT'
 set -Eeuo pipefail
 # BUN_DIR 显式指定时优先用它（新机 bun 装在 /home/ubuntu/.bun/bin，
@@ -171,7 +175,7 @@ command -v curl >/dev/null 2>&1 || die 'curl is required on the server'
 cd "$REMOTE_APP_DIR" || die "source checkout does not exist: $REMOTE_APP_DIR"
 git rev-parse --show-toplevel >/dev/null 2>&1 || die "$REMOTE_APP_DIR is not a Git checkout"
 
-exec 9>/tmp/new-api-frontend.deploy.lock
+exec 9>"${REMOTE_LOCK_FILE:-/tmp/new-api-frontend.deploy.lock}"
 flock -n 9 || die 'another deployment is already running'
 
 if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
