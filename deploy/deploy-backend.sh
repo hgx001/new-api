@@ -26,32 +26,45 @@ if ! [[ "$TARGET" =~ ^[0-9a-f]{7,40}$ ]]; then
   exit 1
 fi
 
+# HOST 可以写成 "user@host" 或直接 "host"（此时取 DEPLOY_USER）。
+# 新机（114.132.252.150）的 ssh 是 22 端口 + root，不能沿用老机的 ubuntu@host:877。
+# ⚠️ ssh 的 Host 别名（.ssh/config 里的名字）**不能**写成 user@alias，
+# 所以「裸 host」必须保持裸的，由 ~/.ssh/config 里的 User 决定登录用户；
+# DEPLOY_USER 只在裸 IP（没有别名）时用来拼 user@ip。
 HOST="${DEPLOY_HOST:-ubuntu@119.29.253.97}"
 PORT="${DEPLOY_PORT:-877}"
+SSH_TARGET="$HOST"
+if [[ "$HOST" != *@* ]] && [ -n "${DEPLOY_USER:-}" ]; then
+  # 裸 host + 显式 DEPLOY_USER → 拼成 user@host（别名场景请在 .ssh/config 里配好 User）
+  SSH_TARGET="$DEPLOY_USER@$HOST"
+fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REMOTE_SCRIPT="/tmp/backend-remote.sh"
-REMOTE_LOG="/tmp/backend-deploy-$(date +%Y%m%d%H%M%S).log"
+# 远端脚本与日志的落地目录。/tmp 带 sticky 位，root 通过 scp 直接写 /tmp 会
+# 被拒（Permission denied）——root 场景改用 /root。
+REMOTE_BASE="${DEPLOY_REMOTE_BASE:-/tmp}"
+REMOTE_SCRIPT="$REMOTE_BASE/backend-remote.sh"
+REMOTE_LOG="$REMOTE_BASE/backend-deploy-$(date +%Y%m%d%H%M%S).log"
 POLL_TIMEOUT="${DEPLOY_POLL_TIMEOUT:-5400}"
 POLL_INTERVAL="${DEPLOY_POLL_INTERVAL:-15}"
 
 if [ "${DRY:-0}" = 1 ]; then
-  echo "DRY-RUN: scp -P $PORT $SCRIPT_DIR/backend-remote.sh $HOST:$REMOTE_SCRIPT"
-  echo "DRY-RUN: ssh -p $PORT $HOST 'nohup setsid bash $REMOTE_SCRIPT $TARGET > $REMOTE_LOG 2>&1 &'"
+  echo "DRY-RUN: scp -P $PORT $SCRIPT_DIR/backend-remote.sh $SSH_TARGET:$REMOTE_SCRIPT"
+  echo "DRY-RUN: ssh -p $PORT $SSH_TARGET 'nohup setsid bash $REMOTE_SCRIPT $TARGET > $REMOTE_LOG 2>&1 &'"
   exit 0
 fi
 
 echo "[deploy] 上传部署脚本"
-scp -P "$PORT" "$SCRIPT_DIR/backend-remote.sh" "$HOST:$REMOTE_SCRIPT"
+scp -P "$PORT" "$SCRIPT_DIR/backend-remote.sh" "$SSH_TARGET:$REMOTE_SCRIPT"
 
 echo "[deploy] 启动远端部署（脱离会话，日志：$REMOTE_LOG）"
-ssh -p "$PORT" "$HOST" \
+ssh -p "$PORT" "$SSH_TARGET" \
   "nohup setsid bash '$REMOTE_SCRIPT' '$TARGET' > '$REMOTE_LOG' 2>&1 < /dev/null & echo started:\$REMOTE_LOG"
 
 # 轮询远端日志直到出现终态标记；期间本地断开也不影响远端部署继续跑。
 seen=0
 deadline=$(( $(date +%s) + POLL_TIMEOUT ))
 while :; do
-  out=$(ssh -p "$PORT" "$HOST" "cat '$REMOTE_LOG' 2>/dev/null || true")
+  out=$(ssh -p "$PORT" "$SSH_TARGET" "cat '$REMOTE_LOG' 2>/dev/null || true")
   if [ -n "$out" ]; then
     total=$(printf '%s\n' "$out" | wc -l)
     if [ "$total" -gt "$seen" ]; then
@@ -67,13 +80,13 @@ while :; do
     echo "[deploy] 部署失败（见 $REMOTE_LOG）" >&2
     exit 1
   fi
-  alive=$(ssh -p "$PORT" "$HOST" "pgrep -f '[b]ackend-remote.sh' >/dev/null && echo yes || echo no")
+  alive=$(ssh -p "$PORT" "$SSH_TARGET" "pgrep -f '[b]ackend-remote.sh' >/dev/null && echo yes || echo no")
   if [ "$alive" != "yes" ]; then
     # 竞态兜底：远端脚本写完 FINAL_SHA 就退出，而上一轮的 cat 可能拿到的是它退出前的
     # 快照（末几行还没刷出来）。2026-11-01 实测——49d51cf2 这次部署远端日志明明有
     # HEALTH_OK 和 FINAL_SHA，本地却因为「进程已退出 + 快照里没有终态标记」报了失败。
     # 进程退出后日志就不会再变，这里补读一次再下结论。
-    final=$(ssh -p "$PORT" "$HOST" "cat '$REMOTE_LOG' 2>/dev/null || true")
+    final=$(ssh -p "$PORT" "$SSH_TARGET" "cat '$REMOTE_LOG' 2>/dev/null || true")
     final_total=$(printf '%s\n' "$final" | wc -l)
     if [ "$final_total" -gt "$seen" ]; then
       printf '%s\n' "$final" | tail -n +$((seen + 1))
