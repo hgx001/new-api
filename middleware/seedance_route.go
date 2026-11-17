@@ -339,8 +339,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 					// 秒数与 size 倍率都取源模型口径，覆盖 CapCut adaptor
 					// 自己给的档位差价（480p=1.0 / 720p=×2.0 是 CapCut 的定价结构）。
 					//
-					// ⚠️ 生成档是 480p（2026-11-15 起，交付前超分到 720P），
-					// 但**售价不吃这个降档**：源链路只卖 720P，客户价按 720P 算。
+					// 2026-11-17 起生成档 = 交付档 = **720p 原生直出**，
+					// 售价仍按源模型的 720P 口径算（与 CapCut 自己的档位差价无关）。
 					setRouteBillingContext(c, seconds,
 						sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
 					logger.LogInfo(c, fmt.Sprintf(
@@ -405,8 +405,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 							// ⚠️ 必须覆盖 CapCut adaptor 自己给的 size 倍率
 							// （480p=1.0 / 720p=×2.0）—— 那是 CapCut 的档位差价，
 							// 与源模型的档位差价不是同一个维度，不覆盖就是超收。
-							// 改派生成的档位是 480p（2026-11-15，交付前超分到 720P），
-							// 这里仍按源模型的 720P 档算价 —— 降档省的是成本，不是售价。
+							// 生成档是 720p 原生直出（2026-11-17 起取消超分），
+							// 这里仍按源模型的 720P 档算价 —— 不用 CapCut 的档位差价。
 							setRouteBillingContext(c, capcutSeconds,
 								sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
 							logger.LogInfo(c, fmt.Sprintf(

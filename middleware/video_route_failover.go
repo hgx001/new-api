@@ -251,9 +251,10 @@ func tryFailoverRoute(c *gin.Context, body map[string]interface{}, billingOrigin
 		return false, ""
 	}
 
-	// 备选备胎优先于班车（2026-11-14）：开关打开时先试 CapCut 480p + 超分 720P。
-	// 接不住（能力不兼容 / 没渠道 / 没配超分）时**继续往下走班车** ——
-	// 备选是更好的退路，不是唯一退路。
+	// 备选备胎优先于班车（2026-11-14）：开关打开时先试 CapCut 2.5 Flash
+	// （2026-11-17 起 720p 原生直出，不再 480p + 超分）。
+	// 接不住（能力不兼容 / 没渠道 / 时长不在白名单 / 比例缺省）时
+	// **继续往下走班车** —— 备选是更好的退路，不是唯一退路。
 	if tryFailoverAltRoute(c, body, modelName, billingOriginModel) {
 		return true, reason
 	}
@@ -335,7 +336,7 @@ func tryFailoverAfterDoubaoRoute(
 		return false, ""
 	}
 	// 备选备胎优先（与顶层 tryFailoverRoute 同口径）：
-	// 促销族 → 豆包 → CapCut（480p + 超分 720P）优先于班车。
+	// 促销族 → 豆包 → CapCut（720p 原生直出）优先于班车。
 	// 放在 target 判空之前：班车没配时备选这条退路仍然应该生效。
 	if tryFailoverAltRoute(c, doubaoBody, modelName, billingOriginModel) {
 		return true, reason
