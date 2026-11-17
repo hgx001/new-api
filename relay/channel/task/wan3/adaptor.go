@@ -108,6 +108,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	//
 	// ⚠️ 只对特惠档生效：官网原生（wan3.0-video-官网）与标准版
 	// （wan3.0-video）仍支持全比例，不受这条收窄影响。
+	//
+	// ⚠️ 与 middleware/wan3_tehui_alias.go 的闸门是**两道互补的闸**，不是重复：
+	//   - 主闸门在别名中间件：wan3.0-720p-特惠 是无条件别名 → seedance2.5-特惠，
+	//     请求**根本不会进到 wan3 adaptor**（先改名、再被规则八兜底到
+	//     cp-seedance-2.5flash）。2026-11-17 实测：只在这里设闸门时，
+	//     16:9 请求照样 200 建单并落到 channel 20。
+	//   - 本闸门兜底**旧名**（wan3.0-720p-官网）：它不走别名中间件，
+	//     直达 wan3 adaptor。近 7 天生产零调用，但过渡期仍可调用，
+	//     画幅口径必须与新名一致。
 	if info != nil && isOfficial720PModel(info.OriginModelName) {
 		ratio := resolveRatio(req)
 		if !isRatioAllowedForOfficial720P(ratio) {

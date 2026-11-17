@@ -111,3 +111,85 @@ func TestWan3TehuiAliasKeepsOriginAfterSecondsRule(t *testing.T) {
 	assert.Equal(t, wan3TehuiModelName, rec.originModel,
 		"规则一改派后，计费原点必须仍是 wan3.0-720p-特惠")
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// 特惠档比例闸门（老板口径：只做 9:16）
+//
+// ⚠️ 闸门必须挂在**别名中间件**（Wan3TehuiAliasRoute）而不是 wan3 adaptor：
+// 生产上 wan3.0-720p-特惠 是无条件别名 → seedance2.5-特惠，请求根本不会
+// 进入 wan3 adaptor（先被改名，再被规则八兜底到 cp-seedance-2.5flash）。
+// 闸门放在 adaptor 里等于形同虚设 —— 2026-11-17 生产实测：16:9 请求照样
+// 200 建单并落到 channel 20。
+// ════════════════════════════════════════════════════════════════════════════
+
+// runAliasRaw 不对响应码做断言，用于验证 400 拒单的场景。
+func runAliasRaw(t *testing.T, body string) (*httptest.ResponseRecorder, *routeRecorder) {
+	t.Helper()
+	stubChannelAvailable(t, true)
+	rec := &routeRecorder{}
+	engine := newRouteEngine(rec, Wan3TehuiAliasRoute(), Seedance25TeHuiRoute())
+	request := httptest.NewRequest("POST", "/v1/video/generations", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	return response, rec
+}
+
+// 非 9:16 必须被 400 明确拒单（而不是静默改成 9:16 交付）。
+func TestWan3TehuiAliasRejectsNonPortraitRatio(t *testing.T) {
+	disableAllRoutes(t)
+
+	for _, ratio := range []string{"16:9", "1:1", "4:3", "3:4", "21:9", "adaptive"} {
+		response, rec := runAliasRaw(t,
+			`{"model":"wan3.0-720p-特惠","prompt":"a cat","ratio":"`+ratio+`"}`)
+		assert.Equal(t, 400, response.Code,
+			"比例 %s 必须被 400 拒单，实际响应 %d：%s", ratio, response.Code, response.Body.String())
+		assert.Contains(t, response.Body.String(), "9:16",
+			"拒单文案必须说明只支持 9:16")
+		assert.Empty(t, rec.body, "被拒的请求不能进入下游链路")
+	}
+}
+
+// 9:16 必须放行，且照常改名成 seedance2.5-特惠。
+func TestWan3TehuiAliasAllowsPortraitRatio(t *testing.T) {
+	disableAllRoutes(t)
+
+	rec := runAlias(t, "/v1/video/generations", "application/json",
+		`{"model":"wan3.0-720p-特惠","prompt":"a cat","ratio":"9:16"}`)
+	assert.Equal(t, constant.Seedance25TeHuiModel, decodeBody(t, rec.body)["model"])
+}
+
+// metadata.ratio 与 aspect_ratio 写法同样受闸门约束（不能只堵顶层字段）。
+func TestWan3TehuiAliasRatioGateCoversMetadataFields(t *testing.T) {
+	disableAllRoutes(t)
+
+	cases := []string{
+		`{"model":"wan3.0-720p-特惠","prompt":"a cat","metadata":{"ratio":"16:9"}}`,
+		`{"model":"wan3.0-720p-特惠","prompt":"a cat","metadata":{"aspect_ratio":"16:9"}}`,
+		`{"model":"wan3.0-720p-特惠","prompt":"a cat","aspect_ratio":"16:9"}`,
+		`{"model":"wan3.0-720p-特惠","prompt":"a cat","size":"1920x1080"}`,
+	}
+	for _, body := range cases {
+		response, _ := runAliasRaw(t, body)
+		assert.Equal(t, 400, response.Code,
+			"请求 %s 必须被 400 拒单，实际 %d：%s", body, response.Code, response.Body.String())
+	}
+}
+
+// 客户**没传**比例时必须放行：不能凭空拒单（默认画幅由链路自己定）。
+func TestWan3TehuiAliasRatioGateAllowsMissingRatio(t *testing.T) {
+	disableAllRoutes(t)
+
+	rec := runAlias(t, "/v1/video/generations", "application/json",
+		`{"model":"wan3.0-720p-特惠","prompt":"a cat"}`)
+	assert.Equal(t, constant.Seedance25TeHuiModel, decodeBody(t, rec.body)["model"])
+}
+
+// 闸门只针对特惠档：其它模型（seedance2.5-特惠 等）不受影响。
+func TestWan3TehuiAliasRatioGateDoesNotAffectOtherModels(t *testing.T) {
+	disableAllRoutes(t)
+
+	rec := runAlias(t, "/v1/video/generations", "application/json",
+		`{"model":"seedance2.5-特惠","prompt":"a cat","ratio":"16:9"}`)
+	assert.Contains(t, rec.body, `"ratio":"16:9"`)
+}
