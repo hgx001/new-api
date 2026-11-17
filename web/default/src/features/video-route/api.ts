@@ -73,7 +73,7 @@ export type VideoRoutePolicy = {
   /** 有赞兜底的目标模型（有赞标准版 wan3.0-video）。 */
   short_youzan_target_model: string
   /**
-   * 规则六的**第三条分支**（CapCut 满血档 cp-seedance-2.0）的开关。
+   * 规则六的**第三条分支**（CapCut 出口 cp-seedance-2.5flash）的开关。
    *
    * ⚠️ 三条短时长分支**同时只能有一条生效**：心笔内链 / 有赞标准版 /
    * CapCut 满血档。打开本条会自动关掉另外两条（后端写入口保证），
@@ -390,10 +390,10 @@ export async function setSecondsRuleRatioGate(
 }
 
 /**
- * 切换规则六的**第三条分支**（CapCut 满血档 cp-seedance-2.0）。
+ * 切换规则六的**第三条分支**（CapCut 出口 cp-seedance-2.5flash）。
  *
  * 打开：心笔与有赞标准版都接不住时，≤阈值的短请求改派
- * cp-seedance-2.0；关闭（默认）：不走这条。
+ * cp-seedance-2.5flash；关闭（默认）：不走这条。
  *
  * ⚠️ 打开本条会**自动关掉**另外两条短时长分支（心笔内链 / 有赞标准版）——
  * 三条是同一个时长区间的三个出口，同时开着时「落到哪一条」必须是明确的

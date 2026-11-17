@@ -45,7 +45,7 @@ type EcommerceRouteCardProps = {
    *
    * 源渠道（承载 seedance2.5-特惠 / seedance2.5-活动）是运营做决策的地方 ——
    * 「这些请求要不要改派」本来就是源链路的经营选择；目标渠道
-   * （承载 cp-seedance-2.5）也要显示，因为运营在那边排查
+   * （承载 cp-seedance-2.5flash）也要显示，因为运营在那边排查
    * 「为什么有一批请求跑到了这条链路上」时，需要能直接关掉入口。
    */
   channelModels: string

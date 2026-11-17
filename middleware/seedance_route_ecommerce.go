@@ -654,9 +654,11 @@ func rewriteBodyForCapcut(body map[string]interface{}, target, ratio, resolution
 // 也不再触发超分钩子（见 relay/channel/task/manwu/capcut_upscale.go 的
 // needsCapcutUpscale），避免对 720p 原片再做一次超分（白花钱且可能降质）。
 //
-// ⚠️ 不要把这个函数改回「看超分配置决定 480p/720p」：规则五豆包备胎
-// （video_route_failover_alt.go）走的是另一套 capcutAltGenerationResolution，
-// 那条链路仍保留超分，与本值互不影响。
+// ⚠️ 不要把这个函数改回「看超分配置决定 480p/720p」：2026-11-17 起全站 CapCut
+// 取消超分，规则五豆包备胎（video_route_failover_alt.go 的
+// capcutAltGenerationResolution）同样是 720p 原生直出。两条链路各自持有
+// 档位常量是历史分层，语义已一致；将来若只恢复某一条链路的超分，先理清
+// 「生成档 < 交付档」是否在该链路上成立，再动对应的常量。
 const capcutGenerationResolutionValue = "720p"
 
 // capcutGenerationResolution 返回改派到 CapCut 时下发的生成档位。
