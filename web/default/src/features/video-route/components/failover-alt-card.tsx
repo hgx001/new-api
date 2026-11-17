@@ -46,17 +46,17 @@ type FailoverAltCardProps = {
  * 「故障转移备选：CapCut 2.5 Flash」开关 —— 决定豆包挂了走哪条退路。
  *
  * 规则五原本只有一条退路：wan3.0-班车（同上游队列，排队时长不可控）。
- * 打开本开关后，豆包不可用时改派 cp-seedance-2.5flash：向上游要 480p
- * （成本最低），交付前用腾讯 MPS 超分到 720P（对外承诺的档位）。
+ * 打开本开关后，豆包不可用时改派 cp-seedance-2.5flash：**720P 原生直出**
+ * （2026-11-17 起取消「480p 生成 + MPS 超分 720P」，超分画质不达标）。
  *
  * 关闭（默认）仍走班车。两个开关的分工：
  *   - 豆包链路开关：豆包通不通；
  *   - 本开关：豆包不通时改派到班车还是 CapCut。
  *
- * ⚠️ 超分没配置 / CapCut 没渠道 / 模型名被改错时，后端会**静默回落班车**
- * （避免按 720P 的价交付 480P）。所以这里不能只显示「已打开」，
- * 必须把「打开了但实际不会生效」显式提示出来 —— 否则运营以为配好了，
- * 事故发生时才发现退路根本没换。
+ * ⚠️ CapCut 没渠道 / 模型名被改错时，后端会**静默回落班车**。
+ * 所以这里不能只显示「已打开」，必须把「打开了但实际不会生效」显式提示
+ * 出来 —— 否则运营以为配好了，事故发生时才发现退路根本没换。
+ * 超分配置不再是这条链路的前置条件（已与超分解耦）。
  */
 export function FailoverAltCard({ channelModels }: FailoverAltCardProps) {
   const { t } = useTranslation()
@@ -138,11 +138,11 @@ export function FailoverAltCard({ channelModels }: FailoverAltCardProps) {
 
   const detail = on
     ? t(
-        'When the Doubao link is unavailable, requests route to {{target}}: generated at 480p, upscaled to 720P before delivery',
+        'When the Doubao link is unavailable, requests route to {{target}}: delivered as native 720P',
         { target: altTarget }
       )
     : t(
-        'When the Doubao link is unavailable, requests still go to the shuttle queue; turn on to reroute them to {{target}} (480p generation upscaled to 720P)',
+        'When the Doubao link is unavailable, requests still go to the shuttle queue; turn on to reroute them to {{target}} (native 720P delivery)',
         { target: altTarget }
       )
 

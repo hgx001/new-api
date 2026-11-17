@@ -152,7 +152,7 @@ func TestEcommerceTargetModelDefaults(t *testing.T) {
 	applyPolicy(t, ecommercePolicy())
 
 	assert.Equal(t, DefaultEcommerceTargetModel, Get().EcommerceTargetModelFor("seedance2.5-特惠"))
-	assert.Equal(t, "cp-seedance-2.5", DefaultEcommerceTargetModel)
+	assert.Equal(t, "cp-seedance-2.5flash", DefaultEcommerceTargetModel)
 }
 
 // 时长阈值：0 = 没配 = 用默认 20 秒。

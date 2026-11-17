@@ -104,13 +104,13 @@ export type VideoRoutePolicy = {
    *
    * 打开：提示词命中电商/产品推荐关键词（或勾选的参数条件命中）的请求
    * **留在常驻有赞链路**（10–29 秒走标准版、30 秒由 adaptor 映射 prime）；
-   * 只有有赞物理接不住的（<10 秒 / 带参考音视频）才改派 cp-seedance-2.5。
+   * 只有有赞物理接不住的（<10 秒 / 带参考音视频）才改派 cp-seedance-2.5flash。
    * 关闭（默认）：这类请求按原规则走。
    *
    * ⚠️ 带参考音视频的请求会改派 CapCut —— 有赞上游只收参考图。
    */
   ecommerce_enabled: boolean
-  /** 规则七的兜底目标模型（默认 cp-seedance-2.5，有赞接不住时才用）。 */
+  /** 规则七的兜底目标模型（默认 cp-seedance-2.5flash，有赞接不住时才用）。 */
   ecommerce_target_model: string
   /** 是否勾选「9:16 比例」入口。 */
   ecommerce_ratio_condition: boolean
@@ -128,10 +128,10 @@ export type VideoRoutePolicy = {
   /** 默认关键词表（供前端做「恢复默认」用）。 */
   ecommerce_keywords_default: string[]
   /**
-   * 规则八（全量兜底 → cp-seedance-2.5）的开关。
+   * 规则八（全量兜底 → cp-seedance-2.5flash）的开关。
    *
    * 打开：seedance2.5-特惠 / seedance2.5-活动 收到的**所有**请求无条件
-   * 改派 cp-seedance-2.5，不看时长/比例/提示词内容/首尾帧。
+   * 改派 cp-seedance-2.5flash，不看时长/比例/提示词内容/首尾帧。
    *
    * 用途只有一个：**源链路（有赞）彻底不能用**时的逃生口。日常不要开 ——
    * 一开就等于把这两个模型的全部流量挪到另一条上游。
@@ -142,7 +142,7 @@ export type VideoRoutePolicy = {
    * ⚠️ 它**不依赖**规则总开关（enabled）—— 应急时不该要求先确认别的开关。
    */
   total_fallback_enabled: boolean
-  /** 规则八的目标模型（恒为 cp-seedance-2.5，由后端常量给出）。 */
+  /** 规则八的目标模型（恒为 cp-seedance-2.5flash，由后端常量给出）。 */
   total_fallback_target_model: string
   /**
    * 规则一的可选比例条件（后台勾选）。
@@ -413,7 +413,7 @@ export async function setShortCapcutEnabled(
  *
  * 打开：seedance2.5-特惠 / seedance2.5-活动 的请求，只要提示词命中
  * 电商/产品推荐关键词（或勾选的参数条件命中），就**留在常驻有赞链路**；
- * 只有有赞接不住的（<10 秒 / 带参考音视频）才改派 cp-seedance-2.5。
+ * 只有有赞接不住的（<10 秒 / 带参考音视频）才改派 cp-seedance-2.5flash。
  * 关闭（默认）：这类请求按原规则走。
  *
  * ⚠️ 带参考音视频的请求会改派 CapCut（有赞上游只收参考图）。
@@ -466,10 +466,10 @@ export async function setEcommerceKeywords(
 }
 
 /**
- * 切换规则八（全量兜底 → cp-seedance-2.5）。
+ * 切换规则八（全量兜底 → cp-seedance-2.5flash）。
  *
  * 打开：seedance2.5-特惠 / seedance2.5-活动 的**所有**请求无条件改派
- * cp-seedance-2.5 —— 不看时长、不看比例、不看提示词内容、不看首尾帧。
+ * cp-seedance-2.5flash —— 不看时长、不看比例、不看提示词内容、不看首尾帧。
  *
  * 只有一个用途：源链路（有赞）彻底不能用时的逃生口。日常必须关着 ——
  * 开着就等于把这两个模型的全部流量挪到另一条上游。

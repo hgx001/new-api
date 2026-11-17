@@ -1,16 +1,14 @@
 package manwu
 
-// CapCut「交付前超分」钩子的测试（2026-11-14 起，2026-11-15 扩到促销族）。
+// CapCut「交付前超分」钩子的测试（2026-11-17 起全站取消超分）。
 //
-// 要锁的核心不变量：**只有「客户买 720P、CapCut 按 480p 生成」的任务**才超分。
+// 要锁的核心不变量：**任何任务都不再触发超分**。
 //
-//	客户直接买 cp-seedance-2.5flash      → 不超分（它自己就是商品档位）；
-//	客户直接买 seedance-2-5（豆包正常）  → 不超分（执行模型不是 CapCut）；
-//	规则五（豆包不可用 → 2.5 Flash 480p）→ 超分到 720P；
-//	规则六/七/八（促销族 → CapCut 480p）→ 超分到 720P。
+//	规则五（豆包降级 → 2.5 Flash 720p 原生）→ 不超分；
+//	规则六/七/八/九（促销族 → CapCut 720p 原生）→ 不超分；
+//	客户直接买 CapCut 档位 / 其它模型          → 不超分。
 //
-// 误判的后果分别是「白花钱多跑一次 MPS」和「交付 480P 原片给按 720P 付费的客户」——
-// 两者都不会报错。
+// 误判的后果是「白花钱多跑一次 MPS、还可能把清晰原片越转越糊」——不会报错。
 
 import (
 	"context"
@@ -36,7 +34,7 @@ func capcutAltTask() *model.Task {
 
 // 只认「执行 CapCut + 计费原点按 720P 售卖」这一种组合。
 func TestNeedsCapcutUpscaleMatrix(t *testing.T) {
-	assert.True(t, needsCapcutUpscale(capcutAltTask()), "规则五降级任务必须超分")
+	assert.False(t, needsCapcutUpscale(capcutAltTask()), "规则五降级任务已改 720p 原生，不再超分")
 
 	direct := &model.Task{TaskID: "task_direct"}
 	direct.Properties.OriginModelName = ModelCapcut25Flash
@@ -49,30 +47,30 @@ func TestNeedsCapcutUpscaleMatrix(t *testing.T) {
 	assert.False(t, needsCapcutUpscale(doubao),
 		"执行模型是豆包时不该超分（豆包本来就是 720P 交付）")
 
-	// 促销族改派（规则七/八，2026-11-15 起同样按 480p 生成）。
+	// 促销族改派（规则七/八，2026-11-17 起按 720p 原生生成、直接交付）。
 	ecom := &model.Task{TaskID: "task_ecom"}
 	ecom.Properties.OriginModelName = ModelCapcut25Flash
 	ecom.PrivateData.RouteOriginModel = "seedance2.5-特惠"
-	assert.True(t, needsCapcutUpscale(ecom),
-		"促销族改派 CapCut 必须超分（生成的是 480p，客户买的是 720P）")
+	assert.False(t, needsCapcutUpscale(ecom),
+		"促销族改派 CapCut 已是 720p 原片，不得再超分")
 
 	huodong := &model.Task{TaskID: "task_huodong"}
 	huodong.Properties.OriginModelName = ModelCapcut25Flash
 	huodong.PrivateData.RouteOriginModel = "seedance2.5-活动"
-	assert.True(t, needsCapcutUpscale(huodong), "活动版按次档同样承诺 720P 交付")
+	assert.False(t, needsCapcutUpscale(huodong), "活动版按次档同样不再超分")
 
 	// 历史别名：别名中间件只改 body.model，计费原点保留旧名。
 	legacy := &model.Task{TaskID: "task_legacy"}
 	legacy.Properties.OriginModelName = ModelCapcut25Flash
 	legacy.PrivateData.RouteOriginModel = "wan3.0-720p-特惠"
-	assert.True(t, needsCapcutUpscale(legacy),
-		"wan3.0-720p-特惠 是促销族的历史别名，漏掉会让老客户拿到 480P 原片")
+	assert.False(t, needsCapcutUpscale(legacy),
+		"wan3.0-720p-特惠 是促销族历史别名，同样已是 720p 原片")
 
-	// 规则六短时长分支的目标（2.0 Fast）同样按 480p 生成。
+	// 规则六短时长分支的目标（2.0 Fast）同样改为 720p 原生。
 	fast := &model.Task{TaskID: "task_fast"}
 	fast.Properties.OriginModelName = ModelCapcut20Fast
 	fast.PrivateData.RouteOriginModel = "seedance2.5-特惠"
-	assert.True(t, needsCapcutUpscale(fast), "CapCut 快速档改派也要补齐 720P 交付")
+	assert.False(t, needsCapcutUpscale(fast), "CapCut 快速档改派也不再超分")
 
 	// 直接买 CapCut 其它档位：不受影响。
 	directOther := &model.Task{TaskID: "task_direct_other"}
@@ -88,8 +86,6 @@ func TestAfterUpstreamSuccessDelegatesWhenHookInjected(t *testing.T) {
 	SetSuperResolutionHooks(
 		func(_ context.Context, task *model.Task, upstreamURL string) (bool, error) {
 			submitted = true
-			assert.Equal(t, "https://cdn.example.com/raw.mp4", upstreamURL)
-			assert.Equal(t, "task_alt_1", task.TaskID)
 			return true, nil
 		},
 		func(context.Context, *model.Task) (bool, error) { return true, nil },
@@ -100,8 +96,8 @@ func TestAfterUpstreamSuccessDelegatesWhenHookInjected(t *testing.T) {
 	handled, err := adaptor.AfterUpstreamSuccess(
 		context.Background(), capcutAltTask(), "https://cdn.example.com/raw.mp4")
 	require.NoError(t, err)
-	assert.True(t, handled, "降级任务提交超分后必须保持「处理中」")
-	assert.True(t, submitted)
+	assert.False(t, handled, "全站取消超分后不再接管任何新任务（720p 原片直接交付）")
+	assert.False(t, submitted, "不得提交 MPS 超分")
 }
 
 // 不匹配的任务：既不提交也不改交付路径（保持一跳行为）。
@@ -138,8 +134,9 @@ func TestAfterUpstreamSuccessWithoutHookFallsBackToOriginal(t *testing.T) {
 	assert.False(t, handled, "没有超分能力时按原片交付，不把任务挂在处理中")
 }
 
-// 轮询：只有带后处理状态且匹配的任务才推进；其余一律「没有后处理」。
-func TestPollPostProcessOnlyForCapcutAltTasks(t *testing.T) {
+// 轮询：发版前已提交 MPS 的在途任务（带 PostProcess 状态）必须继续推进到终态，
+// 不能因为 needsCapcutUpscale 恒 false 就把 480p 原片当 720P 成品交付。
+func TestPollPostProcessContinuesInFlightTasks(t *testing.T) {
 	polled := 0
 	SetSuperResolutionHooks(
 		func(context.Context, *model.Task, string) (bool, error) { return true, nil },
@@ -163,47 +160,33 @@ func TestPollPostProcessOnlyForCapcutAltTasks(t *testing.T) {
 	done, err = adaptor.PollPostProcess(context.Background(), withPP)
 	require.NoError(t, err)
 	assert.True(t, done)
-	assert.Equal(t, 1, polled, "降级任务必须推进后处理轮询")
+	assert.Equal(t, 1, polled, "在途的 MPS 任务必须推进到终态（收敛成 720P 产物）")
 
+	// 发版前任何带着 PostProcess 状态的任务都算「在途」，都要收敛，
+	// 不再按 origin 过滤（否则会拿 480p 原片当 720P 成品交付）。
 	other := &model.Task{TaskID: "task_direct"}
 	other.Properties.OriginModelName = ModelCapcut25Flash
 	other.PrivateData.PostProcess = &model.TaskPostProcess{Stage: "submitted", TaskID: "mps-2"}
 	done, err = adaptor.PollPostProcess(context.Background(), other)
 	require.NoError(t, err)
 	assert.True(t, done)
-	assert.Equal(t, 1, polled, "非降级任务不该被推进后处理")
+	assert.Equal(t, 2, polled, "所有在途的 MPS 任务都要收敛，不按 origin 过滤")
 }
 
 // ───────────────────────── 成片地址解析（2026-11-14 实测修复）─────────
 
-// ArcReel 走自有托管时 ParseTaskResult 不吐地址，service 层传下来的
-// upstreamURL 是空串。此时必须从任务的原始响应里把 sourceUrl 找回来，
-// 否则超分拿不到输入、静默跳过 —— 客户拿到 480P 却按 720P 计费。
-func TestAfterUpstreamSuccessFallsBackToTaskSourceURL(t *testing.T) {
-	var got string
-	SetSuperResolutionHooks(
-		func(_ context.Context, _ *model.Task, upstreamURL string) (bool, error) {
-			got = upstreamURL
-			return true, nil
-		},
-		func(context.Context, *model.Task) (bool, error) { return true, nil },
-	)
-	t.Cleanup(func() { SetSuperResolutionHooks(nil, nil) })
-
+// ArcReel 走自有托管时 ParseTaskResult 不吐地址。
+// 超分取消后这些解析函数生产上不再被调用，但保留可恢复性 —— 直接测辅助函数本身。
+func TestCapcutSourceURLFromTask(t *testing.T) {
 	task := capcutAltTask()
 	task.Data = json.RawMessage(`{"status":"ready","sourceUrl":"https://cdn.example.com/out.mp4"}`)
-
-	adaptor := &TaskAdaptor{}
-	handled, err := adaptor.AfterUpstreamSuccess(context.Background(), task, "")
-	require.NoError(t, err)
-	assert.True(t, handled)
-	assert.Equal(t, "https://cdn.example.com/out.mp4", got,
-		"upstreamURL 为空时必须回落到任务原始响应里的 sourceUrl")
+	assert.Equal(t, "https://cdn.example.com/out.mp4", capcutSourceURLFromTask(task),
+		"必须能从任务原始响应里取回 sourceUrl")
 }
 
-// ArcReel 的产物接口需要渠道密钥（无鉴权 401），但它会 302 到公开 CDN。
-// MPS 只能拉无鉴权地址，所以要先用密钥把 Location 读出来。
-func TestAfterUpstreamSuccessResolvesAuthedMediaToPublicURL(t *testing.T) {
+// ArcReel 的产物接口需要渠道密钥（无鉴权 401），但它会 302 到公开 CDN ——
+// 这是 resolveCapcutMediaURL 的职责（超分恢复时需要）。
+func TestResolveCapcutMediaURLFollowsRedirectWithAuth(t *testing.T) {
 	var seenAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenAuth = r.Header.Get("Authorization")
@@ -212,26 +195,12 @@ func TestAfterUpstreamSuccessResolvesAuthedMediaToPublicURL(t *testing.T) {
 	}))
 	defer server.Close()
 
-	var got string
-	SetSuperResolutionHooks(
-		func(_ context.Context, _ *model.Task, upstreamURL string) (bool, error) {
-			got = upstreamURL
-			return true, nil
-		},
-		func(context.Context, *model.Task) (bool, error) { return true, nil },
-	)
-	t.Cleanup(func() { SetSuperResolutionHooks(nil, nil) })
-
-	task := capcutAltTask()
-	task.Data = json.RawMessage(`{"sourceUrl":"` + server.URL + `/api/v1/remote-generation/jobs/j1/outputs/o1.mp4"}`)
-
 	adaptor := &TaskAdaptor{apiKey: "sk-test"}
-	handled, err := adaptor.AfterUpstreamSuccess(context.Background(), task, "")
-	require.NoError(t, err)
-	assert.True(t, handled)
+	got := adaptor.resolveCapcutMediaURL(context.Background(),
+		server.URL+"/api/v1/remote-generation/jobs/j1/outputs/o1.mp4")
 	assert.Equal(t, "Bearer sk-test", seenAuth, "换公开地址必须带上渠道密钥")
 	assert.Equal(t, "https://arcmedia.example.com/public/out.mp4", got,
-		"交给 MPS 的必须是 302 之后的公开地址")
+		"302 之后必须给出公开地址")
 }
 
 // 完全拿不到地址（既没有 upstreamURL 也没有 sourceUrl）：

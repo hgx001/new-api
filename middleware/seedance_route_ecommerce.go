@@ -44,9 +44,9 @@ package middleware
 //
 //	· 分辨率：源链路支持 480P/720P/1080P，CapCut **只卖 480p/720p**
 //	  （1080p 官网有但未定价，显式 400）。1080P 的请求改派过去必 400 → 挡。
-//	  改派时的**生成档固定 480p**（2026-11-15 起）+ 交付前超分到 720P：
-//	  CapCut 720p 是 480p 的 2 倍 credits，超分比这半个档位便宜。
-//	  超分链路没配时退回 720p 直接生成，绝不按 720P 价交付 480P。
+//	  改派时**生成档固定 720p 原生直出**（2026-11-17 起）：此前是 480p 生成
+//	  + 交付前超分到 720P，因超分画质不达标取消。客户买的是 720P，交付的也是
+//	  原生 720P，对客口径与价格不变。
 //
 //	· 时长：源链路 2–30 秒，CapCut 2.5 系列 **4–30 秒**、2.0 Fast **4–15 秒**。
 //	  2–3 秒的请求改派过去必被上游拒 → 挡。
@@ -253,7 +253,7 @@ func tryRefAVCapcutRoute(c *gin.Context, body map[string]interface{}, sourceMode
 	if newBody, routed := prepareRefAVRoute(c, body, seedanceroute_setting.DefaultRefAVTargetModel, seconds); routed {
 		if applyRewrittenBody(c, newBody, billingOriginModel) {
 			// 计费按**源模型**算：秒数 + 源模型口径的 size 倍率。
-			// 生成档 480p 交付 720P 是成本侧的事，售价不吃降档。
+			// 生成档为原生 720P 直出，与源模型交付档一致，售价不吃任何降档。
 			setRouteBillingContext(c, seconds,
 				sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
 			logger.LogInfo(c, fmt.Sprintf(
@@ -413,8 +413,7 @@ func prepareCapcutRoute(
 		return nil, false
 	}
 
-	// 生成档位：默认钉 480p（交付前超分到 720P，省一半 credits）；
-	// 超分链路没配时退 720p 直接生成，绝不「按 720P 价交付 480P」。
+	// 生成档位：原生 720P 直出（2026-11-17 起，不再 480p 生成 + 超分）。
 	//
 	// ⚠️ 必须在准入检查**之后**算：准入已经挡掉了 1080P，
 	// 所以这里一定落在 480p / 720p 两个上游认的档位里。
@@ -626,11 +625,10 @@ func rewriteBodyForCapcut(body map[string]interface{}, target, ratio, resolution
 	// 时长：字符串形态最通用（与规则一一致）。
 	out["seconds"] = strconv.Itoa(seconds)
 
-	// 分辨率：CapCut 只卖 480p / 720p，缺省 480p。
+	// 分辨率：CapCut 只卖 480p / 720p。
 	//
-	// 2026-11-15 起**生成档固定 480p**（交付前超分到 720P，省一半 credits），
-	// 超分没配时退回 720p 直接生成 —— 两个档位都是上游认的字面量，
-	// 而 1080P 已在准入阶段挡掉。
+	// 2026-11-17 起**生成档固定 720p 原生直出**（超分画质不达标已取消），
+	// 720p 是上游认的字面量，而 1080P 已在准入阶段挡掉。
 	out["resolution"] = resolution
 
 	// 比例：显式落到顶层 ratio。
@@ -644,35 +642,29 @@ func rewriteBodyForCapcut(body map[string]interface{}, target, ratio, resolution
 	return out
 }
 
-const (
-	// capcutUpscaleGenerationResolution 是「480p 生成 + 超分 720P 交付」的生成档位。
-	capcutUpscaleGenerationResolution = "480p"
-	// capcutDirectDeliveryResolution 是超分不可用时的直接生成档位（= 源链路的交付承诺）。
-	capcutDirectDeliveryResolution = "720p"
-)
+// capcutGenerationResolutionValue 是促销族改派 CapCut 时下发的**生成档位**
+// （小写，CapCut 口径），也等于交付档位 —— 原生 720P 直出。
+//
+// 2026-11-17 老板口径：**取消「480p 生成 + MPS 超分 720P」**，促销族一律
+// 按 720p 原生生成并直接交付。原因是超分画质不达标（细节糊、观感差），
+// 省下的半个档位 credits 不足以抵消口碑损失。
+//
+// 对客口径不变：客户买的仍是源链路 720P（¥0.20/秒 或 ¥4.5/次），拿到的仍是
+// 720P，只是从「生成 480p 再提升」变成「上游直接出 720p」。manwu 侧对促销族
+// 也不再触发超分钩子（见 relay/channel/task/manwu/capcut_upscale.go 的
+// needsCapcutUpscale），避免对 720p 原片再做一次超分（白花钱且可能降质）。
+//
+// ⚠️ 不要把这个函数改回「看超分配置决定 480p/720p」：规则五豆包备胎
+// （video_route_failover_alt.go）走的是另一套 capcutAltGenerationResolution，
+// 那条链路仍保留超分，与本值互不影响。
+const capcutGenerationResolutionValue = "720p"
 
-// capcutGenerationResolution 返回改派到 CapCut 时要下发的**生成档位**（小写，CapCut 口径）。
+// capcutGenerationResolution 返回改派到 CapCut 时下发的生成档位。
 //
-// 2026-11-15 老板口径：促销族（seedance2.5-特惠 / seedance2.5-活动）改派 CapCut 时
-// **统一按 480p 生成、交付前超分到 720P**，不再直接买 720p 档。
-//
-// 理由纯成本：CapCut 2.5 系列的 720p 是 480p 的 **2 倍 credits**
-// （30 秒：720p=510 / 480p=240，见 App 侧 capcutCreditsPerSecond），
-// 而 MPS 超分的单价远低于半个档位的差价。交付档位不变 —— 客户买的是源链路
-// 的 720P，超分后交付的仍是 720P（超分在 relay/channel/task/manwu 的
-// AfterUpstreamSuccess 里做，判据见该文件 needsCapcutUpscale）。
-//
-// ⚠️ 超分没配就**不能钉 480p**：那会「按 720P 的价交付 480P 的片」，
-// 是静默降质（任务成功、账单照收、客户拿到低一档的成片）。
-// 这种情况退回 720p 直接生成 —— 与改造前的行为完全一致，只是不省钱。
-// 与规则五备选链路同一口径（那边是「超分没配就不改派」，这里不能不改派：
-// 规则七/八的目标链路本来就是出片出口，退回 720p 出片比不出片强）。
+// 恒为 720p 原生直出（见 capcutGenerationResolutionValue 注释）。参数 c 仅为
+// 保持调用点签名不变；不再读取超分配置 —— 促销族改派与超分已彻底解耦。
 func capcutGenerationResolution(c *gin.Context) string {
-	if !superResolutionConfiguredProbe() {
-		logger.LogInfo(c, "条件路由：超分链路未配置，CapCut 仍按 720p 直接生成（避免按 720P 价交付 480P）")
-		return capcutDirectDeliveryResolution
-	}
-	return capcutUpscaleGenerationResolution
+	return capcutGenerationResolutionValue
 }
 
 // ecommerceRouteTriggered 判断请求是否命中规则七的触发条件。

@@ -48,29 +48,24 @@ import (
 	"strings"
 )
 
-// DefaultEcommerceTargetModel 是规则七的**兜底**目标模型（CapCut Seedance 2.5 满血档）。
+// DefaultEcommerceTargetModel 是规则七的**兜底**目标模型（CapCut Seedance 2.5 Flash）。
 //
 // 2026-11-16 起规则七默认留在有赞，只有「有赞接不住」的请求（<10 秒 /
 // 带参考音视频）才落到这里 —— 所以它是兜底目标，不是默认路径。
 //
-// 2026-11-16 晚口径（老板）：「特惠 / 活动这两个模型路由到 CapCut 时用
-// cp-seedance-2.5，保证质量、做口碑」。同日的另一条口径是「豆包
-// seedance-2-5 的备胎仍是 2.5 Flash」—— 两条目标**刻意不同**：
+// 2026-11-17 口径（老板）：促销族所有 CapCut 出口（规则六/七/八/九）**统一**
+// 走 cp-seedance-2.5flash。此前 11-16 晚曾为「做口碑」升到 2.5 满血档，
+// 同日又因超分画质不达标取消 480p+超分、改为 720p 原生直出；换档与取消超分
+// 一起回退，最终促销族与豆包备胎都落在 2.5flash（DefaultFailoverAltModel）。
 //
-//	促销族（特惠/活动）→ cp-seedance-2.5      （质量优先，对客是口碑商品）
-//	豆包 seedance-2-5   → cp-seedance-2.5flash（价格优先，见 DefaultFailoverAltModel）
-//
-// 所以两处常量**不能合并**，也不要在「统一改目标」时一起改。
-//
-// 为什么兜底选 2.5 而不是 2.0：2.5 时长 4–30 秒、参考图 ≤30 张，
-// 能覆盖源链路（有赞促销族 5–30 秒）全部时长区间；2.0 系列上界只有 15 秒，
+// 为什么选 2.5 系列而不是 2.0：2.5flash 时长 4–30 秒、参考图 ≤30 张，
+// 能覆盖源链路（有赞促销族 4–30 秒）全部时长区间；2.0 系列上界只有 15 秒，
 // 超过 15 秒的请求改派过去必被上游 400。
 //
-// ⚠️ 生成档位仍是 **480p + 超分交付 720P**（见 capcutGenerationResolution），
-// 不随这次换档改成 720p 直生：2.5 档 720p 的单价比 480p 高 2 倍，
-// 而促销族对客售价与 2.5 档 480p 基准价持平 —— 直生 720p 会直接亏本。
-// 换档提升的是**模型画质**，降本结构保持不变。
-const DefaultEcommerceTargetModel = "cp-seedance-2.5"
+// ⚠️ 生成档位是 **720p 原生直出**（见 middleware 的 capcutGenerationResolutionValue），
+// 不再 480p 生成 + 超分。对客售价与交付档都不变（仍是 720P），
+// 只是省掉了画质不达标的超分环节。
+const DefaultEcommerceTargetModel = "cp-seedance-2.5flash"
 
 // DefaultEcommerceTriggerSeconds 是规则七「时长条件」的默认阈值（秒）。
 //

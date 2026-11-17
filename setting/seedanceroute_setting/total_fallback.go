@@ -51,16 +51,14 @@
 //	这是**有意的**：停用规则 ≠ 链路可用，两者是不同的事。
 package seedanceroute_setting
 
-// DefaultTotalFallbackTargetModel 是规则八的目标模型（CapCut Seedance 2.5 满血档）。
+// DefaultTotalFallbackTargetModel 是规则八的目标模型（CapCut Seedance 2.5 Flash）。
 //
-// 2026-11-16 晚口径（老板）：「特惠 / 活动这两个模型路由到 CapCut 时用
-// cp-seedance-2.5，保证质量、做口碑」。规则七/八/九同源（都是促销族的
-// CapCut 出口），所以三处常量一起换；豆包的备胎（DefaultFailoverAltModel）
-// **不跟着换**，那边仍是 2.5 Flash。
+// 2026-11-17 口径（老板）：促销族所有 CapCut 出口（规则六/七/八/九）统一走
+// cp-seedance-2.5flash；与取消 480p+超分、改 720p 原生直出同批执行。
+// 豆包备胎（DefaultFailoverAltModel）本就是 2.5 Flash，仍保持原样。
 //
-// ⚠️ 生成档位仍是 480p + 超分交付 720P（capcutGenerationResolution），
-// 不改成 720p 直生：2.5 档 720p 单价是 480p 的 2 倍，而促销族对客售价与
-// 2.5 档 480p 基准价持平 —— 直生 720p 会直接亏本。换档提升的是模型画质。
+// ⚠️ 生成档位是 720p 原生直出（middleware 的 capcutGenerationResolutionValue），
+// 2026-11-17 起不再 480p 生成 + 超分（超分画质不达标）。对客售价与交付档都不变。
 //
 // 为什么固定成常量、不给 Policy 字段：
 // 规则八的准入与改写走的是 prepareCapcutRoute，它**只适配了这一条契约**
@@ -70,7 +68,7 @@ package seedanceroute_setting
 // 不是不生效，而是把请求改写到一条没适配过的链路上。
 //
 // 要换目标时改这一行（并补对应准入），不要加配置项。
-const DefaultTotalFallbackTargetModel = "cp-seedance-2.5"
+const DefaultTotalFallbackTargetModel = "cp-seedance-2.5flash"
 
 // IsTotalFallbackEnabled 判断规则八的开关是否打开（不看源模型，也不看规则总开关）。
 //

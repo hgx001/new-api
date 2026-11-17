@@ -834,7 +834,7 @@ function buildWan3PrimeVideoParameters(): SupportedParameter[] {
 
 /**
  * seedance2.5-特惠（按秒计费的促销母本）：2026-11-15 起上游执行模型换成
- * 标准版 wan3.0-video —— 时长 5—30 秒、720P/1080P 两档、缺省 720P。
+ * 标准版 wan3.0-video —— 时长 4—30 秒、720P/1080P 两档、缺省 720P。
  * 不能再复用 prime 表（prime 已收窄为仅 30 秒仅 720P），也不能落进通用表
  * （通用表会显示 480P —— 上游已下架，传了被后端归到 720P）。
  *
@@ -852,7 +852,7 @@ function buildSeedance25TehuiVideoParameters(): SupportedParameter[] {
     {
       name: 'duration',
       type: 'integer',
-      range: '5 ~ 30',
+      range: '4 ~ 30',
       descriptionKey: 'Video length in seconds',
     },
     {
@@ -866,7 +866,7 @@ function buildSeedance25TehuiVideoParameters(): SupportedParameter[] {
 }
 
 /**
- * seedance2.5-活动：**按次档**参数表（按次 ¥4.5/条、时长 5-30 秒、固定 720P）。
+ * seedance2.5-活动：**按次档**参数表（按次 ¥4.5/条、时长 4-30 秒、固定 720P）。
  *
  * 为什么必须单列，不能落进通用表：
  *   - 落进通用 VIDEO_PARAMS → 显示「resolution 480P/720P/1080P」，客户传 1080P；
@@ -875,8 +875,8 @@ function buildSeedance25TehuiVideoParameters(): SupportedParameter[] {
  *   - 落进 prime 表 → 显示「resolution 720P,1080P」，同样会被后端拒
  *     （活动版锁死 720P）。
  *
- * 时长写 range='5 ~ 30' + defaultValue=30（2026-11-11 起放开逐秒可选；
- * 2026-11-15 起区间为 5-30 —— 老板口径，<10 秒改派 CapCut 满血档）。
+ * 时长写 range='4 ~ 30' + defaultValue=30（2026-11-11 起放开逐秒可选；
+ * 2026-11-17 起区间为 4-30 —— 老板口径，<10 秒改派 CapCut 满血档）。
  * default 只是「不传时按 30 秒跑」，不是唯一合法值。
  */
 function buildSeedance25FixedTierVideoParameters(
@@ -888,9 +888,9 @@ function buildSeedance25FixedTierVideoParameters(
       name: 'duration',
       type: 'integer',
       // 2026-11-11 起活动版时长放开逐秒可选（售价仍恒 ¥4.5/条）；
-      // 2026-11-15 起区间为 5-30 秒（<10 秒改派 CapCut 满血档）。
+      // 2026-11-17 起区间为 4-30 秒（<10 秒改派 CapCut 满血档）。
       // spec.seconds 只是**默认值**（不传时按它跑），不再是唯一合法取值。
-      range: '5 ~ 30',
+      range: '4 ~ 30',
       defaultValue: spec.seconds,
       descriptionKey: 'Video length in seconds',
     },
@@ -1200,7 +1200,7 @@ export function buildSupportedParameters(
       return buildSeedance25FixedTierVideoParameters(seedance25FixedTier)
     }
     if (model.model_name === SEEDANCE25_TEHUI) {
-      // 2026-11-15 起母本由标准版执行（5—30 秒、720P/1080P），
+      // 2026-11-15 起母本由标准版执行（4—30 秒、720P/1080P），
       // 不能再沿用 prime 表（prime 已收窄为仅 30 秒仅 720P）。
       // 30 秒落 prime 是后端 adaptor 内部的上游映射，对客参数不变。
       return buildSeedance25TehuiVideoParameters()

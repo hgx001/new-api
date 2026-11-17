@@ -19,7 +19,7 @@ import (
 //   - wan3.0-video 直连（不在源清单里，但同被该闸拦截）。
 //   prime 直连不在此列 —— 有赞 prime 路由仍收音视频，adaptor 的闸对它豁免。
 
-const testRefAVTarget = "cp-seedance-2.5"
+const testRefAVTarget = "cp-seedance-2.5flash"
 
 // enableRefAVRoute 配置一个只开规则九所需最小项的策略，测试结束恢复。
 //

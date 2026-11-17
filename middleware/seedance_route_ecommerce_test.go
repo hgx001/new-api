@@ -23,10 +23,10 @@ import (
 // 规则六（≤10 秒 → cp-seedance-2.0）也有一组独立用例（见 TestShortCapcut* 系列）。
 
 const (
-	testEcommerceTarget   = "cp-seedance-2.5"
+	testEcommerceTarget   = "cp-seedance-2.5flash"
 	// 2026-11-15 老板口径：<10 秒改派 CapCut **满血档** cp-seedance-2.0
 	// （不是快速档 2.0fast）。与 setting 层的 DefaultShortCapcutTargetModel 同源。
-	testShortCapcutTarget = "cp-seedance-2.0"
+	testShortCapcutTarget = "cp-seedance-2.5flash"
 	// testSourceModelAlt 是促销族的活动版（按次固定档）。
 	//
 	// 必须与母本一起写进 source_models：中间件入口的 IsSourceModel 早退
@@ -490,35 +490,35 @@ func TestEcommerceLiftsReferenceImagesToInputReference(t *testing.T) {
 	}
 }
 
-// 生成档位必须显式钉 480p（2026-11-15 老板口径）：CapCut 720p 是 480p 的
-// 2 倍 credits，交付靠超分补回 720P。
+// 生成档位必须显式钉 720p 原生直出（2026-11-17 老板口径）：
+// 超分画质不达标，取消「480p 生成 + 超分 720P」，直接向上游买 720p。
 //
 // ⚠️ 这里**不能**留空让 CapCut 用自己的缺省值：虽然它的缺省恰好也是 480p，
-// 但「靠巧合对上」在改一次上游缺省后就会变成 720p 白烧钱。
-func TestEcommercePinsGenerationResolutionTo480p(t *testing.T) {
+// 但「靠巧合对上」在改一次上游缺省后就会变成静默降档交付。
+func TestEcommercePinsGenerationResolutionTo720p(t *testing.T) {
 	enableEcommerce(t, true, true, 20)
-	stubSuperResolution(t, true)
 
-	// 6 秒：有赞接不住才会改派 CapCut，480p 钉档只对改派路径有意义。
-	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐"}`)
-	body := decodeBody(t, seen)
-
-	if body["resolution"] != "480p" {
-		t.Fatalf("生成档位必须钉 480p（交付前超分到 720P），实际 %v", body["resolution"])
-	}
-}
-
-// 超分链路没配时不许钉 480p：那会「按 720P 的价交付 480P 的片」。
-// 退回 720p 直接生成 —— 与改造前的行为一致，只是不省钱。
-func TestEcommerceKeeps720pWhenSuperResolutionUnavailable(t *testing.T) {
-	enableEcommerce(t, true, true, 20)
-	stubSuperResolution(t, false)
-
+	// 6 秒：有赞接不住才会改派 CapCut，720p 钉档只对改派路径有意义。
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐"}`)
 	body := decodeBody(t, seen)
 
 	if body["resolution"] != "720p" {
-		t.Fatalf("超分不可用必须按 720p 直接生成，实际 %v", body["resolution"])
+		t.Fatalf("生成档位必须钉 720p 原生直出（不再超分），实际 %v", body["resolution"])
+	}
+}
+
+// 超分配置与否不再影响促销族改派的生成档（已彻底解耦）。
+// 无论探针返回什么，都必须按 720p 原生生成。
+func TestEcommerceResolutionIgnoresSuperResolutionConfig(t *testing.T) {
+	for _, configured := range []bool{true, false} {
+		enableEcommerce(t, true, true, 20)
+
+		seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":6,"prompt":"好物推荐"}`)
+		body := decodeBody(t, seen)
+
+		if body["resolution"] != "720p" {
+			t.Fatalf("超分配置=%v 时都应钉 720p 原生直出，实际 %v", configured, body["resolution"])
+		}
 	}
 }
 

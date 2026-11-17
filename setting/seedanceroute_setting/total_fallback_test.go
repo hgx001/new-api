@@ -70,12 +70,12 @@ func TestTotalFallbackEnabledForOnlyConfiguredSources(t *testing.T) {
 	assert.True(t, TotalFallbackEnabledFor("seedance2.5-特惠"))
 	assert.True(t, TotalFallbackEnabledFor("seedance2.5-活动"))
 	assert.False(t, TotalFallbackEnabledFor("seedance-2-5"), "非源模型不该被全量兜底抓到")
-	assert.False(t, TotalFallbackEnabledFor("cp-seedance-2.5"), "目标模型自己不能被再次改派")
+	assert.False(t, TotalFallbackEnabledFor("cp-seedance-2.5flash"), "目标模型自己不能被再次改派")
 }
 
 // 目标模型是常量，不存在「配错名字」这种静默故障。
 func TestTotalFallbackTargetModelIsCapcutFlash(t *testing.T) {
-	assert.Equal(t, "cp-seedance-2.5", TotalFallbackTargetModel())
+	assert.Equal(t, "cp-seedance-2.5flash", TotalFallbackTargetModel())
 	assert.Equal(t, DefaultTotalFallbackTargetModel, TotalFallbackTargetModel())
 }
 

@@ -32,21 +32,20 @@
 // 升级当天线上流量逐字节不变（与 ShortYouzanEnabled 同一口径）。
 package seedanceroute_setting
 
-// DefaultShortCapcutTargetModel 是规则六第三分支的目标模型（CapCut Seedance 2.0 满血档）。
+// DefaultShortCapcutTargetModel 是规则六第三分支的目标模型（CapCut Seedance 2.5 Flash）。
 //
-// 2026-11-15 老板口径：<10 秒的请求改派 **cp-seedance-2.0**（满血档），不是 2.0fast。
+// 2026-11-17 老板口径：促销族所有 CapCut 出口（规则六/七/八/九）统一走
+// cp-seedance-2.5flash，规则六短时长分支也从 2.0 满血档换过来。
 //
-// 为什么换档：
-//   - 2.0 满血 ¥0.0205/秒，2.0fast ¥0.011/秒。老板选满血档是要更好的出片质量
-//     （2.0fast 是「快速档」，定位是便宜不是好）；
-//   - 两档的时长上界相同（4–15 秒），5–9 秒都在区间内，换档不损失时长覆盖；
-//   - 两档的 720p 倍率不同（2.0 是 ×2.0，2.0fast 是 ×1.5）—— 但改派后计费
-//     **按源模型口径**算（setRouteBillingContext 覆盖 adaptor 的 size 倍率），
-//     换档不会改变对客价格。
+// 为什么换档没问题：
+//   - 2.5flash 的时长下界是 4 秒，覆盖规则六处理的 <10 秒区间；上界 30 秒
+//     比原 2.0 的 15 秒更宽，不会因换档把本来能跑的请求挡掉；
+//   - 改派后计费**按源模型口径**算（setRouteBillingContext 覆盖 adaptor 的
+//     size 倍率），换档不会改变对客价格。
 //
-// ⚠️ 换档不影响超分：capcutUpscaleDeliveryOrigin 按「计费原点是促销族」判定，
-//   五档 CapCut 商品共用同一条超分前提（见 manwu 的 isCapcutVideoExecutionModel）。
-const DefaultShortCapcutTargetModel = "cp-seedance-2.0"
+// ⚠️ 换档不影响超分：2026-11-17 起促销族改派 CapCut 一律 720p 原生直出，
+//   manwu 的 capcutUpscaleDeliveryOrigin 只对豆包备胎（seedance-2-5）返回 true。
+const DefaultShortCapcutTargetModel = "cp-seedance-2.5flash"
 
 // ShortCapcutMinSeconds 是规则六第三分支的**时长下界**（秒）。
 //

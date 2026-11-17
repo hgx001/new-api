@@ -594,13 +594,13 @@ export function buildVideoSample(lang: Lang, ctx: SampleContext): string {
   //
   // seedance2.5-活动 是按次档（¥4.5/条）：2026-11-11 起支持逐秒可选、
   // 默认 30 秒。示例写默认值 30 秒，客户照抄即可；
-  // 想跑短片自行改成 5-30 内的整数（越界会被后端 400，不做吸附）。
+  // 想跑短片自行改成 4-30 内的整数（越界会被后端 400，不做吸附）。
   //
   // 示例是客户**直接照抄**的东西，所以必须写一个后端真正接受的值。
   const fixedTier = getSeedance25SampleSpec(ctx.modelName)
   // 2026-11-15 上游切换后的 wan3 系时长口径：标准版（wan3.0-video/smart/
   // wan3.0-720p-特惠）最低 10 秒，prime 仅 30 秒；促销族（seedance2.5-特惠）
-  // 支持 5-30 秒但示例写 10 —— 走有赞标准版源链路，最不容易失败。
+  // 支持 4-30 秒但示例写 10 —— 走有赞标准版源链路，最不容易失败。
   // 示例是客户直接照抄的东西，必须写后端真正接受的值。
   const wan3SampleSeconds = (name: string): string | null => {
     if (name === 'wan3.0-video-prime' || name === 'wan3.0-video-prime-1080p') {

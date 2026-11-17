@@ -8,25 +8,13 @@ package manwu
 //	  Properties.OriginModelName 是 CapCut 档位（cp-seedance-*）
 //	  PrivateData.RouteOriginModel 是「按 720P 售卖」的源模型
 //
-//	当前覆盖两条改派链，它们的共同点是「客户买 720P、CapCut 只按 480p 生成」：
+//	2026-11-17 起**全站取消超分**：促销族改派与豆包降级备胎都改为
+//	720p 原生生成、直接交付（超分画质不达标）。capcutUpscaleDeliveryOrigin
+//	恒返回 false，本钩子不再对任何任务触发超分。
 //
-//	  1. 规则五降级（2026-11-14）：豆包 seedance-2-5 不可用 → 改派
-//	     cp-seedance-2.5flash 按 480p 生成（middleware/video_route_failover_alt.go），
-//	     计费原点 seedance-2-5（一口价 ¥3.50/次）。
-//	  2. 规则六/七/八（2026-11-15）：促销族 seedance2.5-特惠 / -活动 改派
-//	     cp-seedance-2.5flash（或 2.0fast）时统一钉 480p 生成
-//	     （middleware/seedance_route_ecommerce.go 的 capcutGenerationResolution），
-//	     计费原点仍是促销族（按秒 ¥0.20/秒 或按次 ¥4.5/次）。
-//	     促成的动机是成本：CapCut 720p 是 480p 的 2 倍 credits，
-//	     超分（MPS）比这半个档位便宜得多。
-//
-//	反面必须**不触发**的两类（误判就是白花钱、或把成片越超越糊）：
-//	  - 客户直接买 cp-seedance-2.5flash（RouteOriginModel 为空）→ 他买的
-//	    就是那个档位，480p 单不该超分、720p 单已经是对应档位；
-//	  - 执行模型不是 CapCut（豆包/班车等）→ 它们自己交付的就是承诺档位。
-//
-//	⚠️ 为什么不给 CapCut 全档无脑超分：CapCut 自己就是按档卖的商品，
-//	超分只服务「生成档位低于交付档位」这一种情况。
+//	保留整个注入结构与判据函数是为了可恢复：将来若某条链路需要重新做
+//	「生成档低于交付档」的补齐，只需在 capcutUpscaleDeliveryOrigin 里加白名单，
+//	不必重建 relay_adaptor 的装配、也不必改 service 层的钩子协议。
 //
 // ───────────────────────── 为什么用「注入」而不是直接调用 ─────────────────────────
 //
@@ -53,28 +41,21 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 )
 
-// capcutUpscaleDeliveryOrigin 判断计费原点是不是「按 720P 售卖」的模型。
+// capcutUpscaleDeliveryOrigin 判断计费原点是否需要「480p→720P 超分」。
 //
-// 三类原点都算：豆包 seedance-2-5（规则五降级）、促销族
-// seedance2.5-特惠 / -活动（规则六/七/八改派）、以及促销族母本的历史别名
-// wan3.0-720p-特惠（别名中间件只改 body.model、计费原点保留旧名）。
+// 2026-11-17 起**恒为 false**：全站 CapCut 链路（促销族改派 + 豆包降级备胎）
+// 一律改为 720p 原生直出，超分已彻底取消（画质不达标）。所有改派的请求拿到的
+// 都是上游直接生成的 720P 原片，再跑一次 MPS 只会白花钱、徒增延迟，还可能
+// 把清晰的原片越转越糊。
 //
-// 空串（= 没发生改派，客户直接买 CapCut 档位）一律 false ——
-// 那种任务买什么档就交付什么档，不该被超分。
+// 保留这个函数与钩子装配（relay/relay_adaptor.go 的 init）是为了让「将来若要
+// 恢复某条链路超分」只需在一个地方加白名单，不必重建整个注入结构。
 func capcutUpscaleDeliveryOrigin(origin string) bool {
-	name := strings.TrimSpace(origin)
-	if name == "" {
-		return false
-	}
-	if name == constant.Seedance25DoubaoModel || name == constant.Wan3TehuiLegacyModel {
-		return true
-	}
-	return constant.IsSeedance25Family(name)
+	return false
 }
 
 // isCapcutVideoExecutionModel 判断实际执行的是不是 CapCut 档位。
@@ -91,7 +72,7 @@ func isCapcutVideoExecutionModel(name string) bool {
 //
 // 两个条件必须同时成立（缺一不可）：
 //  1. 实际执行的是 CapCut 档位；
-//  2. 计费原点是按 720P 售卖的源模型（豆包 / 促销族 / 老别名）。
+//  2. 计费原点命中超分白名单 —— 2026-11-17 起白名单恒为空，恒 false。
 func needsCapcutUpscale(task *model.Task) bool {
 	if task == nil {
 		return false
@@ -327,13 +308,14 @@ func deriveArcmediaPublicURL(raw string) string {
 
 // PollPostProcess 推进超分任务；done=true 表示已到终态。
 //
-// 只有 needsCapcutUpscale 为真时才推进 —— 与本 adaptor 其它任务的
-// 「无后处理」语义保持一致（返回 true 表示「没有后处理要等」，service 层照常收尾）。
+// ⚠️ 这里**不能**用 needsCapcutUpscale 挡（2026-11-17 修）：那个判据现在恒 false，
+// 但发版前已提交 MPS 的在途任务 PostProcess.Stage=submitted、ResultURL 还是
+// 上游 480p 原片。若在这里直接返回 true，service 会把它们当 SUCCESS 收尾，
+// 客户按 720P 付费却拿到 480P 原片（静默降质）。
+// 所以只要 task 上**已经有** PostProcess 状态就继续推进到终态（收敛成 720P 产物），
+// 与「新任务不再提交超分」是两件事。
 func (a *TaskAdaptor) PollPostProcess(ctx context.Context, task *model.Task) (bool, error) {
 	if task == nil || task.PrivateData.PostProcess == nil {
-		return true, nil
-	}
-	if !needsCapcutUpscale(task) {
 		return true, nil
 	}
 	if superResolutionPoller == nil {

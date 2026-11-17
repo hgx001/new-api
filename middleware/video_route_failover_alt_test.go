@@ -1,13 +1,16 @@
 package middleware
 
-// 规则五「备选备胎」（豆包不可用 → CapCut 480p + 超分 720P）的测试。
+// 规则五「备选备胎」（豆包不可用 → CapCut 720p 原生直出）的测试。
 //
 // 判定矩阵与规则五主链路同构，多了三格：
 //
 //	1. 备选开关关闭 → 仍走班车（升级当天行为必须逐字节不变）；
-//	2. 备选开关打开 → 改派 cp-seedance-2.5flash，并钉住 480p 生成；
-//	3. 备选接不住（没渠道 / 没比例 / 比例不兼容 / 没配超分 / 时长非档位）
+//	2. 备选开关打开 → 改派 cp-seedance-2.5flash，并钉住 720p 原生生成；
+//	3. 备选接不住（没渠道 / 没比例 / 比例不兼容 / 时长非档位）
 //	   → **回落班车**，而不是把请求留在已挂的源链路上。
+//
+// 2026-11-17 起全站 CapCut 取消超分：备选链路不再依赖 MPS 配置，
+// 超分探针在生产代码里已不被读取。
 //
 // ⚠️ 第三条是本文件最重要的断言：备选是「更好的退路」，不是唯一退路。
 
@@ -55,14 +58,6 @@ func enableFailoverWithAlt(t *testing.T, altEnabled bool, extra map[string]inter
 	})
 }
 
-// stubSuperResolution 覆盖「超分链路是否可用」的探针。
-func stubSuperResolution(t *testing.T, configured bool) {
-	t.Helper()
-	previous := superResolutionConfiguredProbe
-	superResolutionConfiguredProbe = func() bool { return configured }
-	t.Cleanup(func() { superResolutionConfiguredProbe = previous })
-}
-
 // runAltRoute 跑一遍路由，返回完整记录器（要看屏蔽倍率标记）。
 func runAltRoute(t *testing.T, body string) *routeRecorder {
 	t.Helper()
@@ -84,7 +79,6 @@ func TestFailoverAltOffKeepsBackupChain(t *testing.T) {
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, true)
 
 	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"16:9"}`)
 	seen := decodeBody(t, rec.body)
@@ -92,22 +86,21 @@ func TestFailoverAltOffKeepsBackupChain(t *testing.T) {
 	assert.False(t, rec.suppressTaskRatios, "班车链路不需要屏蔽倍率")
 }
 
-// 备选打开且接得住：改派 CapCut，钉住 480p，并保留比例/时长/参考图。
-func TestFailoverAltRoutesToCapcut480p(t *testing.T) {
+// 备选打开且接得住：改派 CapCut，钉住 720p 原生直出，并保留比例/时长/参考图。
+func TestFailoverAltRoutesToCapcut720p(t *testing.T) {
 	enableFailoverWithAlt(t, true, nil)
 	stubChannelAvailableByModel(t, map[string]bool{
 		failoverSourceModel:       false,
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, true)
 
 	rec := runAltRoute(t,
 		`{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"16:9","images":["https://cdn.example.com/a.png"]}`)
 	seen := decodeBody(t, rec.body)
 
 	assert.Equal(t, testCapcutAltModel, seen["model"])
-	assert.Equal(t, "480p", seen["resolution"], "生成档位必须是 480p（成本与超分链路的前提）")
+	assert.Equal(t, "720p", seen["resolution"], "生成档位必须是 720p（原生直出，不再依赖 MPS）")
 	assert.Equal(t, "16:9", seen["ratio"], "比例必须按 CapCut 顶层字段写")
 	assert.Equal(t, "10", seen["seconds"], "时长按 CapCut 契约写成字符串")
 	images, ok := seen["images"].([]interface{})
@@ -128,26 +121,27 @@ func TestFailoverAltFallsBackWhenCapcutChannelMissing(t *testing.T) {
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: false,
 	})
-	stubSuperResolution(t, true)
 
 	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"16:9"}`)
 	assert.Equal(t, failoverBackupModel, decodeBody(t, rec.body)["model"])
 	assert.False(t, rec.suppressTaskRatios)
 }
 
-// 没配超分 → 不能用备选（否则按 720P 的价交付 480P）。
-func TestFailoverAltFallsBackWhenSuperResolutionUnconfigured(t *testing.T) {
+// 超分探针报「未配置」也**不回落**：2026-11-17 起备选链路 720p 原生直出，
+// 与 MPS 完全无关 —— 超分开关关掉后豆包挂了仍走 CapCut 出 720P 原片。
+func TestFailoverAltIgnoresSuperResolutionProbe(t *testing.T) {
 	enableFailoverWithAlt(t, true, nil)
 	stubChannelAvailableByModel(t, map[string]bool{
 		failoverSourceModel:       false,
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, false)
+	superResolutionConfiguredProbe = func() bool { return false }
 
 	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"16:9"}`)
-	assert.Equal(t, failoverBackupModel, decodeBody(t, rec.body)["model"],
-		"超分没配时必须回落班车，不能静默交付 480P")
+	seen := decodeBody(t, rec.body)
+	assert.Equal(t, testCapcutAltModel, seen["model"], "超分探针不再影响备选链路")
+	assert.Equal(t, "720p", seen["resolution"])
 }
 
 // 请求没写比例（= 官网自动档）→ CapCut 无自动档，回落班车。
@@ -158,7 +152,6 @@ func TestFailoverAltFallsBackWhenRatioMissing(t *testing.T) {
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, true)
 
 	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat"}`)
 	assert.Equal(t, failoverBackupModel, decodeBody(t, rec.body)["model"])
@@ -172,7 +165,6 @@ func TestFailoverAltFallsBackWhenRatioAuto(t *testing.T) {
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, true)
 
 	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"auto"}`)
 	assert.Equal(t, failoverBackupModel, decodeBody(t, rec.body)["model"])
@@ -189,7 +181,6 @@ func TestFailoverAltFallsBackWhenDurationNotWhitelisted(t *testing.T) {
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, true)
 
 	body := `{"model":"seedance-2-5","seconds":7,"prompt":"a cat","ratio":"16:9"}`
 	rec := runAltRoute(t, body)
@@ -205,7 +196,6 @@ func TestFailoverAltDoesNothingWhenSourceHealthy(t *testing.T) {
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, true)
 
 	body := `{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"16:9"}`
 	rec := runAltRoute(t, body)
@@ -231,7 +221,6 @@ func TestFailoverAltAppliesAfterRuleOneRoute(t *testing.T) {
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, true)
 
 	marked := seedanceroute_setting.WithFailoverUnavailable(
 		timeNowUnix()+3600, seedanceroute_setting.ReasonQuotaExhausted)
@@ -244,7 +233,7 @@ func TestFailoverAltAppliesAfterRuleOneRoute(t *testing.T) {
 	seen := decodeBody(t, rec.body)
 
 	assert.Equal(t, testCapcutAltModel, seen["model"])
-	assert.Equal(t, "480p", seen["resolution"])
+	assert.Equal(t, "720p", seen["resolution"])
 	assert.Equal(t, "seedance2.5-特惠", rec.originModel,
 		"计费原点必须是客户最初请求的促销族模型")
 	assert.True(t, rec.suppressTaskRatios)
@@ -261,14 +250,13 @@ func TestFailoverAltIgnoresUnknownTargetModel(t *testing.T) {
 		testCapcutAltChannelModel: true,
 		"some-other-model":        true,
 	})
-	stubSuperResolution(t, true)
 
 	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"16:9"}`)
 	assert.Equal(t, failoverBackupModel, decodeBody(t, rec.body)["model"],
 		"备选目标必须是 CapCut 2.5 Flash，其它名字不猜契约")
 }
 
-// CapCut 契约：模型名必须是 2.5 Flash 那一档，且写的是 480p（小写字面量）。
+// CapCut 契约：模型名必须是 2.5 Flash 那一档，且写的是 720p（小写字面量）。
 func TestFailoverAltBodyUsesCapcutContract(t *testing.T) {
 	enableFailoverWithAlt(t, true, nil)
 	stubChannelAvailableByModel(t, map[string]bool{
@@ -276,13 +264,12 @@ func TestFailoverAltBodyUsesCapcutContract(t *testing.T) {
 		failoverBackupModel:       true,
 		testCapcutAltChannelModel: true,
 	})
-	stubSuperResolution(t, true)
 
 	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":5,"prompt":"a cat","size":"9:16"}`)
 	seen := decodeBody(t, rec.body)
 	assert.Equal(t, testCapcutAltModel, seen["model"])
 	assert.Equal(t, "9:16", seen["ratio"], "size 形态的比例要归一成 CapCut 的顶层 ratio")
-	assert.True(t, strings.EqualFold("480p", seen["resolution"].(string)))
+	assert.True(t, strings.EqualFold("720p", seen["resolution"].(string)))
 }
 
 // 源与备选落在**同一批渠道**时，备选仍然必须生效。
@@ -290,7 +277,7 @@ func TestFailoverAltBodyUsesCapcutContract(t *testing.T) {
 // 线上就是这种结构：seedance-2-5 与 cp-seedance-2.5flash 都只挂在同一个
 // 中转渠道（漫屋 ArcReel），但渠道背后是两个不同上游模型、两套独立额度。
 // 班车那条「同渠道放弃改写」的护栏套到这里就成了致命误判 ——
-// 开关打开、超分就绪、渠道也在，请求却一条都进不来（2026-11-14 实测）。
+// 开关打开、渠道也在，请求却一条都进不来（2026-11-14 实测）。
 func TestFailoverAltWorksWhenSourceAndTargetShareChannel(t *testing.T) {
 	enableFailoverWithAlt(t, true, nil)
 	stubChannelAvailableByModel(t, map[string]bool{
@@ -304,13 +291,12 @@ func TestFailoverAltWorksWhenSourceAndTargetShareChannel(t *testing.T) {
 		failoverBackupModel:       {27},
 		testCapcutAltChannelModel: {20},
 	})
-	stubSuperResolution(t, true)
 
 	rec := runAltRoute(t, `{"model":"seedance-2-5","seconds":10,"prompt":"a cat","ratio":"16:9"}`)
 	seen := decodeBody(t, rec.body)
 
 	assert.Equal(t, testCapcutAltModel, seen["model"],
 		"同一中转渠道下豆包与 CapCut 是两套上游额度，备选必须生效")
-	assert.Equal(t, "480p", seen["resolution"])
+	assert.Equal(t, "720p", seen["resolution"])
 	assert.True(t, rec.suppressTaskRatios)
 }

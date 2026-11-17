@@ -1,7 +1,7 @@
 package middleware
 
 // 规则五的**备选备胎**：豆包链路不可用时改派 CapCut Seedance 2.5 Flash，
-// 按 480p 生成、交付前超分到 720P（2026-11-14 加）。
+// 按 720p 原生直出（2026-11-14 加，2026-11-17 由 480p+超分改为原生）。
 //
 // ───────────────────────── 为什么需要第二个备胎 ─────────────────────────
 //
@@ -10,7 +10,7 @@ package middleware
 //	（我们自己的账号池），豆包挂掉时它是一条完全独立的路。
 //
 //	所以运营需要一个开关来选择「豆包挂了以后走哪条」：
-//	  打开：cp-seedance-2.5flash（480p 生成 + 超分交付 720P）
+//	  打开：cp-seedance-2.5flash（720p 原生直出，2026-11-17 起）
 //	  关闭：wan3.0-班车（现状，默认）
 //
 // ───────────────────────── 为什么必须单独一套改写 ─────────────────────────
@@ -27,18 +27,14 @@ package middleware
 //	但 adaptive 不在白名单），素材字段也要重排 —— 「改派过去跑不起来」
 //	正是规则五要防的最坏结果。
 //
-// ───────────────────────── 交付档位：480p 生成 → 720P 交付 ─────────────────────────
+// ───────────────────────── 交付档位：720p 原生直出 ─────────────────────────
 //
-//	CapCut 的 480p 与 720p 是两个价（720p 是 480p 的 2 倍，见
-//	manwu.capcut720PRatios），而客户买的是 seedance-2-5 的一口价（¥3.50/次）。
-//	生成 480p 再把成片超分到 720P 交付，成本最低且交付档位与对外承诺一致。
+//	2026-11-17 起备选链路按 720p 原生生成并直接交付，不再做「480p 生成 +
+//	MPS 超分 720P」。原因是超分画质不达标；对客仍是 seedance-2-5 的一口价
+//	（¥3.50/次）、交付档仍是 720P，只是取消了中间那一步超分。
 //
-//	超分复用规则六心笔内链那套腾讯 MPS 链路（relay/channel/task/wan3 的
-//	SubmitSuperResolution）—— 超分与上游是谁无关，只要有一条可抓取的 480p 成片。
-//
-//	⚠️ MPS 没配就**不能用这条备选链路**：那会「按 720P 的价交付 480P 的片」，
-//	是静默降质（任务成功、账单照收、客户拿到低一档的成片）。
-//	这种情况回落班车 —— 至少班车交付的是它承诺的档位。
+//	⚠️ 这条链路不再依赖腾讯 MPS 配置（superResolutionConfiguredProbe 已不被
+//	生产代码读取）—— 超分开关关掉后，豆包挂了仍可走 CapCut 备胎出 720P 原片。
 
 import (
 	"fmt"
@@ -56,8 +52,9 @@ import (
 
 // capcutAltGenerationResolution 是备选链路向上游请求的生成档位（小写，CapCut 口径）。
 //
-// 与交付档位分开：交付恒 720P（超分后），生成档位只影响成本。
-const capcutAltGenerationResolution = "480p"
+// 2026-11-17 起改为 720p 原生直出：全站 CapCut 链路取消「480p 生成 + MPS
+// 超分 720P」（超分画质不达标）。生成档 = 交付档 = 720P，对客口径与价格不变。
+const capcutAltGenerationResolution = "720p"
 
 // capcutAltMinSeconds / capcutAltMaxSeconds 是 CapCut 2.5 Flash 的时长区间。
 //
@@ -86,8 +83,9 @@ var capcutAltRatios = map[string]bool{
 
 // superResolutionConfiguredProbe 判定「超分链路是否可用」。
 //
-// 抽成变量是为了可测：真实实现读全局配置，单测替换它就能构造
-// 「MPS 没配」的世界（那是必须回落班车的分支）。
+// 2026-11-17 起全站 CapCut 取消超分（改 720p 原生直出），生产代码**不再**
+// 读这个探针。保留变量仅为兼容既有的 stubSuperResolution 测试桩（那些测试
+// 仍在验证其它规则与超分配置解耦），勿在新的生产路径里引用它。
 var superResolutionConfiguredProbe = tencentmps_setting.IsConfigured
 
 // failoverAltTarget 返回备选备胎的目标模型名；第二个返回值 = 当前是否启用。
@@ -134,11 +132,7 @@ func tryFailoverAltRoute(
 	if !enabled {
 		return false
 	}
-	// 超分没配 → 交付不出 720P，不能用这条链路（否则是静默降质）。
-	if !superResolutionConfiguredProbe() {
-		logger.LogInfo(c, "条件路由跳过故障转移备选：超分链路未配置，回落班车（避免按 720P 价交付 480P）")
-		return false
-	}
+	// 2026-11-17 起不再检查超分配置：备选链路改为 720p 原生直出，与 MPS 无关。
 	// ⚠️ 这里**故意不做** failoverSharedChannelChain 判断，与班车那条不同。
 	//
 	// 「源与备选解析到同一批渠道就改名无收益」这条护栏是为班车设的：
@@ -149,7 +143,7 @@ func tryFailoverAltRoute(
 	//   seedance-2-5       → 豆包官网额度
 	//   cp-seedance-2.5flash → CapCut 额度
 	// 豆包额度耗尽恰恰不影响 CapCut —— 这正是备选存在的全部理由。
-	// 复用班车那条判断的后果是：开关打开、超分配置齐全、渠道也在，
+	// 复用班车那条判断的后果是：开关打开、渠道也在，
 	// 请求却一条都进不来，全员静默走班车（2026-11-14 实测确认）。
 	//
 	// 真正要防的「改了名还在同一个池子里」已由上一段的可用性探针覆盖：
@@ -167,7 +161,7 @@ func tryFailoverAltRoute(
 	// 不标记就会 ¥3.50×N（见 constant.ContextKeyRouteSuppressTaskRatios）。
 	common.SetContextKey(c, constant.ContextKeyRouteSuppressTaskRatios, true)
 	logger.LogInfo(c, fmt.Sprintf(
-		"条件路由：豆包链路不可用，改派 %s → %s（480p 生成 + 超分 720P 交付，计费仍按 %s）",
+		"条件路由：豆包链路不可用，改派 %s → %s（720p 原生直出，计费仍按 %s）",
 		sourceModel, target, billingOriginModel))
 	return true
 }
@@ -250,7 +244,7 @@ func prepareCapcutAltRoute(
 //
 // 只带 CapCut 真正会读的字段：
 //
-//	model / prompt / seconds（字符串）/ resolution（恒 480p）/ ratio / images
+//	model / prompt / seconds（字符串）/ resolution（恒 720p 原生直出）/ ratio / images
 //
 // 其余（metadata、media、size、aspect_ratio、audio/video 系列）一律**不带**：
 //   - metadata：豆包链路根本不读它（客户塞进去不生效），带过去 CapCut 的
