@@ -433,13 +433,20 @@ func isAllowedPricingModel(name string) bool {
 	if name == "sd-2.5" {
 		return true
 	}
-	// MegaAI 渠道的 wan-3.0（上游按次 + 分辨率档计价，与官网 wan3.0-video 区分开）
-	if name == "wan-3.0" {
+	// 有赞渠道的新独立模型（2026-11-18 上架，公开名 **wan-3.0-yz**）：
+	// 上游独立模型 ID 是 wan-3.0，按秒计费 ¥0.20/秒（720P）/ ¥0.25/秒（1080P），
+	// 时长 10-30 秒逐秒可选。
+	//
+	// ⚠️ 这个公开名**曾经**是 "wan-3.0"（2026-11-18 改名为 wan-3.0-yz）。
+	// "wan-3.0" 那个名字先后属于过 MegaAI 渠道（已停售，代码侧已改名归档为
+	// "wan-3.0-megabyai-retired"），现在它只是**上游 ID**，不是任何商品的公开名。
+	// 精确匹配，不会与下面 wan-3.0-pro / wan-3.0-特惠 互相命中。
+	if name == "wan-3.0-yz" {
 		return true
 	}
 	// 有赞渠道的 wan-3.0-pro（2026-11-18 上架）：上游独立模型，按条计费
 	// 720P ¥4.5、1080P ¥5.5；时长 4-30 秒、画幅仅 16:9 / 9:16。
-	// 精确匹配，不会与上面 MegaAI 的 wan-3.0 互相命中。
+	// 精确匹配，不会与上面有赞的 wan-3.0-yz 互相命中。
 	if name == "wan-3.0-pro" {
 		return true
 	}
@@ -570,9 +577,9 @@ func isAllowedPricingModel(name string) bool {
 	}
 	// 漫屋 ArcReel → Picsart 免费无限档 Wan 3.0（2026-10-24 上架，2026-10-25 改名「特惠」）：
 	// platformId=picsart，固定 30 秒、分辨率 480P/720P，按次 ¥2.00/条（480P 用 size 倍率折 ¥1.50）。
-	// ⚠️ 与 MegaAI 渠道的 `wan-3.0` 是两个商品（上面 `name == "wan-3.0"` 是精确
-	// 比较，不会误吃本行；本行也不能写成 `strings.HasPrefix(name, "wan-3.0")`，
-	// 那会把 MegaAI 那档也一起放进来）。
+	// ⚠️ 与有赞渠道的 `wan-3.0-yz` 是两个商品（上面 `name == "wan-3.0-yz"` 是
+	// 精确比较，不会误吃本行；本行也不能写成 `strings.HasPrefix(name, "wan-3.0")`，
+	// 那会把有赞那一档（wan-3.0-yz / wan-3.0-pro）也一起放进来）。
 	// ⚠️ 改名前的旧名 `wan-3.0-无限` **故意不在这里**：白名单只管广场展示，
 	// 不影响调用（见 relay/channel/task/manwu/adaptor.go 的 ModelWan3TeHuiLegacy）。
 	if name == "wan-3.0-特惠" {

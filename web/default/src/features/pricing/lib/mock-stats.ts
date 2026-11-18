@@ -969,6 +969,68 @@ function buildWan30ProVideoParameters(): SupportedParameter[] {
 }
 
 /**
+ * wan-3.0（有赞，2026-11-18 上架）：上游**新上架的独立模型**，
+ * 与旧标准版 wan3.0-video / 旧 prime wan3.0-video-prime 是**三个并列模型**，
+ * 不是改名关系。
+ *
+ * 为什么必须单列，不能落进通用 wan3 表：
+ *   - 通用表写 `duration 10 ~ 30` + `resolution 720P/1080P`，但**没有 aspect_ratio**
+ *     —— 画幅恰恰是本模型最容易踩坑的地方：只支持 16:9 / 9:16，
+ *     传 1:1 会被后端 400（`invalid_ratio`）。
+ *   - 素材形态也不同：本模型与 wan-3.0-pro 一致，用**顶层 images / videos / audios
+ *     三个数组**，不是旧标准版的 media 数组。示例里写错等于素材被静默丢弃。
+ *
+ * 时长下限 10 秒（实测硬边界：上游原文
+ * `Duration 4s is outside the allowed range 10-30 seconds for model wan-3.0`），
+ * 与旧标准版一致，所以下限这里写 10 而不是文档上的 4。
+ */
+function buildWan30VideoParameters(): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      type: 'integer',
+      range: '10 ~ 30',
+      defaultValue: 10,
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: WAN3_RESOLUTIONS,
+      defaultValue: '720P',
+      descriptionKey: 'Output video resolution',
+    },
+    {
+      name: 'aspect_ratio',
+      type: 'enum',
+      // ⚠️ 仅 16:9 / 9:16 —— 传 1:1 会被后端 400，不做静默回退。
+      enumValues: ['16:9', '9:16'],
+      defaultValue: '16:9',
+      descriptionKey: 'Output aspect ratio',
+    },
+    {
+      name: 'images',
+      type: 'array',
+      range: '0 ~ 10',
+      descriptionKey: 'Image input',
+    },
+    {
+      name: 'videos',
+      type: 'array',
+      range: '0 ~ 5',
+      descriptionKey: 'Video input',
+    },
+    {
+      name: 'audios',
+      type: 'array',
+      range: '0 ~ 5',
+      descriptionKey: 'Audio input',
+    },
+  ]
+}
+
+/**
  * wan3.0-720p-特惠：输出档位固定 720P，时长 10—30 秒
  *（2026-11-15 起与促销母本同链路 —— 标准版 wan3.0-video，最低 10 秒）。
  * 名字不以 `wan3.0-video` 开头，必须单列 —— 否则会落进通用 wan3 表
@@ -1271,6 +1333,19 @@ export function buildSupportedParameters(
     // 4—30 秒、720P/1080P、仅 16:9/9:16，按条计费。必须在通用表之前判定。
     if (model.model_name === 'wan-3.0-pro') {
       return buildWan30ProVideoParameters()
+    }
+    // wan-3.0-yz 是有赞 2026-11-18 新上架的**独立**上游模型（与 wan3.0-video /
+    // wan3.0-video-prime 是三个并列模型，不是改名关系）：
+    // 10—30 秒、720P/1080P、仅 16:9/9:16，按秒计费。
+    //
+    // ⚠️ 必须**精确匹配**：不能用 startsWith('wan-3.0')，那会把
+    // wan-3.0-pro（4—30 秒、按条计费）一起吃掉，两张表的时间下界就不对了。
+    // 同理也吃不到 wan-3.0-特惠（漫屋 Picsart 的按次档，名字带中文后缀）。
+    //
+    // ⚠️ 名字是 "wan-3.0-yz"（对外公开名），上游 ID 是 "wan-3.0" ——
+    // 广场上展示和客户调用的都是前者。
+    if (model.model_name === 'wan-3.0-yz') {
+      return buildWan30VideoParameters()
     }
     // seedance2.5 促销族：
     //   - 活动版是固定档（30 秒 / 720P），参数表必须锁死；

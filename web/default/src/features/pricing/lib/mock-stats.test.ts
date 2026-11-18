@@ -243,6 +243,54 @@ describe('Wan3 Model Square API parameters', () => {
     assert.equal(params.fps, undefined)
   })
 
+  // 回归守卫：wan-3.0-yz 是有赞 2026-11-18 新上架的**独立**上游模型
+  // （与 wan3.0-video / wan3.0-video-prime 是三个并列模型，不是改名关系）。
+  //
+  // 它与 wan-3.0-pro 契约相似但**时长下界不同**：wan-3.0-yz 是 10—30 秒
+  // （上游硬边界，实测原文 "Duration 4s is outside the allowed range
+  // 10-30 seconds for model wan-3.0"），pro 是 4—30 秒。
+  //
+  // 漏登记就会落进通用 VIDEO_PARAMS：显示「duration 1~60、aspect_ratio 含 1:1、
+  // fps」且没有 resolution —— 客户照抄传 1:1 会被后端 400。
+  test('describes wan-3.0-yz with its own 10-30s / 720P-1080P / 16:9-9:16 contract', () => {
+    const params = parametersByName('wan-3.0-yz')
+    assert.deepEqual(parameterNames('wan-3.0-yz'), [
+      'prompt',
+      'duration',
+      'resolution',
+      'aspect_ratio',
+      'images',
+      'videos',
+      'audios',
+    ])
+    // 10—30 秒整数秒（实测硬边界），不传默认 10 秒。
+    assert.equal(params.duration.range, '10 ~ 30')
+    assert.equal(params.duration.defaultValue, 10)
+    // 仅 720P / 1080P 两档，示例取最低档。
+    assert.deepEqual(params.resolution.enumValues, ['720P', '1080P'])
+    assert.equal(params.resolution.defaultValue, '720P')
+    // 画幅仅 16:9 / 9:16 —— 通用表里的 1:1 必须消失。
+    assert.deepEqual(params.aspect_ratio.enumValues, ['16:9', '9:16'])
+    assert.equal(params.aspect_ratio.defaultValue, '16:9')
+    // 参考素材上限与上游文档一致（合计 ≤20 项由后端校验）。
+    assert.equal(params.images.range, '0 ~ 10')
+    assert.equal(params.videos.range, '0 ~ 5')
+    assert.equal(params.audios.range, '0 ~ 5')
+    // 该模型没有 fps 参数，通用表的 fps 必须消失。
+    assert.equal(params.fps, undefined)
+  })
+
+  // 回归守卫：wan-3.0-yz 与 wan-3.0-pro 是两个**不同**商品，
+  // 时长下界不同（10 vs 4）。判定必须精确匹配，不能用 startsWith('wan-3.0')，
+  // 否则 pro 的参数表会被 wan-3.0-yz 覆盖（或反之），下界就错了。
+  test('keeps wan-3.0-yz and wan-3.0-pro on separate duration bounds', () => {
+    const wan30 = parametersByName('wan-3.0-yz')
+    const pro = parametersByName('wan-3.0-pro')
+    assert.equal(wan30.duration.range, '10 ~ 30')
+    assert.equal(pro.duration.range, '4 ~ 30')
+    assert.notEqual(wan30.duration.range, pro.duration.range)
+  })
+
   test('describes wan2.7-r2v limits including the required reference images', () => {
     const params = parametersByName('wan2.7-r2v')
     assert.deepEqual(parameterNames('wan2.7-r2v'), [

@@ -165,6 +165,56 @@ func TestPlanSellingPricesSingleTier(t *testing.T) {
 	assert.Equal(t, map[string]float64{"": 1.0}, plans[0].Ratios)
 }
 
+// 上游目录里某个模型没有价格字段时，**跳过它**，但不能让整批同步失败。
+//
+// 2026-11-18 实测：上游 /v1/models 一度不再返回 unitPrice / resolutionPrices。
+// 那时每个模型都解析失败 → PlanSellingPrices 整批报错 → **所有模型的价都
+// 更新不了**（自动调价彻底停摆，而且日志里只有一行看不出原因的报错）。
+//
+// 正确行为：缺价的模型跳过 + 告警（由 controller 层补），其余照常算价。
+func TestPlanSellingPricesSkipsModelsWithoutPrice(t *testing.T) {
+	models := []UpstreamModel{
+		{
+			ID:          "wan3.0-video",
+			BillingUnit: "second",
+			Currency:    creditCurrency,
+			UnitPrice:   "0.18",
+			Parameters: struct {
+				Resolution []string `json:"resolution"`
+			}{Resolution: []string{"720P", "1080P"}},
+		},
+		{
+			// 上游没给价格（既无 unitPrice 也无 resolutionPrices）。
+			ID:          "wan-3.0",
+			BillingUnit: "second",
+			Currency:    creditCurrency,
+		},
+	}
+	plans, err := PlanSellingPrices(models, func(model, resolution string) (float64, bool) {
+		return 0.05, true
+	})
+	require.NoError(t, err, "一个模型缺价不能让整批同步失败")
+	require.Len(t, plans, 1, "缺价的模型应被跳过，其余照常算价")
+	assert.Equal(t, "wan3.0-video", plans[0].Model)
+}
+
+// ⚠️ 但「上游换了计价口径」不能当成「缺价」跳过 —— 那是必须让管理员看到的
+// 异常（按次计价 / 点数单位变了 / 开了阶梯定价），静默跳过等于我们的售价
+// 悄悄跟上游脱节。
+func TestPlanSellingPricesDoesNotSkipBillingShapeChanges(t *testing.T) {
+	models := []UpstreamModel{{
+		ID:          "wan3.0-video",
+		BillingUnit: "request",
+		Currency:    creditCurrency,
+		UnitPrice:   "4.50",
+	}}
+	_, err := PlanSellingPrices(models, func(model, resolution string) (float64, bool) {
+		return 0.05, true
+	})
+	require.Error(t, err, "计价口径变了必须报错，不能静默跳过")
+	assert.Contains(t, err.Error(), "only per-second pricing")
+}
+
 // productionMarkupFor 复刻生产策略（setting 包默认值），测试不依赖全局状态。
 func productionMarkupFor(model, resolution string) (float64, bool) {
 	switch model {
@@ -172,6 +222,12 @@ func productionMarkupFor(model, resolution string) (float64, bool) {
 		return 0.05, true
 	case "wan3.0-video-prime":
 		// 2026-10-29 第二轮起两档统一加价 ¥0.10（720P ¥0.25 / 1080P ¥0.30）。
+		return 0.10, true
+	case "wan-3.0":
+		// 2026-11-18 新上架的标准版：沿用旧标准版加价 ¥0.05。
+		return 0.05, true
+	case "SJ-wan3-prime":
+		// 2026-11-18 新上架的 prime：沿用旧 prime 加价 ¥0.10。
 		return 0.10, true
 	}
 	return 0, false

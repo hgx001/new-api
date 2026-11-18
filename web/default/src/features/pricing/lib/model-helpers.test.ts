@@ -195,6 +195,12 @@ describe('AutoDL H3 resolution tier note', () => {
       'seedance2.5-特惠', // 有赞 Prime 的对外别名，与 prime 同价按秒（2026-10-29 起）
       'wan3.0-video-官网', // 官网标准版
       'wan3.0-720p-特惠', // 官网 720P 成片档（2026-10-29 起，2026-10-30 改名）
+      // 有赞 wan-3.0-yz（2026-11-18 上架）：上游新独立模型，按秒计费
+      // （720P ¥0.20/秒、1080P ¥0.25/秒）。
+      // ⚠️ 名字以连字符开头（`wan-3.0-yz`），前缀表 `startsWith('wan3.0-video')`
+      // 吃不到它 —— 不显式登记就会落进按次兜底，广场把 ¥0.23/秒 挂在
+      // 「/次」下面，客户按次理解就是错价。
+      'wan-3.0-yz',
       'autodl:minimax-h3-u24', // AutoDL H3
       'minimax_h3_v2', // SeetaCloud FastH3 V2（文生/首帧/首尾帧，按秒 ¥0.03 起）
       'minimax_h3_omni', // SeetaCloud FastH3-Omni（9图+3视频+3音频，按秒 ¥0.03 起）
@@ -211,7 +217,6 @@ describe('AutoDL H3 resolution tier note', () => {
       'seedance-2-5', // 豆包 2.5 按次
       'seedance-2.0', // dola 2.0 按次
       'seedance-2.5', // dola 2.5 按次（已下架）
-      'wan-3.0', // MegaAI 渠道：按次 + 分辨率档（无 seconds 倍率）
       // 漫屋 → Picsart 特惠档：固定 30 秒、按次 480P ¥1.50 / 720P ¥2.00
       // （720P 走 size 倍率，不是 seconds 倍率）。
       // 名字是连字符 `wan-3.0-特惠`，与上面点号前缀的 wan3.0-video* 系列不同族，
@@ -252,6 +257,11 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(getWan3SampleResolution('wan3.0-720p-特惠'), '720P')
     // 有赞 wan-3.0-pro（2026-11-18 上架）：文档示例 size=1280x720，取最低档 720P。
     assert.equal(getWan3SampleResolution('wan-3.0-pro'), '720P')
+    // 有赞 wan-3.0-yz（2026-11-18 上架）：新独立模型，档位 720P/1080P，取最低档。
+    //
+    // ⚠️ 判定必须精确匹配：wan-3.0-pro / wan-3.0-特惠 的合法档位与本模型
+    // 不同，前缀匹配会把它们的示例分辨率一起带过来。
+    assert.equal(getWan3SampleResolution('wan-3.0-yz'), '720P')
     // 非 wan3 系模型没有该参数，示例里不应出现 resolution。
     assert.equal(getWan3SampleResolution('autodl:minimax-h3-u24'), null)
     assert.equal(getWan3SampleResolution('gpt-6-luna'), null)

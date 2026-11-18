@@ -165,6 +165,28 @@ describe('按次档模型的示例代码', () => {
       `wan3.0-video 示例应保持 seconds=10：\n${curl}`
     )
   })
+
+  // 有赞 wan-3.0-yz（2026-11-18 上架）：示例必须写 10 秒。
+  //
+  // ⚠️ 示例是客户**直接照抄**的东西：低于 10 秒上游直接拒单
+  // （实测原文 "Duration 4s is outside the allowed range 10-30 seconds"），
+  // 通用兜底值是 5 秒 —— 照抄就会失败。
+  test('wan-3.0-yz 示例保持 10 秒（上游硬边界 10—30 秒）', () => {
+    for (const lang of VIDEO_LANGS) {
+      const sample = videoSample('wan-3.0-yz', lang)
+      const values = extractSeconds(sample)
+      assert.equal(
+        values.length,
+        1,
+        `${lang} 示例里应有且只有一个 seconds 字段：\n${sample}`
+      )
+      assert.equal(
+        values[0],
+        '10',
+        `${lang} wan-3.0-yz 示例写的是 ${values[0]} 秒 —— 上游最低 10 秒：\n${sample}`
+      )
+    }
+  })
 })
 
 describe('前端固定档定义', () => {

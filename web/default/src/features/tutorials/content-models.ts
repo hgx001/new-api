@@ -36,6 +36,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s，参考视频按时长同价并入（生成秒数+参考视频秒数）',
   'wan3.0-720p-特惠｜视频（按秒）｜720P ¥0.20/s，时长 2–30 秒，参考视频按时长并入',
   'wan-3.0-pro｜视频（按条）｜720P ¥5.00 / 条、1080P ¥7.00 / 条，时长 4–30 秒同价（按条计费与时长无关）',
+  'wan-3.0-yz｜视频（按秒）｜720P ¥0.20/秒、1080P ¥0.25/秒，时长 10–30 秒整数秒，画幅仅 16:9 / 9:16（size 四选一）',
   'minimax_h3_omni｜视频（按秒）｜480P ¥0.02/s、768P ¥0.04/s、1080P ¥0.06/s，设定参考最多 9 图 + 3 视频 + 3 音频；⚠️ 参考视频秒数并入计费（生成秒数 + 参考视频秒数），图/音频不额外计费，768P 约 1–2 分钟出片；支持纯文生 / 图生 / 首尾帧 / 多参考，带参考视频或音频须同时至少一张设定参考图',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
@@ -557,6 +558,9 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
             [
               'wan-3.0-pro｜4–30 秒整数秒｜720P / 1080P（size 四选一）｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜按条计费 ¥5.00（720P）/ ¥7.00（1080P），与时长无关',
             ],
+            [
+              'wan-3.0-yz｜10–30 秒整数秒｜720P / 1080P（size 四选一）｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜按秒计费 ¥0.20/秒（720P）/ ¥0.25/秒（1080P），画幅仅 16:9 / 9:16',
+            ],
             [],
             [
               'minimax_h3_omni｜1–15 秒｜480p / 768p / 1080p × 横 / 竖 / (1:1)｜设定参考 ≤9 图 + ≤3 视频 + ≤3 音频，首尾帧走 metadata｜¥0.02 / ¥0.04 / ¥0.06 每秒；参考视频秒数并入计费，图/音频不额外计费（768P 约 1–2 分钟出片）',
@@ -607,6 +611,65 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'hint',
           children: [
             '支持纯文生视频、图生视频与多模态参考。首尾帧（first_frame / last_frame）已被上游移除，传入会直接 400（不消耗费用），请改用参考图。旧名 wan3.0-smart 已下线、不再可路由，请改用 wan3.0-video。带参考视频时计费秒数会并入参考视频时长，单条与合计均不得超过 15 秒。',
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-wan30',
+          children: [
+            {
+              type: 'strong',
+              value: 'wan-3.0-yz（有赞新独立模型，按秒计费）',
+            },
+          ],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            '上游 2026-11-18 新上架的独立模型，与 wan3.0-video / wan3.0-video-prime 是',
+            { type: 'strong', value: '三个并列模型' },
+            '（不是改名关系）。字段用 ',
+            { type: 'code', value: 'size' },
+            ' 表达画幅，计费按秒。',
+            '对外公开名 ',
+            { type: 'code', value: 'wan-3.0-yz' },
+            '（yz 表示有赞渠道这一路），上游模型 ID 是 wan-3.0 —— 调用时用带 yz 的公开名。',
+          ],
+        },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              'size：1280x720（默认）/ 720x1280 / 1920x1080 / 1080x1920，四选一，横竖屏由它决定',
+            ],
+            [
+              'seconds：10–30 的整数秒，默认 10。⚠️ 低于 10 秒上游直接拒单（实测原文 “Duration 4s is outside the allowed range 10-30 seconds for model wan-3.0”），不建单不扣费',
+            ],
+            [
+              'ratio / aspect_ratio：可传，但只接受 16:9 与 9:16，其他值直接 400（invalid_ratio）',
+            ],
+            [
+              'resolution：可传 720P / 1080P；传 480P 会按 720P 执行。size 与 resolution 同时给时以 size 为准',
+            ],
+            ['首尾帧：不支持 first_frame / last_frame，传了直接 400，请改用参考图'],
+            [
+              '参考素材：images ≤10 张、videos ≤5 个、audios ≤5 条，三类合计 ≤20 项，每项都要公网 http(s) URL',
+            ],
+            [
+              '⚠️ 顶层 images / videos / audios 三个数组都会被读取（与 wan-3.0-pro 同款契约）。也可用 media 数组；两者同时给会合并，不会互相覆盖',
+            ],
+            ['计费：按秒计费 —— 720P ¥0.20/秒、1080P ¥0.25/秒（分档价，基准档 720P）'],
+            [
+              '出片耗时：10 秒 720P 实测约 6 分钟出片（官网直连同规格约 4 分钟，有赞链路略慢）。上游进度粒度较粗，建议轮询上限放到 15 分钟以上',
+            ],
+          ],
+        },
+        {
+          type: 'hint',
+          children: [
+            '这是按秒计费商品：720P 档 10 秒 ¥2.00、30 秒 ¥6.00；1080P 档 10 秒 ¥2.50、30 秒 ¥7.50。画幅只支持 16:9 / 9:16，1:1 会被直接拒绝（不做静默改画幅），需要方形成片请选别的模型。',
           ],
         },
         {
@@ -1146,6 +1209,7 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: '参数速查表', href: '#video-params-cheatsheet' },
     { title: '余额查询接口', href: '#quota-query' },
     { title: 'wan3.0-video', href: '#model-wan30-video' },
+    { title: 'wan-3.0-yz', href: '#model-wan30' },
     { title: 'wan-3.0-pro', href: '#model-wan30-pro' },
     { title: 'wan3.0-video-prime', href: '#model-wan30-video-prime' },
     { title: 'seedance2.5-特惠', href: '#model-seedance25-tehui' },

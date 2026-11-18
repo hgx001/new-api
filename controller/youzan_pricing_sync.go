@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -102,6 +103,7 @@ func SyncYouzanWan3Pricing(force bool) (*YouzanPricingSyncResult, error) {
 
 	result := &YouzanPricingSyncResult{ChannelID: channel.Id, Plans: plans}
 	result.Warnings = append(result.Warnings, upstreamCatalogWarnings(models)...)
+	result.Warnings = append(result.Warnings, missingPriceWarnings(models, plans)...)
 	result.Changes, result.Blocked = diffYouzanPrices(plans, ratio_setting.GetModelPriceCopy(), youzanwan3_setting.Get().MaxChangeRatio)
 
 	policy := youzanwan3_setting.Get()
@@ -148,19 +150,60 @@ func upstreamCatalogWarnings(models []youzanwan3.UpstreamModel) []string {
 	for _, item := range models {
 		upstream[item.ID] = true
 	}
-	known := map[string]bool{
+	// ⚠️ 上游 2026-11-18 起是**四个并列的独立模型**，不是改名关系：
+	//
+	//	wan3.0-video        旧标准版（仍可提交）
+	//	wan3.0-video-prime  旧 prime（上游通道已禁用：workflow_unavailable）
+	//	wan-3.0            新标准版
+	//	SJ-wan3-prime      新 prime
+	//
+	// 加上已上架的 wan-3.0-pro，一共五个「已知模型」。
+	// 旧名也留在集合里：上游目录接口可能只回旧名（尚未刷新），
+	// 两种都算「已知」，免得每次同步都刷一条「上游新增模型」的假告警。
+	//
+	// ⚠️ 这个集合里的键**全部是上游 ID**。对外公开名（wan-3.0-yz）**不能**
+	// 混进来 —— 上游目录里根本不会出现公开名，加进来会让「上游已下架」
+	// 那条检查永远报假告警（上游有 wan-3.0、没有 wan-3.0-yz）。
+	knownUpstreamIDs := map[string]bool{
 		"wan3.0-video":       true,
 		"wan3.0-video-prime": true,
+		"wan-3.0":            true,
+		"SJ-wan3-prime":      true,
+		"wan-3.0-pro":        true,
 	}
 	for id := range upstream {
-		if !known[id] {
+		if !knownUpstreamIDs[id] {
 			warnings = append(warnings, fmt.Sprintf("上游新增模型 %s：未自动上架，需要确认定价后手工加渠道与卡片", id))
 		}
 	}
-	for id := range known {
+	for id := range knownUpstreamIDs {
 		if !upstream[id] {
-			warnings = append(warnings, fmt.Sprintf("上游已下架模型 %s：价格不再更新，请同步下架", id))
+			// 告警里说客户认识的名字（对外公开名），便于直接去广场/卡片改。
+			publicName := youzanwan3.PublicModelName(id)
+			warnings = append(warnings, fmt.Sprintf("上游已下架模型 %s：价格不再更新，请同步下架", publicName))
 		}
+	}
+	return warnings
+}
+
+// missingPriceWarnings 报告「上游目录里有、但这次没算出价」的模型。
+//
+// 上游的 /v1/models 一度不再返回 unitPrice / resolutionPrices（2026-11-18 实测）。
+// 那种情况下 PlanSellingPrices 会**跳过**这些模型（不让一个模型的缺价拖垮
+// 整批调价），但跳过必须留痕 —— 否则管理员看到「同步成功」却不知道
+// 某个模型的价已经不再自动更新了。
+func missingPriceWarnings(models []youzanwan3.UpstreamModel, plans []youzanwan3.ModelPricePlan) []string {
+	planned := make(map[string]bool, len(plans))
+	for _, plan := range plans {
+		planned[plan.Model] = true
+	}
+	warnings := make([]string, 0)
+	for _, item := range models {
+		if planned[item.ID] {
+			continue
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"上游模型 %s 未提供按秒价格，本次跳过（售价保持不变，请人工确认）", item.ID))
 	}
 	return warnings
 }
@@ -176,14 +219,19 @@ func diffYouzanPrices(plans []youzanwan3.ModelPricePlan, currentPrices map[strin
 	blocked := make([]string, 0)
 
 	for _, plan := range plans {
-		oldBaseUSD, ok := currentPrices[plan.Model]
+		// ⚠️ currentPrices 是 ModelPrice 快照，键是**对外公开名**；
+		// plan.Model 是上游 ID。两者不同的模型（wan-3.0-yz ↔ wan-3.0）
+		// 不转换的话 oldBaseUSD 永远取不到 → 每次同步都当成「首次配置」，
+		// 变动幅度这道护栏就形同虚设。
+		publicName := youzanwan3.PublicModelName(plan.Model)
+		oldBaseUSD, ok := currentPrices[publicName]
 		if !ok || oldBaseUSD <= 0 {
 			// 从来没有配过价：这是首次配置，不算「变动」，也不需要阈值保护。
 			continue
 		}
 		oldBaseCNY := oldBaseUSD * ratio_setting.USD2RMB
 		for resolution, newPrice := range plan.Prices {
-			oldRatio, hasRatio := youzanwan3_setting.GetResolutionRatio(plan.Model, resolution)
+			oldRatio, hasRatio := youzanwan3_setting.GetResolutionRatio(publicName, resolution)
 			if !hasRatio {
 				// 没有动态倍率时用新计划的倍率反推旧价，等价于「只比基准价」。
 				oldRatio = plan.Ratios[resolution]
@@ -194,7 +242,7 @@ func diffYouzanPrices(plans []youzanwan3.ModelPricePlan, currentPrices map[strin
 				continue
 			}
 			changes = append(changes, YouzanPricingChange{
-				Model:       plan.Model,
+				Model:       publicName,
 				Resolution:  resolution,
 				OldPrice:    oldPrice,
 				NewPrice:    newPrice,
@@ -203,7 +251,7 @@ func diffYouzanPrices(plans []youzanwan3.ModelPricePlan, currentPrices map[strin
 			if maxChangeRatio > 0 && changeRatio > maxChangeRatio {
 				blocked = append(blocked, fmt.Sprintf(
 					"%s %s：¥%.4f → ¥%.4f（变动 %.1f%%，阈值 %.0f%%）",
-					plan.Model, resolutionLabel(resolution), oldPrice, newPrice,
+					publicName, resolutionLabel(resolution), oldPrice, newPrice,
 					changeRatio*100, maxChangeRatio*100))
 			}
 		}
@@ -219,11 +267,15 @@ func applyYouzanPricePlans(plans []youzanwan3.ModelPricePlan) error {
 	prices := ratio_setting.GetModelPriceCopy()
 	ratios := make(map[string]map[string]float64, len(plans))
 	for _, plan := range plans {
+		// ⚠️ 键必须是**对外公开名**（wan-3.0-yz），不是上游 ID（wan-3.0）。
+		// 计费链路（ModelPriceHelper / EstimateBilling）读的是客户请求里的
+		// 那个名字；写上游 ID 等于把价格写到一个没人调用的键上。
+		publicName := youzanwan3.PublicModelName(plan.Model)
 		// 不额外取整：BasePrice/7.3 是确定性的 IEEE 运算，同一份上游价每次算出的
 		// 值逐位相同，JSON 也会输出同样的最短表示。取整反而会让 ModelPrice 与
 		// 手写配置的精度不一致（显示上虽看不出，但没必要引入差异）。
-		prices[plan.Model] = plan.BasePrice / ratio_setting.USD2RMB
-		ratios[plan.Model] = plan.Ratios
+		prices[publicName] = plan.BasePrice / ratio_setting.USD2RMB
+		ratios[publicName] = plan.Ratios
 	}
 	// 跟价的别名（见 youzanAliasTargets）。当前为空：seedance2.5-特惠 独立定价。
 	// 这段保留是因为「同一个上游模型对外卖两个名字」以后还会再出现，
@@ -238,6 +290,31 @@ func applyYouzanPricePlans(plans []youzanwan3.ModelPricePlan) error {
 			ratios[alias] = ratio
 		}
 	}
+	// 钉死售价的模型：覆盖上游算出来的价，保证对外承诺价不被上游成本改写。
+	//
+	// ⚠️ 必须在这里覆盖（而不是在 PlanSellingPrices 里跳过）：跳过的话，
+	// ModelPrice 里这个模型的键会**保持旧值**——而旧值可能是按上游成本算的，
+	// 上游一改成本，我们对外的报价就跟着变，而且没有任何痕迹。
+	// 覆盖是显式的、每次同步都重新写一遍，行为可预期。
+	for _, publicName := range youzanwan3_setting.FixedPriceModels() {
+		tiers := youzanwan3_setting.Get().FixedPrices[publicName]
+		if len(tiers) == 0 {
+			continue
+		}
+		// 基准档 = 售价最低的那档（与 ModelPrice「基准档配最低价」的口径一致），
+		// 其余档位用相对倍率表达。
+		baseResolution, basePrice := lowestPricedTier(tiers)
+		prices[publicName] = basePrice / ratio_setting.USD2RMB
+		tierRatios := make(map[string]float64, len(tiers))
+		for resolution, price := range tiers {
+			if price <= 0 {
+				continue
+			}
+			tierRatios[resolution] = price / basePrice
+		}
+		ratios[publicName] = tierRatios
+		_ = baseResolution
+	}
 
 	priceJSON, err := common.Marshal(prices)
 	if err != nil {
@@ -251,6 +328,37 @@ func applyYouzanPricePlans(plans []youzanwan3.ModelPricePlan) error {
 		return fmt.Errorf("youzan wan3 pricing sync: 写入配置失败: %w", err)
 	}
 	return nil
+}
+
+// lowestPricedTier 找出售价最低的那一档（并列时按档位名排序取第一个）。
+//
+// 为什么按最低档当基准：ModelPrice 只能配一个数，而广场徽标直接显示它。
+// 基准档配最低价 + 其它档用倍率表达，才不会在高档位上少收钱。
+func lowestPricedTier(tiers map[string]float64) (string, float64) {
+	bestResolution := ""
+	bestPrice := 0.0
+	first := true
+	for _, resolution := range sortedKeys(tiers) {
+		price := tiers[resolution]
+		if price <= 0 {
+			continue
+		}
+		if first || price < bestPrice {
+			bestResolution = resolution
+			bestPrice = price
+			first = false
+		}
+	}
+	return bestResolution, bestPrice
+}
+
+func sortedKeys(m map[string]float64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func relativeChange(oldPrice, newPrice float64) float64 {

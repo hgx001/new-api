@@ -227,6 +227,16 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if taskErr := validateWan30ProExplicitRatio(req); taskErr != nil {
 		return taskErr
 	}
+	// 两个新模型（wan-3.0 / SJ-wan3-prime）的显式参数白名单：
+	//   - wan-3.0：画幅仅 16:9 / 9:16；
+	//   - SJ-wan3-prime：分辨率仅 720P（上游实测 1080p/480p 被禁用）。
+	// 都必须 fail-loud —— 静默降档等于「付了 1080P 的钱拿 720P 的片」。
+	if taskErr := validateNewModelExplicitRatio(req); taskErr != nil {
+		return taskErr
+	}
+	if taskErr := validateSJWan3PrimeExplicitResolution(req); taskErr != nil {
+		return taskErr
+	}
 	// 按次档（seedance2.5-活动）的档位锁定必须在**校验阶段**拒掉，
 	// 不能等到计费或建单之后 —— 否则会走完「建单 → 预扣 → 上游拒绝 → 退款」，
 	// 客户白占一次余额还要等退款。
@@ -345,15 +355,26 @@ func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskEr
 		return nil
 	}
 	// 促销族下界 4 秒（2026-11-17 老板口径），标准版直连仍是 10 秒；
-	// wan-3.0-pro 按上游文档 4 秒起。
+	// wan-3.0-pro 按上游文档 4 秒起；wan-3.0 实测上游硬边界 10 秒；
+	// SJ-wan3-prime 上游允许 2 秒、对外按老板口径收口到 5 秒。
 	//
 	// ⚠️ 促销族 <10 秒的请求正常会被路由层改派到 CapCut 满血档；这里放行 4 秒
 	//   是兜底（路由层那档开关关掉时不应该直接 400 —— 那是「本来能跑的请求
 	//   在源链路被拒」，不是「上游不支持」）。
 	lowerBound := minDuration
-	if isWan30ProModel(req.Model) {
+	switch {
+	case isWan30ProModel(req.Model):
 		lowerBound = wan30ProMinDuration
-	} else if isPromoFamilyModel(req.Model) {
+	case isWan30Model(req.Model):
+		// wan-3.0 实测硬边界 10 秒：上游原文 "Duration 4s is outside the
+		// allowed range 10-30 seconds for model wan-3.0"。
+		// ⚠️ 不能为了「统一到 5 秒」而放开 5-9 秒 —— 那是「客户付了钱、
+		// 建了单，上游才拒」。
+		lowerBound = wan30MinDuration
+	case isSJWan3PrimeModel(req.Model):
+		// SJ-wan3-prime 上游允许 2 秒起；对外统一收口到 5 秒（老板口径）。
+		lowerBound = sjWan3PrimeMinDuration
+	case isPromoFamilyModel(req.Model):
 		lowerBound = promoMinDuration
 	}
 	if duration < lowerBound {
@@ -393,6 +414,92 @@ func validatePrimeExplicitResolution(req relaycommon.TaskSubmitReq) *dto.TaskErr
 
 func isPrimeExplicit1080P(raw string) bool {
 	return strings.TrimSpace(raw) != "" && normalizeResolution(raw) == "1080P"
+}
+
+// validateSJWan3PrimeExplicitResolution 校验 SJ-wan3-prime 显式要的分辨率。
+//
+// 2026-11-18 实测上游对该模型回
+// "Resolution 1080p is disabled for model SJ-wan3-prime"（480p 同理被禁）——
+// **只有 720P 可用**。
+//
+// 客户显式要 1080P / 480P 时**必须 400**，不能走 normalizeResolutionForModel
+// 的静默回落：那等于「收 1080P 的钱给 720P 的片」，而且按秒计费下客户还会
+// 以为多付了钱买到了更清晰的片。
+//
+// ⚠️ 文档参数表写的是「480P / 720P / 1080P」，与实测不符。这里按实测收紧 ——
+// 真被拒时是上游侧临时状态，届时再放开即可（放开的方向是安全的：宁可拒，
+// 不可静默降档）。
+func validateSJWan3PrimeExplicitResolution(req relaycommon.TaskSubmitReq) *dto.TaskError {
+	if !isSJWan3PrimeModel(req.Model) {
+		return nil
+	}
+	rejected := func(raw string) *dto.TaskError {
+		return service.TaskErrorWrapperLocal(
+			errors.Errorf("分辨率 %q 不受支持：该模型目前仅支持 720P", strings.TrimSpace(raw)),
+			"invalid_resolution", http.StatusBadRequest)
+	}
+	if raw := strings.TrimSpace(req.Resolution); raw != "" {
+		if normalized := normalizeResolution(raw); normalized != primeDefaultResolution {
+			return rejected(raw)
+		}
+	}
+	if req.Metadata != nil {
+		if raw, ok := req.Metadata["resolution"].(string); ok && strings.TrimSpace(raw) != "" {
+			if normalized := normalizeResolution(raw); normalized != primeDefaultResolution {
+				return rejected(raw)
+			}
+		}
+	}
+	return nil
+}
+
+// validateNewModelExplicitRatio 校验两个新模型（wan-3.0 / SJ-wan3-prime）
+// 显式传入的画幅。
+//
+// wan-3.0：上游仅 16:9 / 9:16（文档原话「画幅仅 16:9 / 9:16」），
+//
+//	客户显式要 1:1 / 4:3 / 21:9 时必须 400 —— 静默改成横图等于「要方图给横图」。
+//
+// SJ-wan3-prime：支持 16:9 / 9:16 / 1:1 / 4:3 / 3:4（实测 21:9 与 adaptive
+//
+//	不可用）。⚠️ 这里**不拦** adaptive：adaptive 是历史默认写法，拦掉会让
+//	老客户的请求直接 400。adaptive 不在白名单 → resolveRatio 回退到 16:9。
+func validateNewModelExplicitRatio(req relaycommon.TaskSubmitReq) *dto.TaskError {
+	if isWan30Model(req.Model) {
+		ratioErr := func(raw string) *dto.TaskError {
+			return service.TaskErrorWrapperLocal(
+				errors.Errorf("画幅 %q 不受支持：该模型仅支持 16:9 / 9:16", strings.TrimSpace(raw)),
+				"invalid_ratio", http.StatusBadRequest)
+		}
+		if !isWan30Ratio(req.Ratio) && strings.TrimSpace(req.Ratio) != "" {
+			return ratioErr(req.Ratio)
+		}
+		if !isWan30Ratio(req.AspectRatio) && strings.TrimSpace(req.AspectRatio) != "" {
+			return ratioErr(req.AspectRatio)
+		}
+		if req.Metadata != nil {
+			for _, key := range []string{"ratio", "aspect_ratio"} {
+				if raw, ok := req.Metadata[key].(string); ok && strings.TrimSpace(raw) != "" {
+					if !isWan30Ratio(raw) {
+						return ratioErr(raw)
+					}
+				}
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+// isWan30Ratio 判断画幅是否在 wan-3.0 的白名单内（16:9 / 9:16）。
+func isWan30Ratio(raw string) bool {
+	normalized := strings.TrimSpace(raw)
+	for _, allowed := range wan30Ratios {
+		if normalized == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // validateWan30ProExplicitRatio 校验 wan-3.0-pro 显式传入的画幅与尺寸。
@@ -549,6 +656,34 @@ func isWan30ProModel(model string) bool {
 	return strings.TrimSpace(model) == wan30ProModel
 }
 
+// isWan30Model 判断是不是 wan-3.0（上游 2026-11-18 新上架的独立模型）。
+//
+// 它与旧标准版 wan3.0-video 的边界**完全不同**（见 constants.go 的注释）：
+//   - 时长 10-30 秒（上游原文 "Duration 4s is outside the allowed range
+//     10-30 seconds for model wan-3.0"）；
+//   - 参数形态是 size 四个固定值，**不接受** resolution+ratio
+//     （实测回 "unsupported resolution or ratio"）；
+//   - 画幅仅 16:9 / 9:16。
+//
+// 之所以必须单独判：所有分模型判断都要先认它，否则会落进旧标准版分支，
+// 发出 resolution+ratio 组合 → 上游回 "unsupported resolution or ratio"。
+func isWan30Model(model string) bool {
+	return strings.TrimSpace(model) == wan30Model
+}
+
+// isSJWan3PrimeModel 判断是不是 SJ-wan3-prime（上游 2026-11-18 新上架）。
+//
+// 边界（2026-11-18 实测优先于文档）：时长 2-30 秒（对外收口 5-30）、
+// **仅 720P**（上游回 "Resolution 1080p is disabled for model SJ-wan3-prime"）、
+// size 形态（resolution+ratio 单独下发回 WAN_RATIO_INVALID）。
+//
+// ⚠️ 它与旧 prime（wan3.0-video-prime）的区别最关键：旧 prime 仅 30 秒、
+//
+//	仅 720P；新 prime 逐秒可选。两者是两个商品，不能互相别名化。
+func isSJWan3PrimeModel(model string) bool {
+	return strings.TrimSpace(model) == sjWan3PrimeModel
+}
+
 func isPrimeModel(model string) bool {
 	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起**默认**由标准版执行：
 	// 分辨率档位与默认值仍与 prime 旧口径一致（720P/1080P、缺省 720P），
@@ -642,9 +777,22 @@ func upstreamModelFor(model string) (string, error) {
 		return videoModel, nil
 	}
 	switch strings.TrimSpace(model) {
+	case wan30Model:
+		// 对外名 wan-3.0-yz → 上游真实 ID wan-3.0。
+		//
+		// ⚠️ 必须返回 wan30UpstreamModel（上游真名），不能返回 wan30Model
+		// （对外名）—— 上游没有 "wan-3.0-yz" 这个模型，填对外名直接 404。
+		return wan30UpstreamModel, nil
+	case sjWan3PrimeModel:
+		// 同上。新 prime 逐秒可选，**不能**复用旧 prime 的「仅 30 秒」闸门。
+		return sjWan3PrimeModel, nil
 	case videoModel, smartLegacyModel:
+		// 旧标准版：wan3.0-smart 是它的历史别名。
 		return videoModel, nil
 	case primeModel, legacyPrimeModel:
+		// 旧 prime：wan3.0-video-prime-1080p 是它的历史别名。
+		// ⚠️ 上游这条通道已禁用（workflow_unavailable / lifecycle=disabled），
+		// 调用会失败 —— 保留映射是为了让报错指向真实原因，而不是「模型不存在」。
 		return primeModel, nil
 	case wan30ProModel:
 		// 公开名与上游 ID 完全一致（文档要求「请求使用精确模型 ID」）。
@@ -715,6 +863,33 @@ func normalizeResolutionForModel(model, resolution string) string {
 			return ""
 		}
 	}
+	if isWan30Model(model) {
+		// wan-3.0：720P / 1080P 两档（size 四个值覆盖）。480P 按最低档 720P 执行。
+		switch resolution {
+		case "720P", "1080P":
+			return resolution
+		case "480P":
+			return defaultResolution
+		default:
+			return ""
+		}
+	}
+	if isSJWan3PrimeModel(model) {
+		// SJ-wan3-prime：**仅 720P**。
+		//
+		// ⚠️ 实测（2026-11-18）上游对该模型回
+		// "Resolution 1080p is disabled for model SJ-wan3-prime"（480p 同理被禁）。
+		// 文档参数表写的「480P / 720P / 1080P」与实测不符 —— 按实测走。
+		//
+		// 这里**只认 720P**，其余档位返回空串由调用方继续找下一种来源、
+		// 最后落到默认 720P；显式要 1080P/480P 的请求由
+		// validateSJWan3PrimeExplicitResolution 在校验阶段 400 ——
+		// 静默降档等于「付了 1080P 的钱拿 720P 的片」。
+		if resolution == primeDefaultResolution {
+			return primeDefaultResolution
+		}
+		return ""
+	}
 	if isPrimeModel(model) {
 		// 上游 prime 只提供 720P / 1080P：480P 请求按最低档 720P 执行，
 		// 既不静默升到更贵的 1080P，也让请求能够成功。
@@ -753,6 +928,10 @@ func normalizeResolutionForModel(model, resolution string) string {
 func defaultResolutionForModel(model string) string {
 	if isR2VModel(model) {
 		return "1080p"
+	}
+	if isSJWan3PrimeModel(model) {
+		// SJ-wan3-prime 仅 720P。
+		return primeDefaultResolution
 	}
 	if isPrimeModel(model) {
 		return primeDefaultResolution
@@ -843,9 +1022,16 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	if duration <= 0 {
 		// 按次档没传 → 30 秒（保持旧客户拿到的片长）；prime 直连没传 →
 		// 30 秒（它只接 30 秒）；wan-3.0-pro 没传 → 5 秒（文档示例值）；
+		// wan-3.0 没传 → 10 秒（上游下界）；SJ-wan3-prime 没传 → 5 秒
+		// （对外统一口径的下界）；
 		// 其余模型默认标准版最低档 10 秒。
-		if isWan30ProModel(model) {
+		switch {
+		case isWan30ProModel(model):
 			return wan30ProDefaultDuration
+		case isWan30Model(model):
+			return wan30DefaultDuration
+		case isSJWan3PrimeModel(model):
+			return sjWan3PrimeDefaultDuration
 		}
 		if isPerCallModel(model) || isPrimeOnlyModel(model) {
 			return perCallFixedDuration
@@ -857,6 +1043,28 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	if isWan30ProModel(model) {
 		if duration < wan30ProMinDuration {
 			return wan30ProMinDuration
+		}
+		if duration > maxDuration {
+			return maxDuration
+		}
+		return duration
+	}
+	// wan-3.0：实测硬边界 10-30 秒。显式越界已在 validate 阶段 400，
+	// 这里夹紧只是兜底（比如路由层改写进来的秒数）。
+	if isWan30Model(model) {
+		if duration < wan30MinDuration {
+			return wan30MinDuration
+		}
+		if duration > maxDuration {
+			return maxDuration
+		}
+		return duration
+	}
+	// SJ-wan3-prime：上游 2-30 秒，对外收口 5-30 秒。逐秒可选 ——
+	// 与旧 prime 的「仅 30 秒」完全不同，不能套 primeFixedDuration。
+	if isSJWan3PrimeModel(model) {
+		if duration < sjWan3PrimeMinDuration {
+			return sjWan3PrimeMinDuration
 		}
 		if duration > maxDuration {
 			return maxDuration
@@ -928,6 +1136,17 @@ func resolveRatio(req relaycommon.TaskSubmitReq) string {
 		// 缺省 16:9 —— 不能落 adaptive，上游不认。
 		allowedRatios = wan30ProRatios
 		fallback = wan30ProDefaultRatio
+	}
+	// wan-3.0：画幅仅 16:9 / 9:16（size 四个值正好覆盖）。缺省 16:9。
+	if isWan30Model(req.Model) {
+		allowedRatios = wan30Ratios
+		fallback = wan30DefaultRatio
+	}
+	// SJ-wan3-prime：支持 16:9 / 9:16 / 1:1 / 4:3 / 3:4，
+	// **不支持** adaptive 与 21:9（实测上游拒）。缺省 16:9。
+	if isSJWan3PrimeModel(req.Model) {
+		allowedRatios = sjWan3PrimeRatios
+		fallback = sjWan3PrimeDefaultRatio
 	}
 	if isR2VModel(req.Model) {
 		allowedRatios = r2vRatios
@@ -1040,10 +1259,15 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 	// 无条件并入：legacy 图排在 media 之后，图与图之间的相对顺序保持不变，
 	// 所以 prompt 里「@图片N」的指认不会错位。
 	media = append(media, legacyImages(req)...)
-	// wan-3.0-pro 的上游契约把视频/音频做成**顶层数组**（videos / audios），
+	// wan-3.0 / wan-3.0-pro 的上游契约把视频/音频做成**顶层数组**（videos / audios），
 	// 不像其它模型那样只走 media。客户端照抄上游文档时这些素材必须并入
 	// 校验与下发，否则会被静默丢弃（客户付了钱、成片里没有参考素材）。
-	if isWan30ProModel(req.Model) {
+	//
+	// ⚠️ 2026-11-18：原先只有 wan-3.0-pro 走这条分支，但上游文档明确
+	// 「wan-3.0、wan-3.0-pro、seedance-2.0 支持 images / videos / audios 数组」
+	// —— wan-3.0 同样吃顶层音视频数组。只放 pro 会让 wan-3.0 的
+	// 顶层 videos/audios 静默丢失（任务成功、成片无参考素材）。
+	if isWan30ProModel(req.Model) || isWan30Model(req.Model) {
 		media = append(media, legacyVideoAudioMedia(req)...)
 	}
 	return media, validateMedia(media, req.Model)
@@ -1127,7 +1351,12 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	// ⚠️ wan-3.0-pro 例外：它的上游文档明确「支持 images、videos、audios 数组」
 	// （2026-11-17 版），与 wan3.0-video 不是同一份素材契约。拦掉它等于
 	// 把这个模型的一半能力禁掉。
-	if !isPrimeOnlyModel(model) && !isWan30ProModel(model) &&
+	//
+	// ⚠️ wan-3.0 同样例外（2026-11-18）：上游文档「wan-3.0、wan-3.0-pro、
+	// seedance-2.0 支持 images、videos、audios 数组」把这两个模型并列，
+	// 素材契约一致。不放行的话，客户照文档传顶层 videos/audios 会被本地
+	// 400 拦下（文案还在说「已不再支持」，与事实相反）。
+	if !isPrimeOnlyModel(model) && !isWan30ProModel(model) && !isWan30Model(model) &&
 		(counts["reference_video"] > 0 || counts["reference_audio"] > 0) {
 		return errors.New("参考视频/参考音频已不再支持：上游 2026-11-15 切换后该链路仅接受 reference_image 参考图，请去掉视频/音频素材后重试（需要参考音视频请改用支持它们的模型）")
 	}
@@ -1305,12 +1534,133 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 	if isWan30ProModel(req.Model) {
 		return buildWan30ProRequestBody(req, upstreamModel, prompt, media)
 	}
+	// wan-3.0 与 SJ-wan3-prime 都走 **size 契约**。
+	//
+	// 实测 2026-11-18：
+	//   - wan-3.0：只认 size 的四个固定值（1280x720 / 720x1280 / 1920x1080 /
+	//     1080x1920）。发 resolution+ratio 组合会回 "unsupported resolution or
+	//     ratio"；单发 resolution 会回 "unsupported size"（说明它把 resolution
+	//     也按 size 解析）。
+	//   - SJ-wan3-prime：单发 resolution=720P 会回 "WAN_RATIO_INVALID"
+	//     （缺 ratio），而 size=720x1280 建单成功 —— 同样是 size 契约。
+	//
+	// size 与 resolution+ratio 可以**同时**下发（上游以 size 为准），但我们
+	// 只发 size —— 多发一份就多一份「上游认哪个」的不确定性。
+	switch {
+	case isWan30Model(req.Model):
+		return buildWan30RequestBody(req, upstreamModel, prompt, media)
+	case isSJWan3PrimeModel(req.Model):
+		return buildSJWan3PrimeRequestBody(req, upstreamModel, prompt, media)
+	}
 	body := map[string]interface{}{
 		"model":      upstreamModel,
 		"prompt":     prompt,
 		"ratio":      resolveRatio(req),
 		"resolution": resolveResolution(req),
 		"seconds":    strconv.Itoa(resolveDuration(req)),
+	}
+	if len(media) > 0 {
+		body["media"] = media
+	}
+	return common.Marshal(body)
+}
+
+// buildWan30RequestBody 按上游 wan-3.0 的契约构造请求体。
+//
+// 实测口径（2026-11-18）：
+//
+//	{"model":"wan-3.0","prompt":"...","seconds":10,"size":"1280x720",
+//	 "images":[...],"videos":[...],"audios":[...]}
+//
+// 要点：
+//   - size 是唯一被接受的尺寸字段（四个固定值，见 wan30SizeByRatio）；
+//   - seconds 是**字符串**（与旧标准版一致，pro 才是整数）；
+//   - 素材是**顶层 images / videos / audios 数组**（不是 media）。
+//     文档原话：「wan-3.0、wan-3.0-pro、seedance-2.0 支持 images、videos、
+//     audios 数组」—— 与 wan-3.0-pro 同一份契约，所以两者共用同一个构造函数。
+func buildWan30RequestBody(
+	req relaycommon.TaskSubmitReq,
+	upstreamModel, prompt string,
+	media []relaycommon.TaskMedia,
+) ([]byte, error) {
+	resolution := resolveResolutionForModel(req, req.Model)
+	ratio := resolveRatio(req)
+	size := wan30SizeByRatio[resolution+"/"+ratio]
+	if size == "" {
+		// 理论上到不了：分辨率已归一为 720P/1080P、画幅已归一到白名单。
+		// 真到了说明调用顺序被人改坏了 —— 明确报错，不要静默发一个上游不认的 size。
+		return nil, errors.Errorf(
+			"wan-3.0 无法推导合法 size：resolution=%q ratio=%q", resolution, ratio)
+	}
+	body := map[string]interface{}{
+		"model":   upstreamModel,
+		"prompt":  prompt,
+		"seconds": strconv.Itoa(resolveDurationForModel(req, req.Model)),
+		"size":    size,
+	}
+	appendMediaArrays(body, media)
+	return common.Marshal(body)
+}
+
+// appendMediaArrays 把素材拆成顶层 images / videos / audios 三个数组。
+//
+// wan-3.0 与 wan-3.0-pro 共用：上游文档明确这两个模型用这三个顶层数组，
+// 不是 media 数组。少发一个字段 = 那类素材**静默丢失**（客户付了钱、
+// 成片里没有参考素材），这是最差的失败方式。
+func appendMediaArrays(body map[string]interface{}, media []relaycommon.TaskMedia) {
+	images := make([]string, 0, len(media))
+	videos := make([]string, 0)
+	audios := make([]string, 0)
+	for _, item := range media {
+		switch item.Type {
+		case "reference_image":
+			images = append(images, item.URL)
+		case "reference_video":
+			videos = append(videos, item.URL)
+		case "reference_audio":
+			audios = append(audios, item.URL)
+		}
+	}
+	if len(images) > 0 {
+		body["images"] = images
+	}
+	if len(videos) > 0 {
+		body["videos"] = videos
+	}
+	if len(audios) > 0 {
+		body["audios"] = audios
+	}
+}
+
+// buildSJWan3PrimeRequestBody 按上游 SJ-wan3-prime 的契约构造请求体。
+//
+// 实测口径（2026-11-18）：
+//
+//	{"model":"SJ-wan3-prime","prompt":"...","seconds":5,"size":"1280x720"}
+//
+// 要点：
+//   - size 是被接受的尺寸字段（不是 resolution+ratio）；
+//   - **仅 720P 一档**（上游 1080p/480p 被禁用）；
+//   - seconds 是字符串（与旧标准版一致）；
+//   - 素材走 media 数组。
+func buildSJWan3PrimeRequestBody(
+	req relaycommon.TaskSubmitReq,
+	upstreamModel, prompt string,
+	media []relaycommon.TaskMedia,
+) ([]byte, error) {
+	ratio := resolveRatio(req)
+	size := sjWan3PrimeSizeByRatio[ratio]
+	if size == "" {
+		// 理论上到不了：画幅已归一到白名单。
+		// 真到了说明调用顺序被人改坏了 —— 明确报错，不要静默发一个上游不认的 size。
+		return nil, errors.Errorf(
+			"SJ-wan3-prime 无法推导合法 size：ratio=%q", ratio)
+	}
+	body := map[string]interface{}{
+		"model":   upstreamModel,
+		"prompt":  prompt,
+		"seconds": strconv.Itoa(resolveDurationForModel(req, req.Model)),
+		"size":    size,
 	}
 	if len(media) > 0 {
 		body["media"] = media
@@ -1349,28 +1699,7 @@ func buildWan30ProRequestBody(
 		"seconds": resolveDurationForModel(req, req.Model),
 		"size":    size,
 	}
-	images := make([]string, 0, len(media))
-	videos := make([]string, 0)
-	audios := make([]string, 0)
-	for _, item := range media {
-		switch item.Type {
-		case "reference_image":
-			images = append(images, item.URL)
-		case "reference_video":
-			videos = append(videos, item.URL)
-		case "reference_audio":
-			audios = append(audios, item.URL)
-		}
-	}
-	if len(images) > 0 {
-		body["images"] = images
-	}
-	if len(videos) > 0 {
-		body["videos"] = videos
-	}
-	if len(audios) > 0 {
-		body["audios"] = audios
-	}
+	appendMediaArrays(body, media)
 	return common.Marshal(body)
 }
 
@@ -1496,6 +1825,26 @@ func resolutionRatioForModel(model, resolution string) float64 {
 			return ratio
 		}
 		if ratio := wan30ProResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
+	if isWan30Model(model) {
+		// wan-3.0：两档同价 → 倍率全为 1（¥0.23/秒）。
+		if ratio, ok := youzanwan3_setting.GetResolutionRatio(wan30Model, resolution); ok {
+			return ratio
+		}
+		if ratio := wan30ResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
+	if isSJWan3PrimeModel(model) {
+		// SJ-wan3-prime：仅 720P 一档 → 倍率恒为 1（¥0.25/秒）。
+		if ratio, ok := youzanwan3_setting.GetResolutionRatio(sjWan3PrimeModel, resolution); ok {
+			return ratio
+		}
+		if ratio := sjWan3PrimeResolutionSizeRatio[resolution]; ratio > 0 {
 			return ratio
 		}
 		return 1

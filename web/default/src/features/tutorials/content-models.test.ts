@@ -163,7 +163,14 @@ describe('tutorials model guide content', () => {
     // ⚠️ seedance2.5-特惠 曾同在本次下架清单里，但 2026-10-29 它作为
     // wan3.0-video-prime 的对外别名重新上架（改路由到有赞 prime + 按秒计价），
     // 故从本守卫移除、重新计入下面的「广场在售模型」清单。
-    for (const gone of ['wan-3.0｜', 'wan-3.0-特惠', 'model-wan-3-0']) {
+    //
+    // ⚠️ 2026-11-18：「wan-3.0」这个名字先是归有赞的新独立模型，
+    // 同日又改名为「wan-3.0-yz」（对外公开名带渠道后缀）。
+    // （上游新上架，与 wan3.0-video 是并列模型）。所以现在不能再用
+    // 「wan-3.0」做「已下架」判定 —— 必须用带中文/英文后缀的精确串，
+    // 且 MegaAI 时代的整行格式是「wan-3.0｜视频（按次）…」。
+    // 「wan-3.0-特惠」是漫屋 Picsart 的按次档，仍然在售，不能误伤。
+    for (const gone of ['wan-3.0-特惠', 'model-wan-3-0']) {
       assert.equal(
         sectionsJson.includes(gone),
         false,
@@ -483,6 +490,9 @@ describe('tutorials model guide content', () => {
       'wan3.0-video-官网',
       'wan3.0-720p-特惠',
       'wan-3.0-pro',
+      // 有赞新独立模型 wan-3.0-yz（2026-11-18 上架）：名字与 MegaAI 时代的
+      // 旧商品重名，但那是**不同渠道的不同商品** —— 现在这个指的是有赞的。
+      'wan-3.0-yz',
     ]
     for (const model of squareModels) {
       assert.equal(
@@ -768,6 +778,9 @@ describe('tutorials model guide content', () => {
 
     for (const model of [
       'wan3.0-video',
+      // 有赞新独立模型 wan-3.0-yz（2026-11-18 上架）：与 wan3.0-video 并列，
+      // 时长下界 10 秒（不是 2 秒），必须有自己的行。
+      'wan-3.0-yz',
       'wan3.0-video-prime',
       'seedance2.5-特惠',
       'wan3.0-video-官网',

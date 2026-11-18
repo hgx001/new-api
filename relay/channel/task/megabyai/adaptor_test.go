@@ -18,7 +18,7 @@ import (
 )
 
 func TestModelListContainsSD25AndWan30(t *testing.T) {
-	require.Equal(t, []string{"sd-2.5", "wan-3.0", "seedance2.5-特惠"}, (&TaskAdaptor{}).GetModelList())
+	require.Equal(t, []string{"sd-2.5", "wan-3.0-megabyai-retired", "seedance2.5-特惠"}, (&TaskAdaptor{}).GetModelList())
 	require.Equal(t, "MegaAI", (&TaskAdaptor{}).GetChannelName())
 }
 
@@ -30,11 +30,11 @@ func TestEstimateBillingIsFixedPerUse(t *testing.T) {
 	require.Nil(t, adaptor.EstimateBilling(nil, &relaycommon.RelayInfo{OriginModelName: "sd-2.5"}))
 }
 
-// wan-3.0 上游按次计价（时长不参与），只有分辨率档参与计价：
+// wan-3.0-megabyai-retired 上游按次计价（时长不参与），只有分辨率档参与计价：
 // 480p 1.0 / 720p 3.5/3.0 / 1080p 4.0/3.0，且**不能**出现 seconds 倍率。
 func TestEstimateBillingWan30UsesResolutionTierOnly(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	info := &relaycommon.RelayInfo{OriginModelName: "wan-3.0"}
+	info := &relaycommon.RelayInfo{OriginModelName: "wan-3.0-megabyai-retired"}
 
 	for resolution, expected := range map[string]float64{
 		"480p":  1.0,
@@ -45,7 +45,7 @@ func TestEstimateBillingWan30UsesResolutionTierOnly(t *testing.T) {
 		c.Set(wan30ResolutionContextKey, resolution)
 		ratios := adaptor.EstimateBilling(c, info)
 		require.Equal(t, map[string]float64{"size": expected}, ratios, resolution)
-		require.NotContains(t, ratios, "seconds", "wan-3.0 上游按次计费，时长不得参与计价")
+		require.NotContains(t, ratios, "seconds", "wan-3.0-megabyai-retired 上游按次计费，时长不得参与计价")
 	}
 }
 
@@ -119,10 +119,10 @@ func TestBuildWan30MediaEnforcesUpstreamLimits(t *testing.T) {
 	require.Equal(t, []string{"https://example.com/c.mp3"}, collectedAudios)
 }
 
-// wan-3.0 提交体必须走上游「统一参数」契约：
+// wan-3.0-megabyai-retired 提交体必须走上游「统一参数」契约：
 // duration / ratio / resolution / referenceImages，而不是秒 / 尺寸 / images 那套透传字段。
 func TestBuildRequestBodyUsesUnifiedUpstreamContract(t *testing.T) {
-	raw := `{"model":"wan-3.0","prompt":"海边日落","duration":10,"ratio":"16:9","resolution":"720p","images":["https://example.com/a.png"],"seed":42}`
+	raw := `{"model":"wan-3.0-megabyai-retired","prompt":"海边日落","duration":10,"ratio":"16:9","resolution":"720p","images":["https://example.com/a.png"],"seed":42}`
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(raw))
 	c.Set(common.KeyRequestBody, []byte(raw))
@@ -136,8 +136,8 @@ func TestBuildRequestBodyUsesUnifiedUpstreamContract(t *testing.T) {
 
 	adaptor := &TaskAdaptor{}
 	reader, err := adaptor.BuildRequestBody(c, &relaycommon.RelayInfo{
-		OriginModelName: "wan-3.0",
-		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "wan-3.0"},
+		OriginModelName: "wan-3.0-megabyai-retired",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "wan-3.0-megabyai-retired"},
 	})
 	require.NoError(t, err)
 
@@ -146,7 +146,7 @@ func TestBuildRequestBodyUsesUnifiedUpstreamContract(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(encoded, &body))
 
-	require.Equal(t, "wan-3.0", body["model"])
+	require.Equal(t, "wan-3.0-megabyai-retired", body["model"])
 	require.Equal(t, "海边日落", body["prompt"])
 	require.Equal(t, float64(10), body["duration"])
 	require.Equal(t, "16:9", body["ratio"])
@@ -220,20 +220,27 @@ func int64Ptr(value int64) *int64 {
 	return &value
 }
 
-// 对外价必须锁死：480p ¥3.0 / 720p ¥3.5 / 1080p ¥4.0（每次）。
-// 改价会红：改价要同时改 defaultModelPrice、本测试的期望值和生产 ModelPrice option。
+// MegaAI 归档名必须**不再有价**。
+//
+// ⚠️ 这条商品已随渠道（type=64）于 2026-11-10 停售，生产库里它的渠道、卡片、
+// ModelPrice 键全部清空。代码默认值里那个 "wan-3.0" 的按次价（¥3.0/次）也已删除 ——
+// 留着它有两个害处：
+//  1. 名字被有赞的新模型接管后，同一个 ModelPrice 键会同时表达
+//     「按次 ¥3.0」和「按秒」两种口径，计费必然算错；
+//  2. 归档名还挂着一个价，等于给一条死链路留了个能下单的口子。
+//
+// 所以这里断言的是「查不到价」—— 死商品就该没有价。
+//
+// ⚠️ 2026-11-18：对外公开名已从 "wan-3.0" 改为 "wan-3.0-yz"（上游真名仍是 wan-3.0）。
 func TestWan30PriceTiers(t *testing.T) {
-	basePrice, ok := ratio_setting.GetDefaultModelPriceMap()["wan-3.0"]
-	require.True(t, ok, "wan-3.0 必须配置按次单价")
-	baseQuota := int(basePrice * common.QuotaPerUnit)
+	_, ok := ratio_setting.GetDefaultModelPriceMap()["wan-3.0-megabyai-retired"]
+	require.False(t, ok,
+		"MegaAI 归档名不得再有 ModelPrice —— 它的渠道已停售，"+
+			"而 'wan-3.0-yz' 这个键归有赞新模型（按秒）所有")
 
-	for resolution, expectedCny := range map[string]float64{
-		"480p":  3.0,
-		"720p":  3.5,
-		"1080p": 4.0,
-	} {
-		quota := int(float64(baseQuota) * wan30ResolutionSizeRatio[resolution])
-		actualCny := float64(quota) / common.QuotaPerUnit * ratio_setting.USD2RMB
-		require.InDelta(t, expectedCny, actualCny, 0.0001, resolution)
-	}
+	// 对照组：有赞新模型必须有价，否则按秒计费会落到「查不到价」分支算成 ¥0。
+	youzanPrice, youzanOK := ratio_setting.GetDefaultModelPriceMap()["wan-3.0-yz"]
+	require.True(t, youzanOK, "有赞 wan-3.0-yz 必须配价")
+	require.InDelta(t, 0.20/ratio_setting.USD2RMB, youzanPrice, 1e-12,
+		"有赞 wan-3.0-yz 基准档（720P）必须是 ¥0.20/秒")
 }

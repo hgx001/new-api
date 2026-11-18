@@ -159,7 +159,9 @@ func (m UpstreamModel) CostsByResolution() (map[string]float64, error) {
 		}
 	}
 	if len(costs) == 0 {
-		return nil, errors.Errorf("model %s exposes neither unitPrice nor resolutionPrices", m.ID)
+		// 上游目录里这个模型没有价格字段 —— 这是**可跳过**的情况
+		// （见 PlanSellingPrices 与 isMissingPriceError）。
+		return nil, errors.Errorf("model %s %s", m.ID, missingPriceMarker)
 	}
 	return costs, nil
 }
@@ -170,11 +172,26 @@ func (m UpstreamModel) CostsByResolution() (map[string]float64, error) {
 // 基准档取成本最低的那档（并列时按档位名排序取第一个），倍率相对它计算。
 //
 // markupFor 由调用方注入，便于测试；生产传 youzanwan3_setting.MarkupFor。
+//
+// ⚠️ **单个模型没价格就跳过它，不让整批失败**（2026-11-18）。
+// 上游的 /v1/models 一度不再返回 unitPrice / resolutionPrices 字段 ——
+// 那时每个模型都会解析失败，整批同步直接报错、**所有模型的价都更新不了**。
+// 「一个模型缺价」不该拖垮其余模型的调价：缺价的那个跳过 + 告警，
+// 其余照常算价落库。
 func PlanSellingPrices(models []UpstreamModel, markupFor func(model, resolution string) (float64, bool)) ([]ModelPricePlan, error) {
 	plans := make([]ModelPricePlan, 0, len(models))
+	var skipped []string
 	for _, item := range models {
 		costs, err := item.CostsByResolution()
 		if err != nil {
+			// 「这个模型没有可用的按秒价」是可跳过的情况；
+			// 其它错误（计价单位不对、点数单位不对、开了阶梯定价）同样不可用，
+			// 但性质不同 —— 前者是上游目录不完整，后者是**上游换了计价口径**，
+			// 必须让管理员看到，不能静默跳过。
+			if isMissingPriceError(err) {
+				skipped = append(skipped, item.ID)
+				continue
+			}
 			return nil, err
 		}
 		prices := make(map[string]float64, len(costs))
@@ -210,6 +227,17 @@ func PlanSellingPrices(models []UpstreamModel, markupFor func(model, resolution 
 	}
 	sort.Slice(plans, func(i, j int) bool { return plans[i].Model < plans[j].Model })
 	return plans, nil
+}
+
+// missingPriceMarker 是「上游目录里这个模型没有价格」的错误标记。
+//
+// 用一个专门的错误类型而不是字符串匹配：CostsByResolution 是本包的函数，
+// 错误文案改字就会让这里静默失配（变成「不跳过 → 整批失败」或反之）。
+var missingPriceMarker = "exposes neither unitPrice nor resolutionPrices"
+
+// isMissingPriceError 判断这个错误是不是「上游没给这个模型的价格」。
+func isMissingPriceError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), missingPriceMarker)
 }
 
 // lowestTier 返回成本最低的档位，作为 ModelPrice 的基准档。

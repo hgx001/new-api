@@ -5,7 +5,9 @@ const ChannelName = "MegaAI"
 // ModelList 是 MegaAI 渠道对外暴露的模型。
 //
 //   - sd-2.5：按次计费，上游固定价（与分辨率、时长无关）。
-//   - wan-3.0：按次计费 + 分辨率档（上游 480p ¥1.6 / 720p ¥1.8 / 1080p ¥2.0，均按「次」计）。
+//   - wan-3.0-megabyai-retired：原名 "wan-3.0"，按次计费 + 分辨率档
+//     （上游 480p ¥1.6 / 720p ¥1.8 / 1080p ¥2.0，均按「次」计）。
+//     ⚠️ 2026-11-18 改名归档：MegaAI 已停售，"wan-3.0" 让给有赞新模型。
 //   - seedance2.5-特惠：wan-3.0 的对外别名，参数传递完全一致，但**固定 ¥3.0/条**
 //     （不分分辨率档、不乘时长；上游锁 720p 结算，成本 ¥1.8/条）。
 //
@@ -13,12 +15,25 @@ const ChannelName = "MegaAI"
 // 生产渠道只挂 wan-3.0 与 seedance2.5-特惠；代码里保留 sd-2.5 是不破坏既有路径。
 var ModelList = []string{
 	"sd-2.5",
-	"wan-3.0",
+	wan30Model,
 	Seedance25TeHuiModel,
 }
 
 // wan30Model 是走「统一参数 + 分辨率档按次计费」契约的模型名。
-const wan30Model = "wan-3.0"
+//
+// ⚠️ 2026-11-18：这里**曾经**是 "wan-3.0"，但 MegaAI 渠道（type=64）已于
+// 2026-11-10 停售，生产库里该渠道、其模型卡片、其 ModelPrice 键全部清空。
+// 而 "wan-3.0" 这个名字 2026-11-18 被**有赞渠道的新独立模型 wan-3.0** 接管
+// （按秒计费，¥0.23/秒起）。
+//
+// 两个商品同名会让「ModelPrice 基准价键」直接冲突：残留的按次价 ¥3.0/次
+// 会覆盖新模型的按秒价，前端广场也会显示错的价格。所以这里把 MegaAI 的
+// 对外名改成带后缀的**归档名**，让出 "wan-3.0" 给有赞。
+//
+// 改名后 MegaAI 这条链路彻底不可路由（渠道本身已不存在），属于预期结果；
+// 保留本包是因为 youkou（type=59）还要复用 TaskAdaptor 的按次计费能力
+// （见 relay/megabyai_channel_retired_test.go）。
+const wan30Model = "wan-3.0-megabyai-retired"
 
 // Seedance25TeHuiModel 是 wan-3.0 的对外别名（2026-10-22 新增）。
 //
@@ -26,6 +41,9 @@ const wan30Model = "wan-3.0"
 // 只是对外价格口径不同：固定 ¥3.0/条，不按分辨率分档、不乘时长。
 // 上游仍然是 wan-3.0 —— 渠道 model_mapping 配同样的映射，代码里另有兜底表，
 // 渠道忘了配 mapping 时也不会把这个中文别名发给上游。
+//
+// ⚠️ 2026-11-18：上游名随 wan30Model 一起改为归档名 "wan-3.0-megabyai-retired"
+// （原为 "wan-3.0"，让给有赞新模型）。MegaAI 渠道已停售，该链路已不可路由。
 const Seedance25TeHuiModel = "seedance2.5-特惠"
 
 // megabyaiUnifiedContractModels 是走上游「统一参数」契约的对外模型名集合。

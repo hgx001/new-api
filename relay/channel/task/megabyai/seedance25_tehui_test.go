@@ -10,17 +10,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// seedance2.5-特惠 是 wan-3.0 的对外别名（2026-10-22 新增）：
+// seedance2.5-特惠 是 wan-3.0-megabyai-retired 的对外别名（2026-10-22 新增）：
 //
 //   - 参数传递**完全一致**（同一套上游统一参数契约）
-//   - 上游 model 名恒为 wan-3.0（别名绝不能原样发给上游）
+//   - 上游 model 名恒为 wan-3.0-megabyai-retired（别名绝不能原样发给上游）
 //
 // ⚠️ 计费口径 2026-10-29 变过一次：这个模型已迁到**有赞 Wan3** 渠道，
 // 计价从「固定 ¥3.0/条」改成「**按秒** ¥0.20/秒（720P）/ ¥0.30/秒（1080P）」。
 // 本文件里与「档位门控」相关的断言（只出 720p、只出 30 秒）仍适用于 MegaAI 渠道，
 // 但**价格断言已按新口径更新**（见 TestSeedance25TeHuiPrice）。
 
-// 别名与 wan-3.0 的上游载荷必须逐字段一致，只有 model 名不同。
+// 别名与 wan-3.0-megabyai-retired 的上游载荷必须逐字段一致，只有 model 名不同。
 func TestSeedance25TeHuiSharesParameterContractWithWan30(t *testing.T) {
 	raw := `{"model":"seedance2.5-特惠","prompt":"海边日落","duration":30,"ratio":"16:9",` +
 		`"resolution":"720p","images":["https://e.com/a.png"],"seed":42}`
@@ -31,8 +31,8 @@ func TestSeedance25TeHuiSharesParameterContractWithWan30(t *testing.T) {
 	base := runChainWithModel(t, raw, wan30Model, wan30Model)
 	require.Nil(t, base.taskErr)
 
-	// model 是唯一允许不同的字段：别名必须下发上游真名 wan-3.0。
-	require.Equal(t, "wan-3.0", alias.body["model"], "别名不能原样发给上游")
+	// model 是唯一允许不同的字段：别名必须下发上游真名 wan-3.0-megabyai-retired。
+	require.Equal(t, "wan-3.0-megabyai-retired", alias.body["model"], "别名不能原样发给上游")
 	require.Equal(t, base.body["prompt"], alias.body["prompt"])
 	require.Equal(t, base.body["duration"], alias.body["duration"])
 	require.Equal(t, base.body["ratio"], alias.body["ratio"])
@@ -46,7 +46,7 @@ func TestSeedance25TeHuiSharesParameterContractWithWan30(t *testing.T) {
 	}
 }
 
-// 别名模型的**本地报错**不能点名上游：文案写死 "wan-3.0" 等于把真实上游
+// 别名模型的**本地报错**不能点名上游：文案写死 "wan-3.0-megabyai-retired" 等于把真实上游
 // 告诉下游（脱敏层只能把整句换成误导性的「上游 accepts...」）。
 // 这类上限是本站的限制，说 "this model" 对两个对外名都成立。
 func TestSeedance25TeHuiErrorMessagesNeverNameUpstream(t *testing.T) {
@@ -69,7 +69,7 @@ func TestSeedance25TeHuiErrorMessagesNeverNameUpstream(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := runChainWithModel(t, tc.raw, Seedance25TeHuiModel, "")
 			require.NotNil(t, result.taskErr)
-			require.NotContains(t, result.taskErr.Message, "wan-3.0", "别名模型的报错不得点名上游模型")
+			require.NotContains(t, result.taskErr.Message, "wan-3.0-megabyai-retired", "别名模型的报错不得点名上游模型")
 			require.NotContains(t, result.taskErr.Message, "wan3")
 			require.NotEmpty(t, result.taskErr.Message, "报错文案要能指导用户怎么改")
 		})
@@ -116,25 +116,25 @@ func TestSeedance25TeHuiPrice(t *testing.T) {
 		"特惠的兜底价必须是 ¥0.20/秒（基准档 720P），与有赞渠道口径一致")
 }
 
-// 上游 model 名的解析顺序：渠道 mapping 优先，其次兜底表，最后 wan-3.0。
+// 上游 model 名的解析顺序：渠道 mapping 优先，其次兜底表，最后 wan-3.0-megabyai-retired。
 func TestResolveMegabyaiUpstreamModel(t *testing.T) {
 	// 渠道漏配 mapping：靠兜底表，别名绝不能原样发给上游。
-	require.Equal(t, "wan-3.0", resolveMegabyaiUpstreamModel(&relaycommon.RelayInfo{
+	require.Equal(t, "wan-3.0-megabyai-retired", resolveMegabyaiUpstreamModel(&relaycommon.RelayInfo{
 		OriginModelName: Seedance25TeHuiModel,
 		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: Seedance25TeHuiModel},
 	}))
 	// 渠道配了 mapping：以 mapping 为准。
-	require.Equal(t, "wan-3.0", resolveMegabyaiUpstreamModel(&relaycommon.RelayInfo{
+	require.Equal(t, "wan-3.0-megabyai-retired", resolveMegabyaiUpstreamModel(&relaycommon.RelayInfo{
 		OriginModelName: Seedance25TeHuiModel,
-		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "wan-3.0"},
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "wan-3.0-megabyai-retired"},
 	}))
 	// 映射到别的上游：尊重渠道配置。
-	require.Equal(t, "wan-3.0-turbo", resolveMegabyaiUpstreamModel(&relaycommon.RelayInfo{
+	require.Equal(t, "wan-3.0-megabyai-retired-turbo", resolveMegabyaiUpstreamModel(&relaycommon.RelayInfo{
 		OriginModelName: Seedance25TeHuiModel,
-		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "wan-3.0-turbo"},
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "wan-3.0-megabyai-retired-turbo"},
 	}))
-	// wan-3.0 本身不变。
-	require.Equal(t, "wan-3.0", resolveMegabyaiUpstreamModel(&relaycommon.RelayInfo{
+	// wan-3.0-megabyai-retired 本身不变。
+	require.Equal(t, "wan-3.0-megabyai-retired", resolveMegabyaiUpstreamModel(&relaycommon.RelayInfo{
 		OriginModelName: wan30Model,
 		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: wan30Model},
 	}))
@@ -149,7 +149,7 @@ func TestUnifiedContractModelSet(t *testing.T) {
 	for _, other := range []string{"seedance-2-5", "seedance-2.5", "seedance2.5特惠版", "seedance-2-0-fast"} {
 		require.False(t, megabyaiUnifiedContractModels[other], other)
 	}
-	// 只有 wan-3.0 按分辨率档计价。
+	// 只有 wan-3.0-megabyai-retired 按分辨率档计价。
 	require.True(t, megabyaiResolutionTierModels[wan30Model])
 	require.False(t, megabyaiResolutionTierModels[Seedance25TeHuiModel])
 }
@@ -198,14 +198,14 @@ func TestSeedance25TeHuiLocksResolutionAndDuration(t *testing.T) {
 	}
 }
 
-// 锁定档位只作用于别名模型：wan-3.0 仍然支持三档分辨率与多档时长。
+// 锁定档位只作用于别名模型：wan-3.0-megabyai-retired 仍然支持三档分辨率与多档时长。
 func TestWan30KeepsUnlockedTiersAndDurations(t *testing.T) {
 	for _, raw := range []string{
-		`{"model":"wan-3.0","prompt":"p","resolution":"480p"}`,
-		`{"model":"wan-3.0","prompt":"p","resolution":"1080p"}`,
-		`{"model":"wan-3.0","prompt":"p","duration":5}`,
-		`{"model":"wan-3.0","prompt":"p","duration":15}`,
-		`{"model":"wan-3.0","prompt":"p","seconds":"10"}`,
+		`{"model":"wan-3.0-megabyai-retired","prompt":"p","resolution":"480p"}`,
+		`{"model":"wan-3.0-megabyai-retired","prompt":"p","resolution":"1080p"}`,
+		`{"model":"wan-3.0-megabyai-retired","prompt":"p","duration":5}`,
+		`{"model":"wan-3.0-megabyai-retired","prompt":"p","duration":15}`,
+		`{"model":"wan-3.0-megabyai-retired","prompt":"p","seconds":"10"}`,
 	} {
 		result := runChainWithModel(t, raw, wan30Model, wan30Model)
 		require.Nil(t, result.taskErr, raw)

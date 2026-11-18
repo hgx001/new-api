@@ -94,9 +94,15 @@ func TestIsAllowedPricingModelDoubaoSeedance(t *testing.T) {
 	}
 }
 
-// MegaAI 渠道的 wan-3.0 上广场：与官网 wan3.0-video 系列并存，按次 + 分辨率档计价。
-func TestIsAllowedPricingModelMegaAIWan30(t *testing.T) {
-	require.True(t, isAllowedPricingModel("wan-3.0"), "wan-3.0 must show in pricing square")
+// 有赞渠道的 wan-3.0-yz 上广场：按秒计费（720P ¥0.20/秒、1080P ¥0.25/秒）。
+//
+// ⚠️ 2026-11-18 公开名从 "wan-3.0" 改为 "wan-3.0-yz"（带渠道后缀）。
+// 裸键 "wan-3.0" 现在只是**上游 ID**，不是任何商品的公开名 —— 它不该上广场，
+// 否则客户会在广场上看到一个自己调不通的模型名。
+func TestIsAllowedPricingModelYouzanWan30(t *testing.T) {
+	require.True(t, isAllowedPricingModel("wan-3.0-yz"), "wan-3.0-yz must show in pricing square")
+	require.False(t, isAllowedPricingModel("wan-3.0"),
+		"\"wan-3.0\" 只是上游 ID，不是公开名，不该上广场")
 }
 
 // 有赞 Wan3 的对外别名 seedance2.5-特惠 必须上广场：按秒计费（独立定价
@@ -163,7 +169,7 @@ func TestIsAllowedPricingModelManwuWan3TeHui(t *testing.T) {
 			"%s must not show in pricing square", hidden)
 	}
 
-	// 与 MegaAI 渠道的 wan-3.0 是两个商品：前者是精确名，不能被本行的存在影响。
-	assert.True(t, isAllowedPricingModel("wan-3.0"),
-		"MegaAI wan-3.0 仍须独立上广场")
+	// 与有赞渠道的 wan-3.0-yz 是两个商品：后者是精确名，不能被本行的存在影响。
+	assert.True(t, isAllowedPricingModel("wan-3.0-yz"),
+		"有赞 wan-3.0-yz 仍须独立上广场")
 }

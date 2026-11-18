@@ -606,6 +606,12 @@ export function buildVideoSample(lang: Lang, ctx: SampleContext): string {
     if (name === 'wan3.0-video-prime' || name === 'wan3.0-video-prime-1080p') {
       return '30'
     }
+    // 有赞 wan-3.0-yz（2026-11-18 上架，公开名带 yz 后缀区分渠道）：
+    // 上游新独立模型，时长 **10-30 秒整数秒**（实测硬边界，低于 10 秒上游
+    // 直接拒单）。示例写 10 秒 —— 最短合法值，客户照抄最不容易失败，也最便宜。
+    if (name === 'wan-3.0-yz') {
+      return '10'
+    }
     if (
       name === 'wan3.0-video' ||
       name === 'wan3.0-smart' ||

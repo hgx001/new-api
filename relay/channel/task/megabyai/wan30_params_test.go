@@ -27,7 +27,7 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// runWan30Chain 复刻生产真实链路（对外模型名固定为 wan-3.0）。
+// runWan30Chain 复刻生产真实链路（对外模型名固定为 wan-3.0-megabyai-retired）。
 func runWan30Chain(t *testing.T, raw string) wan30ChainResult {
 	t.Helper()
 	return runChainWithModel(t, raw, wan30Model, wan30Model)
@@ -89,14 +89,14 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		// 期望的上游提交体字段（逐字段断言，没出现在 expected 里的键一律不许存在）
 		expected map[string]any
 		// 期望的计费 size 倍率；nil 表示本次不该走到计费
-		expectedSize *float64
+		expectedSize  *float64
 		expectErrCode string
 	}{
 		{
 			name: "最小请求：没给分辨率就落 480p 档并显式下发",
-			raw:  `{"model":"wan-3.0","prompt":"一只橘猫"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"一只橘猫"}`,
 			expected: map[string]any{
-				"model":      "wan-3.0",
+				"model":      "wan-3.0-megabyai-retired",
 				"prompt":     "一只橘猫",
 				"resolution": "480p",
 			},
@@ -104,7 +104,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "duration 传数字",
-			raw:  `{"model":"wan-3.0","prompt":"p","duration":30}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","duration":30}`,
 			expected: map[string]any{
 				"duration":   float64(30),
 				"resolution": "480p",
@@ -113,7 +113,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "duration 传字符串",
-			raw:  `{"model":"wan-3.0","prompt":"p","duration":"30"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","duration":"30"}`,
 			expected: map[string]any{
 				"duration":   float64(30),
 				"resolution": "480p",
@@ -122,7 +122,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "seconds 传字符串（Sora 风格）",
-			raw:  `{"model":"wan-3.0","prompt":"p","seconds":"15"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","seconds":"15"}`,
 			expected: map[string]any{
 				"duration":   float64(15),
 				"resolution": "480p",
@@ -133,7 +133,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 			// 数字型 seconds 以前会让整包反序列化失败 → 客户端拿到 400 invalid_json，
 			// 表现为「参数没传进去」。现在必须和字符串写法等价。
 			name: "seconds 传数字（第三方客户端常见写法）",
-			raw:  `{"model":"wan-3.0","prompt":"p","seconds":15}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","seconds":15}`,
 			expected: map[string]any{
 				"duration":   float64(15),
 				"resolution": "480p",
@@ -142,7 +142,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "resolution 720p：下发与计费同档",
-			raw:  `{"model":"wan-3.0","prompt":"p","resolution":"720p"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","resolution":"720p"}`,
 			expected: map[string]any{
 				"resolution": "720p",
 			},
@@ -150,7 +150,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "resolution 1080p：下发与计费同档",
-			raw:  `{"model":"wan-3.0","prompt":"p","resolution":"1080p"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","resolution":"1080p"}`,
 			expected: map[string]any{
 				"resolution": "1080p",
 			},
@@ -158,7 +158,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "size 传 WxH：同时推出分辨率档与宽高比",
-			raw:  `{"model":"wan-3.0","prompt":"p","size":"1920x1080"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","size":"1920x1080"}`,
 			expected: map[string]any{
 				"resolution": "1080p",
 				"ratio":      "16:9",
@@ -167,7 +167,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "size 传竖屏 WxH：比例取竖屏",
-			raw:  `{"model":"wan-3.0","prompt":"p","size":"720x1280"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","size":"720x1280"}`,
 			expected: map[string]any{
 				"resolution": "720p",
 				"ratio":      "9:16",
@@ -176,7 +176,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "metadata 里带分辨率与比例",
-			raw:  `{"model":"wan-3.0","prompt":"p","metadata":{"resolution":"1080p","ratio":"9:16"}}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","metadata":{"resolution":"1080p","ratio":"9:16"}}`,
 			expected: map[string]any{
 				"resolution": "1080p",
 				"ratio":      "9:16",
@@ -185,7 +185,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "顶层 ratio 透传（通用入参里没有 ratio 字段）",
-			raw:  `{"model":"wan-3.0","prompt":"p","ratio":"9:16"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","ratio":"9:16"}`,
 			expected: map[string]any{
 				"ratio": "9:16",
 			},
@@ -193,7 +193,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "images 转成 referenceImages",
-			raw:  `{"model":"wan-3.0","prompt":"p","images":["https://e.com/a.png","https://e.com/b.png"]}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","images":["https://e.com/a.png","https://e.com/b.png"]}`,
 			expected: map[string]any{
 				"referenceImages": []any{"https://e.com/a.png", "https://e.com/b.png"},
 			},
@@ -201,7 +201,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "media 按类型拆成三组",
-			raw: `{"model":"wan-3.0","prompt":"p","media":[` +
+			raw: `{"model":"wan-3.0-megabyai-retired","prompt":"p","media":[` +
 				`{"type":"reference_image","url":"https://e.com/a.png"},` +
 				`{"type":"first_frame","url":"https://e.com/f.png"},` +
 				`{"type":"reference_video","url":"https://e.com/v.mp4"},` +
@@ -215,7 +215,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "audios 数组转成 referenceAudios",
-			raw:  `{"model":"wan-3.0","prompt":"p","audios":["https://e.com/a.mp3"]}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","audios":["https://e.com/a.mp3"]}`,
 			expected: map[string]any{
 				"referenceAudios": []any{"https://e.com/a.mp3"},
 			},
@@ -223,9 +223,9 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			// 平台的 Sora 语义是「input_reference 是单图字段，存在就覆盖整个 images 数组」。
-			// wan-3.0 支持多参考图，两者并存时一张都不能丢。
+			// wan-3.0-megabyai-retired 支持多参考图，两者并存时一张都不能丢。
 			name: "images 与 input_reference 并存：两张都要带",
-			raw:  `{"model":"wan-3.0","prompt":"p","images":["https://e.com/a.png"],"input_reference":"https://e.com/b.png"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","images":["https://e.com/a.png"],"input_reference":"https://e.com/b.png"}`,
 			expected: map[string]any{
 				"referenceImages": []any{"https://e.com/a.png", "https://e.com/b.png"},
 			},
@@ -233,7 +233,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "seed 传数字",
-			raw:  `{"model":"wan-3.0","prompt":"p","seed":42}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","seed":42}`,
 			expected: map[string]any{
 				"seed": float64(42),
 			},
@@ -241,36 +241,36 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 		},
 		{
 			name: "seed 传字符串",
-			raw:  `{"model":"wan-3.0","prompt":"p","seed":"42"}`,
+			raw:  `{"model":"wan-3.0-megabyai-retired","prompt":"p","seed":"42"}`,
 			expected: map[string]any{
 				"seed": float64(42),
 			},
 			expectedSize: float64Ptr(1.0),
 		},
 		{
-			name:         "非法分辨率必须 400（不能猜档位）",
-			raw:          `{"model":"wan-3.0","prompt":"p","resolution":"4k"}`,
+			name:          "非法分辨率必须 400（不能猜档位）",
+			raw:           `{"model":"wan-3.0-megabyai-retired","prompt":"p","resolution":"4k"}`,
 			expectErrCode: "invalid_resolution",
 		},
 		{
-			name:         "素材超上限必须 400",
-			raw:          `{"model":"wan-3.0","prompt":"p","images":["https://e.com/1.png","https://e.com/2.png","https://e.com/3.png","https://e.com/4.png","https://e.com/5.png","https://e.com/6.png","https://e.com/7.png","https://e.com/8.png","https://e.com/9.png","https://e.com/10.png","https://e.com/11.png"]}`,
+			name:          "素材超上限必须 400",
+			raw:           `{"model":"wan-3.0-megabyai-retired","prompt":"p","images":["https://e.com/1.png","https://e.com/2.png","https://e.com/3.png","https://e.com/4.png","https://e.com/5.png","https://e.com/6.png","https://e.com/7.png","https://e.com/8.png","https://e.com/9.png","https://e.com/10.png","https://e.com/11.png"]}`,
 			expectErrCode: "invalid_input_reference",
 		},
 		{
 			// 上游要自己抓素材，data: URI 它抓不到 → 必然失败，必须提前 400。
-			name:         "data URI 素材必须 400（上游抓不到）",
-			raw:          `{"model":"wan-3.0","prompt":"p","images":["data:image/png;base64,AAAA"]}`,
+			name:          "data URI 素材必须 400（上游抓不到）",
+			raw:           `{"model":"wan-3.0-megabyai-retired","prompt":"p","images":["data:image/png;base64,AAAA"]}`,
 			expectErrCode: "invalid_input_reference",
 		},
 		{
-			name:         "没有 host 的本地路径素材必须 400",
-			raw:          `{"model":"wan-3.0","prompt":"p","images":["/tmp/local.png"]}`,
+			name:          "没有 host 的本地路径素材必须 400",
+			raw:           `{"model":"wan-3.0-megabyai-retired","prompt":"p","images":["/tmp/local.png"]}`,
 			expectErrCode: "invalid_input_reference",
 		},
 		{
-			name:         "缺 prompt 必须 400",
-			raw:          `{"model":"wan-3.0","duration":30}`,
+			name:          "缺 prompt 必须 400",
+			raw:           `{"model":"wan-3.0-megabyai-retired","duration":30}`,
 			expectErrCode: "invalid_request",
 		},
 	}
@@ -314,7 +314,7 @@ func TestWan30ParameterChainEndToEnd(t *testing.T) {
 // 且计费里不得出现 seconds 倍率（上游按次计费）。
 func TestWan30UpstreamPayloadNeverLeaksClientFields(t *testing.T) {
 	result := runWan30Chain(t,
-		`{"model":"wan-3.0","prompt":"p","duration":30,"resolution":"720p","ratio":"16:9",`+
+		`{"model":"wan-3.0-megabyai-retired","prompt":"p","duration":30,"resolution":"720p","ratio":"16:9",`+
 			`"size":"1280x720","seconds":"30","images":["https://e.com/a.png"],`+
 			`"input_reference":"https://e.com/b.png","seed":7}`)
 	require.Nil(t, result.taskErr)

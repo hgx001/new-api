@@ -1,6 +1,7 @@
 package youzanwan3
 
 import (
+	"strings"
 	"time"
 
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -12,8 +13,74 @@ const ChannelName = "Youzan Wan3"
 
 const (
 	// 上游模型 ID，同时作为 new-api 的公开模型名（广场展示名与上游完全一致）。
+	//
+	// ⚠️ 2026-11-18 重要修正：wan-3.0 与 SJ-wan3-prime **不是** wan3.0-video /
+	// wan3.0-video-prime 的改名，而是上游**新上架的两个独立模型**。
+	// 上游文档（api.youzan666.vip/docs，2026-11-17 版）把它们与旧的两个并列列出，
+	// 契约也完全不同（见下面各自注释）。旧的两个并未下架：
+	//   - wan3.0-video 仍可提交（10–30 秒，720P/1080P，resolution+ratio 形态）；
+	//   - wan3.0-video-prime 的上游通道**已禁用**（报 workflow_unavailable /
+	//     lifecycle=disabled），提交必失败。
+	//
+	// 也就是说：把旧名映射到新上游 ID 是**错的**（会改变旧模型的时长与素材契约），
+	// 正确做法是让新模型各自独立成一条路径，旧名保持原样。
+	//
+	// ⚠️ 这两个常量**不是**新模型的 ID —— 它们是「旧标准版 / 旧 prime」这条
+	// 历史路径的名字，全站几十处分支都引用它们（isPrimeModel、默认值、倍率表、
+	// 促销族映射……）。把它们的值换成新模型会让旧路径整体被新模型接管：
+	// 促销族的默认档会从 wan3.0-video 变成 wan-3.0、prime 直连的「仅 30 秒」
+	// 闸门会套到新 prime 上（它逐秒可选）。所以这里保持原值不动，
+	// 新模型另立 wan30Model / sjWan3PrimeModel 两个常量。
 	videoModel = "wan3.0-video"
 	primeModel = "wan3.0-video-prime"
+
+	// wan30Model 是有赞渠道 **wan-3.0-yz** 的**对外公开名**（老板 2026-11-18 定）。
+	//
+	// ⚠️ 公开名与上游 ID **故意不一样**：上游真实模型 ID 是 "wan-3.0"（见
+	// wan30UpstreamModel），对外挂 "wan-3.0-yz" 是为了：
+	//   1. 与同站的 wan3.0-video-官网 / wan-3.0-特惠 命名习惯一致（一律带渠道后缀），
+	//      客户在广场上一眼能看出这是「有赞」这一路的货；
+	//   2. 彻底避开 "wan-3.0" 这个裸名的历史包袱（它先后属于过 MegaAI 渠道
+	//      （已停售，代码侧归档为 wan-3.0-megabyai-retired）和本站其它商品）。
+	//
+	// ⚠️ 改名只改**对外名**。上游 ID 不变（上游不提供 "wan-3.0-yz" 这个模型），
+	// 所以下发时必须用 wan30UpstreamModel —— 见 upstreamModelFor。
+	//
+	// 上游契约（2026-11-18 实测 + 文档）：
+	//   - 时长 **10–30 整数秒**。实测原文："Duration 4s is outside the allowed
+	//     range 10-30 seconds for model wan-3.0"。文档写 4–30，但实测更严 ——
+	//     按实测来（放行 5–9 秒就是「客户付了钱、建了单，上游才拒」）；
+	//   - 参数形态是 **size**（1280x720 / 720x1280 / 1920x1080 / 1080x1920），
+	//     **不接受** resolution+ratio 组合（实测回 "unsupported resolution or ratio"）；
+	//   - 素材是**顶层 images / videos / audios 数组**（与 wan-3.0-pro 同契约）。
+	//     文档原话：「wan-3.0、wan-3.0-pro、seedance-2.0 支持 images、videos、
+	//     audios 数组，素材数量与组合以接口校验为准」；
+	//   - 画幅仅 16:9 / 9:16。
+	wan30Model = "wan-3.0-yz"
+
+	// wan30UpstreamModel 是 wan-3.0-yz 对应的**上游真实模型 ID**。
+	//
+	// ⚠️ 它必须与 wan30Model 分开：对外名可以带渠道后缀、可以随时改，
+	// 但上游 ID 是上游定的，改了就 404。上游请求体里 model 字段填的是它。
+	//
+	// ⚠️ 也**不能**把 wan30UpstreamModel 写进对外可见的字段（提交回执的
+	// upstream_model_name 会带出它）—— 脱敏层只对别名模型遮模型名，
+	// 而 wan-3.0-yz 不在别名名单里，所以它的名字会原样出现在对客响应里。
+	// 这正是我们要的：公开名 = 上游名 = wan-3.0-yz，客户能对照文档核对。
+	wan30UpstreamModel = "wan-3.0"
+
+	// sjWan3PrimeModel 是上游 2026-11-18 新上架的独立模型 **SJ-wan3-prime**。
+	//
+	// 上游契约（2026-11-18 实测 + 文档）：
+	//   - 时长 **2–30 整数秒**（上游原文 "duration must be an integer between 2
+	//     and 30"）。对外按老板口径收口到 5–30 秒；
+	//   - **仅 720P**。实测上游回 "Resolution 1080p is disabled for model
+	//     SJ-wan3-prime"（480p 同理被禁）—— 文档写的「480P/720P/1080P」与
+	//     实测不符，按实测来（放行 1080P 就是静默降档给客户）；
+	//   - 参数形态是 **size**（不是 resolution+ratio）。实测 resolution=720P 单独
+	//     下发回 "WAN_RATIO_INVALID"，而 size=720x1280 建单成功；
+	//   - 画幅支持 16:9 / 9:16 / 1:1 / 4:3 / 3:4（实测 21:9 与 adaptive 不可用）。
+	sjWan3PrimeModel = "SJ-wan3-prime"
 
 	// wan30ProModel 是有赞 2026-11-17 文档里的 wan-3.0-pro（与 wan-3.0 并列的
 	// 独立上游模型，不是 wan3.0-video 的别名）。
@@ -53,15 +120,50 @@ const (
 	r2vModel = "wan2.7-r2v"
 )
 
+// PublicModelName 把上游模型 ID 映射成**对外公开名**。
+//
+// 为什么需要它：调价同步是按上游目录里的 ID 算价的（上游只有 ID），
+// 但写回 ModelPrice / 倍率表的键必须是**对外公开名** —— 计费链路
+// （ModelPriceHelper / EstimateBilling）读的是客户请求里的那个名字。
+// 两者不同的模型（wan-3.0-yz ↔ wan-3.0）不转换的话，价格就写到了
+// 一个没人调用的键上，客户按 ¥0/秒 或旧价计费。
+//
+// 未登记的上游 ID 原样返回（绝大多数模型公开名 == 上游名）。
+func PublicModelName(upstreamID string) string {
+	if strings.TrimSpace(upstreamID) == wan30UpstreamModel {
+		return wan30Model
+	}
+	return upstreamID
+}
+
+// PublicModelNames 是「上游 ID → 对外公开名」的映射表（当前只有一个非恒等项）。
+//
+// ⚠️ 新增「公开名 ≠ 上游名」的模型时，这里和 ModelList 必须一起改：
+// ModelList 列上游真名（否则上游同步会把别名当真实模型写回渠道配置），
+// 这里列对外名（否则价格写到错的键上）。
+var PublicModelNames = map[string]string{
+	wan30UpstreamModel: wan30Model,
+}
+
 // ModelList 与上游 /v1/models 的模型 ID 完全一致（在售的真实上游模型）。
 //
-// 2026-11-18 加 wan-3.0-pro：上游文档 2026-11-17 版把它列为独立模型。
+// 2026-11-18 加 wan-3.0 / SJ-wan3-prime：上游新上架的**独立模型**，
+// 与旧的 wan3.0-video / wan3.0-video-prime 并列存在（实测两者都在
+// api.youzan666.vip/v1/models 里）。旧名也保留在清单里 —— 它们仍是可提交的
+// 上游模型（只有 wan3.0-video-prime 的通道已禁用），且老客户在用。
 // 别名（seedance2.5-特惠 / -活动）**不写进来** —— 这份清单必须与上游逐字
 // 一致，否则「同步上游模型」会把别名当成真实模型写回渠道配置。
+//
+// ⚠️ wan-3.0-yz 的**上游 ID 是 wan-3.0**，所以这里列的是 wan30UpstreamModel
+// 而不是对外名 wan30Model。写成对外名会让「同步上游模型」把 wan-3.0-yz
+// 当成上游真实模型写进 channels.models —— 上游没有这个模型，直接 404。
+// 对外名 → 上游名的映射由渠道的 model_mapping 承担。
 var ModelList = []string{
 	videoModel,
 	primeModel,
 	wan30ProModel,
+	wan30UpstreamModel,
+	sjWan3PrimeModel,
 }
 
 // videoResolutionSizeRatio：上游 wan3.0-video 三档同价（0.18 ⚡/秒 = ¥0.18/秒），
@@ -84,6 +186,86 @@ var videoResolutionSizeRatio = map[string]float64{
 var primeResolutionSizeRatio = map[string]float64{
 	"720P":  1.0,
 	"1080P": 1.2,
+}
+
+// wan30ResolutionSizeRatio：上游 wan-3.0（对外名 wan-3.0-yz，2026-11-18 新上架）。
+//
+// 上游契约（实测 + 文档）：
+//   - 时长 **10–30 整数秒**（上游原文 "Duration 4s is outside the allowed range
+//     10-30 seconds for model wan-3.0"；5-9 秒一律拒单，这是硬边界）；
+//   - 参数形态是 **size**（1280x720 / 720x1280 / 1920x1080 / 1080x1920），
+//     **不接受** resolution+ratio 组合；
+//   - 画幅仅 16:9 / 9:16（size 四个值正好覆盖这两个画幅的两档分辨率）。
+//
+// 定价（老板 2026-11-18 定）：**分档价** —— 720P ¥0.20/秒、1080P ¥0.25/秒。
+// 基准档取 720P（ModelPrice 配 0.20/7.3 ≈ 0.0273973），1080P 倍率 = 0.25/0.20 = 1.25。
+//
+// ⚠️ 改价时 ModelPrice 与本表必须一起改，否则两档价会错位。
+//
+// ⚠️ 下界 10 秒是**上游硬边界**，不能跟别的模型统一到 5 秒：5-9 秒本地放行
+// 就是「客户付了钱、建了单，上游才拒」。
+var wan30ResolutionSizeRatio = map[string]float64{
+	"720P":  1.0,
+	"1080P": 1.25,
+}
+
+// wan30Ratios 是 wan-3.0 允许的画幅（size 的四个值正好覆盖这两档）。
+var wan30Ratios = []string{"16:9", "9:16"}
+
+// wan30DefaultRatio 是 wan-3.0 没传画幅时的缺省值（横屏，与 pro 一致）。
+const wan30DefaultRatio = "16:9"
+
+// wan30SizeByRatio 是「分辨率档 × 画幅」到上游 size 字面量的映射。
+var wan30SizeByRatio = map[string]string{
+	"720P/16:9":  "1280x720",
+	"720P/9:16":  "720x1280",
+	"1080P/16:9": "1920x1080",
+	"1080P/9:16": "1080x1920",
+}
+
+// sjWan3PrimeResolutionSizeRatio：上游 SJ-wan3-prime（2026-11-18 新上架）。
+//
+// 上游契约（2026-11-18 实测优先于文档）：
+//   - 时长 **2–30 整数秒**（上游原文 "duration must be an integer between 2
+//     and 30"）。对外按老板口径收口到 5–30 秒；
+//   - **仅 720P 可用**。实测上游回 "Resolution 1080p is disabled for model
+//     SJ-wan3-prime"（480p 同样被禁）。⚠️ 文档参数表写的是「480P / 720P /
+//     1080P」—— 与实测不符，按实测走：放开 1080P 就是「客户付了 1080P 的钱
+//     静默拿 720P 的片」；
+//   - 参数形态是 **size**。实测 resolution=720P 单独下发回 "WAN_RATIO_INVALID"
+//     （缺 ratio），size=720x1280 建单成功；
+//   - 画幅支持 16:9 / 9:16 / 1:1 / 4:3 / 3:4（实测 21:9 与 adaptive 不可用）；
+//   - 独立模型；成片转存 COS 后返回签名链接。
+//
+// ⚠️ 与旧 prime（wan3.0-video-prime）完全不同：旧 prime 仅 30 秒、仅 720P；
+//
+//	新 prime 逐秒可选。两者是**两个商品**，不要互相别名化。
+//
+// 定价沿用旧 prime 同价（老板 2026-11-18 口径）：¥0.25/秒，基准档 720P。
+// 上游 1080P 被禁 → 只有一档价 → 倍率恒为 1。
+var sjWan3PrimeResolutionSizeRatio = map[string]float64{
+	"720P": 1.0,
+}
+
+// sjWan3PrimeRatios 是 SJ-wan3-prime 支持的画幅白名单。
+// 实测 21:9 被上游 plugin 拒（"hook buildSubmitRequest failed"），
+// adaptive 被 sigrun-video 拒（WAN_RATIO_INVALID）。
+var sjWan3PrimeRatios = []string{"16:9", "9:16", "1:1", "4:3", "3:4"}
+
+// sjWan3PrimeDefaultRatio 是 SJ-wan3-prime 没传画幅时的缺省值（横屏）。
+const sjWan3PrimeDefaultRatio = "16:9"
+
+// sjWan3PrimeSizeByRatio 是「画幅 → 上游 size 字面量」的映射。
+//
+// SJ-wan3-prime 只提供 720P 一档，实测接受的 size 只有横竖两个方幅尺寸；
+// 方幅（1:1 / 4:3 / 3:4）上游标称支持，但具体 size 字面量未在文档给出 ——
+// 方幅走 720x720 这类正方形尺寸，缺省映射到 720x720（正方形即 1:1）。
+var sjWan3PrimeSizeByRatio = map[string]string{
+	"16:9": "1280x720",
+	"9:16": "720x1280",
+	"1:1":  "720x720",
+	"4:3":  "960x720",
+	"3:4":  "720x960",
 }
 
 // wan30ProResolutionSizeRatio：wan-3.0-pro **按条**计费（与时长无关），
@@ -329,6 +511,21 @@ const (
 	// 按条计费下把 60 秒夹成 30 秒，客户付了同价却少一半片长。
 	wan30ProMinDuration     = 4
 	wan30ProDefaultDuration = 5
+
+	// wan30MinDuration / wan30DefaultDuration 是 wan-3.0 的时长口径。
+	//
+	// 上游硬边界 10 秒（实测：4-9 秒一律回 duration_out_of_range，10 秒通过）。
+	// 与 SJ-wan3-prime 的 2 秒、wan-3.0-pro 的 4 秒不同 —— 这是上游商品本身的
+	// 差异，统一到 5 秒只对后两者成立，对 wan-3.0 只会造出「建单后才失败」。
+	wan30MinDuration     = 10
+	wan30DefaultDuration = 10
+
+	// sjWan3PrimeMinDuration / sjWan3PrimeDefaultDuration 是 SJ-wan3-prime 的
+	// 时长口径：上游 2-30 秒。老板 2026-11-18 口径「最小时长统一 ≥5 秒」，
+	// 这里取 5 秒作为对外下界（上游允许 2-4 秒，但对外统一收口到 5 秒，
+	// 与 wan-3.0-pro 一致）。
+	sjWan3PrimeMinDuration     = 5
+	sjWan3PrimeDefaultDuration = 5
 )
 
 // 导出的限制值，供条件路由中间件（middleware/seedance_route.go）在**改派前**

@@ -61,12 +61,13 @@ func TestDefaultModelRatioOpus55Removed(t *testing.T) {
 // MiniMax-M3 / M3.1 的定价（2026-10-31 老板定：输出价在原价基础上涨 10 倍）。
 //
 // 换算（与 service/text_quota.go、前端 features/pricing/lib/price.ts 三方一致）：
-//   ¥ / 1M tokens = model_ratio × 1e6 ÷ QuotaPerUnit × USDExchangeRate
-//                = model_ratio × 1e6 ÷ 500000 × 7.3 = model_ratio × 14.6
-//   输入价 = model_ratio × 14.6                    = 0.015103 × 14.6 = ¥0.2205/1M
-//   输出价 = model_ratio × completion_ratio × 14.6
-//          旧: 0.015103 × 0.410959 × 14.6 = ¥0.0906/1M
-//          新: 0.015103 × 4.10959  × 14.6 = ¥0.9062/1M   ← 正好 10 倍
+//
+//	¥ / 1M tokens = model_ratio × 1e6 ÷ QuotaPerUnit × USDExchangeRate
+//	             = model_ratio × 1e6 ÷ 500000 × 7.3 = model_ratio × 14.6
+//	输入价 = model_ratio × 14.6                    = 0.015103 × 14.6 = ¥0.2205/1M
+//	输出价 = model_ratio × completion_ratio × 14.6
+//	       旧: 0.015103 × 0.410959 × 14.6 = ¥0.0906/1M
+//	       新: 0.015103 × 4.10959  × 14.6 = ¥0.9062/1M   ← 正好 10 倍
 //
 // ⚠️ M3 与 M3.1 必须同价：渠道 model_mapping 是 {"MiniMax-M3.1": "MiniMax-M3"}，
 // M3.1 实际转发到上游 M3，共用同一份上游成本。只改一个就是套利漏洞。
@@ -153,7 +154,7 @@ func TestDefaultModelPriceWan27R2VPerSecond(t *testing.T) {
 // ModelPrice 配的是**最低档 480P 的 ¥1.50** —— 模型广场徽标直接显示它，
 // 配 720P 的 ¥2.00 会让徽标显示 ¥2 而客户最低能买到 ¥1.50（老板 2026-10-25 定稿）。
 // 720P 由 manwu adaptor 的 picsart720PSizeRatio 乘上去。
-// 与 MegaAI 的 wan-3.0（¥3.00/条）是**不同商品**（不同渠道/不同上游），
+// 与有赞的 wan-3.0（¥0.23/秒）是**不同商品**（不同渠道/不同上游/不同计费口径），
 // 价格必须各自独立，改动其中一条不能带走另一条。
 func TestDefaultModelPriceWan3TeHuiPerCall(t *testing.T) {
 	InitRatioSettings()
@@ -168,13 +169,38 @@ func TestDefaultModelPriceWan3TeHuiPerCall(t *testing.T) {
 	require.True(t, legacyOk, "旧名 wan-3.0-无限 过渡期仍可调用，必须有价，否则按次计费静默算 ¥0")
 	require.InDelta(t, price, legacy, 1e-12, "旧名与新名必须同价，否则两个名字下单是两个价")
 
-	// MegaAI 同名近似商品是 ¥3.00/条，与本档 ¥1.50 基价不同 —— 显式锁住这个差异，
-	// 防止有人图省事把两条合并。
-	base, ok := GetModelPrice("wan-3.0", false)
-	require.True(t, ok)
-	require.InDelta(t, 3.0/USD2RMB, base, 1e-12, "MegaAI wan-3.0 仍是 ¥3.00/条")
+	// 有赞的 wan-3.0-yz 是**按秒**商品（¥0.20/秒基准档），与本档 ¥1.50 基价不同 ——
+	// 显式锁住这个差异，防止有人图省事把两条合并。
+	base, ok := GetModelPrice("wan-3.0-yz", false)
+	require.True(t, ok, "有赞 wan-3.0-yz 必须配价，否则按秒计费会落到「查不到价」分支算成 ¥0")
+	require.InDelta(t, 0.20/USD2RMB, base, 1e-12, "有赞 wan-3.0-yz 基准档必须是 ¥0.20/秒")
 	require.NotEqual(t, base, price,
 		"两条是不同渠道的独立商品，价格不同；合并会让其中一侧算错账")
+}
+
+// 有赞渠道新独立模型 wan-3.0-yz（2026-11-18 上架，公开名带 yz 后缀）：
+// 按秒计费，基准档 720P ¥0.20/秒。
+//
+// ⚠️ 这个 ModelPrice 键**曾经**是 MegaAI 渠道（已停售）的按次价 ¥3.00/条。
+// 名字一旦复用而价格口径不同（次 vs 秒），计费会整个算错 —— 所以这里锁死
+// 「有赞的 wan-3.0-yz 必须是 ¥0.20/秒」，不是 MegaAI 的 ¥3.00/次。
+//
+// ⚠️ 裸键 "wan-3.0" 现在**必须没有价**：它只是上游 ID，不是任何商品的公开名。
+// 给它配价等于配了个没人调用的键，而真正在用的 "wan-3.0-yz" 反而查不到价
+// → 按秒计费落到「查不到价」分支，任务静默算成 ¥0（免费白送）。
+func TestDefaultModelPriceWan3YouzanPerSecond(t *testing.T) {
+	InitRatioSettings()
+
+	price, ok := GetModelPrice("wan-3.0-yz", false)
+	require.True(t, ok, "有赞 wan-3.0-yz must have an explicit per-second price")
+	require.InDelta(t, 0.20/USD2RMB, price, 1e-12, "有赞 wan-3.0-yz 基准档必须是 ¥0.20/秒")
+	require.NotEqual(t, 3.0/USD2RMB, price,
+		"不能残留 MegaAI 的 ¥3.00/次 —— 那是已停售渠道的按次价，计费口径完全不同")
+
+	// 上游 ID 不是公开名：裸键不能有价，否则定价页会给一个没人能调用的模型标价。
+	_, upstreamIDHasPrice := GetModelPrice("wan-3.0", false)
+	require.False(t, upstreamIDHasPrice,
+		"\"wan-3.0\" 只是上游 ID，不该有 ModelPrice —— 有价会给没人调用的键标价")
 }
 
 // 6/7.3 = 0.821918；任务链路按 ModelPrice 固定扣费，禁止乘 seconds。

@@ -99,6 +99,15 @@ export function getWan3SampleResolution(modelName: string): string | null {
   if (modelName === 'wan-3.0-pro') {
     return '720P'
   }
+  // 有赞 wan-3.0-yz（2026-11-18 上架，公开名带 yz 后缀区分渠道）：
+  // 新独立模型，档位 720P / 1080P，示例取最低档 720P。
+  //
+  // ⚠️ 必须**精确匹配**：不能用 startsWith('wan-3.0')，那会把
+  // wan-3.0-pro / wan-3.0-特惠 的示例分辨率也带过来（这两档的合法档位
+  // 与本模型不同：pro 是 720P/1080P、特惠是固定 480P/720P 口径）。
+  if (modelName === 'wan-3.0-yz') {
+    return '720P'
+  }
   // 有赞 prime（wan3.0-video-prime / 历史别名 wan3.0-video-prime-1080p）：
   // 2026-11-15 上游切换后**仅 720P**（1080P 已下架），示例取 720P。
   //
@@ -198,6 +207,18 @@ export function isPerSecondModel(model: PricingModel): boolean {
     name === 'minimax_h3-文生' ||
     name === 'minimax_h3-图生'
   ) {
+    return true
+  }
+  // 有赞 wan-3.0-yz（2026-11-18 上架，公开名带 yz 后缀区分渠道）：
+  // 上游新上架的独立模型，按**秒**计费（720P ¥0.20/秒、1080P ¥0.25/秒）。
+  //
+  // ⚠️ 必须单列且用**精确匹配**：它不以 "wan3.0-video" 开头（是连字符的
+  // "wan-3.0-yz"），不登记就会落进末尾的按次兜底 —— 广场会把 ¥0.20/秒 的牌价
+  // 挂在「/次」下面，客户按次理解就是错价（每条只收 ¥0.20，实际要按秒算）。
+  //
+  // ⚠️ 也不能用 startsWith('wan-3.0')：那会把 wan-3.0-pro（按条计费，
+  // 本来就是 /次）和 wan-3.0-特惠（按次）一起翻成 /秒。
+  if (name === 'wan-3.0-yz') {
     return true
   }
   return (

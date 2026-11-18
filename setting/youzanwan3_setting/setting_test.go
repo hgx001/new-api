@@ -112,4 +112,41 @@ func TestMarshalRoundTrip(t *testing.T) {
 	assert.True(t, parsed.AutoApply)
 	assert.Equal(t, 1.2, parsed.Ratios["wan3.0-video-prime"]["1080P"])
 	assert.Equal(t, 0.10, parsed.Markup["wan3.0-video-prime"]["1080P"])
+	// FixedPrices 也不能丢 —— 丢了等于钉死价失效，自动调价会改写对外报价。
+	assert.Equal(t, 0.20, parsed.FixedPrices["wan-3.0-yz"]["720P"])
+	assert.Equal(t, 0.25, parsed.FixedPrices["wan-3.0-yz"]["1080P"])
+}
+
+// wan-3.0-yz 的对外报价是**承诺价**（720P ¥0.20/秒、1080P ¥0.25/秒），
+// 必须钉死、不随上游成本浮动。
+//
+// 这条守卫锁两件事：
+//  1. 钉死价确实能读出来（GetFixedPrice）；
+//  2. 钉死价模型的**倍率**是 0.25/0.20 = 1.25 —— 基准档取最低价那档，
+//     否则高档位会少收钱（收 1080P 的钱、按 720P 的价结算）。
+func TestFixedPriceForYouzanWan30(t *testing.T) {
+	resetPolicy(t)
+
+	price720, ok := GetFixedPrice("wan-3.0-yz", "720P")
+	require.True(t, ok, "wan-3.0-yz 必须有钉死价")
+	assert.Equal(t, 0.20, price720)
+
+	price1080, ok := GetFixedPrice("wan-3.0-yz", "1080P")
+	require.True(t, ok)
+	assert.Equal(t, 0.25, price1080)
+
+	// 未钉死的模型读不到（走上游成本 + 加价）。
+	_, ok = GetFixedPrice("wan3.0-video", "720P")
+	assert.False(t, ok, "只有钉死价表里的模型才有钉死价")
+
+	// 倍率：基准档 720P = 1.0，1080P = 0.25/0.20 = 1.25。
+	ratio720, ok := GetResolutionRatio("wan-3.0-yz", "720P")
+	require.True(t, ok)
+	assert.Equal(t, 1.0, ratio720)
+	ratio1080, ok := GetResolutionRatio("wan-3.0-yz", "1080P")
+	require.True(t, ok)
+	assert.Equal(t, 1.25, ratio1080)
+
+	assert.Contains(t, FixedPriceModels(), "wan-3.0-yz")
+	assert.True(t, HasFixedPrices())
 }

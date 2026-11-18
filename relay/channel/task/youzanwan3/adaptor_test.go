@@ -372,6 +372,14 @@ func TestUpstreamModelFor(t *testing.T) {
 		input string
 		want  string
 	}{
+		// 2026-11-18 上游新上架的两个独立模型。
+		//
+		// ⚠️ wan-3.0-yz 的**对外公开名**与**上游 ID** 不同：
+		// 下发时必须换成上游真名 wan-3.0（上游没有 wan-3.0-yz 这个模型）。
+		{wan30Model, "wan-3.0"},
+		{sjWan3PrimeModel, "SJ-wan3-prime"},
+		// 旧名继续路由到**旧的上游模型** —— 旧客户是按旧契约付费的
+		//（按秒、10-30 秒、resolution+ratio 形态），改指向新模型等于换算力收一样的钱。
 		{videoModel, "wan3.0-video"},
 		{smartLegacyModel, "wan3.0-video"},
 		{primeModel, "wan3.0-video-prime"},
@@ -392,8 +400,44 @@ func TestUpstreamModelFor(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestNewModelsAreIndependent 钉死「wan-3.0 / SJ-wan3-prime 是新上架的独立
+// 模型，不是旧名的改名」这个事实。
+//
+// 2026-11-18 一度按「上游改名」处理（把旧名映射到新 ID），被上游文档纠正：
+// api.youzan666.vip/docs 里 wan3.0-video / wan3.0-video-prime 与 wan-3.0 /
+// SJ-wan3-prime 是**并列的四行**，契约完全不同（时长下界、参数形态、素材规则）。
+//
+// 这条测试的作用：一旦有人再次把新旧混为一谈（例如把旧标准版也映射到
+// wan-3.0），这里立刻失败。
+func TestNewModelsAreIndependent(t *testing.T) {
+	// 新模型下发到上游。
+	//
+	// ⚠️ wan30Model（对外公开名 wan-3.0-yz）下发时必须换成上游真实 ID
+	// wan-3.0 —— 上游没有 "wan-3.0-yz" 这个模型，填对外名直接 404。
+	// SJ-wan3-prime 的公开名与上游 ID 相同，原样下发。
+	for _, tc := range []struct{ public, upstream string }{
+		{wan30Model, wan30UpstreamModel},
+		{sjWan3PrimeModel, sjWan3PrimeModel},
+	} {
+		got, err := upstreamModelFor(tc.public)
+		require.NoError(t, err)
+		require.Equal(t, tc.upstream, got, "公开名 %s 必须下发为上游 ID %s", tc.public, tc.upstream)
+	}
+	// 旧名**不能**落到新模型上。
+	for _, legacy := range []string{videoModel, smartLegacyModel, primeModel, legacyPrimeModel} {
+		got, err := upstreamModelFor(legacy)
+		require.NoError(t, err)
+		require.NotEqual(t, wan30UpstreamModel, got, "旧名 %s 不能落到新模型 wan-3.0", legacy)
+		require.NotEqual(t, sjWan3PrimeModel, got, "旧名 %s 不能落到新模型 SJ-wan3-prime", legacy)
+	}
+	// 促销族仍落旧标准版。
+	got, err := upstreamModelFor(tehuiModel)
+	require.NoError(t, err)
+	require.Equal(t, videoModel, got)
+}
+
 func TestResolutionDurationRatio(t *testing.T) {
-	// 2026-11-15 上游切换后标准版只有 720P/1080P（480P 下架），缺省 720P。
+	// 2026-11-15 上游切换后旧标准版只有 720P/1080P（480P 下架），缺省 720P。
 	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: videoModel}))
 	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: videoModel, Resolution: "720p"}))
 	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: videoModel, Size: "1080"}))
@@ -402,7 +446,7 @@ func TestResolutionDurationRatio(t *testing.T) {
 	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: videoModel, Duration: 1}))
 	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: videoModel, Duration: 99}))
 	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: videoModel, Seconds: "7"}))
-	// 2026-10-28 新增 21:9 宽银幕。
+	// 2026-10-28 新增 21:9 宽银幕（旧标准版仍然支持）。
 	require.Equal(t, "21:9", resolveRatio(relaycommon.TaskSubmitReq{
 		Model:    videoModel,
 		Metadata: map[string]interface{}{"ratio": "21:9"},
@@ -418,8 +462,189 @@ func TestResolutionDurationRatio(t *testing.T) {
 	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: smartLegacyModel, Duration: 8}))
 }
 
+// TestWan30Contract 钉死新模型 wan-3.0 的参数契约（2026-11-18 实测口径）。
+//
+// 上游原文：
+//   - 时长硬边界 10-30 秒："Duration 4s is outside the allowed range
+//     10-30 seconds for model wan-3.0"；
+//   - 参数形态是 size 四个固定值，发 resolution+ratio 回
+//     "unsupported resolution or ratio"；
+//   - 画幅仅 16:9 / 9:16。
+//
+// ⚠️ 文档参数表写的是「4–30」，与实测不符 —— 按实测走。放行 5-9 秒就是
+// 「客户付了钱、建了单，上游才拒」。
+func TestWan30Contract(t *testing.T) {
+	// 时长：10-30 秒，缺省 10 秒。
+	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: wan30Model}))
+	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: wan30Model, Duration: 4}))
+	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: wan30Model, Duration: 99}))
+	require.Equal(t, 15, resolveDuration(relaycommon.TaskSubmitReq{Model: wan30Model, Duration: 15}))
+
+	// 显式越界必须在**校验阶段** fail-loud（不能只靠夹紧）。
+	for _, bad := range []int{4, 5, 9} {
+		taskErr := validateExplicitDurationForModel(relaycommon.TaskSubmitReq{
+			Model: wan30Model, Duration: bad,
+		})
+		require.NotNil(t, taskErr, "wan-3.0 %d 秒必须被拒 —— 上游硬边界是 10 秒", bad)
+	}
+	taskErr := validateExplicitDurationForModel(relaycommon.TaskSubmitReq{
+		Model: wan30Model, Duration: 10,
+	})
+	require.Nil(t, taskErr, "10 秒必须放行")
+
+	// 分辨率：720P / 1080P 两档；480P 按最低档 720P 执行。
+	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: wan30Model}))
+	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: wan30Model, Resolution: "1080p"}))
+	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: wan30Model, Resolution: "480P"}))
+
+	// 画幅：仅 16:9 / 9:16，缺省 16:9（上游不认 adaptive）。
+	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{Model: wan30Model}))
+	require.Equal(t, "9:16", resolveRatio(relaycommon.TaskSubmitReq{
+		Model: wan30Model, Metadata: map[string]interface{}{"ratio": "9:16"},
+	}))
+	// 21:9 不在白名单 → 回退 16:9；显式传 21:9 必须 400（不能静默改画幅）。
+	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{
+		Model: wan30Model, Metadata: map[string]interface{}{"ratio": "21:9"},
+	}))
+	ratioErr := validateNewModelExplicitRatio(relaycommon.TaskSubmitReq{
+		Model: wan30Model, Ratio: "1:1",
+	})
+	require.NotNil(t, ratioErr, "wan-3.0 显式 1:1 必须被拒 —— 上游仅 16:9 / 9:16")
+
+	// 请求体：size 契约 + seconds 字符串，**不带** resolution / ratio。
+	body, err := (&TaskAdaptor{}).buildRequestBody(relaycommon.TaskSubmitReq{
+		Model: wan30Model, Prompt: "清晨湖泊", Duration: 10, Resolution: "720P",
+	})
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "wan-3.0", payload["model"])
+	require.Equal(t, "10", payload["seconds"])
+	require.Equal(t, "1280x720", payload["size"])
+	require.NotContains(t, payload, "resolution", "wan-3.0 走 size 契约，不发 resolution")
+	require.NotContains(t, payload, "ratio", "wan-3.0 走 size 契约，不发 ratio")
+}
+
+// TestWan30TopLevelMediaContract 钉死 wan-3.0 的**顶层素材数组**契约。
+//
+// 上游文档原文：「wan-3.0、wan-3.0-pro、seedance-2.0 支持 images、videos、
+// audios 数组」—— 三个模型并列，素材形态一致（不是 media 数组）。
+//
+// 回归背景：原先 buildMedia 只对 wan-3.0-pro 并入顶层 videos / audios，
+// validateMedia 也只对 wan-3.0-pro 放行参考音视频。wan-3.0 因此有两个洞：
+//  1. 顶层 videos/audios 被**静默丢弃** —— 任务 SUCCESS、照常扣费，
+//     成片里却没有参考素材（最差的失败方式）；
+//  2. 走 media 传音视频会被本地 400 拦下，错误文案还写着「已不再支持」，
+//     与上游文档直接矛盾。
+func TestWan30TopLevelMediaContract(t *testing.T) {
+	// 顶层 videos / audios 必须被并入素材（不能丢）。
+	media, err := buildMedia(relaycommon.TaskSubmitReq{
+		Model:  wan30Model,
+		Images: []string{"https://e.com/a.png"},
+		Videos: []string{"https://e.com/v.mp4"},
+		Audios: []string{"https://e.com/a.mp3"},
+	})
+	require.NoError(t, err)
+	counts := map[string]int{}
+	for _, item := range media {
+		counts[item.Type]++
+	}
+	require.Equal(t, 1, counts["reference_image"], "顶层 images 必须进素材")
+	require.Equal(t, 1, counts["reference_video"], "顶层 videos 必须进素材 —— 丢了就是静默吞素材")
+	require.Equal(t, 1, counts["reference_audio"], "顶层 audios 必须进素材 —— 丢了就是静默吞素材")
+
+	// 走 media 传音视频也必须放行（上游文档明确支持）。
+	require.NoError(t, validateMedia([]relaycommon.TaskMedia{
+		{Type: "reference_video", URL: "https://e.com/v.mp4"},
+	}, wan30Model), "wan-3.0 上游支持参考视频，不该被本地闸门拦下")
+
+	// 对照组：旧标准版仍然只接受 reference_image（闸门没被误开）。
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{
+		{Type: "reference_video", URL: "https://e.com/v.mp4"},
+	}, videoModel), "旧标准版 wan3.0-video 上游只接受 reference_image，必须继续拦")
+
+	// 下发体：顶层三数组必须出现（wan-3.0-pro 是同款契约，一并验证不串味）。
+	body, err := (&TaskAdaptor{}).buildRequestBody(relaycommon.TaskSubmitReq{
+		Model: wan30Model, Prompt: "清晨湖泊", Duration: 10, Resolution: "720P",
+		Media: []relaycommon.TaskMedia{
+			{Type: "reference_image", URL: "https://e.com/a.png"},
+			{Type: "reference_video", URL: "https://e.com/v.mp4"},
+			{Type: "reference_audio", URL: "https://e.com/a.mp3"},
+		},
+	})
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, []any{"https://e.com/a.png"}, payload["images"])
+	require.Equal(t, []any{"https://e.com/v.mp4"}, payload["videos"])
+	require.Equal(t, []any{"https://e.com/a.mp3"}, payload["audios"])
+	require.NotContains(t, payload, "media", "wan-3.0 走顶层三数组，不发 media")
+}
+
+// TestSJWan3PrimeContract 钉死新模型 SJ-wan3-prime 的参数契约
+// （2026-11-18 实测口径）。
+//
+// 上游原文：
+//   - 时长 2-30 秒："duration must be an integer between 2 and 30"；
+//   - 分辨率仅 720P："Resolution 1080p is disabled for model SJ-wan3-prime"；
+//   - 参数形态是 size：单发 resolution=720P 回 "WAN_RATIO_INVALID"，
+//     而 size=720x1280 建单成功；
+//   - 画幅支持 16:9 / 9:16 / 1:1 / 4:3 / 3:4（21:9 与 adaptive 不可用）。
+//
+// ⚠️ 文档参数表写的是「2–30 / 480P·720P·1080P」，与实测不符 —— 按实测走。
+func TestSJWan3PrimeContract(t *testing.T) {
+	// 时长：上游 2-30 秒，对外统一收口到 5-30 秒（老板 2026-11-18 口径）。
+	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Model: sjWan3PrimeModel}))
+	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Model: sjWan3PrimeModel, Duration: 2}))
+	require.Equal(t, 10, resolveDuration(relaycommon.TaskSubmitReq{Model: sjWan3PrimeModel, Duration: 10}))
+	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: sjWan3PrimeModel, Duration: 99}))
+
+	// 对外下界 5 秒：2-4 秒必须在校验阶段被拒。
+	for _, bad := range []int{2, 3, 4} {
+		taskErr := validateExplicitDurationForModel(relaycommon.TaskSubmitReq{
+			Model: sjWan3PrimeModel, Duration: bad,
+		})
+		require.NotNil(t, taskErr, "SJ-wan3-prime %d 秒必须被拒 —— 对外统一 ≥5 秒", bad)
+	}
+	require.Nil(t, validateExplicitDurationForModel(relaycommon.TaskSubmitReq{
+		Model: sjWan3PrimeModel, Duration: 5,
+	}))
+
+	// 分辨率：仅 720P。1080P / 480P 显式传入必须 400（静默降档等于骗客户）。
+	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: sjWan3PrimeModel}))
+	for _, bad := range []string{"1080P", "1080p", "480P"} {
+		taskErr := validateSJWan3PrimeExplicitResolution(relaycommon.TaskSubmitReq{
+			Model: sjWan3PrimeModel, Resolution: bad,
+		})
+		require.NotNil(t, taskErr, "SJ-wan3-prime 显式 %s 必须被拒 —— 上游只提供 720P", bad)
+	}
+
+	// 画幅：16:9 / 9:16 / 1:1 / 4:3 / 3:4 可用；21:9 与 adaptive 回退 16:9。
+	for _, ratio := range []string{"16:9", "9:16", "1:1", "4:3", "3:4"} {
+		require.Equal(t, ratio, resolveRatio(relaycommon.TaskSubmitReq{
+			Model: sjWan3PrimeModel, Metadata: map[string]interface{}{"ratio": ratio},
+		}), "SJ-wan3-prime 应支持画幅 %s", ratio)
+	}
+	require.Equal(t, "16:9", resolveRatio(relaycommon.TaskSubmitReq{
+		Model: sjWan3PrimeModel, Metadata: map[string]interface{}{"ratio": "21:9"},
+	}))
+
+	// 请求体：size 契约 + seconds 字符串。
+	body, err := (&TaskAdaptor{}).buildRequestBody(relaycommon.TaskSubmitReq{
+		Model: sjWan3PrimeModel, Prompt: "金色阳光照亮雪山", Duration: 5,
+	})
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(body, &payload))
+	require.Equal(t, "SJ-wan3-prime", payload["model"])
+	require.Equal(t, "5", payload["seconds"])
+	require.Equal(t, "1280x720", payload["size"])
+	require.NotContains(t, payload, "resolution")
+	require.NotContains(t, payload, "ratio")
+}
+
 func TestPrimeTiersAndDuration(t *testing.T) {
-	// 上游 prime 只有 720P / 1080P，缺省 720P（最低档，不静默升价）。
+	// 旧 prime（wan3.0-video-prime）只有 720P / 1080P，缺省 720P（最低档，不静默升价）。
 	require.Equal(t, "720P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel}))
 	require.Equal(t, "1080P", resolveResolution(relaycommon.TaskSubmitReq{Model: primeModel, Resolution: "1080p"}))
 	// 480P 请求按最低档 720P 执行，而不是被丢掉或升到 1080P。
@@ -445,6 +670,29 @@ func TestPrimeTiersAndDuration(t *testing.T) {
 	}), primeModel))
 }
 
+// TestNewPrimeIsNotOldPrime 钉死「新 prime 逐秒可选，旧 prime 仅 30 秒」。
+//
+// 这是两者最容易混的一处：新 prime（SJ-wan3-prime）上游允许 2-30 秒逐秒，
+// 旧 prime（wan3.0-video-prime）只接 30 秒。如果把旧 prime 的「仅 30 秒」
+// 闸门套到新 prime 上，客户传 10 秒就会被本地 400 —— 明明上游能跑。
+func TestNewPrimeIsNotOldPrime(t *testing.T) {
+	// 旧 prime 走「仅 30 秒」闸门：10 秒显式被拒。
+	require.NotNil(t, validateExplicitDurationForModel(relaycommon.TaskSubmitReq{
+		Model: primeModel, Duration: 10,
+	}), "旧 prime 只接 30 秒，10 秒必须被拒")
+	// 新 prime 逐秒可选：10 秒放行。
+	require.Nil(t, validateExplicitDurationForModel(relaycommon.TaskSubmitReq{
+		Model: sjWan3PrimeModel, Duration: 10,
+	}), "新 prime 逐秒可选，10 秒必须放行")
+	// 两者的默认时长也不同（旧 30 秒 / 新 5 秒）。
+	require.Equal(t, 30, resolveDuration(relaycommon.TaskSubmitReq{Model: primeModel}))
+	require.Equal(t, 5, resolveDuration(relaycommon.TaskSubmitReq{Model: sjWan3PrimeModel}))
+	// 新 prime 不进旧 prime 的能力组（否则会继承「仅 30 秒」与素材上限）。
+	require.False(t, isPrimeOnlyModel(sjWan3PrimeModel),
+		"新 prime 不能被当成旧 prime 直连 —— 否则会被「仅 30 秒」闸门误伤")
+	require.True(t, isPrimeOnlyModel(primeModel))
+}
+
 func TestEstimateBillingChargesResolutionTiers(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	adaptor := &TaskAdaptor{}
@@ -466,6 +714,14 @@ func TestEstimateBillingChargesResolutionTiers(t *testing.T) {
 		{primeModel, "1080P", 1.2, 30},
 		// 480P 不在 prime 档位内，按 720P 计费（不低于成本）。
 		{primeModel, "480P", 1.0, 30},
+		// wan-3.0-yz（2026-11-18 新上架）：**分档价**（老板定）
+		// 720P ¥0.20/秒、1080P ¥0.25/秒 → 基准档 720P 倍率 1.0，
+		// 1080P 倍率 = 0.25/0.20 = 1.25；按秒计费 → 必须带 seconds。
+		{wan30Model, "720P", 1.0, 10},
+		{wan30Model, "1080P", 1.25, 10},
+		// SJ-wan3-prime（2026-11-18 新上架）：沿用旧 prime 同价 ¥0.25/秒，
+		// 上游仅 720P 一档 → 倍率恒为 1。
+		{sjWan3PrimeModel, "720P", 1.0, 5},
 		// 对外别名 seedance2.5-特惠 **独立定价**（老板 2026-10-29 明确）：
 		// 720P ¥0.20 / 1080P ¥0.30，倍率 1.0 / 1.5，不跟 prime 联动。
 		{tehuiModel, "720P", 1.0, 10},
@@ -598,8 +854,15 @@ func TestNormalizeAPIRootStripsVersionSuffix(t *testing.T) {
 func TestGetModelListExposesYouzanModels(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	// 与上游 /v1/models 完全一致（wan3.0-smart / wan2.7-r2v 已不再展示）。
-	// 2026-11-18 加 wan-3.0-pro（上游文档 2026-11-17 版列为独立模型）。
-	require.Equal(t, []string{"wan3.0-video", "wan3.0-video-prime", "wan-3.0-pro"}, adaptor.GetModelList())
+	// 2026-11-18 上游新上架 wan-3.0 / SJ-wan3-prime 两个独立模型；
+	// 旧的 wan3.0-video / wan3.0-video-prime 仍在列（老客户还在用）。
+	// ⚠️ 这里列的是**上游真名** wan-3.0，不是对外公开名 wan-3.0-yz ——
+	// ModelList 必须与上游 /v1/models 逐字一致，否则「同步上游模型」会把
+	// 别名当成真实上游模型写回渠道配置，上游直接 404。
+	require.Equal(t, []string{
+		"wan3.0-video", "wan3.0-video-prime", "wan-3.0-pro",
+		"wan-3.0", "SJ-wan3-prime",
+	}, adaptor.GetModelList())
 }
 
 // TestEstimateBillingPrefersDynamicRatio 锁定「动态调价优先于代码常量」。
@@ -614,11 +877,15 @@ func TestEstimateBillingPrefersDynamicRatio(t *testing.T) {
 		youzanwan3_setting.SetRatios(map[string]map[string]float64{
 			"wan3.0-video":       {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
 			"wan3.0-video-prime": {"720P": 1.0, "1080P": 1.2},
+			"wan-3.0":            {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
+			"SJ-wan3-prime":      {"720P": 1.0, "1080P": 1.2},
 		}, 0)
 	})
 	youzanwan3_setting.SetRatios(map[string]map[string]float64{
 		"wan3.0-video":       {"480P": 1.0, "720P": 1.0, "1080P": 1.0},
 		"wan3.0-video-prime": {"720P": 1.0, "1080P": 2.0},
+		"wan-3.0":            {"480P": 1.0, "720P": 1.0, "1080P": 3.0},
+		"SJ-wan3-prime":      {"720P": 1.0, "1080P": 4.0},
 	}, 0)
 
 	// prime 与它的历史旧名读 prime 的动态倍率。
@@ -630,10 +897,24 @@ func TestEstimateBillingPrefersDynamicRatio(t *testing.T) {
 		require.Equal(t, map[string]float64{"seconds": 30, "size": 2.0},
 			(&TaskAdaptor{}).EstimateBilling(context, info), "model=%s", model)
 	}
-	// 标准版读自己的配置，不受 prime 的倍率影响。
+	// 新模型读**自己**的动态倍率 —— 不能串到旧 prime / 旧标准版的配置上。
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
-	info := &relaycommon.RelayInfo{OriginModelName: videoModel}
+	info := &relaycommon.RelayInfo{OriginModelName: wan30Model}
+	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.25},
+		(&TaskAdaptor{}).EstimateBilling(context, info),
+		"wan-3.0-yz 必须读自己的倍率 1.25（¥0.25/秒 ÷ ¥0.20/秒），不能串到旧 prime 的 2.0")
+
+	context, _ = gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "720P"})
+	info = &relaycommon.RelayInfo{OriginModelName: sjWan3PrimeModel}
+	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.0},
+		(&TaskAdaptor{}).EstimateBilling(context, info),
+		"SJ-wan3-prime 的 720P 倍率是 1（720P 基准档）")
+	// 标准版读自己的配置，不受 prime 的倍率影响。
+	context, _ = gin.CreateTestContext(httptest.NewRecorder())
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
+	info = &relaycommon.RelayInfo{OriginModelName: videoModel}
 	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.0},
 		(&TaskAdaptor{}).EstimateBilling(context, info))
 }
