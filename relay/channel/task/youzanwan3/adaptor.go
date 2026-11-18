@@ -222,6 +222,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if taskErr := validateExplicitDurationForModel(req); taskErr != nil {
 		return taskErr
 	}
+	// wan-3.0-pro 的画幅/尺寸白名单（上游仅 16:9 / 9:16、四个固定尺寸）。
+	// 与 prime 的显式分辨率校验同一理由：静默改画幅 =「要方图给横图」。
+	if taskErr := validateWan30ProExplicitRatio(req); taskErr != nil {
+		return taskErr
+	}
 	// 按次档（seedance2.5-活动）的档位锁定必须在**校验阶段**拒掉，
 	// 不能等到计费或建单之后 —— 否则会走完「建单 → 预扣 → 上游拒绝 → 退款」，
 	// 客户白占一次余额还要等退款。
@@ -301,7 +306,7 @@ func parseRequestedDuration(req relaycommon.TaskSubmitReq) (int, error) {
 }
 
 // validateExplicitDurationForModel 校验客户端**显式传入**的时长与分辨率
-//（2026-11-15 上游切换后的新硬边界）。
+// （2026-11-15 上游切换后的新硬边界）。
 //
 // 两条 fail-loud 边界，夹紧替代不了：
 //   - prime 直连：只接受 30 秒、只接受 720P。旧协议的「2-30 逐秒 / 1080P」
@@ -339,13 +344,16 @@ func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskEr
 		}
 		return nil
 	}
-	// 促销族下界 4 秒（2026-11-17 老板口径），标准版直连仍是 10 秒。
+	// 促销族下界 4 秒（2026-11-17 老板口径），标准版直连仍是 10 秒；
+	// wan-3.0-pro 按上游文档 4 秒起。
 	//
 	// ⚠️ 促销族 <10 秒的请求正常会被路由层改派到 CapCut 满血档；这里放行 4 秒
 	//   是兜底（路由层那档开关关掉时不应该直接 400 —— 那是「本来能跑的请求
 	//   在源链路被拒」，不是「上游不支持」）。
 	lowerBound := minDuration
-	if isPromoFamilyModel(req.Model) {
+	if isWan30ProModel(req.Model) {
+		lowerBound = wan30ProMinDuration
+	} else if isPromoFamilyModel(req.Model) {
 		lowerBound = promoMinDuration
 	}
 	if duration < lowerBound {
@@ -385,6 +393,74 @@ func validatePrimeExplicitResolution(req relaycommon.TaskSubmitReq) *dto.TaskErr
 
 func isPrimeExplicit1080P(raw string) bool {
 	return strings.TrimSpace(raw) != "" && normalizeResolution(raw) == "1080P"
+}
+
+// validateWan30ProExplicitRatio 校验 wan-3.0-pro 显式传入的画幅与尺寸。
+//
+// 上游文档（2026-11-17 版）原话「画幅仅 16:9 / 9:16」，尺寸只列了四个值。
+// 客户显式要 1:1 / 4:3 / 21:9 时**必须 400**，不能走 resolveRatio 的静默回落 ——
+// 那等于「要方图给横图」，且按条计费已经扣了钱。
+//
+// size 的口径（两条都合法）：
+//   - 分辨率写法（720P / 1080P / 720 / 1080）—— 平台通用习惯，照常接受；
+//   - 文档列出的四个尺寸（1280x720 / 720x1280 / 1920x1080 / 1080x1920）；
+//   - 其它 WxH（例如 1600x900、1080x1080）上游不认，本地 400 并列出合法值。
+func validateWan30ProExplicitRatio(req relaycommon.TaskSubmitReq) *dto.TaskError {
+	if !isWan30ProModel(req.Model) {
+		return nil
+	}
+	ratioErr := func(raw string) *dto.TaskError {
+		return service.TaskErrorWrapperLocal(
+			errors.Errorf("画幅 %q 不受支持：该模型仅支持 16:9 / 9:16", strings.TrimSpace(raw)),
+			"invalid_ratio", http.StatusBadRequest)
+	}
+	if !isWan30ProRatio(req.Ratio) && strings.TrimSpace(req.Ratio) != "" {
+		return ratioErr(req.Ratio)
+	}
+	if !isWan30ProRatio(req.AspectRatio) && strings.TrimSpace(req.AspectRatio) != "" {
+		return ratioErr(req.AspectRatio)
+	}
+	if req.Metadata != nil {
+		for _, key := range []string{"ratio", "aspect_ratio"} {
+			if raw, ok := req.Metadata[key].(string); ok && strings.TrimSpace(raw) != "" {
+				if !isWan30ProRatio(raw) {
+					return ratioErr(raw)
+				}
+			}
+		}
+	}
+	sizeCandidates := []string{req.Size}
+	if req.Metadata != nil {
+		if raw, ok := req.Metadata["size"].(string); ok {
+			sizeCandidates = append(sizeCandidates, raw)
+		}
+	}
+	for _, raw := range sizeCandidates {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if normalizeResolution(raw) != "" {
+			continue
+		}
+		if resolutionFromWan30ProSize(raw) != "" {
+			continue
+		}
+		return service.TaskErrorWrapperLocal(
+			errors.Errorf("尺寸 %q 不受支持：该模型仅支持 1280x720 / 720x1280 / 1920x1080 / 1080x1920（也可改用 resolution=720P/1080P）", strings.TrimSpace(raw)),
+			"invalid_size", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// isWan30ProRatio 判断画幅是否在 wan-3.0-pro 的白名单内（16:9 / 9:16）。
+func isWan30ProRatio(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	for _, ratio := range wan30ProRatios {
+		if trimmed == ratio {
+			return true
+		}
+	}
+	return false
 }
 
 func primeResolutionError(raw string) *dto.TaskError {
@@ -461,6 +537,16 @@ func normalizeResolution(value string) string {
 
 func isR2VModel(model string) bool {
 	return strings.TrimSpace(model) == r2vModel
+}
+
+// isWan30ProModel 判断是不是 wan-3.0-pro（独立上游模型，不是别名）。
+//
+// 它与标准版/prime 的边界都不同（见 constants.go 的 wan30ProModel 注释）：
+// 时长 4-30、画幅仅 16:9/9:16、素材走 images/videos/audios 数组、按条计价。
+// 所有分模型判断都必须先认它，否则会落进标准版分支（10 秒下界 + 禁止音视频 +
+// 按秒计费），表现是「客户按文档传 5 秒被拒」或「1080P 按 720P 价格收」。
+func isWan30ProModel(model string) bool {
+	return strings.TrimSpace(model) == wan30ProModel
 }
 
 func isPrimeModel(model string) bool {
@@ -560,6 +646,9 @@ func upstreamModelFor(model string) (string, error) {
 		return videoModel, nil
 	case primeModel, legacyPrimeModel:
 		return primeModel, nil
+	case wan30ProModel:
+		// 公开名与上游 ID 完全一致（文档要求「请求使用精确模型 ID」）。
+		return wan30ProModel, nil
 	case r2vModel:
 		return "", errors.New("youzan wan2.7-r2v is not exposed by the current upstream API")
 	default:
@@ -600,6 +689,18 @@ func upstreamModelForRequest(req relaycommon.TaskSubmitReq) (string, error) {
 }
 
 func normalizeResolutionForModel(model, resolution string) string {
+	// wan-3.0-pro：只有 720P / 1080P 两档（与标准版同档位），480P 按最低档执行。
+	// 未知写法返回空串，由调用方继续找下一种来源、最后落到默认 720P。
+	if isWan30ProModel(model) {
+		switch resolution {
+		case "720P", "1080P":
+			return resolution
+		case "480P":
+			return defaultResolution
+		default:
+			return ""
+		}
+	}
 	// 按次档固定 720P：只有一档价（¥4.5/次），上游 1080P 的成本是 720P 的
 	// 1.33 倍（¥0.20/秒 vs ¥0.15/秒），卖同一个价就会在 1080P 上倒挂。
 	//
@@ -673,7 +774,46 @@ func resolveResolutionForModel(req relaycommon.TaskSubmitReq, model string) stri
 	if value := normalizeResolutionForModel(model, normalizeResolution(req.Size)); value != "" {
 		return value
 	}
+	// wan-3.0-pro 的上游契约推荐用 size 指定输出（文档示例 {"size":"1280x720"}）。
+	// 客户照抄文档只传 size 时，normalizeResolution("1280x720") 解析不出档位，
+	// 会一路落到默认 720P —— 1080P 尺寸就会被静默降成 720P（收 720P 的钱、
+	// 给 720P 的片，客户要的 1080P 丢失）。这里按文档的四个合法尺寸反推档位。
+	if isWan30ProModel(model) {
+		if value := resolutionFromWan30ProSize(req.Size); value != "" {
+			return value
+		}
+		if req.Metadata != nil {
+			if raw, ok := req.Metadata["size"].(string); ok {
+				if value := resolutionFromWan30ProSize(raw); value != "" {
+					return value
+				}
+			}
+		}
+	}
 	return defaultResolutionForModel(model)
+}
+
+// resolutionFromWan30ProSize 按上游 wan-3.0-pro 文档的四个合法尺寸反推分辨率档。
+//
+// 只认文档列出的值（大小写不敏感、容忍 "×" 与首尾空白）：
+//
+//	1280x720 / 720x1280   → 720P
+//	1920x1080 / 1080x1920 → 1080P
+//
+// 其它写法返回空串（不猜）：例如 "1080x1080" 是 1:1，上游这个模型根本不支持，
+// 由 validateWan30ProExplicitRatio 统一 400，而不是在这里悄悄认成 1080P。
+func resolutionFromWan30ProSize(raw string) string {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized = strings.ReplaceAll(normalized, "×", "x")
+	normalized = strings.ReplaceAll(normalized, " ", "")
+	switch normalized {
+	case "1280x720", "720x1280":
+		return "720P"
+	case "1920x1080", "1080x1920":
+		return "1080P"
+	default:
+		return ""
+	}
 }
 
 func resolveResolution(req relaycommon.TaskSubmitReq) string {
@@ -702,11 +842,26 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	}
 	if duration <= 0 {
 		// 按次档没传 → 30 秒（保持旧客户拿到的片长）；prime 直连没传 →
-		// 30 秒（它只接 30 秒）；其余模型默认标准版最低档 10 秒。
+		// 30 秒（它只接 30 秒）；wan-3.0-pro 没传 → 5 秒（文档示例值）；
+		// 其余模型默认标准版最低档 10 秒。
+		if isWan30ProModel(model) {
+			return wan30ProDefaultDuration
+		}
 		if isPerCallModel(model) || isPrimeOnlyModel(model) {
 			return perCallFixedDuration
 		}
 		return defaultDuration
+	}
+	// wan-3.0-pro：4-30 秒（上游文档口径），直接按区间夹紧兜底 ——
+	// 显式越界已在 validateExplicitDurationForModel 400 拒掉。
+	if isWan30ProModel(model) {
+		if duration < wan30ProMinDuration {
+			return wan30ProMinDuration
+		}
+		if duration > maxDuration {
+			return maxDuration
+		}
+		return duration
 	}
 	if isR2VModel(model) {
 		// 上游仅接受 5 秒和 10 秒两档，就近取档。
@@ -768,6 +923,12 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 func resolveRatio(req relaycommon.TaskSubmitReq) string {
 	allowedRatios := smartRatios
 	fallback := defaultRatio
+	if isWan30ProModel(req.Model) {
+		// wan-3.0-pro 上游只认 16:9 / 9:16（文档原话「画幅仅 16:9 / 9:16」）。
+		// 缺省 16:9 —— 不能落 adaptive，上游不认。
+		allowedRatios = wan30ProRatios
+		fallback = wan30ProDefaultRatio
+	}
 	if isR2VModel(req.Model) {
 		allowedRatios = r2vRatios
 		fallback = r2vDefaultRatio
@@ -879,7 +1040,35 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 	// 无条件并入：legacy 图排在 media 之后，图与图之间的相对顺序保持不变，
 	// 所以 prompt 里「@图片N」的指认不会错位。
 	media = append(media, legacyImages(req)...)
+	// wan-3.0-pro 的上游契约把视频/音频做成**顶层数组**（videos / audios），
+	// 不像其它模型那样只走 media。客户端照抄上游文档时这些素材必须并入
+	// 校验与下发，否则会被静默丢弃（客户付了钱、成片里没有参考素材）。
+	if isWan30ProModel(req.Model) {
+		media = append(media, legacyVideoAudioMedia(req)...)
+	}
 	return media, validateMedia(media, req.Model)
+}
+
+// legacyVideoAudioMedia 把 wan-3.0-pro 的顶层 videos / audios（含单数写法）
+// 转成 reference_video / reference_audio。
+//
+// 只给 wan-3.0-pro 用：其它模型（2026-11-15 上游切换后）不接受参考视频/音频，
+// 把字段并进来只会让它们撞上「仅接受 reference_image」的闸门，报错更难懂。
+func legacyVideoAudioMedia(req relaycommon.TaskSubmitReq) []relaycommon.TaskMedia {
+	media := make([]relaycommon.TaskMedia, 0, len(req.Videos)+len(req.Audios)+2)
+	appendList := func(kind, single string, list []string) {
+		if len(list) == 0 && strings.TrimSpace(single) != "" {
+			list = []string{single}
+		}
+		for _, item := range list {
+			if trimmed := strings.TrimSpace(item); trimmed != "" {
+				media = append(media, relaycommon.TaskMedia{Type: kind, URL: trimmed})
+			}
+		}
+	}
+	appendList("reference_video", req.Video, req.Videos)
+	appendList("reference_audio", req.Audio, req.Audios)
+	return media
 }
 
 // legacyImages 把老字段（images / image / input_reference）转成 reference_image。
@@ -934,7 +1123,12 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	// 不拦的后果：请求透传给上游 → 上游按它自己的文案拒单 → 客户对着
 	// 「参数或参考素材不符合要求」反复重试。参考视频/音频的诉求应改走
 	// CapCut 链路（cp-seedance-2.5 支持参考音视频直链）。
-	if !isPrimeOnlyModel(model) && (counts["reference_video"] > 0 || counts["reference_audio"] > 0) {
+	//
+	// ⚠️ wan-3.0-pro 例外：它的上游文档明确「支持 images、videos、audios 数组」
+	// （2026-11-17 版），与 wan3.0-video 不是同一份素材契约。拦掉它等于
+	// 把这个模型的一半能力禁掉。
+	if !isPrimeOnlyModel(model) && !isWan30ProModel(model) &&
+		(counts["reference_video"] > 0 || counts["reference_audio"] > 0) {
 		return errors.New("参考视频/参考音频已不再支持：上游 2026-11-15 切换后该链路仅接受 reference_image 参考图，请去掉视频/音频素材后重试（需要参考音视频请改用支持它们的模型）")
 	}
 	if counts["reference_video"] > maxReferenceVideos {
@@ -1105,6 +1299,12 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 	if prompt == "" && len(media) == 0 {
 		return nil, errors.New("youzan wan3 requires prompt or media")
 	}
+	// wan-3.0-pro 走上游文档的原生契约：seconds（整数）/ size（四个固定尺寸）/
+	// images / videos / audios 数组。**不能**复用下面那套 ratio+resolution+media ——
+	// 那是 wan3.0-video 的契约，字段名与素材形态都不同。
+	if isWan30ProModel(req.Model) {
+		return buildWan30ProRequestBody(req, upstreamModel, prompt, media)
+	}
 	body := map[string]interface{}{
 		"model":      upstreamModel,
 		"prompt":     prompt,
@@ -1114,6 +1314,62 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 	}
 	if len(media) > 0 {
 		body["media"] = media
+	}
+	return common.Marshal(body)
+}
+
+// buildWan30ProRequestBody 按上游 wan-3.0-pro 文档构造请求体。
+//
+// 文档原文（2026-11-17 版）：
+//
+//	{"model":"wan-3.0-pro","prompt":"...","seconds":5,"size":"1280x720",
+//	 "images":[...],"videos":[...],"audios":[...]}
+//
+// 要点：
+//   - seconds 是**整数**（其它模型下发的是字符串，那是旧协议的习惯）；
+//   - size 必须是四个固定值之一（由分辨率档 × 画幅推导，见 wan30ProSizeByRatio）；
+//   - 素材是三个**顶层数组**，不是 media。
+func buildWan30ProRequestBody(
+	req relaycommon.TaskSubmitReq,
+	upstreamModel, prompt string,
+	media []relaycommon.TaskMedia,
+) ([]byte, error) {
+	resolution := resolveResolutionForModel(req, req.Model)
+	ratio := resolveRatio(req)
+	size := wan30ProSizeByRatio[resolution+"/"+ratio]
+	if size == "" {
+		// 理论上到不了：分辨率已归一为 720P/1080P、画幅已归一到白名单。
+		// 真到了说明调用顺序被人改坏了 —— 明确报错，不要静默发一个上游不认的 size。
+		return nil, errors.Errorf(
+			"wan-3.0-pro 无法推导合法 size：resolution=%q ratio=%q", resolution, ratio)
+	}
+	body := map[string]interface{}{
+		"model":   upstreamModel,
+		"prompt":  prompt,
+		"seconds": resolveDurationForModel(req, req.Model),
+		"size":    size,
+	}
+	images := make([]string, 0, len(media))
+	videos := make([]string, 0)
+	audios := make([]string, 0)
+	for _, item := range media {
+		switch item.Type {
+		case "reference_image":
+			images = append(images, item.URL)
+		case "reference_video":
+			videos = append(videos, item.URL)
+		case "reference_audio":
+			audios = append(audios, item.URL)
+		}
+	}
+	if len(images) > 0 {
+		body["images"] = images
+	}
+	if len(videos) > 0 {
+		body["videos"] = videos
+	}
+	if len(audios) > 0 {
+		body["audios"] = audios
 	}
 	return common.Marshal(body)
 }
@@ -1144,6 +1400,15 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	//     不影响我们的售价口径）。
 	if isPerCallModel(modelName) {
 		return nil
+	}
+	// wan-3.0-pro 是「按条 + 分辨率档」：¥4.5/条（720P）、¥5.5/条（1080P），
+	// **与时长无关**、参考视频秒数也不并入。
+	//
+	// 只返回 size 倍率 —— 绝不能带 seconds：applyTaskOtherRatios 会把秒数乘进
+	// ¥4.5，30 秒的请求就变成 ¥135（按次档注释里记着同一个坑）。
+	if isWan30ProModel(modelName) {
+		resolution := resolveResolutionForModel(req, modelName)
+		return map[string]float64{"size": resolutionRatioForModel(modelName, resolution)}
 	}
 	// 两个在售模型均为按秒计费：quota = ModelPrice × seconds × size。
 	// prime 的 720P / 1080P 分档差价体现在 size 倍率（见 primeResolutionSizeRatio），
@@ -1220,6 +1485,17 @@ func resolutionRatioForModel(model, resolution string) float64 {
 			return ratio
 		}
 		if ratio := tehuiResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
+	if isWan30ProModel(model) {
+		// 按条 + 分辨率档（720P 1.0 / 1080P 5.5/4.5）。
+		// 同样先读动态倍率：价格同步任务若把它纳入，改动无需发版即可生效。
+		if ratio, ok := youzanwan3_setting.GetResolutionRatio(wan30ProModel, resolution); ok {
+			return ratio
+		}
+		if ratio := wan30ProResolutionSizeRatio[resolution]; ratio > 0 {
 			return ratio
 		}
 		return 1

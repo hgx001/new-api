@@ -94,6 +94,11 @@ export function getWan3SampleResolution(modelName: string): string | null {
   if (modelName === 'wan3.0-720p-特惠') {
     return '720P'
   }
+  // 有赞 wan-3.0-pro（2026-11-18 上架）：文档示例 size=1280x720，
+  // 档位 720P / 1080P，示例取最低档 720P。
+  if (modelName === 'wan-3.0-pro') {
+    return '720P'
+  }
   // 有赞 prime（wan3.0-video-prime / 历史别名 wan3.0-video-prime-1080p）：
   // 2026-11-15 上游切换后**仅 720P**（1080P 已下架），示例取 720P。
   //

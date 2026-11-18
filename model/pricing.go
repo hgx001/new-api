@@ -437,6 +437,12 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan-3.0" {
 		return true
 	}
+	// 有赞渠道的 wan-3.0-pro（2026-11-18 上架）：上游独立模型，按条计费
+	// 720P ¥4.5、1080P ¥5.5；时长 4-30 秒、画幅仅 16:9 / 9:16。
+	// 精确匹配，不会与上面 MegaAI 的 wan-3.0 互相命中。
+	if name == "wan-3.0-pro" {
+		return true
+	}
 	// 有赞 Wan3 的对外别名：客户看到 seedance2.5-特惠，实际由 wan3.0-video-prime
 	// 执行（2026-10-29 起）。此前它挂在 MegaAI 渠道按次卖 ¥5.0/条，2026-10-26
 	// 随该渠道停售而空置。现计费为**独立定价**：按秒 720P ¥0.20 / 1080P ¥0.30，

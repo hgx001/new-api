@@ -15,6 +15,22 @@ const (
 	videoModel = "wan3.0-video"
 	primeModel = "wan3.0-video-prime"
 
+	// wan30ProModel 是有赞 2026-11-17 文档里的 wan-3.0-pro（与 wan-3.0 并列的
+	// 独立上游模型，不是 wan3.0-video 的别名）。
+	//
+	// 契约（照 upstream 文档，2026-11-18 接入）：
+	//   - 时长 4-30 整数秒（文档：4–30）；
+	//   - 分辨率 720P / 1080P，尺寸只有 1280x720 / 720x1280 / 1920x1080 / 1080x1920；
+	//   - 画幅仅 16:9 / 9:16；
+	//   - 素材走 images / videos / audios 数组（**不是** media），数量与组合以
+	//     上游接口校验为准；
+	//   - 计费按条：720P ¥4.5/条、1080P ¥5.5/条，与时长无关。
+	//
+	// ⚠️ 为什么不复用 wan3.0-video：两者是上游的两个商品（不同模型 ID、不同
+	// 时长下界、不同素材契约）。把它映射到 wan3.0-video 会同时踩两边的边界
+	// （10 秒下界 vs 4 秒、仅参考图 vs 支持音视频）。
+	wan30ProModel = "wan-3.0-pro"
+
 	// tehuiModel 是对外别名：客户看到「Seedance 2.5 特惠版」，实际由上游
 	// wan3.0-video-prime 执行（同一份算力，按秒分档计价）。
 	// 该名字 2026-10-26 随 MegaAI 渠道停售而空置，2026-10-29 改为路由到有赞 prime。
@@ -37,10 +53,15 @@ const (
 	r2vModel = "wan2.7-r2v"
 )
 
-// ModelList 与上游 /v1/models 的模型 ID 完全一致（2026-10-28 起上游只提供这两个）。
+// ModelList 与上游 /v1/models 的模型 ID 完全一致（在售的真实上游模型）。
+//
+// 2026-11-18 加 wan-3.0-pro：上游文档 2026-11-17 版把它列为独立模型。
+// 别名（seedance2.5-特惠 / -活动）**不写进来** —— 这份清单必须与上游逐字
+// 一致，否则「同步上游模型」会把别名当成真实模型写回渠道配置。
 var ModelList = []string{
 	videoModel,
 	primeModel,
+	wan30ProModel,
 }
 
 // videoResolutionSizeRatio：上游 wan3.0-video 三档同价（0.18 ⚡/秒 = ¥0.18/秒），
@@ -63,6 +84,40 @@ var videoResolutionSizeRatio = map[string]float64{
 var primeResolutionSizeRatio = map[string]float64{
 	"720P":  1.0,
 	"1080P": 1.2,
+}
+
+// wan30ProResolutionSizeRatio：wan-3.0-pro **按条**计费（与时长无关），
+// 对外 720P ¥4.5/条、1080P ¥5.5/条（2026-11-18 老板定价）。
+//
+// ModelPrice 按 720P 基准配置（4.5/7.3 ≈ 0.6164384），1080P 倍率 = 5.5 / 4.5。
+// EstimateBilling 只返回 size 倍率、**不带 seconds** —— 带秒数会把 ¥4.5 乘成
+// 每多一秒多收一份钱，正是「按条」与「按秒」的分水岭。
+//
+// ⚠️ 与 seedance2.5-活动 同价（¥4.5/条）但**不是同一个商品**：活动版锁死
+// 720P，本模型 1080P 是另一档价；不要把两者互相别名化。
+var wan30ProResolutionSizeRatio = map[string]float64{
+	"720P":  1.0,
+	"1080P": 5.5 / 4.5,
+}
+
+// wan30ProRatios 是上游 wan-3.0-pro 允许的成片画幅（文档原话「画幅仅 16:9 / 9:16」）。
+// 与其它模型不同：**不支持** adaptive / 1:1 / 4:3 / 3:4 / 21:9。
+var wan30ProRatios = []string{"16:9", "9:16"}
+
+// wan30ProDefaultRatio 是客户没传画幅时的缺省值。
+// 取 16:9（横屏是文档示例与主流用法；不能沿用其它模型的 adaptive ——
+// 上游这个模型不认 adaptive）。
+const wan30ProDefaultRatio = "16:9"
+
+// wan30ProSizeByRatio 是「分辨率档 × 画幅」到上游 size 字面量的映射。
+//
+// wan-3.0-pro 的上游契约推荐用 size（而不是 resolution/ratio 分开传）：
+// 文档示例就是 {"size":"1280x720"}，可取值只有这四个。
+var wan30ProSizeByRatio = map[string]string{
+	"720P/16:9":  "1280x720",
+	"720P/9:16":  "720x1280",
+	"1080P/16:9": "1920x1080",
+	"1080P/9:16": "1080x1920",
 }
 
 // tehuiResolutionSizeRatio：对外别名 seedance2.5-特惠 **独立定价**，不跟随 prime。
@@ -263,6 +318,17 @@ const (
 	//
 	// ⚠️ 同样是 constant.Seedance25PerCallFixedResolution 的派生。
 	perCallFixedResolution = constant.Seedance25PerCallFixedResolution
+
+	// wan30ProMinDuration / wan30ProDefaultDuration 是 wan-3.0-pro 的时长口径。
+	//
+	// 上游文档（2026-11-17 版）原话「4–30」，比标准版 wan3.0-video 的 10-30
+	// 更宽 —— 这是**上游模型自身**的能力，不走改派，直接透传即可。
+	// 没传时长按 5 秒（文档示例值，也是最短档附近，客户最容易核对的取值）。
+	//
+	// ⚠️ 越界一律 400 fail-loud（validateExplicitDurationForModel），不做夹紧：
+	// 按条计费下把 60 秒夹成 30 秒，客户付了同价却少一半片长。
+	wan30ProMinDuration     = 4
+	wan30ProDefaultDuration = 5
 )
 
 // 导出的限制值，供条件路由中间件（middleware/seedance_route.go）在**改派前**

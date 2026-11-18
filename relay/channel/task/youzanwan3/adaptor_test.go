@@ -598,7 +598,8 @@ func TestNormalizeAPIRootStripsVersionSuffix(t *testing.T) {
 func TestGetModelListExposesYouzanModels(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	// 与上游 /v1/models 完全一致（wan3.0-smart / wan2.7-r2v 已不再展示）。
-	require.Equal(t, []string{"wan3.0-video", "wan3.0-video-prime"}, adaptor.GetModelList())
+	// 2026-11-18 加 wan-3.0-pro（上游文档 2026-11-17 版列为独立模型）。
+	require.Equal(t, []string{"wan3.0-video", "wan3.0-video-prime", "wan-3.0-pro"}, adaptor.GetModelList())
 }
 
 // TestEstimateBillingPrefersDynamicRatio 锁定「动态调价优先于代码常量」。

@@ -250,6 +250,8 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(getWan3SampleResolution('seedance2.5-特惠'), '720P')
     // 官网 720P 成片档：输出固定 720P，示例按 720P 写。
     assert.equal(getWan3SampleResolution('wan3.0-720p-特惠'), '720P')
+    // 有赞 wan-3.0-pro（2026-11-18 上架）：文档示例 size=1280x720，取最低档 720P。
+    assert.equal(getWan3SampleResolution('wan-3.0-pro'), '720P')
     // 非 wan3 系模型没有该参数，示例里不应出现 resolution。
     assert.equal(getWan3SampleResolution('autodl:minimax-h3-u24'), null)
     assert.equal(getWan3SampleResolution('gpt-6-luna'), null)
