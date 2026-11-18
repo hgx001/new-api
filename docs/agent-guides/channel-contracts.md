@@ -75,6 +75,34 @@
 - youzanwan3 adaptor 对 prime 外的所有模型主动拦参考视频/音频，报错文案明确指向「去掉素材或改用支持的模型」——这是设计内拒单，不是缺陷。
 - 2026-11-16 起规则九把这类请求改派 cp-seedance-2.5（CapCut 链路 2026-11-15 起音视频可透传；促销族三个 CapCut 出口统一 2.5 满血档，豆包 seedance-2-5 的备胎仍是 2.5flash）：触发面 = 促销族源模型 + wan3.0-video 直连；准入与改写复用 prepareCapcutRoute（1080P / 2–3 秒 / 首尾帧 / data URI 素材仍留源链路吃 400，原因准确）；三态开关 ref_av_capcut_enabled 默认开、不受规则总开关连坐（IsAnyRouteEnabled 单独判定）。
 
+## 有赞 wan-3.0-pro：按条计价 + 分辨率分档（2026-11-18）
+
+上游文档 https://api.youzan666.vip/docs/ （2026-11-17 版）契约，与标准版
+wan3.0-video **不是同一套**，adaptor 里按模型名分支处理（`isWan30ProModel`）：
+
+- 时长 4–30 整数秒，不传默认 5；显式越界本地 400（不吸附、不改派）。
+- 分辨率 720P / 1080P；size 只有 `1280x720 / 720x1280 / 1920x1080 / 1080x1920`。
+  客户照抄文档只传 `size` 时用 `resolutionFromWan30ProSize` 反推档位，
+  **不能**让它落到 `normalizeResolution` 的默认 720P —— 那是「收 720P 的钱给 1080P」。
+- 画幅仅 16:9 / 9:16，缺省 16:9（不是 standard 的 adaptive，上游不认）。
+- 素材走顶层 `images` / `videos` / `audios` 数组（旧字段 `image`/`videos`/`audios`
+  也会并入）。上限 10 / 5 / 5、合计 20，与 `maxReference*` 常量一致。
+  参考视频、参考音频**放行** —— 不要套用标准版「仅 reference_image」那道闸。
+- 计费：按条 ¥4.5（720P）/ ¥5.5（1080P），与时长无关。`EstimateBilling`
+  只返 `{"size": ratio}`，**绝不能带 seconds**（带了就是 ¥4.5 × 30 = ¥135）。
+
+⚠️ **最容易踩的坑：按条计价 ≠ 按次免倍率。**
+本项目里这是两个概念：前者看是否配了 `ModelPrice`（`quota_type=1`），
+后者看 `constant.IsTaskPerCallModel`。`relay_task.go` 对按次档会**清空全部倍率**
+（`mergeEstimatedRatios` / `applyBillingRatios` / `resolveSubmitQuota` 三处），
+而 pro 的 1080P 售价靠的正是 size 倍率。把 pro 加进按次名单 → 1080P 静默
+按 ¥4.5 收（少收 18%，无报错）。`TestWan30ProNotInPerCallSuppressionList`
+钉住这条前提。
+
+上架台账：`scripts/prod-wan30pro-20261118.sql`（渠道 17 `models`、`abilities`、
+`ModelPrice` 基准价 4.5/7.3、`models` 卡片描述）。改完等 `SyncChannelCache` /
+`SyncOptions` 的 60 秒周期生效，不用重启容器。
+
 ## wan3.0-720p-特惠 按能力分流到心笔（2026-11-06，⚠️ 2026-11-16 已下线）
 
 > **2026-11-16 下线**：心笔不稳定，用户要求特惠全部走 Wan3 官网链路（480P 生成 +
