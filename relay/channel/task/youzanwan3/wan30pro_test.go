@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -254,4 +255,28 @@ func TestWan30ProUpstreamModelMapping(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "wan-3.0-pro", got)
+}
+
+// TestWan30ProNotInPerCallSuppressionList 钉住一个**反直觉但必须成立**的前提：
+// wan-3.0-pro 虽然按条计价（ModelPrice 一口价），却**不能**进
+// constant.IsTaskPerCallModel 的名单。
+//
+// 原因：relay/relay_task.go 对「按次档」的处理是**清空所有倍率**
+// （mergeEstimatedRatios → `PriceData.OtherRatios = nil`，applyBillingRatios
+// 直接 return，resolveSubmitQuota 不重算）。那套逻辑是为 seedance2.5-活动
+// 这类「单一档位、售价恒定」的模型写的 —— 清空是对的。
+//
+// 但 wan-3.0-pro 有 720P / 1080P 两个**不同售价**，靠的正是 EstimateBilling
+// 返回的 size 倍率（1080P = 5.5/4.5）。一旦有人把它加进按次名单：
+//   - 1080P 会被静默按 720P 的 ¥4.5 收（少收 18%），账单上完全看不出来；
+//   - 更糟的是没有任何报错，只能靠对账发现。
+//
+// 所以「按条计价」与「按次免倍率」在本项目里是**两个不同的概念**，
+// 前者看 ModelPrice 是否配置，后者看 constant.IsTaskPerCallModel。
+func TestWan30ProNotInPerCallSuppressionList(t *testing.T) {
+	assert.False(t, constant.IsTaskPerCallModel(wan30ProModel),
+		"wan-3.0-pro 靠 size 倍率区分 720P/1080P，进按次名单会让 1080P 按 ¥4.5 静默少收")
+
+	// 对照：真正的一口价模型仍在名单里（这条防的是「为了修上面的问题把名单整个删掉」）。
+	assert.True(t, constant.IsSeedance25PerCall("seedance2.5-活动"))
 }
