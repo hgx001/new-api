@@ -905,6 +905,70 @@ function buildSeedance25FixedTierVideoParameters(
 }
 
 /**
+ * wan-3.0-pro（有赞，2026-11-18 上架）：**按条计费**的独立上游模型。
+ *
+ * 为什么必须单列，不能落进通用 VIDEO_PARAMS：
+ *   - 通用表写 `duration 1 ~ 60`、`aspect_ratio 16:9/9:16/1:1`、`fps 8 ~ 60`，
+ *     且**没有 resolution** —— 三条都与上游文档不符：
+ *     实际是 4—30 秒整数秒、画幅仅 16:9 / 9:16、无 fps 参数、有 720P/1080P 两档。
+ *   - 客户照抄广场示例传 `aspect_ratio=1:1` 会被后端 400（`invalid_ratio`）。
+ *   - 落进通用 wan3 表也不行：那是 10—30 秒、默认 720P 的按秒口径。
+ *
+ * 命名口径与上游文档一致：对客用 `resolution`（720P/1080P）+ `aspect_ratio`，
+ * 后端会按「比例 → 四选一 size」映射成 1280x720 / 720x1280 / 1920x1080 /
+ * 1080x1920；客户也可直接传 `size`，后端反推档位计费（不会静默降档）。
+ *
+ * 时长写 `4 ~ 30` + defaultValue=5：default 只是「不传时按 5 秒跑」，
+ * 不是唯一合法值；显式 <4 或 >30 会被后端 400（不做吸附）。
+ * 售价与时长无关（720P ¥4.5/条、1080P ¥5.5/条），所以这里不写 price 语义，
+ * 只描述参数能力。
+ */
+function buildWan30ProVideoParameters(): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      type: 'integer',
+      range: '4 ~ 30',
+      defaultValue: 5,
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: WAN3_RESOLUTIONS,
+      defaultValue: '720P',
+      descriptionKey: 'Output video resolution',
+    },
+    {
+      name: 'aspect_ratio',
+      type: 'enum',
+      enumValues: ['16:9', '9:16'],
+      defaultValue: '16:9',
+      descriptionKey: 'Output aspect ratio',
+    },
+    {
+      name: 'images',
+      type: 'array',
+      range: '0 ~ 10',
+      descriptionKey: 'Image input',
+    },
+    {
+      name: 'videos',
+      type: 'array',
+      range: '0 ~ 5',
+      descriptionKey: 'Video input',
+    },
+    {
+      name: 'audios',
+      type: 'array',
+      range: '0 ~ 5',
+      descriptionKey: 'Audio input',
+    },
+  ]
+}
+
+/**
  * wan3.0-720p-特惠：输出档位固定 720P，时长 10—30 秒
  *（2026-11-15 起与促销母本同链路 —— 标准版 wan3.0-video，最低 10 秒）。
  * 名字不以 `wan3.0-video` 开头，必须单列 —— 否则会落进通用 wan3 表
@@ -1202,6 +1266,11 @@ export function buildSupportedParameters(
   if (cat === 'video') {
     if (model.model_name === 'wan2.7-r2v') {
       return buildR2VVideoParameters()
+    }
+    // wan-3.0-pro 是有赞的**独立**上游模型（不是 wan3.0 标准版别名）：
+    // 4—30 秒、720P/1080P、仅 16:9/9:16，按条计费。必须在通用表之前判定。
+    if (model.model_name === 'wan-3.0-pro') {
+      return buildWan30ProVideoParameters()
     }
     // seedance2.5 促销族：
     //   - 活动版是固定档（30 秒 / 720P），参数表必须锁死；

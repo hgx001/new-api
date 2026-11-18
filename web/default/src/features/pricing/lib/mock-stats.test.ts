@@ -211,6 +211,38 @@ describe('Wan3 Model Square API parameters', () => {
     assert.equal(params.aspect_ratio.defaultValue, '9:16')
   })
 
+  // 回归守卫：wan-3.0-pro 是有赞的独立上游模型（不是 wan3.0 标准版别名），
+  // 名字命中的是通用 `/wan-/` 规则。漏登记就会落进通用 VIDEO_PARAMS，
+  // 显示「duration 1~60、aspect_ratio 含 1:1、fps」且**没有 resolution**
+  // —— 三条都与上游文档不符，客户照抄示例传 1:1 会被后端 400。
+  test('describes wan-3.0-pro with its own 4-30s / 720P-1080P / 16:9-9:16 contract', () => {
+    const params = parametersByName('wan-3.0-pro')
+    assert.deepEqual(parameterNames('wan-3.0-pro'), [
+      'prompt',
+      'duration',
+      'resolution',
+      'aspect_ratio',
+      'images',
+      'videos',
+      'audios',
+    ])
+    // 4—30 秒整数秒，不传默认 5 秒；与时长无关的固定售价由后端计费保证。
+    assert.equal(params.duration.range, '4 ~ 30')
+    assert.equal(params.duration.defaultValue, 5)
+    // 仅 720P / 1080P 两档，示例取最低档。
+    assert.deepEqual(params.resolution.enumValues, ['720P', '1080P'])
+    assert.equal(params.resolution.defaultValue, '720P')
+    // 画幅仅 16:9 / 9:16 —— 通用表里的 1:1 必须消失。
+    assert.deepEqual(params.aspect_ratio.enumValues, ['16:9', '9:16'])
+    assert.equal(params.aspect_ratio.defaultValue, '16:9')
+    // 参考素材上限与上游文档一致（合计 ≤20 项由后端校验）。
+    assert.equal(params.images.range, '0 ~ 10')
+    assert.equal(params.videos.range, '0 ~ 5')
+    assert.equal(params.audios.range, '0 ~ 5')
+    // 该模型没有 fps 参数，通用表的 fps 必须消失。
+    assert.equal(params.fps, undefined)
+  })
+
   test('describes wan2.7-r2v limits including the required reference images', () => {
     const params = parametersByName('wan2.7-r2v')
     assert.deepEqual(parameterNames('wan2.7-r2v'), [
