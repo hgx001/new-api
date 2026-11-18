@@ -222,9 +222,9 @@ const (
 	// tiktokUpstreamModel 是发往 ArcReel 的上游模型名；ArcReel 侧 TikTok 按
 	// **平台**记账（billing_model_id 固定 "tiktok-symphony"），所以它与公开名不同。
 	tiktokUpstreamModel = "tiktok-symphony"
-	ModelImage         = "Nano Banana Pro"
-	ModelVideo         = "gemini-web-video"
-	ModelReverse       = "jimeng-video-reverse"
+	ModelImage          = "Nano Banana Pro"
+	ModelVideo          = "gemini-web-video"
+	ModelReverse        = "jimeng-video-reverse"
 	// ModelSeedream50Flash 是**豆包官网**「图像生成」入口的默认模型
 	// （2026-11-07 上架）。公开名**就是官网显示名**（用户口径：
 	// 「命名就按照官网的命名用」），不做本地化改写。
@@ -433,11 +433,11 @@ var modelSpecs = map[string]modelSpec{
 	// 公开名 → 官网档位真名的翻译在这一层做，ArcReel/Worker 两侧白名单仍是真名。
 	//
 	// 计价：五档**统一按秒**（EstimateBilling 返回 seconds 倍率），720p 再乘 size 倍率。
-	ModelCapcut25:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
-	ModelCapcut25Flash: {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25Flash},
-	ModelCapcut20:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
-	ModelCapcut20Fast:  {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
-	ModelCapcut20Mini:  {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
+	ModelCapcut25:       {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
+	ModelCapcut25Flash:  {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25Flash},
+	ModelCapcut20:       {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
+	ModelCapcut20Fast:   {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
+	ModelCapcut20Mini:   {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
 	ModelTikTokSymphony: {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstreamModel},
 }
 
@@ -1072,6 +1072,31 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 				fmt.Errorf("%s accepts at most %d reference images, got %d", norm.Model, capcutMaxReferenceImages, norm.ReferenceCount),
 				"invalid_request", http.StatusBadRequest,
 			)
+		}
+		// 三类素材下限（音频 ≥2s / 参考图短边 ≥300px / 参考视频短边 ≥720px）：
+		// 官网对越界素材静默处理，等到 Worker 开页上传才暴露时额度已扣、页面白等。
+		// 放在这里（validate 阶段、预扣费之前）：实测越界 → 400 不扣费不建单；
+		// 探测失败放行（地址只对上游可达时抓不到 ≠ 越界），但必须留痕。
+		boundsClient, boundsClientErr := service.GetHttpClientWithProxy("")
+		if boundsClientErr != nil {
+			return service.TaskErrorWrapperLocal(
+				errors.Wrap(boundsClientErr, "new http client failed for media bounds"), "invalid_input_reference", http.StatusInternalServerError)
+		}
+		unmeasuredBounds, boundsErr := taskcommon.EnforceReferenceMediaMinBounds(
+			context.Background(), norm.Images, norm.Videos, norm.Audios,
+			taskcommon.ReferenceMediaMinBounds{
+				AudioMinSeconds:   capcutMinReferenceAudioSeconds,
+				ImageMinShortSide: capcutMinReferenceImageShortSide,
+				VideoMinShortSide: capcutMinReferenceVideoShortSide,
+			}, boundsClient)
+		if boundsErr != nil {
+			logger.LogInfo(c, audit.auditLog(norm.Model))
+			return service.TaskErrorWrapperLocal(boundsErr, "invalid_input_reference", http.StatusBadRequest)
+		}
+		if len(unmeasuredBounds) > 0 {
+			logger.LogWarn(c, fmt.Sprintf(
+				"manwu capcut 参考素材下限不可测（已放行）：model=%s count=%d urls=%s",
+				norm.Model, len(unmeasuredBounds), strings.Join(unmeasuredBounds, ",")))
 		}
 		// 参考素材处置**留痕**：三个计数就是「客户传了什么、我们保留了什么」的对账依据。
 		logger.LogInfo(c, audit.auditLog(norm.Model))
@@ -1892,6 +1917,21 @@ const (
 // 视频与音频**各自**按这个数校验（口径见设计文档 D1 的「合计」澄清）：
 // 视频参与计费、音频不参与，合并计量会让客户收到与账单无关的拒单理由。
 const capcutReferenceTotalSeconds = taskcommon.MaxReferenceVideoSeconds
+
+// CapCut 三类参考素材的**下限**（官网静默处理越界素材，必须在预扣费前实测拦截）。
+//
+// 与 Worker 端 src/platforms/capcut/params.ts 的 CAPCUT_REFERENCE_*_BOUNDS 同口径：
+//   - 音频 ≥2s：2026-11-17 生产取证，1.58s / 1.79s 四单被官网静默丢弃，2.21s 起全收；
+//   - 参考图短边 ≥300px：官网 image_length_out_of_range 的 limit 下界（逐档真机标定）；
+//   - 参考视频短边 ≥720px：2026-11-18 三单哈希对照，640×360 失败 / 1280×720 成功。
+//
+// ⚠️ 改这三个数必须三仓同批（new-api 这里 + Worker params.ts + ArcReel 说明）。
+// 短边口径 min(宽,高)，竖屏 720×1280 不被误杀。
+const (
+	capcutMinReferenceAudioSeconds   = 2
+	capcutMinReferenceImageShortSide = 300
+	capcutMinReferenceVideoShortSide = 720
+)
 
 // capcutRefVideoSecondsContextKey 保存 validate 阶段探测出的参考视频计费总秒数。
 //
