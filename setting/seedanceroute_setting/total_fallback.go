@@ -1,4 +1,4 @@
-// Package seedanceroute_setting 的「规则八：全量兜底 → cp-seedance-2.5」。
+// Package seedanceroute_setting 的「规则八：全量兜底 → CapCut（按时长分档）」。
 //
 // 背景（2026-11-15 老板需求）：
 //
@@ -8,8 +8,23 @@
 //	都建立在「源链路至少能跑一部分请求」这个前提上。
 //
 //	所以需要第八条规则：一个**一键逃生口**。打开之后，
-//	这两个模型收到的请求**无条件**改派到 cp-seedance-2.5，
-//	不看时长、不看比例、不看提示词内容、不看有没有首尾帧。
+//	这两个模型收到的请求**无条件**改派到 CapCut，
+//	不看比例、不看提示词内容、不看有没有首尾帧。
+//
+// ── 目标按时长分档（2026-11-18 老板口径）──
+//
+//	打开开关后不再全量钉死一个模型，按**客户请求的秒数**选档：
+//
+//	  · 1–15 秒（含 15 秒）→ cp-seedance-2.0（CapCut Seedance 2.0 标准档）；
+//	  · 16 秒及以上        → cp-seedance-2.5flash（原有目标，2.5 系列上界 30 秒）。
+//
+//	1–15 秒这一档有额外素材闸门：**参考图超过 9 张**时不走 2.0，
+//	仍走 2.5flash（规则八是逃生口，不能把请求丢回已经挂掉的源链路）。
+//	注意 9 张是本规则对短档的保守口径；CapCut adaptor 自己的物理上限是
+//	30 张（2026-11-14 用户口径），两者不要混为一谈。
+//
+//	「无条件」指的是**触发条件**无条件，不是目标模型无条件 ——
+//	分档只看秒数与参考图张数这两个客观事实，运营不需要再配任何开关。
 //
 // ── 「无条件」到底无到什么程度 ──
 //
@@ -51,24 +66,61 @@
 //	这是**有意的**：停用规则 ≠ 链路可用，两者是不同的事。
 package seedanceroute_setting
 
-// DefaultTotalFallbackTargetModel 是规则八的目标模型（CapCut Seedance 2.5 Flash）。
+// DefaultTotalFallbackTargetModel 是规则八的**长档**目标（CapCut Seedance 2.5 Flash）。
 //
-// 2026-11-17 口径（老板）：促销族所有 CapCut 出口（规则六/七/八/九）统一走
-// cp-seedance-2.5flash；与取消 480p+超分、改 720p 原生直出同批执行。
-// 豆包备胎（DefaultFailoverAltModel）本就是 2.5 Flash，仍保持原样。
+// 2026-11-17 口径：促销族 CapCut 出口统一走 2.5flash，取消 480p+超分、改
+// 720p 原生直出；豆包备胎（DefaultFailoverAltModel）本就是 2.5 Flash，仍保持原样。
+// 2026-11-18 起 1–15 秒改走短档 cp-seedance-2.0，本常量只管 16 秒及以上。
 //
 // ⚠️ 生成档位是 720p 原生直出（middleware 的 capcutGenerationResolutionValue），
-// 2026-11-17 起不再 480p 生成 + 超分（超分画质不达标）。对客售价与交付档都不变。
+// 对客售价与交付档都不变 —— 改派到哪个档都不改客户账单。
 //
 // 为什么固定成常量、不给 Policy 字段：
-// 规则八的准入与改写走的是 prepareCapcutRoute，它**只适配了这一条契约**
-// （480p/720p、4–30 秒、CapCut 比例表、参考视频/音频各 ≤5 个）。
-// 开放成可配置项的话，配成别的模型名就是一个「看起来配了、实际必挂」的
-// 静默故障 —— 与本包其它「配错就不生效」的字段不同，这个字段配错
-// 不是不生效，而是把请求改写到一条没适配过的链路上。
+// 规则八的准入与改写走的是 prepareCapcutRoute，它**只适配了这两条契约**
+// （480p/720p、4–30 秒 / 4–15 秒、CapCut 比例表、参考视频/音频各 ≤5 个）。
+// 开放成可配置项的话，配成没适配过的模型名就是一个「看起来配了、实际必挂」
+// 的静默故障。
 //
-// 要换目标时改这一行（并补对应准入），不要加配置项。
+// 要换目标时改这些常量（并补对应准入），不要加配置项。
 const DefaultTotalFallbackTargetModel = "cp-seedance-2.5flash"
+
+// DefaultTotalFallbackShortTargetModel 是规则八的**短档**目标（CapCut Seedance 2.0）。
+//
+// 与 cp-seedance-2.0fast / 2.0mini 是两个独立商品：标准档 4–15 秒、
+// 720p ¥0.30/秒（按秒计费）。规则六的 ≤10 秒分支走的是 2.0fast，不要混用。
+const DefaultTotalFallbackShortTargetModel = "cp-seedance-2.0"
+
+// TotalFallbackShortMaxSeconds 是短档的时长上界（**含** 15 秒）。
+//
+// 与 CapCut 官网 2.0 系列的 4–15 秒一致；16 秒起必须回 2.5 系列
+// （2.0 档上游滑杆上界就是 15，硬塞必 400）。
+const TotalFallbackShortMaxSeconds = 15
+
+// TotalFallbackShortMaxReferenceImages 是短档允许的最大参考图张数。
+//
+// 2026-11-18 老板口径「参考图超过 9 张就不走 2.0」。超过时**仍走规则八**
+// （落到长档 2.5flash），不丢回源链路 —— 规则八开着就说明源链路已经不可用。
+// ⚠️ 与 adaptor 的 capcutMaxReferenceImages（30）不是同一个数：
+// 后者是整条 CapCut 链路的物理上限，这里是短档的经营口径。
+const TotalFallbackShortMaxReferenceImages = 9
+
+// SelectTotalFallbackTarget 按客户请求的秒数与参考图张数选规则八目标。
+//
+// 纯函数、不读全局状态：中间件与后台状态展示必须拿到同一个答案。
+// seconds <= 0 按缺省 5 秒处理（调用方通常已归一化，这里兜底）。
+//
+// 参考图超 9 张时不返回短档：让调用方落到长档，而不是把请求留在
+// 已经挂掉的源链路（规则八的语义是逃生口，不是择优器）。
+func SelectTotalFallbackTarget(seconds, referenceImageCount int) string {
+	if seconds <= 0 {
+		seconds = 5
+	}
+	if seconds <= TotalFallbackShortMaxSeconds &&
+		referenceImageCount <= TotalFallbackShortMaxReferenceImages {
+		return DefaultTotalFallbackShortTargetModel
+	}
+	return DefaultTotalFallbackTargetModel
+}
 
 // IsTotalFallbackEnabled 判断规则八的开关是否打开（不看源模型，也不看规则总开关）。
 //

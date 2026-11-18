@@ -117,3 +117,41 @@ func TestWithTotalFallbackDisabledRestoresDefaultBehavior(t *testing.T) {
 	assert.False(t, IsTotalFallbackEnabled())
 	assert.False(t, TotalFallbackEnabledFor("seedance2.5-特惠"))
 }
+
+// ── 2026-11-18 分档口径 ──────────────────────────────────────────────
+//
+// 这组是纯函数表测：分档只看秒数与参考图张数，不读全局状态。
+// 边界值（15/16 秒、9/10 张）是重点 —— 差一档就是另一条上游、
+// 另一套价格，而两条链路在管理后台看起来只差一个模型名。
+func TestSelectTotalFallbackTargetTable(t *testing.T) {
+	tests := []struct {
+		name      string
+		seconds   int
+		refImages int
+		want      string
+	}{
+		{"未传时长按 5 秒落短档", 0, 3, DefaultTotalFallbackShortTargetModel},
+		{"4 秒短档", 4, 0, DefaultTotalFallbackShortTargetModel},
+		{"10 秒短档", 10, 3, DefaultTotalFallbackShortTargetModel},
+		{"15 秒含边界走短档", 15, 9, DefaultTotalFallbackShortTargetModel},
+		{"16 秒走长档", 16, 0, DefaultTotalFallbackTargetModel},
+		{"30 秒走长档", 30, 2, DefaultTotalFallbackTargetModel},
+		{"短档参考图 10 张落长档", 10, 10, DefaultTotalFallbackTargetModel},
+		{"15 秒参考图 10 张落长档", 15, 10, DefaultTotalFallbackTargetModel},
+		{"长档参考图超 9 张仍走长档", 20, 10, DefaultTotalFallbackTargetModel},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, SelectTotalFallbackTarget(tt.seconds, tt.refImages))
+		})
+	}
+}
+
+// 常量值本身也要锁：前端描述、后台状态、中间件改写三处都读它们，
+// 单独改一处不会编译失败，但界面会开始说谎。
+func TestTotalFallbackTierConstants(t *testing.T) {
+	assert.Equal(t, "cp-seedance-2.0", DefaultTotalFallbackShortTargetModel)
+	assert.Equal(t, "cp-seedance-2.5flash", DefaultTotalFallbackTargetModel)
+	assert.Equal(t, 15, TotalFallbackShortMaxSeconds)
+	assert.Equal(t, 9, TotalFallbackShortMaxReferenceImages)
+}

@@ -32,7 +32,7 @@ func TestDoubaoRouteAdminStateReportsEcommerceFields(t *testing.T) {
 	state := doubaoRouteAdminState()
 
 	assert.Equal(t, true, state["ecommerce_enabled"])
-	assert.Equal(t, "cp-seedance-2.5", state["ecommerce_target_model"])
+	assert.Equal(t, "cp-seedance-2.5flash", state["ecommerce_target_model"])
 	assert.Equal(t, true, state["ecommerce_ratio_condition"])
 	assert.Equal(t, true, state["ecommerce_seconds_condition"])
 	assert.Equal(t, 25, state["ecommerce_trigger_seconds"])
@@ -62,9 +62,9 @@ func TestDoubaoRouteAdminStateReportsShortCapcutFields(t *testing.T) {
 	state := doubaoRouteAdminState()
 
 	assert.Equal(t, true, state["short_capcut_enabled"])
-	assert.Equal(t, "cp-seedance-2.0", state["short_capcut_target_model"])
-	assert.Equal(t, "cp-seedance-2.0", state["short_active_target"])
-	assert.Equal(t, []string{"cp-seedance-2.0"}, state["short_active_targets"])
+	assert.Equal(t, "cp-seedance-2.5flash", state["short_capcut_target_model"])
+	assert.Equal(t, "cp-seedance-2.5flash", state["short_active_target"])
+	assert.Equal(t, []string{"cp-seedance-2.5flash"}, state["short_active_targets"])
 }
 
 // 校验先行：enabled 没传时必须拒绝。
@@ -182,7 +182,7 @@ func TestSetShortCapcutLinkAdminTurnsOffOtherBranches(t *testing.T) {
 	require.NotNil(t, saved.ShortLinkEnabled, "心笔开关必须被写成显式值")
 	assert.False(t, *saved.ShortLinkEnabled, "心笔内链应被自动关掉")
 
-	assert.Equal(t, "cp-seedance-2.0", seedanceroute_setting.ActiveShortRouteTarget(),
+	assert.Equal(t, "cp-seedance-2.5flash", seedanceroute_setting.ActiveShortRouteTarget(),
 		"当前生效方必须是 CapCut 快速档")
 }
 

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,20 +11,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 规则八（全量兜底 → cp-seedance-2.5）的中间件测试。
+// 规则八（全量兜底 → CapCut，按时长分档）的中间件测试。
 //
-// 语义（2026-11-15 老板需求）：seedance2.5-特惠 / seedance2.5-活动 的常驻链路
-// 是有赞。有赞**彻底不能用**时，前七条规则全部失效（它们都假设源链路还能跑
-// 一部分）。这条是唯一不依赖该前提的逃生口：开关一开，请求**无条件**改派
-// CapCut 2.5 Flash，不看时长/比例/提示词内容/首尾帧。
+// 语义：seedance2.5-特惠 / seedance2.5-活动 的常驻链路是有赞。有赞
+// **彻底不能用**时，前七条规则全部失效（它们都假设源链路还能跑一部分）。
+// 这条是唯一不依赖该前提的逃生口：开关一开，请求**无条件**改派 CapCut，
+// 不看比例/提示词内容/首尾帧。
 //
-// 本文件锁两类行为：
+// 2026-11-18 起目标按时长在 CapCut 族内分档：
+//
+//	≤15 秒 → cp-seedance-2.0（短档）；>15 秒 → cp-seedance-2.5flash（长档）。
+//
+// 本文件锁三类行为：
 //  1. 「无条件」真的无条件 —— 短请求、长请求、非电商提示词、非 9:16 都改派；
-//  2. 目标链路的**物理能力**边界不改派（1080P / 2–3 秒 / 参考视频音频 /
-//     自适应比例带参考图）—— 那几类改派过去必 400，会把「链路挂了」
-//     伪装成「你的参数不合法」。
+//  2. **分档边界**（15/16 秒、参考图 9/10 张）—— 差一档就是另一条上游、
+//     另一套价格，而两条链路在后台看起来只差一个模型名；
+//  3. 目标链路的**物理能力**边界不改派（1080P / 2–3 秒 / 首尾帧 /
+//     自适应比例带参考图）—— 那几类改派过去必 400。
 
 const totalFallbackTarget = "cp-seedance-2.5flash"
+const totalFallbackShortTarget = "cp-seedance-2.0"
 
 // enableTotalFallback 只打开规则八（前七条都不配），测试结束恢复原状。
 //
@@ -61,7 +68,7 @@ func TestTotalFallbackRoutesShortPlainRequest(t *testing.T) {
 		"media":[{"type":"reference_image","url":"https://x/a.png"}]}`)
 	body := decodeBody(t, rec.body)
 
-	assert.Equal(t, totalFallbackTarget, body["model"], "规则八必须无条件改派 CapCut")
+	assert.Equal(t, totalFallbackShortTarget, body["model"], "12 秒必须落规则八短档")
 	assert.Equal(t, "12", body["seconds"], "时长必须原样下发（字符串形态）")
 	assert.Equal(t, "720p", body["resolution"], "生成档必须钉 720p 原生直出（不再超分）")
 	assert.Equal(t, "16:9", body["ratio"], "比例必须显式落到顶层 ratio")
@@ -119,7 +126,7 @@ func TestTotalFallbackIgnoresRatio(t *testing.T) {
 		"metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
-	assert.Equal(t, totalFallbackTarget, body["model"])
+	assert.Equal(t, totalFallbackShortTarget, body["model"])
 	assert.Equal(t, "9:16", body["ratio"])
 }
 
@@ -146,7 +153,7 @@ func TestTotalFallbackResolutionIgnoresSuperResolutionConfig(t *testing.T) {
 		rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat"}`)
 		body := decodeBody(t, rec.body)
 
-		assert.Equal(t, totalFallbackTarget, body["model"])
+		assert.Equal(t, totalFallbackShortTarget, body["model"])
 		assert.Equal(t, "720p", body["resolution"], "超分配置=%v 时都应原生出 720p", configured)
 	}
 }
@@ -162,7 +169,7 @@ func TestTotalFallbackKeepsSourceTierBillingRatio(t *testing.T) {
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
-	require.Equal(t, totalFallbackTarget, body["model"])
+	require.Equal(t, totalFallbackShortTarget, body["model"])
 	require.Equal(t, "720p", body["resolution"])
 	assert.True(t, rec.hasBillingSize, "必须显式记源模型口径的 size 倍率")
 	assert.Equal(t, 1.0, rec.billingSizeRatio, "720P 源档的倍率是 1.0")
@@ -180,25 +187,19 @@ func TestTotalFallbackSkips1080P(t *testing.T) {
 	assert.Empty(t, origin, "没改派就不该留计费原点")
 }
 
-// <10 秒的请求**也**走规则八（2026-11-16 老板口径：规则八是真无条件）。
+// <10 秒的请求**也**走规则八（触发上无条件），但 2026-11-18 起落在短档
+// cp-seedance-2.0 —— 规则六的 ≤10 秒分支在规则八开着时根本没机会执行。
 //
-// 老板原话：「这个只要勾选了全量无条件后全部到 2.5 Flash 是没问题的，不用管」。
-//
-// 早先这里曾断言 <10 秒跳过规则八去落 cp-seedance-2.0 满血档
-// （2026-11-15 的临时口径），现已撤销 —— 规则八是**逃生口**，它的语义是
-// 「打开就全量」，任何时长特判都会把它变成「看情况的开关」，
-// 运营按下按钮时的心智模型被破坏。
-//
-// ⚠️ 要让 <10 秒落满血档，正确做法是**关掉规则八**（规则六是默认路径），
-// 而不是给规则八内部加时长特判。
+// 注意这与 11-15 的旧口径不同：那时 <10 秒是**跳过规则八**去落规则六，
+// 也就是留在源链路；现在两条都是 CapCut 出口，只是档位不同。
 func TestTotalFallbackTakesBelowTenSecondsToo(t *testing.T) {
 	enableTotalFallback(t)
 
 	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":8,"prompt":"a cat"}`)
 	decoded := decodeBody(t, rewritten)
 
-	assert.Equal(t, totalFallbackTarget, decoded["model"],
-		"规则八是无条件全量兜底，<10 秒同样改派")
+	assert.Equal(t, totalFallbackShortTarget, decoded["model"],
+		"规则八是无条件全量兜底，8 秒同样改派且落短档")
 }
 
 // 2–3 秒不改派：CapCut 时长下界 4 秒。
@@ -222,7 +223,7 @@ func TestTotalFallbackRoutesReferenceVideo(t *testing.T) {
 		"media":[{"type":"reference_video","url":"https://x/a.mp4"}],"prompt":"a cat"}`)
 	decoded := decodeBody(t, rewritten)
 
-	assert.Equal(t, totalFallbackTarget, decoded["model"], "带参考视频应改派")
+	assert.Equal(t, totalFallbackShortTarget, decoded["model"], "带参考视频应改派（12 秒落短档）")
 	assert.Equal(t, []interface{}{"https://x/a.mp4"}, decoded["videos"],
 		"参考视频必须抬到顶层 videos")
 	assert.NotContains(t, decoded, "media", "media 必须摘掉，否则同一视频投两次")
@@ -235,7 +236,7 @@ func TestTotalFallbackRoutesReferenceAudio(t *testing.T) {
 	rewritten, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":12,"audios":["https://x/a.mp3"],"prompt":"a cat"}`)
 	decoded := decodeBody(t, rewritten)
 
-	assert.Equal(t, totalFallbackTarget, decoded["model"], "带参考音频应改派")
+	assert.Equal(t, totalFallbackShortTarget, decoded["model"], "带参考音频应改派（12 秒落短档）")
 	assert.Equal(t, []interface{}{"https://x/a.mp3"}, decoded["audios"],
 		"参考音频必须抬到顶层 audios")
 }
@@ -266,19 +267,15 @@ func TestTotalFallbackSkipsWhenTargetChannelUnavailable(t *testing.T) {
 
 // 没传时长时按 5 秒下发：这是源链路与 CapCut **共同**的缺省值，
 // 改派前后成片长度一致。
-// 没传时长 → 规则八按缺省 5 秒处理。
-//
-// ⚠️ 2026-11-15 起 5 秒 <10 秒，**跳过规则八**（老板口径：<10 秒走
-// CapCut 满血档 cp-seedance-2.0）—— 所以这个用例现在断言「不被规则八接走」。
-// 见 TestTotalFallbackSkipsBelowTenSeconds。
+// 没传时长 → 规则八按缺省 5 秒处理，并按 5 秒落短档 cp-seedance-2.0。
 func TestTotalFallbackDefaultsMissingSecondsToFive(t *testing.T) {
 	enableTotalFallback(t)
 
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","prompt":"a cat"}`)
 	body := decodeBody(t, rec.body)
 
-	assert.Equal(t, totalFallbackTarget, body["model"],
-		"规则八是无条件全量兜底，没传时长（缺省 5 秒）同样改派")
+	assert.Equal(t, totalFallbackShortTarget, body["model"],
+		"规则八是无条件全量兜底，没传时长（缺省 5 秒）同样改派且落短档")
 	assert.Equal(t, "5", body["seconds"],
 		"缺省时长必须按 5 秒下发 —— 与源链路、CapCut 的共同缺省一致")
 }
@@ -327,14 +324,55 @@ func TestTotalFallbackIgnoresNonSourceModel(t *testing.T) {
 func TestTotalFallbackNeverWritesEmptyModel(t *testing.T) {
 	enableTotalFallback(t)
 
-	// 12 秒（≥10 秒才会走规则八；<10 秒跳过规则八）。
+	// 12 秒 → 规则八短档。
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":12,"prompt":"a cat"}`)
-	require.True(t, strings.Contains(rec.body, `"model":"`+totalFallbackTarget+`"`))
+	require.True(t, strings.Contains(rec.body, `"model":"`+totalFallbackShortTarget+`"`))
 	assert.NotContains(t, rec.body, `"model":""`)
 }
 
-// 编译期保证：目标模型常量与 CapCut 2.5 Flash 的对外名一致。
-// 改错这个名字的后果是「改派到一个不存在的模型」→ Distribute 503。
+// ── 2026-11-18 分档边界回归锁 ────────────────────────────────────────
+//
+// 这两条是本次需求的核心不变量：15 秒含边界走短档，16 秒走长档；
+// 参考图 9 张走短档，10 张落长档。差一格就是另一条上游、另一套价格，
+// 而代码里只是 `<=` 与 `<` 的差别 —— 编译和类型检查都抓不住。
+func TestTotalFallbackTierBoundaryBySeconds(t *testing.T) {
+	enableTotalFallback(t)
+
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat"}`)
+	body := decodeBody(t, rec.body)
+	assert.Equal(t, totalFallbackShortTarget, body["model"], "15 秒含边界必须走短档")
+
+	rec = runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":16,"prompt":"a cat"}`)
+	body = decodeBody(t, rec.body)
+	assert.Equal(t, totalFallbackTarget, body["model"], "16 秒必须走长档")
+	assert.Equal(t, "16", body["seconds"], "分档不能改变下发的时长")
+}
+
+func TestTotalFallbackShortTierReferenceImageLimit(t *testing.T) {
+	enableTotalFallback(t)
+
+	// 9 张（含边界）仍走短档。显式给 ratio —— 带参考图而无比例会被
+	// CapCut 的 adaptive 闸门挡掉，那是另一条不变量，不是这里要测的。
+	nine := `{"model":"seedance2.5-特惠","seconds":12,"ratio":"16:9","prompt":"a cat","images":[`
+	for i := 0; i < 9; i++ {
+		if i > 0 {
+			nine += ","
+		}
+		nine += fmt.Sprintf(`"https://x/%d.png"`, i)
+	}
+	nine += `]}`
+	body := decodeBody(t, runRouteFull(t, nine).body)
+	assert.Equal(t, totalFallbackShortTarget, body["model"], "9 张参考图应走短档")
+
+	ten := strings.Replace(nine, `"https://x/8.png"`, `"https://x/8.png","https://x/9.png"`, 1)
+	body = decodeBody(t, runRouteFull(t, ten).body)
+	assert.Equal(t, totalFallbackTarget, body["model"],
+		"10 张参考图必须落长档，而不是留在已挂掉的源链路")
+}
+
+// 编译期保证：两个目标模型常量与 CapCut 对外名一致。
+// 改错名字的后果是「改派到一个不存在的模型」→ Distribute 503。
 func TestTotalFallbackTargetMatchesCapcutFlash(t *testing.T) {
 	assert.Equal(t, "cp-seedance-2.5flash", seedanceroute_setting.TotalFallbackTargetModel())
+	assert.Equal(t, "cp-seedance-2.0", seedanceroute_setting.DefaultTotalFallbackShortTargetModel)
 }

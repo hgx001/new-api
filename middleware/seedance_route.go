@@ -299,8 +299,9 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 2026-11-15 老板口径：这两个模型名的常驻链路是有赞；有赞**彻底不能用**时
 		// （渠道被关 / 账号封 / 上游大面积失败），前七条规则全部失效 ——
 		// 它们都建立在「源链路至少能跑一部分请求」这个前提上。
-		// 这条是唯一的逃生口：打开开关后，请求**无条件**改派
-		// cp-seedance-2.5，不看时长/比例/提示词内容/首尾帧。
+		// 这条是唯一的逃生口：打开开关后，请求**无条件**改派 CapCut，
+		// 不看比例/提示词内容/首尾帧；目标按秒数分档：
+		// ≤15 秒 → cp-seedance-2.0，>15 秒 → cp-seedance-2.5flash。
 		//
 		// 为什么排在规则七之前：规则八开着时「全量都走同一条链路」，
 		// 规则七再判一次关键词/比例/时长纯属白算；更糟的是日志里会出现
@@ -318,14 +319,13 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 非 http(s) 直链的图/视频/音频一律不改派（CapCut 只收公网直链）。
 		// 逐条理由见 setting/seedanceroute_setting/total_fallback.go 包头注释。
 		//
-		// ⚠️ 规则八是**真无条件**：不做任何时长特判（2026-11-16 老板口径
-		// 「勾选了全量无条件后全部到 2.5 Flash 是没问题的，不用管」）。
-		// 早先这里曾让 <10 秒的请求跳过规则八去落规则六的满血档 —— 那条特判已撤：
-		// 规则八的语义就是「逃生口，打开就全量」，任何时长特判都会让它变成
-		// 「看情况的开关」，运营按下按钮时的心智模型被破坏。
-		// <10 秒要落满血档的话，**关掉规则八**即可（规则六是默认路径）。
+		// ⚠️ 2026-11-18 口径变更：上一版这里**刻意不做任何时长特判**
+		// （11-16「全量到 2.5 Flash 就行」），现在改成按时长在 CapCut 族内分档。
+		// 注意分档**不改变**规则的触发条件：开关一开仍然全量改派，
+		// 只是出口从「单一 2.5flash」变成「短请求 2.0 / 长请求 2.5flash」。
+		// 这与旧版被撤掉的「<10 秒跳过规则八落规则六」不是一回事 ——
+		// 那个是把请求留在源链路，本版两条都是 CapCut 出口。
 		if seedanceroute_setting.TotalFallbackEnabledFor(sourceModel) {
-			target := seedanceroute_setting.TotalFallbackTargetModel()
 			// 时长口径：客户传了就用**原值**（45 秒就该按 45 秒判越界，
 			// 不能悄悄夹到 30 秒 —— 那是「按 45 秒卖、出 30 秒」的静默改档）；
 			// 没传（或传了非法值）才按 5 秒，这是源链路与 CapCut 共同的缺省。
@@ -333,6 +333,12 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			if !hasSeconds || seconds <= 0 {
 				seconds = totalFallbackDefaultSeconds
 			}
+			// 参考图张数只用于短档闸门（>9 张落长档），不在这里挡：
+			// 超限的素材由 prepareCapcutRoute 按链路物理上限（30 张）处理。
+			// 口径必须与改写函数一致（allowDataURL=false, tolerateAV=true），
+			// 否则数出来的是另一组图，分档就会漂。
+			images, _ := collectReferenceImagesInternal(body, false, true)
+			target := seedanceroute_setting.SelectTotalFallbackTarget(seconds, len(images))
 			if newBody, routed := prepareTotalFallbackRoute(c, body, target, seconds); routed {
 				if applyRewrittenBody(c, newBody, billingOriginModel) {
 					// 计费仍按**源模型**算（客户买的是特惠/活动）：
@@ -344,8 +350,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 					setRouteBillingContext(c, seconds,
 						sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
 					logger.LogInfo(c, fmt.Sprintf(
-						"条件路由：命中规则八（全量兜底），改派 %s → %s（%d 秒）",
-						sourceModel, target, seconds))
+						"条件路由：命中规则八（全量兜底），改派 %s → %s（%d 秒，参考图 %d 张）",
+						sourceModel, target, seconds, len(images)))
 					c.Next()
 					return
 				}
@@ -759,8 +765,9 @@ const perCallFixedTierSeconds = constant.Seedance25PerCallFixedSeconds
 //   - ≥10 秒：留在有赞标准版源链路（同渠道同 adaptor，最不容易失败）。
 //
 // ⚠️ 这里放行 4 秒**不代表**有赞能跑 4 秒 —— 有赞标准版下界是 10 秒。
-//   4 秒请求能过这一关，靠的是它先被规则六第三分支改派走了；
-//   万一漏过路由层，源 adaptor 的 validateExplicitDurationForModel 会 fail-loud。
+//
+//	4 秒请求能过这一关，靠的是它先被规则六第三分支改派走了；
+//	万一漏过路由层，源 adaptor 的 validateExplicitDurationForModel 会 fail-loud。
 const (
 	perCallMinSeconds = 4
 	perCallMaxSeconds = 30
@@ -1334,7 +1341,7 @@ func hasFrameMedia(body map[string]interface{}) bool {
 // hasRefAudioVideoMedia 判断请求是否带参考视频/音频。
 //
 // 2026-11-15 上游切换后标准版 wan3.0-video 的 media 仅接受 reference_image
-//（上游文档原话），参考视频/音频落在它身上必 400。规则六的标准版兜底
+// （上游文档原话），参考视频/音频落在它身上必 400。规则六的标准版兜底
 // 分支必须跳过这类请求 —— CapCut 满血档还收 http(s) 直链的音视频，
 // 跳过才能让它们落到能接的链路；全都不接时留在源链路 fail-loud。
 func hasRefAudioVideoMedia(body map[string]interface{}) bool {

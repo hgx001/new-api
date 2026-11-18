@@ -90,10 +90,10 @@ const capcutMinDuration = 4
 // 与 relay/channel/task/manwu 的 capcutMaxDuration25 同值（30 秒）。
 const capcutMaxDuration25 = 30
 
-// capcutMaxDurationFast 是 CapCut 2.0 系列的时长上界（秒）。
+// capcutMaxDurationFast 是 CapCut 2.0 系列（2.0 / 2.0fast / 2.0mini）的时长上界（秒）。
 //
 // 与 relay/channel/task/manwu 的 capcutMaxDuration 同值（15 秒）。
-// 规则六第三分支的目标（cp-seedance-2.0）走这个上界。
+// 规则六第三分支（cp-seedance-2.0fast）与规则八短档（cp-seedance-2.0）共用。
 const capcutMaxDurationFast = 15
 
 // capcutMaxReferenceImages 是 CapCut 的参考图张数上限。
@@ -201,8 +201,17 @@ func prepareShortCapcutRoute(c *gin.Context, body map[string]interface{}, target
 // 与规则七的唯一差别：**没有触发条件**（规则七要命中电商关键词或勾选的条件），
 // 规则八是「开就全量」。所以这里连 seconds 都由调用方按缺省补齐后传入 ——
 // 规则七能保证 hasSeconds，规则八不能（客户完全不传时长是常见形态）。
+// prepareTotalFallbackRoute 组装「规则八（全量兜底）」的改派请求体。
+//
+// 时长上界按**目标模型**精确查表：2.0 标准档是 15 秒，2.5 系列是 30 秒。
+// 刻意不用 strings.Contains 判「2.0」—— `cp-seedance-2.0fast` 也含这个子串，
+// 误判会让快档被当成标准档放行（口径分叉的坑，见 constant/capcut_family.go）。
 func prepareTotalFallbackRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
-	return prepareCapcutRoute(c, body, targetModel, seconds, capcutMaxDuration25, "全量兜底规则八")
+	maxDuration := capcutMaxDuration25
+	if targetModel == seedanceroute_setting.DefaultTotalFallbackShortTargetModel {
+		maxDuration = capcutMaxDurationFast
+	}
+	return prepareCapcutRoute(c, body, targetModel, seconds, maxDuration, "全量兜底规则八")
 }
 
 // prepareRefAVRoute 组装「规则九（音视频参考改派）」的改派请求体。

@@ -60,7 +60,9 @@ type TotalFallbackCardProps = {
  * 这条解决「源链路（有赞）彻底不能用时，这两个模型还有没有出口」。
  *
  * 打开后 seedance2.5-特惠 / seedance2.5-活动 收到的所有请求无条件改派
- * cp-seedance-2.5flash —— 不看时长、不看比例、不看提示词内容、不看首尾帧。
+ * CapCut —— 不看比例、不看提示词内容、不看首尾帧；目标按时长分档：
+ * ≤{{shortMaxSeconds}} 秒走 cp-seedance-2.0，更长的走 cp-seedance-2.5flash。
+ * 所有阈值都从后端状态读，前端不写死数字（两处各写一份必然漂）。
  *
  * 界面上必须写清的三件事（少一条运营就会误判）：
  *
@@ -96,6 +98,10 @@ export function TotalFallbackCard({ channelModels }: TotalFallbackCardProps) {
   }, [load])
 
   const targetModel = policy?.total_fallback_target_model ?? ''
+  const shortTargetModel = policy?.total_fallback_short_target_model ?? ''
+  const shortMaxSeconds = policy?.total_fallback_short_max_seconds ?? 15
+  const shortMaxRefImages =
+    policy?.total_fallback_short_max_reference_images ?? 9
   const sourceModels = useMemo(
     () => (policy?.source_switches ?? []).map((item) => item.source_model),
     [policy?.source_switches]
@@ -108,8 +114,11 @@ export function TotalFallbackCard({ channelModels }: TotalFallbackCardProps) {
       .filter(Boolean)
     if (models.length === 0) return false
     if (targetModel && models.includes(targetModel)) return true
+    // 短档目标所在渠道也要显示卡片：运营在那边看到短请求涌进来时，
+    // 需要能立刻关掉入口（与长档目标同理由）。
+    if (shortTargetModel && models.includes(shortTargetModel)) return true
     return sourceModels.some((source) => models.includes(source))
-  }, [channelModels, sourceModels, targetModel])
+  }, [channelModels, shortTargetModel, sourceModels, targetModel])
 
   const apply = useCallback(
     async (nextOn: boolean) => {
@@ -159,14 +168,20 @@ export function TotalFallbackCard({ channelModels }: TotalFallbackCardProps) {
     ? sourceModels.join(' / ')
     : t('the configured source models')
 
+  const detailVars = {
+    sources,
+    seconds: shortMaxSeconds,
+    shortTarget: shortTargetModel,
+    target: targetModel,
+  }
   const detail = on
     ? t(
-        'Every request to {{sources}} goes to {{target}} — duration, ratio, prompt and frames are all ignored. Turn it off as soon as the source chain recovers.',
-        { sources, target: targetModel }
+        'Every request to {{sources}} now goes to CapCut: up to {{seconds}}s → {{shortTarget}}, longer → {{target}}. Ratio, prompt and frames are ignored. Turn it off as soon as the source chain recovers.',
+        detailVars
       )
     : t(
-        'Turn on only when the source chain is completely unusable: every request to {{sources}} goes to {{target}}, regardless of duration, ratio, prompt or frames.',
-        { sources, target: targetModel }
+        'Turn on only when the source chain is completely unusable: every request to {{sources}} goes to CapCut — up to {{seconds}}s → {{shortTarget}}, longer → {{target}}, regardless of ratio, prompt or frames.',
+        detailVars
       )
 
   return (
@@ -218,6 +233,19 @@ export function TotalFallbackCard({ channelModels }: TotalFallbackCardProps) {
           'These requests still stay on the source chain: 1080P, 2–3s, requests with first/last frames, and adaptive ratio combined with reference images.'
         )}
       </p>
+      {/* 短档的素材闸门：超过阈值张数时仍走长档，而不是丢回已挂掉的源链路。
+          这条必须写出来的理由与上面一样 —— 运营看到「短请求怎么没走 2.0」
+          时，得能在这里找到答案，而不是去查数据库。 */}
+      <p className='text-muted-foreground mt-1 text-[11px]'>
+        {t(
+          'Short requests with more than {{count}} reference images go to {{target}} instead of {{shortTarget}}.',
+          {
+            count: shortMaxRefImages,
+            target: targetModel,
+            shortTarget: shortTargetModel,
+          }
+        )}
+      </p>
       <p className='text-muted-foreground mt-1 text-[11px]'>
         {t(
           'Pricing is unchanged: customers are still billed for the model they requested.'
@@ -243,8 +271,8 @@ export function TotalFallbackCard({ channelModels }: TotalFallbackCardProps) {
             >
               <div>
                 {t(
-                  'Every request to {{sources}} will be routed to {{target}}, regardless of duration, ratio, prompt or frames.',
-                  { sources, target: targetModel }
+                  'Every request to {{sources}} will be routed to CapCut: up to {{seconds}}s → {{shortTarget}}, longer → {{target}}.',
+                  detailVars
                 )}
               </div>
               <div>

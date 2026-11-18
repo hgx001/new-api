@@ -92,9 +92,10 @@ func setTotalFallbackRouteAdmin(
 //
 // 字段命名与前端 api.ts 的 VideoRoutePolicy 一一对应。
 //
-// 只给两个字段（开关 + 目标模型）：这条规则没有阈值、没有关键词、
-// 没有条件勾选 —— 多给的每个字段都要有前端能解释的语义，
-// 否则运营会以为「还有别的东西可以调」。
+// 字段分两类：开关 + **只读的分档口径**。后者没有阈值输入框、没有关键词、
+// 没有条件勾选 —— 前端只拿它们渲染说明文字，运营点击不会改变这些值。
+// 2026-11-18 起目标按秒数分档，前端必须知道短档目标/秒数阈值/参考图上限，
+// 否则界面上那句「全部到 2.5flash」就是错的。
 func appendTotalFallbackState(state gin.H) {
 	// 用 IsTotalFallbackEnabled（= 开关打开**且**配了源模型）而不是直接读
 	// policy.TotalFallbackEnabled：界面显示的必须是「实际会不会生效」。
@@ -102,4 +103,8 @@ func appendTotalFallbackState(state gin.H) {
 	// 而中间件一个请求都不会改派 —— 那种状态没有任何报错。
 	state["total_fallback_enabled"] = seedanceroute_setting.IsTotalFallbackEnabled()
 	state["total_fallback_target_model"] = seedanceroute_setting.TotalFallbackTargetModel()
+	// 短档口径（2026-11-18）：前端描述从后端拿，不在 TS 里另写一份「15」「9」。
+	state["total_fallback_short_target_model"] = seedanceroute_setting.DefaultTotalFallbackShortTargetModel
+	state["total_fallback_short_max_seconds"] = seedanceroute_setting.TotalFallbackShortMaxSeconds
+	state["total_fallback_short_max_reference_images"] = seedanceroute_setting.TotalFallbackShortMaxReferenceImages
 }

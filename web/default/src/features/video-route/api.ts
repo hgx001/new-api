@@ -136,14 +136,21 @@ export type VideoRoutePolicy = {
    * 用途只有一个：**源链路（有赞）彻底不能用**时的逃生口。日常不要开 ——
    * 一开就等于把这两个模型的全部流量挪到另一条上游。
    *
-   * ⚠️ 目标链路的物理能力仍然生效：1080P / 2–3 秒 / 带参考视频音频 /
+   * ⚠️ 目标链路的物理能力仍然生效：1080P / 2–3 秒 / 带首尾帧 /
    * 自适应比例带参考图 这四类仍留在原链路（改派过去必 400）。
+   * 参考音视频 2026-11-15 起已放开，照常改派。
    *
    * ⚠️ 它**不依赖**规则总开关（enabled）—— 应急时不该要求先确认别的开关。
    */
   total_fallback_enabled: boolean
-  /** 规则八的目标模型（恒为 cp-seedance-2.5flash，由后端常量给出）。 */
+  /** 规则八的**长档**目标模型（16 秒及以上，默认 cp-seedance-2.5flash）。 */
   total_fallback_target_model: string
+  /** 规则八的**短档**目标模型（≤15 秒，默认 cp-seedance-2.0）。 */
+  total_fallback_short_target_model: string
+  /** 短档时长上界（含），由后端给出，前端不硬编码。 */
+  total_fallback_short_max_seconds: number
+  /** 短档允许的最大参考图张数；超过时仍走长档，不丢回源链路。 */
+  total_fallback_short_max_reference_images: number
   /**
    * 规则一的可选比例条件（后台勾选）。
    * 非空 = 只有该比例的请求才改派目标链路；空 = 不限比例。
