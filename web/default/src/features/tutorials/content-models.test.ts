@@ -482,6 +482,7 @@ describe('tutorials model guide content', () => {
       'wan3.0-video-prime',
       'wan3.0-video-官网',
       'wan3.0-720p-特惠',
+      'wan-3.0-pro',
     ]
     for (const model of squareModels) {
       assert.equal(

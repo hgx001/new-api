@@ -35,6 +35,7 @@ const MODEL_OVERVIEW_ITEMS = [
   'seedance2.5-特惠｜视频（按秒）｜720P ¥0.20/s、1080P ¥0.30/s，时长 2–30 秒（带参考视频时 ≤15 秒），参考视频按时长并入',
   'wan3.0-video-官网｜视频（按秒）｜480P ¥0.20/s、720P ¥0.45/s、1080P ¥0.80/s，参考视频按时长同价并入（生成秒数+参考视频秒数）',
   'wan3.0-720p-特惠｜视频（按秒）｜720P ¥0.20/s，时长 2–30 秒，参考视频按时长并入',
+  'wan-3.0-pro｜视频（按条）｜720P ¥4.50 / 条、1080P ¥5.50 / 条，时长 4–30 秒同价（按条计费与时长无关）',
   'minimax_h3_omni｜视频（按秒）｜480P ¥0.02/s、768P ¥0.04/s、1080P ¥0.06/s，设定参考最多 9 图 + 3 视频 + 3 音频；⚠️ 参考视频秒数并入计费（生成秒数 + 参考视频秒数），图/音频不额外计费，768P 约 1–2 分钟出片；支持纯文生 / 图生 / 首尾帧 / 多参考，带参考视频或音频须同时至少一张设定参考图',
   'seedance-2.0｜视频（按次）｜¥1.00 / 次，支持 5–15 秒逐秒',
   'seedance-2-0-fast｜视频（按秒）｜¥0.10 / 秒，支持 5–15 秒逐秒',
@@ -553,6 +554,9 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
             [
               'wan3.0-720p-特惠｜2–30 秒｜固定 720P｜同 wan3.0-video-官网｜¥0.20/秒 + 参考视频秒数',
             ],
+            [
+              'wan-3.0-pro｜4–30 秒整数秒｜720P / 1080P（size 四选一）｜图 ≤10、视频 ≤5、音频 ≤5，合计 ≤20｜按条计费 ¥4.50（720P）/ ¥5.50（1080P），与时长无关',
+            ],
             [],
             [
               'minimax_h3_omni｜1–15 秒｜480p / 768p / 1080p × 横 / 竖 / (1:1)｜设定参考 ≤9 图 + ≤3 视频 + ≤3 音频，首尾帧走 metadata｜¥0.02 / ¥0.04 / ¥0.06 每秒；参考视频秒数并入计费，图/音频不额外计费（768P 约 1–2 分钟出片）',
@@ -603,6 +607,60 @@ export function getModelGuideSections(platformUrl: string): TutorialSection[] {
           type: 'hint',
           children: [
             '支持纯文生视频、图生视频与多模态参考。首尾帧（first_frame / last_frame）已被上游移除，传入会直接 400（不消耗费用），请改用参考图。旧名 wan3.0-smart 已下线、不再可路由，请改用 wan3.0-video。带参考视频时计费秒数会并入参考视频时长，单条与合计均不得超过 15 秒。',
+          ],
+        },
+        {
+          type: 'heading',
+          level: 3,
+          id: 'model-wan30-pro',
+          children: [
+            {
+              type: 'strong',
+              value: 'wan-3.0-pro（有赞 Pro，按条计费）',
+            },
+          ],
+        },
+        {
+          type: 'paragraph',
+          children: [
+            '独立上游模型，不是 wan3.0 系列的别名：字段用 ',
+            { type: 'code', value: 'size' },
+            ' 表达画幅，计费按条而非按秒，下面几条不能照抄 wan3.0-video 的调用方式。',
+          ],
+        },
+        {
+          type: 'list',
+          ordered: false,
+          items: [
+            [
+              'size：1280x720（默认）/ 720x1280 / 1920x1080 / 1080x1920，四选一，横竖屏由它决定',
+            ],
+            ['seconds：4–30 的整数秒，默认 5'],
+            [
+              'ratio / aspect_ratio：可传，但只接受 16:9 与 9:16，其他值直接 400（invalid_ratio）；只传 ratio 不传 size 时按 16:9 出 1280x720、按 9:16 出 720x1280',
+            ],
+            [
+              'resolution：可传 720P / 1080P；传 480P 会按 720P 执行。size 与 resolution 同时给时以 size 为准',
+            ],
+            ['首尾帧：不支持 first_frame / last_frame，传了直接 400，请改用参考图'],
+            [
+              '参考素材：images ≤10 张、videos ≤5 个、audios ≤5 条，三类合计 ≤20 项，每项都要公网 http(s) URL',
+            ],
+            [
+              '素材硬约束：参考图短边 ≥720px；参考视频单条 ≤15 秒且合计 ≤15 秒；参考音频合计 ≤15 秒；带参考视频时生成时长 ≤15 秒。超限本地直接拒绝（不建单不扣费）',
+            ],
+            [
+              '计费：按条 ¥4.50（720P）/ ¥5.50（1080P）—— 与时长无关，5 秒和 30 秒同价',
+            ],
+            [
+              '出片耗时：30 秒 720P 实测约 14 分钟（5 秒约 2 分钟）。上游进度粒度很粗，会长时间停在 30%，建议轮询上限放到 20 分钟以上',
+            ],
+          ],
+        },
+        {
+          type: 'hint',
+          children: [
+            '按条计费意味着「时长拉到 30 秒不加价」，适合批量出片前先定好档位。但要算清成本对应关系：30 秒 720P 与 5 秒 720P 同价，长片单价更划算。',
           ],
         },
         {
@@ -1088,6 +1146,7 @@ export function getModelGuideIndex(): { title: string; href: string }[] {
     { title: '参数速查表', href: '#video-params-cheatsheet' },
     { title: '余额查询接口', href: '#quota-query' },
     { title: 'wan3.0-video', href: '#model-wan30-video' },
+    { title: 'wan-3.0-pro', href: '#model-wan30-pro' },
     { title: 'wan3.0-video-prime', href: '#model-wan30-video-prime' },
     { title: 'seedance2.5-特惠', href: '#model-seedance25-tehui' },
     { title: 'wan3.0-video-官网', href: '#model-wan30-guanwang' },
