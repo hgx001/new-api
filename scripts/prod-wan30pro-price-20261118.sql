@@ -22,11 +22,13 @@ SELECT * FROM options WHERE key = 'ModelPrice';
 CREATE TABLE IF NOT EXISTS bak_20261118_wan30pro_price_models AS
 SELECT * FROM models WHERE model_name = 'wan-3.0-pro';
 
--- 2) ModelPrice：720P 基准价 5/7.3 = 0.6849315068493151 --------------------
+-- 2) ModelPrice：720P 基准价 5/7.3 = 0.684931506849315 ---------------------
 --    ⚠️ 这里只放「按条」的 720P 基准价：不写 per-token、不写按秒口径。
 --    1080P 由 EstimateBilling 返回的 size 倍率（7/5）实时算出，不进这张表。
+--    精度：必须写 0.684931506849315（float64 的最短往返表示）；
+--    多写一位（...151）会落到相邻的另一个 double，与代码里的 5/7.3 不相等。
 UPDATE options
-SET value = (value::jsonb || jsonb_build_object('wan-3.0-pro', 0.6849315068493151))::text
+SET value = (value::jsonb || jsonb_build_object('wan-3.0-pro', 0.684931506849315))::text
 WHERE key = 'ModelPrice';
 
 -- 3) 模型卡片描述（价格文案与代码、教程、渠道契约文档统一） ------------------
