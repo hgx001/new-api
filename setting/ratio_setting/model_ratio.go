@@ -394,10 +394,11 @@ var defaultModelPrice = map[string]float64{
 	// 能力定义见 constant/seedance25_family.go。
 	"seedance2.5-活动": 4.5 / USD2RMB, // 对外 ¥4.5/次（固定按次，不乘时长/分辨率倍率）
 	// wan-3.0-pro（2026-11-18 上架，有赞 ch17）：上游 wan-3.0-pro 直连，
-	// **按条**计费 720P ¥4.5/条、1080P ¥5.5/条（与时长无关）。
+	// **按条**计费 720P ¥5.0/条、1080P ¥7.0/条（与时长无关）。
 	// 这里配 720P 基准档；1080P 由 adaptor 的 wan30ProResolutionSizeRatio
-	// 乘 5.5/4.5 得到（EstimateBilling 只返回 size 倍率、不带 seconds）。
-	"wan-3.0-pro":       4.5 / USD2RMB,
+	// 乘 7/5 得到（EstimateBilling 只返回 size 倍率、不带 seconds）。
+	// 2026-11-18 老板调价：原 720P ¥4.5 / 1080P ¥5.5。
+	"wan-3.0-pro":       5.0 / USD2RMB,
 	"seedance-2.0":      1.0 / USD2RMB, // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
 	"seedance-2.5":      0.8 / USD2RMB, // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
 	"seedance-2-5":      3.5 / USD2RMB, // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥3.5/次（任意秒数同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调；2026-11-01 由 ¥3.0 上调至 ¥5.0；2026-11-04 由 ¥5.0 下调至 ¥3.5

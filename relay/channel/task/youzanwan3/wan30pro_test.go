@@ -7,6 +7,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,7 @@ import (
 //   - 分辨率 720P / 1080P，size 只有 1280x720 / 720x1280 / 1920x1080 / 1080x1920；
 //   - 画幅仅 16:9 / 9:16；
 //   - 素材走 images / videos / audios 数组；
-//   - 按条计费 ¥4.5（720P）/ ¥5.5（1080P），与时长无关。
+//   - 按条计费 ¥5.0（720P）/ ¥7.0（1080P），与时长无关。
 //
 // 这组测试钉住「分模型分支不能漏判」：漏判的表现分别是
 // 5 秒被 400（落进标准版 10 秒下界）、1080P 按 720P 收（倍率读错）、
@@ -86,8 +87,8 @@ func TestWan30ProResolutionFromDocumentedSize(t *testing.T) {
 }
 
 // TestWan30ProBillsPerVideoNotPerSecond 锁定按条计费：
-//   - 720P → size=1.0（ModelPrice = ¥4.5）
-//   - 1080P → size=5.5/4.5（结果 ¥5.5）
+//   - 720P → size=1.0（ModelPrice = ¥5.0）
+//   - 1080P → size=7/5（结果 ¥7.0）
 //   - 无论 4 秒还是 30 秒，quota 完全相同
 //   - 参考视频秒数不并入（按条不按秒）
 func TestWan30ProBillsPerVideoNotPerSecond(t *testing.T) {
@@ -111,7 +112,7 @@ func TestWan30ProBillsPerVideoNotPerSecond(t *testing.T) {
 	req1080 := relaycommon.TaskSubmitReq{Model: wan30ProModel, Duration: 5, Resolution: "1080P"}
 	got = billing(req1080)
 	require.Len(t, got, 1)
-	assert.InDelta(t, 5.5/4.5, got["size"], 1e-9, "1080P 倍率 = 5.5/4.5")
+	assert.InDelta(t, 7.0/5.0, got["size"], 1e-9, "1080P 倍率 = 7/5")
 
 	// 4 秒与 30 秒的倍率必须完全一样（与时长无关）。
 	short := billing(relaycommon.TaskSubmitReq{Model: wan30ProModel, Duration: 4, Resolution: "720P"})
@@ -125,15 +126,20 @@ func TestWan30ProBillsPerVideoNotPerSecond(t *testing.T) {
 	got = adaptor.EstimateBilling(c, &relaycommon.RelayInfo{OriginModelName: wan30ProModel})
 	assert.Equal(t, map[string]float64{"size": 1.0}, got, "按条计费：参考视频秒数不得并入")
 
-	// 价格换算：ModelPrice（4.5/7.3 USD）× size 倍率 × 500000 quota/USD
-	// = ¥4.5 / ¥5.5。quota 取整误差不超过 1。
-	// 价格换算：ModelPrice（4.5/7.3 USD）× size 倍率 × 500000 quota/USD
-	// = ¥4.5 / ¥5.5。quota 取整误差不超过 1 分钱。
-	basePriceUSD := 4.5 / 7.3
-	quota720 := int(basePriceUSD * 500000)
-	assert.InDelta(t, 4.5, float64(quota720)/500000*7.3, 0.01)
-	quota1080 := int(float64(quota720) * (5.5 / 4.5))
-	assert.InDelta(t, 5.5, float64(quota1080)/500000*7.3, 0.01)
+	// 价格换算：ModelPrice（720P 基准档，5/7.3 USD）× size 倍率 × 500000 quota/USD
+	// = ¥5.0 / ¥7.0。quota 取整误差不超过 1 分钱。
+	//
+	// 这里直接读价表而不是写死 4.5/7.3：ModelPrice 与倍率表是两处配置，
+	// 只改一处就会让 1080P 静默错价，读同一来源才能锁住两者一致。
+	ratio_setting.InitRatioSettings()
+	basePriceUSD, ok := ratio_setting.GetModelPrice(wan30ProModel, false)
+	require.True(t, ok, "wan-3.0-pro 必须显式配价，否则会回落到按 token 计费")
+	assert.InDelta(t, 5.0/ratio_setting.USD2RMB, basePriceUSD, 1e-9,
+		"ModelPrice 的 720P 基准档必须等于 ¥5.0")
+	quota720 := int(basePriceUSD * common.QuotaPerUnit)
+	assert.InDelta(t, 5.0, float64(quota720)/common.QuotaPerUnit*ratio_setting.USD2RMB, 0.01)
+	quota1080 := int(float64(quota720) * (7.0 / 5.0))
+	assert.InDelta(t, 7.0, float64(quota1080)/common.QuotaPerUnit*ratio_setting.USD2RMB, 0.01)
 }
 
 // TestWan30ProRequestBodyFollowsUpstreamDoc 锁定请求体与上游文档逐字对齐：
@@ -267,15 +273,15 @@ func TestWan30ProUpstreamModelMapping(t *testing.T) {
 // 这类「单一档位、售价恒定」的模型写的 —— 清空是对的。
 //
 // 但 wan-3.0-pro 有 720P / 1080P 两个**不同售价**，靠的正是 EstimateBilling
-// 返回的 size 倍率（1080P = 5.5/4.5）。一旦有人把它加进按次名单：
-//   - 1080P 会被静默按 720P 的 ¥4.5 收（少收 18%），账单上完全看不出来；
+// 返回的 size 倍率（1080P = 7/5）。一旦有人把它加进按次名单：
+//   - 1080P 会被静默按 720P 的 ¥5.0 收（少收 ¥2，约 28.6%），账单上完全看不出来；
 //   - 更糟的是没有任何报错，只能靠对账发现。
 //
 // 所以「按条计价」与「按次免倍率」在本项目里是**两个不同的概念**，
 // 前者看 ModelPrice 是否配置，后者看 constant.IsTaskPerCallModel。
 func TestWan30ProNotInPerCallSuppressionList(t *testing.T) {
 	assert.False(t, constant.IsTaskPerCallModel(wan30ProModel),
-		"wan-3.0-pro 靠 size 倍率区分 720P/1080P，进按次名单会让 1080P 按 ¥4.5 静默少收")
+		"wan-3.0-pro 靠 size 倍率区分 720P/1080P，进按次名单会让 1080P 按 ¥5.0 静默少收")
 
 	// 对照：真正的一口价模型仍在名单里（这条防的是「为了修上面的问题把名单整个删掉」）。
 	assert.True(t, constant.IsSeedance25PerCall("seedance2.5-活动"))

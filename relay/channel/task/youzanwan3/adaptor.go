@@ -1401,11 +1401,11 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if isPerCallModel(modelName) {
 		return nil
 	}
-	// wan-3.0-pro 是「按条 + 分辨率档」：¥4.5/条（720P）、¥5.5/条（1080P），
+	// wan-3.0-pro 是「按条 + 分辨率档」：¥5.0/条（720P）、¥7.0/条（1080P），
 	// **与时长无关**、参考视频秒数也不并入。
 	//
 	// 只返回 size 倍率 —— 绝不能带 seconds：applyTaskOtherRatios 会把秒数乘进
-	// ¥4.5，30 秒的请求就变成 ¥135（按次档注释里记着同一个坑）。
+	// ¥5，30 秒的请求就变成 ¥150（按次档注释里记着同一个坑）。
 	if isWan30ProModel(modelName) {
 		resolution := resolveResolutionForModel(req, modelName)
 		return map[string]float64{"size": resolutionRatioForModel(modelName, resolution)}
@@ -1490,7 +1490,7 @@ func resolutionRatioForModel(model, resolution string) float64 {
 		return 1
 	}
 	if isWan30ProModel(model) {
-		// 按条 + 分辨率档（720P 1.0 / 1080P 5.5/4.5）。
+		// 按条 + 分辨率档（720P 1.0 / 1080P 7.0/5.0）。
 		// 同样先读动态倍率：价格同步任务若把它纳入，改动无需发版即可生效。
 		if ratio, ok := youzanwan3_setting.GetResolutionRatio(wan30ProModel, resolution); ok {
 			return ratio

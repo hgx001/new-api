@@ -88,19 +88,21 @@ wan3.0-video **不是同一套**，adaptor 里按模型名分支处理（`isWan3
 - 素材走顶层 `images` / `videos` / `audios` 数组（旧字段 `image`/`videos`/`audios`
   也会并入）。上限 10 / 5 / 5、合计 20，与 `maxReference*` 常量一致。
   参考视频、参考音频**放行** —— 不要套用标准版「仅 reference_image」那道闸。
-- 计费：按条 ¥4.5（720P）/ ¥5.5（1080P），与时长无关。`EstimateBilling`
-  只返 `{"size": ratio}`，**绝不能带 seconds**（带了就是 ¥4.5 × 30 = ¥135）。
+- 计费：按条 ¥5.0（720P）/ ¥7.0（1080P），与时长无关。`EstimateBilling`
+  只返 `{"size": ratio}`，**绝不能带 seconds**（带了就是 ¥5 × 30 = ¥150）。
 
 ⚠️ **最容易踩的坑：按条计价 ≠ 按次免倍率。**
 本项目里这是两个概念：前者看是否配了 `ModelPrice`（`quota_type=1`），
 后者看 `constant.IsTaskPerCallModel`。`relay_task.go` 对按次档会**清空全部倍率**
 （`mergeEstimatedRatios` / `applyBillingRatios` / `resolveSubmitQuota` 三处），
 而 pro 的 1080P 售价靠的正是 size 倍率。把 pro 加进按次名单 → 1080P 静默
-按 ¥4.5 收（少收 18%，无报错）。`TestWan30ProNotInPerCallSuppressionList`
+按 ¥5.0 收（¥7 少收 ¥2，约 28.6%，无报错）。`TestWan30ProNotInPerCallSuppressionList`
 钉住这条前提。
 
 上架台账：`scripts/prod-wan30pro-20261118.sql`（渠道 17 `models`、`abilities`、
-`ModelPrice` 基准价 4.5/7.3、`models` 卡片描述）。改完等 `SyncChannelCache` /
+`ModelPrice` 基准价、`models` 卡片描述）；调价台账
+`scripts/prod-wan30pro-price-20261118.sql`（2026-11-18 由 ¥4.5/¥5.5 调为
+¥5.0/¥7.0，只改 `ModelPrice` 与卡片描述）。改完等 `SyncChannelCache` /
 `SyncOptions` 的 60 秒周期生效，不用重启容器。
 
 ## wan3.0-720p-特惠 按能力分流到心笔（2026-11-06，⚠️ 2026-11-16 已下线）

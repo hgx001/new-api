@@ -920,7 +920,7 @@ function buildSeedance25FixedTierVideoParameters(
  *
  * 时长写 `4 ~ 30` + defaultValue=5：default 只是「不传时按 5 秒跑」，
  * 不是唯一合法值；显式 <4 或 >30 会被后端 400（不做吸附）。
- * 售价与时长无关（720P ¥4.5/条、1080P ¥5.5/条），所以这里不写 price 语义，
+ * 售价与时长无关（720P ¥5.0/条、1080P ¥7.0/条），所以这里不写 price 语义，
  * 只描述参数能力。
  */
 function buildWan30ProVideoParameters(): SupportedParameter[] {
