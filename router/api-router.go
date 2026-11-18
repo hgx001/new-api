@@ -142,6 +142,16 @@ func SetApiRouter(router *gin.Engine) {
 			// ⚠️ 三条分支同时只能有一条生效 —— 打开本条时自动关掉心笔与有赞。
 			videoRouteAdmin.POST("/policy/short-capcut-link", controller.SetShortCapcutLinkAdmin)
 
+			// 规则六的第四条分支「豆包 Fast」开关（2026-11-18）：
+			// 打开后 ≤14 秒的 720P、以及任意时长的非 720P 请求改派 seedance-2-0-fast。
+			// ⚠️ 四条分支同时只能有一条生效 —— 打开本条时自动关掉心笔、有赞与 CapCut。
+			videoRouteAdmin.POST("/policy/short-fast-link", controller.SetShortFastLinkAdmin)
+
+			// 规则十「seedance-2-5 短时长 → 豆包 Fast」开关（2026-11-18）：
+			// 打开后 seedance-2-5 的 ≤15 秒请求改派 seedance-2-0-fast。
+			// 与规则六的四条分支不互斥（源模型不同），计费仍按 seedance-2-5 一口价。
+			videoRouteAdmin.POST("/policy/doubao-fast-short", controller.SetDoubaoFastShortAdmin)
+
 			// 规则七（电商/产品推荐内容 → 有赞优先，接不住才 cp-seedance-2.5）：
 			// 总开关 + 参数条件勾选（9:16 / 时长阈值）+ 关键词表。
 			// 命中后默认留在有赞链路；只有 <10 秒或带参考音视频才改派 CapCut。

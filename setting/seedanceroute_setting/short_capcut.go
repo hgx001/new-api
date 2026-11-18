@@ -154,12 +154,16 @@ func ShortRouteTargets() []string {
 }
 
 func (p Policy) activeShortRouteTargets() []string {
-	out := make([]string, 0, 3)
+	out := make([]string, 0, 4)
+	// 顺序 = 读侧优先级：心笔 > 有赞标准版 > 豆包 Fast > CapCut。
 	if p.shortLinkEnabledFor() {
 		out = append(out, p.ShortTargetModel)
 	}
 	if p.ShortYouzanEnabled {
 		out = append(out, DefaultShortYouzanTargetModel)
+	}
+	if p.ShortFastEnabled {
+		out = append(out, DefaultShortFastTargetModel)
 	}
 	if p.ShortCapcutEnabled {
 		out = append(out, DefaultShortCapcutTargetModel)

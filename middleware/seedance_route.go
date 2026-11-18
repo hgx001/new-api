@@ -225,6 +225,19 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			return
 		}
 
+		// ── 规则十（seedance-2-5 短时长 → 豆包 Fast）──
+		//
+		// 必须排在 IsSourceModel 早退之**前**：seedance-2-5 是规则一的目标，
+		// 不在 source_models 里；把它加进 source_models 会连带激活规则一/二/
+		// 三/七/八（见本函数开头规则五那段注释）。
+		//
+		// 排在规则五之**后**：源链路（豆包 ch20）不可用时，规则五已改派到
+		// 班车/备选；Fast 与源同渠道，此时再改派只会落到同一个不可用渠道。
+		if tryDoubaoFastShortRoute(c, body, requestedOrigin) {
+			c.Next()
+			return
+		}
+
 		modelName := requestedModel
 		if !policy.IsSourceModel(modelName) {
 			// ── 规则九（音视频参考改派）对 youzan 标准版直连同样生效 ──
@@ -521,9 +534,16 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		shortTarget := policy.ShortTargetModelFor(sourceModel)
 		xinbiReady := seedanceroute_setting.IsShortRouteEnabledFor(sourceModel)
 		youzanReady := seedanceroute_setting.IsShortYouzanEnabledFor(sourceModel)
+		fastReady := seedanceroute_setting.IsShortFastEnabledFor(sourceModel)
 		capcutReady := seedanceroute_setting.IsShortCapcutEnabledFor(sourceModel)
-		if xinbiReady || youzanReady || capcutReady {
-			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.WithinShortTrigger(seconds) {
+		if xinbiReady || youzanReady || fastReady || capcutReady {
+			// 触发判定：正常按阈值（≤ short_trigger_seconds）命中；
+			// **豆包 Fast 分支额外接住「非 720P」的请求** —— 常驻上游
+			// SJ-wan3-prime 只支持 720P，1080P/480P 留在有赞必被上游
+			// 回 resolution_disabled，所以任意时长的非 720P 都要改派。
+			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds &&
+				(policy.WithinShortTrigger(seconds) ||
+					(fastReady && shortRouteResolution(body) != "720P")) {
 				// 第一优先：心笔内链。
 				if xinbiReady {
 					// 目标只支持心笔内链。改派跨 adaptor（youzanwan3 → xinbiapi），
@@ -585,7 +605,36 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 					}
 				}
 
-				// 第三优先：CapCut 满血档（cp-seedance-2.0）。
+				// 第三优先：豆包 Fast（seedance-2-0-fast）。
+				//
+				// 2026-11-18 老板口径：促销族常驻上游换成 SJ-wan3-prime
+				//（**仅 15–30 秒、仅 720P**），所以
+				//   - 720P / 未指定分辨率：≤14 秒改派 Fast（豆包官网 4–30 秒）；
+				//   - 480P / 1080P：**任意时长**都改派 Fast —— SJ 只支持 720P，
+				//     非 720P 档位留在有赞必被上游回 resolution_disabled。
+				//
+				// 准入在 prepareShortFastRoute 里：首尾帧与参考音视频不接
+				//（豆包官网只收参考图/首帧），留给规则九或源链路 fail-loud。
+				if fastReady &&
+					(seconds <= seedanceroute_setting.ShortFastMaxSeconds || shortRouteResolution(body) != "720P") {
+					target := seedanceroute_setting.DefaultShortFastTargetModel
+					if newBody, routed := prepareShortFastRoute(c, body, target, seconds); routed {
+						if applyRewrittenBody(c, newBody, billingOriginModel) {
+							// 计费按**源模型**算：秒数用触发判定的值，
+							// size 倍率按源模型的分辨率档（1080P=1.5，其余=1.0）。
+							// 目标链路自己的定价（¥0.1/秒）不参与对客计费。
+							setRouteBillingContext(c, seconds,
+								sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
+							logger.LogInfo(c, fmt.Sprintf(
+								"条件路由：命中短时长/非720P %d 秒，改派 %s → %s（豆包 Fast）",
+								seconds, sourceModel, target))
+							c.Next()
+							return
+						}
+					}
+				}
+
+				// 第四优先：CapCut 满血档（cp-seedance-2.5flash）。
 				//
 				// 心笔与有赞标准版都没接住时，短请求改派 CapCut 满血档 ——
 				// 这是跨渠道改派（youzanwan3 → manwu），入参契约完全不同，
@@ -1190,6 +1239,52 @@ func prepareShortYouzanRoute(c *gin.Context, body map[string]interface{}, target
 	resolution := shortRouteResolution(body)
 	return rewriteBodyForShortYouzan(body, targetModel, resolution, seconds),
 		youzanwan3.RouteBillingSizeRatio(sourceModel, resolution), true
+}
+
+// prepareShortFastRoute 组装「规则六第四分支（短时长 / 非 720P → 豆包 Fast）」的请求体。
+//
+// 与有赞兜底分支的差别：目标在**另一个渠道**（ch20 manwu，kindDoubaoVideo），
+// 契约与 youzanwan3 不同，所以准入必须按豆包官网的能力边界来判。
+//
+// 准入：
+//   - 首尾帧：豆包官网不走这套协议 → 不改派（留给规则三）；
+//   - 参考视频 / 音频：豆包官网只收参考图，传过去会被静默忽略
+//     → 不改派（留给规则九 CapCut，或源链路 fail-loud）；
+//   - 目标渠道可用性：没渠道就不改写（改写后重试只会用同一个模型名重选渠道，
+//     不会退回源模型，客户会直接失败）。
+//
+// 改写：只换 model、把触发判定拿到的秒数落成顶层 seconds。
+// 分辨率 / size / 比例 / 参考图原样保留 —— manwu 的字段解析顺序与有赞不同，
+// 多改一处就多一处丢参风险。
+func prepareShortFastRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
+	if hasFrameMedia(body) {
+		logger.LogInfo(c, "条件路由跳过短时长豆包 Fast：请求带首尾帧")
+		return nil, false
+	}
+	if requestHasReferenceAudioVideo(body) {
+		logger.LogInfo(c, "条件路由跳过短时长豆包 Fast：请求带参考视频/音频（豆包官网只收参考图）")
+		return nil, false
+	}
+	if !channelAvailabilityProbe(c, targetModel) {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过短时长豆包 Fast：目标 %s 在当前分组下没有可用渠道", targetModel))
+		return nil, false
+	}
+	return rewriteBodyForShortFast(body, targetModel, seconds), true
+}
+
+// rewriteBodyForShortFast 只换 model、把秒数落成顶层 seconds，其余字段原样保留。
+func rewriteBodyForShortFast(body map[string]interface{}, target string, seconds int) map[string]interface{} {
+	out := make(map[string]interface{}, len(body)+2)
+	for key, value := range body {
+		if key == "model" {
+			continue
+		}
+		out[key] = value
+	}
+	out["model"] = target
+	out["seconds"] = strconv.Itoa(seconds)
+	return out
 }
 
 // shortRouteResolution 返回「源链路实际生效的分辨率档」，供改派时显式钉住。

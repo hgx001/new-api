@@ -273,6 +273,7 @@ func setShortCapcutLinkAdmin(
 		// 不写它的话，读侧兜底会认为心笔还开着，本条永远轮不到。
 		policy = seedanceroute_setting.ApplyShortLinkEnabled(policy, false)
 		policy = seedanceroute_setting.ApplyShortYouzanEnabled(policy, false)
+		policy = seedanceroute_setting.ApplyShortFastEnabled(policy, false)
 	}
 	if err := save(policy); err != nil {
 		common.SysLog("update short capcut switch failed: " + err.Error())
@@ -289,10 +290,135 @@ func setShortCapcutLinkAdmin(
 	common.ApiSuccess(c, doubaoRouteAdminState())
 }
 
+// shortFastSwitchRequest 是规则六第四分支「豆包 Fast」开关的请求体。
+type shortFastSwitchRequest struct {
+	// Enabled true = 短时长 / 非 720P 请求改派 seedance-2-0-fast；false = 不走这条。
+	//
+	// 用指针收：不传（nil）必须报错 —— 少写一个字段会把这条分支静默关掉。
+	Enabled *bool `json:"enabled"`
+}
+
+// SetShortFastLinkAdmin 切换规则六第四分支「豆包 Fast」（2026-11-18）。
+//
+//   - 开启：720P/未指定的 ≤14 秒请求、以及任意时长的非 720P 请求，
+//     改派 seedance-2-0-fast（豆包官网，4–30 秒、480P/720P/1080P）；
+//   - 关闭（默认）：不路由，短请求走原链路（母本常驻 SJ-wan3-prime）。
+//
+// 与另外三条短时长分支（心笔 / 有赞标准版 / CapCut）**互斥**：
+// 打开本条时自动把另外三条显式关掉；关闭本条时不动其它三条。
+func SetShortFastLinkAdmin(c *gin.Context) {
+	setShortFastLinkAdmin(c, saveRoutePolicy, recordManageAudit)
+}
+
+// setShortFastLinkAdmin 是唯一实现（依赖注入理由同 setShortCapcutLinkAdmin）。
+func setShortFastLinkAdmin(
+	c *gin.Context,
+	save func(seedanceroute_setting.Policy) error,
+	audit func(*gin.Context, string, map[string]interface{}),
+) {
+	var req shortFastSwitchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "enabled is required",
+		})
+		return
+	}
+
+	policy := seedanceroute_setting.WithShortFastEnabled(*req.Enabled)
+	if *req.Enabled {
+		// 互斥：开本条时把另外三条显式关掉。
+		//
+		// ⚠️ 心笔那条必须写成**显式 false**（不是「不写」）：
+		// short_link_enabled 是三态指针，nil = 默认开启 ——
+		// 不写它的话，读侧兜底会认为心笔还开着，本条永远轮不到。
+		policy = seedanceroute_setting.ApplyShortLinkEnabled(policy, false)
+		policy = seedanceroute_setting.ApplyShortYouzanEnabled(policy, false)
+		policy = seedanceroute_setting.ApplyShortCapcutEnabled(policy, false)
+	}
+	if err := save(policy); err != nil {
+		common.SysLog("update short fast switch failed: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to save route policy",
+		})
+		return
+	}
+
+	audit(c, "video_route.short_fast_switch", map[string]interface{}{
+		"enabled": *req.Enabled,
+	})
+	common.ApiSuccess(c, doubaoRouteAdminState())
+}
+
+// doubaoFastShortSwitchRequest 是规则十「seedance-2-5 短时长 → 豆包 Fast」的请求体。
+type doubaoFastShortSwitchRequest struct {
+	// Enabled true = seedance-2-5 的 ≤15 秒请求改派 seedance-2-0-fast；
+	// false = 不走这条，短请求留在 seedance-2-5。
+	//
+	// 用指针收：不传（nil）必须报错 —— 少写一个字段会把这条规则静默关掉。
+	Enabled *bool `json:"enabled"`
+}
+
+// SetDoubaoFastShortAdmin 切换规则十（2026-11-18）。
+//
+//   - 开启：seedance-2-5 的 ≤15 秒请求改派 seedance-2-0-fast（豆包官网，4–30 秒）；
+//   - 关闭（默认）：不路由，全部留在 seedance-2-5。
+//
+// 与规则六的四条短时长分支**不互斥**：那些分支的源是促销族，本规则的源是
+// seedance-2-5，两者不会命中同一条请求（源模型名不同）。
+func SetDoubaoFastShortAdmin(c *gin.Context) {
+	setDoubaoFastShortAdmin(c, saveRoutePolicy, recordManageAudit)
+}
+
+// setDoubaoFastShortAdmin 是唯一实现（依赖注入理由同 setShortCapcutLinkAdmin）。
+func setDoubaoFastShortAdmin(
+	c *gin.Context,
+	save func(seedanceroute_setting.Policy) error,
+	audit func(*gin.Context, string, map[string]interface{}),
+) {
+	var req doubaoFastShortSwitchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid request body",
+		})
+		return
+	}
+	if req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "enabled is required",
+		})
+		return
+	}
+
+	policy := seedanceroute_setting.WithDoubaoFastShortEnabled(*req.Enabled)
+	if err := save(policy); err != nil {
+		common.SysLog("update doubao fast short switch failed: " + err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "failed to save route policy",
+		})
+		return
+	}
+
+	audit(c, "video_route.doubao_fast_short_switch", map[string]interface{}{
+		"enabled": *req.Enabled,
+	})
+	common.ApiSuccess(c, doubaoRouteAdminState())
+}
+
 // ══════════════════════════════════════════════════════════════════
 // 状态输出
 // ══════════════════════════════════════════════════════════════════
-
 // appendEcommerceRouteState 把规则七与 CapCut 分支的状态字段追加到管理端状态里。
 //
 // 为什么要单独一个函数而不是直接写在 doubaoRouteAdminState 里：
@@ -321,6 +447,18 @@ func appendEcommerceRouteState(state gin.H) {
 	// 规则六第三分支：CapCut 满血档。
 	state["short_capcut_enabled"] = seedanceroute_setting.IsShortCapcutEnabled()
 	state["short_capcut_target_model"] = seedanceroute_setting.DefaultShortCapcutTargetModel
+
+	// 规则六第四分支：豆包 Fast（2026-11-18）。
+	state["short_fast_enabled"] = seedanceroute_setting.IsShortFastEnabled()
+	state["short_fast_target_model"] = seedanceroute_setting.DefaultShortFastTargetModel
+	state["short_fast_max_seconds"] = seedanceroute_setting.ShortFastMaxSeconds
+
+	// 规则十：seedance-2-5 短时长 → 豆包 Fast（2026-11-18）。
+	state["doubao_fast_short_enabled"] = seedanceroute_setting.IsDoubaoFastShortEnabled()
+	state["doubao_fast_short_source_model"] = seedanceroute_setting.DefaultDoubaoFastSourceModel
+	state["doubao_fast_short_target_model"] = seedanceroute_setting.DoubaoFastShortTarget()
+	state["doubao_fast_short_trigger_seconds"] = seedanceroute_setting.DoubaoFastShortTriggerSeconds()
+	state["doubao_fast_short_min_seconds"] = seedanceroute_setting.DoubaoFastMinSeconds
 
 	// 三路互斥的**当前生效方**：运营要能看到「现在到底哪条分支在跑」。
 	//

@@ -194,6 +194,49 @@ type Policy struct {
 	// 升级当天线上流量逐字节不变（与 ShortYouzanEnabled 同一口径）。
 	ShortCapcutEnabled bool `json:"short_capcut_enabled,omitempty"`
 
+	// ShortFastEnabled 是规则六第四分支「豆包 Fast」的开关（2026-11-18 起）。
+	//
+	// 背景：促销族常驻上游换成 SJ-wan3-prime（**仅 15–30 秒、仅 720P**），
+	// 5–14 秒的短请求必须改派到 seedance-2-0-fast（豆包官网，4–30 秒、
+	// 480P/720P/1080P）执行，否则落到有赞会被上游拒。
+	//
+	// 触发口径（按源模型配置的阈值 still 生效）：
+	//   - 720P/未指定：≤ short_trigger_seconds（生产配 14）命中；
+	//   - 480P / 1080P：**任意时长**都命中 —— SJ 只支持 720P，
+	//     非 720P 档位留在有赞必被拒（resolution_disabled）。
+	//
+	// 与另外三条短时长分支**互斥**（心笔 > 有赞标准版 > 豆包 Fast > CapCut），
+	// 写入口在 controller 侧保证，读侧再按优先级兜底。
+	//
+	// ⚠️ 用 bool 而不是三态指针：这是**新行为**，旧的生产 option JSON 里没有
+	// 这个字段，解析后是零值 false = 不启用，语义正好是「没配过就不生效」，
+	// 升级当天线上流量逐字节不变（与 ShortYouzanEnabled / ShortCapcutEnabled 同一口径）。
+	ShortFastEnabled bool `json:"short_fast_enabled,omitempty"`
+
+	// ─────────────────── 规则十：seedance-2-5 短时长 → 豆包 Fast ───────────────────
+	//
+	// 触发：源模型 = seedance-2-5，请求时长 ≤ DoubaoFastShortTriggerSeconds（默认 15 秒，含）。
+	// 目标：seedance-2-0-fast（同渠道 ch20、同 kindDoubaoVideo，只换模型名）。
+	//
+	// 与规则六的区别：规则六的源是促销族（source_models），规则十的源是
+	// 规则一的**目标** seedance-2-5。后者绝不能塞进 source_models ——
+	// 会连带激活规则一/二/三/七/八，形成改派到自己与全量兜底的连锁反应。
+	//
+	// 计费：客户买的是 seedance-2-5 的一口价（¥3.50/次），改派后仍按它收；
+	// 中间件会打 ContextKeyRouteSuppressTaskRatios 屏蔽目标 adaptor 的按秒倍率。
+	//
+	// ⚠️ 用 bool 而不是三态指针：全新规则，旧生产 JSON 没有这个字段，
+	// 解析为零值 false = 不启用，升级当天线上流量逐字节不变。
+	DoubaoFastShortEnabled bool `json:"doubao_fast_short_enabled,omitempty"`
+
+	// DoubaoFastShortTriggerSeconds 是规则十的时长上界（秒，含）。
+	//
+	// 0（或没配）= DefaultDoubaoFastTriggerSeconds（15 秒）。
+	DoubaoFastShortTriggerSeconds int `json:"doubao_fast_short_trigger_seconds,omitempty"`
+
+	// DoubaoFastShortTargetModel 是规则十的目标模型名。空 = 默认 seedance-2-0-fast。
+	DoubaoFastShortTargetModel string `json:"doubao_fast_short_target_model,omitempty"`
+
 	// ────────────── 规则七：电商内容 → 有赞优先（接不住才 CapCut）──────────────
 	//
 	// 触发源与前六条都不同：前六条看的是**请求的客观参数**（时长/比例/首尾帧），
@@ -860,6 +903,11 @@ func (p Policy) anyRuleReady() bool {
 	if totalFallbackConfigured(p) {
 		return true
 	}
+	// 规则十（seedance-2-5 → 豆包 Fast）：源模型独立于 source_models，
+	// 只打开这一个按钮也必须算「策略可用」，否则整体路由被短路。
+	if DoubaoFastShortReadyFor(p, DefaultDoubaoFastSourceModel) {
+		return true
+	}
 	for _, source := range p.allSourceModels() {
 		if secondsRuleConfiguredFor(p, source) ||
 			ratioRuleConfiguredFor(p, source) ||
@@ -871,6 +919,9 @@ func (p Policy) anyRuleReady() bool {
 			// 规则六第三分支（CapCut 满血档）：与前两条分支独立 ——
 			// 只打开它而心笔/有赞都关着时，中间件不能被短路。
 			shortCapcutReadyFor(p, source) ||
+			// 规则六第四分支（豆包 Fast）：2026-11-18 起特惠短请求的唯一出口，
+			// 只打开这一个按钮也必须算「策略可用」，否则整体路由被短路。
+			shortFastReadyFor(p, source) ||
 			// 有赞兜底不依赖 short_target_model（心笔目标）：两个按钮独立配置，
 			// 只打开有赞按钮也必须算「策略可用」，否则中间件会被整体短路。
 			shortYouzanReadyFor(p, source) {
@@ -989,6 +1040,11 @@ func IsAnyRouteEnabled() bool {
 	if refAVCapcutEnabled(current) {
 		return true
 	}
+	// 规则十（seedance-2-5 短时长 → 豆包 Fast）：源模型不在 source_models 里，
+	// 上面的循环永远覆盖不到它，必须单独判一次。
+	if DoubaoFastShortReadyFor(current, DefaultDoubaoFastSourceModel) {
+		return true
+	}
 	if secondsRuleActive(current, nowUnix()) ||
 		ratioRuleReady(current) ||
 		framesRuleReady(current) ||
@@ -1007,6 +1063,8 @@ func IsAnyRouteEnabled() bool {
 			// 规则六第三分支（CapCut 满血档）：独立于前两条分支，
 			// 只打开它时必须单独判一次，否则中间件早退、按钮看起来没反应。
 			shortCapcutReadyFor(current, source) ||
+			// 规则六第四分支（豆包 Fast）：同理，只开这一个按钮也必须参与判定。
+			shortFastReadyFor(current, source) ||
 			// 有赞兜底与心笔开关相互独立：只打开有赞按钮时，
 			// shortRuleReadyFor 会因 short_link_enabled=false 返回 false，
 			// 必须单独判一次，否则中间件早退、按钮看起来没反应。
