@@ -278,8 +278,30 @@ tj = 上游「特价」供应商档，与阿里云直连的 `wan3.0-video` / `wa
 - 分辨率 480P / 720P / 1080P；画幅 16:9 / 9:16 / 4:3 / 3:4 / 1:1（**无 adaptive**，
   缺省 16:9）；时长 2–30 秒，缺省 5 秒。
 - 参考音频**不能单独作为唯一参考**（至少要有一张参考图或一段参考视频）。
+- ⚠️ **素材按文件后缀判格式**（2026-11-19 真机实测）：参考图 jpg/jpeg/png/bmp/webp、
+  参考视频 mp4/mov、参考音频**只收 wav/mp3**。传 `.m4a` 会被上游拒
+  （原文 `format m4a is not supported. Supported formats: ['wav', 'mp3']`），
+  且这个拒绝发生在**建单之后**（钱已预扣、客户要等退款）——
+  所以网关在**校验阶段**按 URL 路径后缀前置拦截；取不到后缀时放行
+  （无后缀的签名 URL 很常见，过度拦截会误杀合法素材）。
 - 计费：按秒，`EstimateBilling` 返回 `{"seconds": N, "size": 分辨率倍率}`，
   分辨率倍率 1 : 2 : 4。对外价与对应标准档一致：tj ¥0.27/秒（480P 基准）、
   prime-tj ¥0.405/秒（480P 基准）。
 - 上游域名与品牌词（`kemeitv`）已进脱敏全局供应商词表；
   地址由 `RedactUpstreamAddress` 一律摘除。
+
+### 三个必须记住的实现要点（2026-11-19 真机踩坑）
+
+1. **`DoResponse` 必须自己写响应体。** 渠道框架**不替适配器回写 body** ——
+   漏掉 `c.JSON` 时客户端拿到 HTTP 200 但 body 为空，连 task id 都取不到，
+   只能回数据库捞单。wan3 / manwu 都是在 `DoResponse` 里自己 `c.JSON`。
+   回的是 OpenAI Video 形状，`id` 用**对外公开单号**（`info.PublicTaskIDOrEmpty()`），
+   不暴露上游单号。
+2. **必须实现 `ConvertToOpenAIVideo`。** `/v1/videos/{id}` 走 OpenAI Video 分支，
+   适配器没实现 `channel.OpenAIVideoConverter` 就直接返回
+   `not_implemented:71`（HTTP 501）—— 任务照跑照扣费，客户端**永远查不到结果**。
+3. **客美没有 `/content` 端点。** 成片地址在 `GET /v1/video/generations/{id}`
+   的 `data[0].url`，且是**带签名的临时直链**（会过期 404）。
+   所以本站对外统一给 `/v1/videos/{id}/content` 代理地址，
+   由 `controller/video_proxy.go` 带**渠道密钥**实时回查上游取当前有效地址，
+   不把库里那份过期直链落库透传。
