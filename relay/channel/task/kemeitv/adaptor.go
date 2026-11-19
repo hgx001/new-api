@@ -1,0 +1,731 @@
+package kemeitv
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+
+	"github.com/gin-gonic/gin"
+	"github.com/pkg/errors"
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Kemeitv（ai.kemeitv.cn）视频任务适配器。
+//
+// 契约（2026-11-19 按上游文档核对，docs/quickstart/*）：
+//
+//	提交   POST {base}/v1/video/generations   （OpenAI 兼容）
+//	       Body: model / prompt / resolution / ratio / duration
+//	             images[] / videos[] / audios[] / files[] / links[]
+//	       素材支持「纯 URL 字符串」或「{url, role} 对象」两种写法。
+//	轮询   GET  {base}/v1/video/generations/{task_id}
+//
+// 鉴权：`Authorization: Bearer sk-...`（上游三种方式任选，此处用 Bearer）。
+//
+// 响应形状（OpenAI 兼容）：
+//
+//	提交 {"id":"video_task_001","task_id":"video_task_001","status":"pending"}
+//	完成 {"id":"...","status":"completed","data":[{"url":"https://.../wan_video.mp4"}]}
+//	失败 HTTP 200 也可能带 "status":"failed"（上游《WAN视频生成》第 5 节明确）。
+//
+// ⚠️ 只接 wan3.0-video-tj 与 wan3.0-video-prime-tj 两个模型（用户 2026-11-19 口径）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+type TaskAdaptor struct {
+	taskcommon.BaseBilling
+	ChannelType int
+	apiKey      string
+	baseURL     string
+}
+
+func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+	if info == nil {
+		return
+	}
+	a.ChannelType = info.ChannelType
+	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
+	a.apiKey = info.ApiKey
+}
+
+// ────────────────────────────── 校验 ──────────────────────────────
+
+// ValidateRequestAndSetAction 在本地把参数收敛到上游合同允许的范围内。
+//
+// 所有拒绝都在**建单之前**返回 400：上游一建单就开始计费，
+// 参数错误不该以「建单后失败」的形式出现。
+func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	if taskErr := relaycommon.ValidateMultipartDirect(c, info); taskErr != nil {
+		return taskErr
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if strings.TrimSpace(req.Prompt) == "" {
+		return service.TaskErrorWrapperLocal(
+			fmt.Errorf("field prompt is required"), "invalid_request", http.StatusBadRequest)
+	}
+	if _, err := resolveDuration(req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+	}
+	if _, err := resolveResolution(req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
+	}
+	if _, err := resolveRatio(req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
+	}
+	// 素材：先做「首尾帧 vs 参考类互斥」的场景闸门，再做数量上限检查。
+	//
+	// ⚠️ 顺序不能反：互斥错误要优先报出来。客户端传了 1 张首帧 + 2 张参考图时，
+	// 先报「图片超上限」会让人误以为加到 11 张就行 —— 真正的问题是场景混用。
+	if _, err := collectMedia(req); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// ────────────────────────────── 计费 ──────────────────────────────
+
+// EstimateBilling 返回计费倍率。
+//
+// 返回 seconds + size：按秒计费（基准价是 480P 的每秒价），
+// 分辨率倍率按 1 : 2 : 4 走。
+//
+// ⚠️ 不返回 nil：返回 nil 会被当成 1 秒，30 秒的请求只收 1 秒的钱。
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		// 请求上下文缺失时按缺省秒数计费，绝不能返回 nil。
+		return map[string]float64{"seconds": float64(defaultDuration), "size": 1.0}
+	}
+	duration, err := resolveDuration(req)
+	if err != nil {
+		// 时长已经在 Validate 阶段拦过；这里拿不到就交给上层按缺省秒数处理，
+		// 绝不能返回一个「0 秒」把账单清零。
+		duration = defaultDuration
+	}
+	resolution, err := resolveResolution(req)
+	if err != nil {
+		resolution = defaultResolution
+	}
+	ratio := resolutionSizeRatio[resolution]
+	if ratio == 0 {
+		ratio = 1.0
+	}
+	return map[string]float64{
+		"seconds": float64(duration),
+		"size":    ratio,
+	}
+}
+
+func (a *TaskAdaptor) AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64 {
+	return nil
+}
+
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	return 0
+}
+
+// ────────────────────────────── 请求 ──────────────────────────────
+
+func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	// 渠道 base_url 可能带结尾斜杠（管理员手填），这里再兜一次，避免拼出 //v1。
+	return strings.TrimRight(a.baseURL, "/") + submitPath, nil
+}
+
+func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
+	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	return nil
+}
+
+// mediaItem 是上游的素材写法：纯 URL 字符串或 {"url": ..., "role": ...}。
+//
+// ⚠️ 统一用对象写法（带 role）：上游的「按张数推断默认 role」规则
+// （1 张=首帧、2 张=首尾帧、3+ 张=参考图）在本站点不可控 ——
+// 客户传 2 张参考图本意是「参考」，上游却会当成首尾帧。
+// 显式写 role 才能保证语义一致。
+type mediaItem struct {
+	URL  string `json:"url"`
+	Role string `json:"role,omitempty"`
+}
+
+// submitRequest 是上游 OpenAI 兼容提交体。
+//
+// ⚠️ 不设 negative_prompt / seed 等上游文档未列的字段 ——
+// 上游是严格参数集校验（additionalProperties 风格），传未声明字段会 400。
+type submitRequest struct {
+	Model      string      `json:"model"`
+	Prompt     string      `json:"prompt"`
+	Resolution string      `json:"resolution,omitempty"`
+	Ratio      string      `json:"ratio,omitempty"`
+	Duration   int         `json:"duration,omitempty"`
+	Images     []mediaItem `json:"images,omitempty"`
+	Videos     []mediaItem `json:"videos,omitempty"`
+	Audios     []mediaItem `json:"audios,omitempty"`
+	Files      []mediaItem `json:"files,omitempty"`
+	Links      []mediaItem `json:"links,omitempty"`
+}
+
+func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	duration, err := resolveDuration(req)
+	if err != nil {
+		return nil, &taskcommon.UserError{Err: err, Code: "invalid_duration"}
+	}
+	resolution, err := resolveResolution(req)
+	if err != nil {
+		return nil, &taskcommon.UserError{Err: err, Code: "invalid_resolution"}
+	}
+	ratio, err := resolveRatio(req)
+	if err != nil {
+		return nil, &taskcommon.UserError{Err: err, Code: "invalid_ratio"}
+	}
+	media, err := collectMedia(req)
+	if err != nil {
+		return nil, &taskcommon.UserError{Err: err, Code: "invalid_input_reference"}
+	}
+
+	body := submitRequest{
+		// 固定上游模型名，不信任渠道映射（见 constants.go 的 upstreamModelFor）。
+		Model:      upstreamModelFor(info.OriginModelName),
+		Prompt:     req.Prompt,
+		Duration:   duration,
+		Resolution: resolution,
+		Ratio:      ratio,
+		Images:     media.Images,
+		Videos:     media.Videos,
+		Audios:     media.Audios,
+		Files:      media.Files,
+		Links:      media.Links,
+	}
+	encoded, err := common.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	return strings.NewReader(string(encoded)), nil
+}
+
+func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	return channel.DoTaskApiRequest(a, c, info, requestBody)
+}
+
+// submitResponse 是提交响应。上游文档给的形状是
+// {"id":"video_task_001","task_id":"video_task_001","status":"pending"}。
+//
+// 两个字段都收：不同版本上游可能只回其中一个。
+type submitResponse struct {
+	ID     string `json:"id"`
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
+	Error  *struct {
+		Message string `json:"message"`
+		Code    string `json:"code"`
+	} `json:"error,omitempty"`
+}
+
+func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, taskErr *dto.TaskError) {
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, service.TaskErrorWrapper(err, "read_response_body_failed", http.StatusInternalServerError)
+	}
+	_ = resp.Body.Close()
+
+	var parsed submitResponse
+	if err := common.Unmarshal(responseBody, &parsed); err != nil {
+		return "", nil, service.TaskErrorWrapper(
+			fmt.Errorf("unmarshal response failed: %w, body: %s", err, truncate(responseBody)),
+			"unmarshal_response_body_failed", http.StatusInternalServerError)
+	}
+
+	upstreamID := firstNonEmpty(parsed.ID, parsed.TaskID)
+	if upstreamID == "" {
+		// 上游回了 200 却没给任务 ID：既不能当成功（下游会拿到一个查不到的任务），
+		// 也不能重试（可能已经建单计费）。按「结果未知」处理，交给上层判定。
+		return "", nil, service.TaskErrorWrapper(
+			fmt.Errorf("task id is empty, body: %s", truncate(responseBody)),
+			"invalid_response", http.StatusInternalServerError)
+	}
+	return upstreamID, responseBody, nil
+}
+
+// ────────────────────────────── 轮询 ──────────────────────────────
+
+func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
+	taskID, ok := body["task_id"].(string)
+	if !ok || strings.TrimSpace(taskID) == "" {
+		return nil, fmt.Errorf("invalid task_id")
+	}
+	base := strings.TrimRight(baseUrl, "/")
+	uri := fmt.Sprintf(base+fetchPath, taskID)
+
+	req, err := http.NewRequest(http.MethodGet, uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Accept", "application/json")
+
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	return client.Do(req)
+}
+
+// taskDetail 是 GET /v1/video/generations/{id} 的响应。
+//
+// 上游文档给的完成形状是 {"id","status","data":[{"url":"..."}]}；
+// 失败时 HTTP 200 也可能带 status:"failed" 与 error。
+type taskDetail struct {
+	ID     string `json:"id"`
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
+	Data   []struct {
+		URL string `json:"url"`
+	} `json:"data"`
+	Error *struct {
+		Message string `json:"message"`
+		Code    string `json:"code"`
+	} `json:"error,omitempty"`
+	// 部分上游把成片地址平铺在顶层。
+	URL string `json:"url,omitempty"`
+}
+
+func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	detail := taskDetail{}
+	if err := common.Unmarshal(respBody, &detail); err != nil {
+		return nil, errors.Wrap(err, "unmarshal task result failed")
+	}
+
+	result := &relaycommon.TaskInfo{Code: 0}
+	switch strings.ToLower(strings.TrimSpace(detail.Status)) {
+	case "pending", "queued", "submitted", "created", "in_queue":
+		result.Status = model.TaskStatusQueued
+		result.Progress = taskcommon.ProgressQueued
+	case "running", "processing", "in_progress", "generating":
+		result.Status = model.TaskStatusInProgress
+		result.Progress = taskcommon.ProgressInProgress
+	case "completed", "succeeded", "success":
+		url := resolveResultURL(detail)
+		if url == "" {
+			// 终态却拿不到成片地址：不能判成功（客户端会拿到一个打不开的链接），
+			// 也不能判失败（钱已经花了、片其实已经出了）。保持处理中，下轮重试。
+			result.Status = model.TaskStatusInProgress
+			result.Progress = taskcommon.ProgressInProgress
+		} else {
+			result.Status = model.TaskStatusSuccess
+			result.Progress = taskcommon.ProgressComplete
+			result.Url = url
+		}
+	case "failed", "rejected", "canceled", "cancelled", "expired":
+		result.Status = model.TaskStatusFailure
+		result.Progress = taskcommon.ProgressComplete
+		result.Reason = firstNonEmpty(errorMessage(detail.Error), detail.Status, taskcommon.ReasonContentModeration)
+	default:
+		// 未知状态一律当「处理中」：判失败会误退款，判成功会交付空产物。
+		result.Status = model.TaskStatusInProgress
+		result.Progress = taskcommon.ProgressInProgress
+	}
+	return result, nil
+}
+
+func (a *TaskAdaptor) GetModelList() []string {
+	return ModelList
+}
+
+func (a *TaskAdaptor) GetChannelName() string {
+	return ChannelName
+}
+
+// ────────────────────────────── 内部工具 ──────────────────────────────
+
+// resolveResultURL 从任务详情里取成片地址。
+//
+// 上游文档给的是 data[0].url；同时兼容顶层 url —— 不同版本形状有差异，
+// 宁可多认几种，也不要因为形状猜错把已计费的成功任务判成未完成。
+func resolveResultURL(detail taskDetail) string {
+	for _, item := range detail.Data {
+		if url := strings.TrimSpace(item.URL); url != "" {
+			return url
+		}
+	}
+	return strings.TrimSpace(detail.URL)
+}
+
+func errorMessage(err *struct {
+	Message string `json:"message"`
+	Code    string `json:"code"`
+}) string {
+	if err == nil {
+		return ""
+	}
+	return firstNonEmpty(err.Message, err.Code)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func truncate(body []byte) string {
+	const maxLen = 512
+	if len(body) <= maxLen {
+		return string(body)
+	}
+	return string(body[:maxLen]) + "..."
+}
+
+// resolveDuration 解析生成时长（秒）。
+//
+// 取值顺序：顶层 duration → metadata.duration/seconds → 缺省 5 秒。
+func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
+	if req.Duration > 0 {
+		if req.Duration < minDuration || req.Duration > maxDuration {
+			return 0, fmt.Errorf("duration must be between %d and %d seconds", minDuration, maxDuration)
+		}
+		return req.Duration, nil
+	}
+	if req.Metadata != nil {
+		for _, key := range []string{"duration", "seconds"} {
+			raw, ok := req.Metadata[key]
+			if !ok || raw == nil {
+				continue
+			}
+			seconds, ok := toInt(raw)
+			if !ok || seconds == 0 {
+				continue
+			}
+			if seconds < minDuration || seconds > maxDuration {
+				return 0, fmt.Errorf("duration must be between %d and %d seconds", minDuration, maxDuration)
+			}
+			return seconds, nil
+		}
+	}
+	return defaultDuration, nil
+}
+
+// toInt 把 metadata 里可能是数字或数字字符串的值转成 int。
+func toInt(raw any) (int, bool) {
+	switch v := raw.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return 0, false
+		}
+		return n, true
+	default:
+		return 0, false
+	}
+}
+
+// resolveResolution 解析输出分辨率档位。
+//
+// 取值顺序：顶层 resolution → metadata.resolution → size 反推 → 缺省 720P。
+func resolveResolution(req relaycommon.TaskSubmitReq) (string, error) {
+	if r := normalizeResolution(req.Resolution); r != "" {
+		return r, nil
+	}
+	if req.Metadata != nil {
+		if raw, ok := req.Metadata["resolution"].(string); ok {
+			if r := normalizeResolution(raw); r != "" {
+				return r, nil
+			}
+		}
+	}
+	if r, ok := resolutionFromSize(req.Size); ok {
+		return r, nil
+	}
+	return defaultResolution, nil
+}
+
+// normalizeResolution 归一分辨率写法。
+//
+// 上游文档写 `resolution`（如 "720P"、"1080P"，`size` 会转大写），
+// 所以这里统一大写并只认三档；其余值返回 ""（走缺省或报错）。
+func normalizeResolution(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "480", "480P":
+		return resolution480P
+	case "720", "720P":
+		return resolution720P
+	case "1080", "1080P":
+		return resolution1080P
+	default:
+		return ""
+	}
+}
+
+// resolutionFromSize 从 size 反推分辨率档位。
+//
+// size 可能是 "1280x720" 这类尺寸，也可能是直接写的 "720P"。
+func resolutionFromSize(size string) (string, bool) {
+	size = strings.ReplaceAll(strings.TrimSpace(size), "*", "x")
+	if size == "" {
+		return "", false
+	}
+	if r := normalizeResolution(size); r != "" {
+		return r, true
+	}
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		return "", false
+	}
+	w, errW := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, errH := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errW != nil || errH != nil || w <= 0 || h <= 0 {
+		return "", false
+	}
+	switch {
+	case w >= 1920 || h >= 1920:
+		return resolution1080P, true
+	case w >= 1280 || h >= 1280:
+		return resolution720P, true
+	default:
+		return resolution480P, true
+	}
+}
+
+// resolveRatio 解析画幅比例。
+//
+// 取值优先级统一走 relaycommon.ResolveTaskRatio：
+// metadata.ratio > metadata.aspect_ratio > 顶层 ratio > 顶层 aspect_ratio > size 推断。
+func resolveRatio(req relaycommon.TaskSubmitReq) (string, error) {
+	result := relaycommon.ResolveTaskRatio(req, relaycommon.TaskRatioOptions{
+		Candidates: relaycommon.TaskRatioCandidates{
+			"16:9": true, "9:16": true,
+			"4:3": true, "3:4": true,
+			"1:1": true,
+		},
+		DefaultRatio: defaultRatio,
+		SizeToRatio:  ratioFromSize,
+	})
+	if result.Ratio == "" {
+		return defaultRatio, nil
+	}
+	return result.Ratio, nil
+}
+
+// ratioFromSize 把 "1280x720" 这类尺寸映射到画幅比例。
+func ratioFromSize(size string) (string, bool) {
+	size = strings.ReplaceAll(strings.TrimSpace(size), "*", "x")
+	if size == "" {
+		return "", false
+	}
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 {
+		return "", false
+	}
+	w, errW := strconv.Atoi(strings.TrimSpace(parts[0]))
+	h, errH := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if errW != nil || errH != nil || w <= 0 || h <= 0 {
+		return "", false
+	}
+	candidates := []struct {
+		ratio string
+		value float64
+	}{
+		{"16:9", 16.0 / 9.0},
+		{"9:16", 9.0 / 16.0},
+		{"4:3", 4.0 / 3.0},
+		{"3:4", 3.0 / 4.0},
+		{"1:1", 1.0},
+	}
+	actual := float64(w) / float64(h)
+	for _, c := range candidates {
+		if nearlyEqual(actual, c.value) {
+			return c.ratio, true
+		}
+	}
+	return "", false
+}
+
+func nearlyEqual(a, b float64) bool {
+	diff := a - b
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff < 0.01
+}
+
+// ────────────────────────────── 素材 ──────────────────────────────
+
+// mediaBundle 是归一后的素材集合。
+type mediaBundle struct {
+	Images []mediaItem
+	Videos []mediaItem
+	Audios []mediaItem
+	Files  []mediaItem
+	Links  []mediaItem
+}
+
+// collectMedia 归一请求里的全部素材，并做场景互斥与数量上限校验。
+//
+// 归一顺序（与站内其它 wan3 渠道一致）：
+// 显式 media → metadata.media → 老字段（images / image / input_reference）。
+//
+// ⚠️ 老字段（images / image / input_reference）默认按**首帧**处理：
+// 这三个字段的既有语义就是「第一张图当首帧」，与上游「1 张图 = first_frame」
+// 的推断规则一致。老字段无法表达「参考图」语义 —— 需要多张参考图请用
+// media 字段并显式写 role。
+func collectMedia(req relaycommon.TaskSubmitReq) (*mediaBundle, error) {
+	bundle := &mediaBundle{}
+
+	for _, item := range req.Media {
+		url := strings.TrimSpace(item.URL)
+		if url == "" {
+			return nil, fmt.Errorf("media url is required")
+		}
+		role := strings.TrimSpace(item.Type)
+		switch role {
+		case roleFirstFrame, roleLastFrame, roleReferenceImage, roleReferenceVideo,
+			roleReferenceAudio, roleFile, roleLink:
+		default:
+			return nil, fmt.Errorf("media type %q is unsupported", role)
+		}
+		entry := mediaItem{URL: url, Role: role}
+		switch role {
+		case roleFirstFrame, roleLastFrame, roleReferenceImage:
+			bundle.Images = append(bundle.Images, entry)
+		case roleReferenceVideo:
+			bundle.Videos = append(bundle.Videos, entry)
+		case roleReferenceAudio:
+			bundle.Audios = append(bundle.Audios, entry)
+		case roleFile:
+			bundle.Files = append(bundle.Files, entry)
+		case roleLink:
+			bundle.Links = append(bundle.Links, entry)
+		}
+	}
+
+	// 老字段：images / image / input_reference 三者取「第一个非空」，
+	// 保持既有语义（避免同一张图被重复计入）。
+	legacy := req.Images
+	if len(legacy) == 0 && strings.TrimSpace(req.Image) != "" {
+		legacy = []string{req.Image}
+	}
+	if len(legacy) == 0 && strings.TrimSpace(req.InputReference) != "" {
+		legacy = []string{req.InputReference}
+	}
+	for _, url := range legacy {
+		url = strings.TrimSpace(url)
+		if url == "" {
+			continue
+		}
+		role := roleFirstFrame
+		if len(bundle.Images) > 0 {
+			// 已有显式 media 的图时，老字段不再追加首帧 ——
+			// 显式 media 优先，避免同一个位置塞两张首帧。
+			continue
+		}
+		bundle.Images = append(bundle.Images, mediaItem{URL: url, Role: role})
+	}
+
+	// 顶层 videos / audios 也是常见写法，并入对应集合。
+	for _, url := range req.Videos {
+		if url = strings.TrimSpace(url); url != "" {
+			bundle.Videos = append(bundle.Videos, mediaItem{URL: url, Role: roleReferenceVideo})
+		}
+	}
+	for _, url := range req.Audios {
+		if url = strings.TrimSpace(url); url != "" {
+			bundle.Audios = append(bundle.Audios, mediaItem{URL: url, Role: roleReferenceAudio})
+		}
+	}
+	if url := strings.TrimSpace(req.Audio); url != "" {
+		bundle.Audios = append(bundle.Audios, mediaItem{URL: url, Role: roleReferenceAudio})
+	}
+
+	if err := validateMedia(bundle); err != nil {
+		return nil, err
+	}
+	return bundle, nil
+}
+
+// validateMedia 做场景互斥与数量上限校验。
+//
+// ⚠️ 上游文档明确「首尾帧与参考类素材不可混用」，混用上游报 400。
+// 本地先拦：上游一建单就计费，混用请求不该走到那里。
+func validateMedia(bundle *mediaBundle) error {
+	// 分别统计首帧 / 尾帧 / 参考图的数量。
+	//
+	// ⚠️ 首帧与尾帧**各最多一张**，两者**合计可以有两张**（首尾帧场景）。
+	//	所以不能拿「首尾帧合计 > 1」当互斥判据 —— 那是把合法的
+	//	「首帧 + 尾帧」两图请求误判成错误。
+	firstCount, lastCount, referenceImageCount := 0, 0, 0
+	for _, item := range bundle.Images {
+		switch item.Role {
+		case roleFirstFrame:
+			firstCount++
+		case roleLastFrame:
+			lastCount++
+		case roleReferenceImage:
+			referenceImageCount++
+		}
+	}
+	if firstCount > 1 || lastCount > 1 {
+		return fmt.Errorf("at most one first_frame and one last_frame are accepted")
+	}
+	frameCount := firstCount + lastCount
+	if frameCount > 0 {
+		// 首尾帧场景：其余参考类素材一律不许混用。
+		if referenceImageCount > 0 {
+			return fmt.Errorf("first_frame / last_frame cannot be mixed with reference_image")
+		}
+		if len(bundle.Videos) > 0 || len(bundle.Audios) > 0 ||
+			len(bundle.Files) > 0 || len(bundle.Links) > 0 {
+			return fmt.Errorf("first_frame / last_frame cannot be mixed with reference videos, audios, files or links")
+		}
+	}
+	// 参考场景：首尾帧与参考类素材同样互斥（上面已覆盖帧侧，这里覆盖反向）。
+	if len(bundle.Videos) > 0 || len(bundle.Audios) > 0 ||
+		len(bundle.Files) > 0 || len(bundle.Links) > 0 {
+		if frameCount > 0 {
+			return fmt.Errorf("reference videos, audios, files or links cannot be mixed with first_frame / last_frame")
+		}
+	}
+	if len(bundle.Images) > maxReferenceImages {
+		return fmt.Errorf("at most %d images are accepted", maxReferenceImages)
+	}
+	if len(bundle.Videos) > maxReferenceVideos {
+		return fmt.Errorf("at most %d reference videos are accepted", maxReferenceVideos)
+	}
+	if len(bundle.Audios) > maxReferenceAudios {
+		return fmt.Errorf("at most %d reference audios are accepted", maxReferenceAudios)
+	}
+	if len(bundle.Files) > maxReferenceFiles {
+		return fmt.Errorf("at most %d reference files are accepted", maxReferenceFiles)
+	}
+	if len(bundle.Links) > maxReferenceLinks {
+		return fmt.Errorf("at most %d reference links are accepted", maxReferenceLinks)
+	}
+	// 参考音频不能单独作为唯一参考（上游文档：至少需一张参考图或一段参考视频）。
+	if len(bundle.Audios) > 0 && len(bundle.Images) == 0 && len(bundle.Videos) == 0 {
+		return fmt.Errorf("reference audio requires at least one reference image or reference video")
+	}
+	return nil
+}

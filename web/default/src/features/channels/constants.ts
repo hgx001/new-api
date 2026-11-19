@@ -87,12 +87,13 @@ export const CHANNEL_TYPES = {
   68: 'Xinbi Model Router',
   69: '视频生成车站',
   70: 'SeetaCloud',
+  71: '客美 Kemeitv',
 } as const
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 33, 24, 43, 3, 41, 48, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15, 46,
   23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21, 44, 2, 5, 36,
-  50, 51, 52, 53, 54, 55, 56, 59, 60, 61, 62, 63, 65, 66, 67, 68, 69, 70,
+  50, 51, 52, 53, 54, 55, 56, 59, 60, 61, 62, 63, 65, 66, 67, 68, 69, 70, 71,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -408,6 +409,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   68: 'Xinbi Model Router API Key (Bearer token from https://www.xinbiapi.com)',
   69: '视频生成车站卡密（X-Token 头鉴权，学员名+口令登录后拿到的 token，非 Bearer）',
   70: 'SeetaCloud API Token（自建实例 token，裸 token 鉴权，非 Bearer）',
+  71: '客美 API Key（Bearer token，sk- 前缀，来自 https://ai.kemeitv.cn）',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {

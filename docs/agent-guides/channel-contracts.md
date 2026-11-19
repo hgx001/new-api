@@ -247,3 +247,39 @@ wan3.0-video **不是同一套**，adaptor 里按模型名分支处理（`isWan3
   不吐上游实例直链（直链里带 `u113...seetacloud.com:8443` 实例地址，
   且直链本身不鉴权，拿到就能下）。
 
+
+## 客美 Kemeitv：OpenAI 兼容视频网关（2026-11-19）
+
+新渠道 type=71「客美 Kemeitv」（ai.kemeitv.cn）。上游是统一 API 网关，
+万相 wan3.0-video 走 **OpenAI 兼容视频协议**，与站内 wan3 系的
+DashScope 原生协议**不是同一套**，不能照抄 wan3 adaptor。
+
+**只接两个模型**（用户 2026-11-19 口径）：`wan3.0-video-tj`、`wan3.0-video-prime-tj`。
+tj = 上游「特价」供应商档，与阿里云直连的 `wan3.0-video` / `wan3.0-video-prime`
+是**两条独立货源**，只是上游给的 rate 档位结构相同。
+
+| | Kemeitv | Wan3 官网（type 60） |
+|---|---|---|
+| 提交 | `POST {base}/v1/video/generations` | `POST {base}/api/v1/services/aigc/video-generation/video-synthesis` |
+| 轮询 | `GET {base}/v1/video/generations/{id}` | `GET {base}/api/v1/tasks/{id}` |
+| 提交响应 | `{"id","task_id","status"}`（平铺） | `{"output":{"task_id","task_status"}}` |
+| 成片地址 | `data[0].url`（兼容顶层 `url`） | `output.video_url` |
+| 素材写法 | `images[]/videos[]/audios[]/files[]/links[]`，元素为 URL 串或 `{url,role}` | `input.media[]` |
+
+- 鉴权 `Authorization: Bearer sk-...`（上游另支持 `X-Goog-Api-Key` 与 `?key=`，
+  本站统一用 Bearer）。
+- ⚠️ **失败可能是 HTTP 200 + `status:"failed"`**（上游《WAN视频生成》第 5 节明确）。
+  所以轮询解析必须先看 body 的 status，不能只看 HTTP 码。
+- ⚠️ **场景互斥**：首尾帧（`first_frame`/`last_frame`）与参考类素材
+  （`reference_*`/`file`/`link`）**不可混用**，混用上游 400。网关本地先拦。
+- ⚠️ 上游的「按张数推断默认 role」（1 张=首帧、2 张=首尾帧、3+ 张=参考图）
+  与本站语义可能冲突（客户传 2 张**参考图**本意是参考，上游会当首尾帧）。
+  所以适配器**统一显式写 role**，不依赖上游的推断。
+- 分辨率 480P / 720P / 1080P；画幅 16:9 / 9:16 / 4:3 / 3:4 / 1:1（**无 adaptive**，
+  缺省 16:9）；时长 2–30 秒，缺省 5 秒。
+- 参考音频**不能单独作为唯一参考**（至少要有一张参考图或一段参考视频）。
+- 计费：按秒，`EstimateBilling` 返回 `{"seconds": N, "size": 分辨率倍率}`，
+  分辨率倍率 1 : 2 : 4。对外价与对应标准档一致：tj ¥0.27/秒（480P 基准）、
+  prime-tj ¥0.405/秒（480P 基准）。
+- 上游域名与品牌词（`kemeitv`）已进脱敏全局供应商词表；
+  地址由 `RedactUpstreamAddress` 一律摘除。

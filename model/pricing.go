@@ -506,6 +506,20 @@ func isAllowedPricingModel(name string) bool {
 	if strings.HasPrefix(name, "wan3.0-video") {
 		return true
 	}
+	// 客美 Kemeitv（渠道 71）的两个万相特价变体（2026-11-19 上架）：
+	// wan3.0-video-tj / wan3.0-video-prime-tj。
+	//
+	// ⚠️ 它们**本来就被上面的 "wan3.0-video" 前缀判断放行**，
+	//	这里再显式写一遍是**回归守卫**：万一后人收紧前缀判断（比如为了
+	//	挡掉某个重名模型），这两个新上架的模型会静默从广场消失 ——
+	//	客户看不到、也不算得出价，而渠道与 abilities 都在，是最难查的一类故障。
+	//
+	// 与站内已有 wan3.0-video / wan3.0-video-prime 是**两条独立货源**，
+	// 对外价按同价位对齐（见 setting/ratio_setting/model_ratio.go）。
+	switch name {
+	case "wan3.0-video-tj", "wan3.0-video-prime-tj":
+		return true
+	}
 	// 三元巡狩 wanwan 1080P（拼车）慢速档：按次计费，次日出片
 	if name == "wan3.0-1080p-慢速" {
 		return true

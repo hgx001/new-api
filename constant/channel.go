@@ -82,7 +82,11 @@ const (
 	// 轮询 GET /api/v1/comfyui/comfyui_workflow/result/{id}。
 	// 鉴权走裸 token（Authorization: <token>），参考图**只收 data URI**。
 	ChannelTypeSeeta = 70
-	ChannelTypeDummy = 71 // this one is only for count, do not add any channel after this
+	// ChannelTypeKemeitv 客美（ai.kemeitv.cn）统一 API 网关：OpenAI 兼容视频协议，
+	// 提交 POST /v1/video/generations，轮询 GET /v1/video/generations/{id}。
+	// 只接 wan3.0-video-tj 与 wan3.0-video-prime-tj 两个万相变体。
+	ChannelTypeKemeitv = 71
+	ChannelTypeDummy  = 72 // this one is only for count, do not add any channel after this
 
 )
 
@@ -158,6 +162,7 @@ var ChannelBaseURLs = []string{
 	"https://www.xinbiapi.com",                  //68 (心笔 Model Router)
 	"",                                          //69 (视频生成车站)
 	"https://u1133789-a936-c07acd4f.westd.seetacloud.com:8443", //70 (SeetaCloud)
+	"https://ai.kemeitv.cn",                       //71 (客美 Kemeitv)
 }
 
 // GetChannelBaseURL returns the built-in base URL for a channel type.
@@ -236,6 +241,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeXinbi:          "心笔 Model Router",
 	ChannelTypeYuanmeng:       "视频生成车站",
 	ChannelTypeSeeta:          "SeetaCloud",
+	ChannelTypeKemeitv:        "客美 Kemeitv",
 }
 
 func GetChannelTypeName(channelType int) string {

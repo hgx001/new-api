@@ -119,6 +119,12 @@ var upstreamVendorLiterals = []string{
 	// ⚠️ 只放 "seetacloud" 这个完整词。裸 "seeta" 会被当成子串误伤
 	// 其它正常英文词（字面量匹配没有词边界），所以短词走下面的 patterns。
 	"seetacloud",
+	// 客美 Kemeitv（2026-11-19 加）：上游站点域名与品牌词。
+	// 上游报错与回执里出现这些字样等于直接报出货源。
+	//
+	// ⚠️ 只放 "kemeitv" 这个完整词。裸 "keme" 会被当成子串误伤其它正常英文词
+	// （字面量匹配没有词边界），所以不放短词。
+	"kemeitv",
 }
 
 // upstreamModelLiterals 是**上游模型名**：只对别名模型替换。
