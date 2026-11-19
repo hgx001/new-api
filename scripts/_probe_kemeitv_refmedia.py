@@ -29,7 +29,7 @@ RATIO = "16:9"
 
 REF_IMG = "https://api.heibaidao.cn/testassets/refimg.png"
 REF_VID = "https://api.heibaidao.cn/testassets/refvid.mp4"
-REF_AUD = "https://api.heibaidao.cn/testassets/refaud.m4a"
+REF_AUD = "https://api.heibaidao.cn/testassets/refaud.mp3"
 
 # 提示词用 @Image1 / @Video1 / @Audio1 显式绑定参考素材。
 # ⚠️ 上游「参考素材靠 tag 绑定提示词」——不写 tag，素材只是传过去没人用。
