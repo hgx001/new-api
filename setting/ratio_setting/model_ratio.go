@@ -329,17 +329,26 @@ var defaultModelPrice = map[string]float64{
 	// 客美 Kemeitv（渠道 71，2026-11-19 上架）的两个万相「特价」变体。
 	//
 	// ⚠️ 它们与站内已有的 wan3.0-video / wan3.0-video-prime 是**两条独立货源**，
-	//	只是上游给的 rate 档位结构一模一样（tj: 0.3/0.6/1.2，prime-tj: 0.45/0.9/1.8），
-	//	所以对外价与对应标准档**保持一致**：tj = 标准版价，prime-tj = prime 版价。
+	//	上游给的 rate 档位结构相同（tj: 0.3/0.6/1.2，prime-tj: 0.45/0.9/1.8），
+	//	但**特价档的对外价由上游单独定**，与站内标准档**不同**：
+	//	标准版 wan3.0-video 是 ¥0.27/秒、prime 是 ¥0.405/秒，
+	//	而客美的 tj / prime-tj 是 ¥0.138/秒、¥0.24/秒 —— 更便宜，别按标准档推算。
 	//
-	// 对外价口径（480P 基准，720P/1080P 走分辨率倍率 2 / 4）：
-	//   - wan3.0-video-tj       ¥0.27/秒（720P ¥0.54、1080P ¥1.08）
-	//   - wan3.0-video-prime-tj ¥0.405/秒（720P ¥0.81、1080P ¥1.62）
+	// 对外价口径（480P 基准）：
+	//   - wan3.0-video-tj       ¥0.138/秒（720P ¥0.25、1080P ¥0.552）
+	//   - wan3.0-video-prime-tj ¥0.24/秒 （720P ¥0.48、1080P ¥0.96）
+	//
+	// ⚠️ tj 的 720P 是**人工特价 ¥0.25/秒**，不等于基准价 × 标准 2 倍（¥0.276）。
+	//	该档位由 relay/channel/task/kemeitv/constants.go 的
+	//	modelResolutionSizeRatio 按「模型 + 分辨率」覆盖（0.25/0.138 ≈ 1.8116），
+	//	其余档位（tj 480P/1080P、prime-tj 全档）走标准倍率 1 : 2 : 4。
 	//
 	// ⚠️ 内部仍按 USD 等值存储（/USD2RMB），与站内其它按秒模型口径一致。
-	// 倍率表见 relay/channel/task/kemeitv/constants.go 的 resolutionSizeRatio（1 : 2 : 4）。
-	"wan3.0-video-tj":       0.0369863,  // ¥0.27/秒（480P 基准）
-	"wan3.0-video-prime-tj": 0.05547945, // ¥0.405/秒（480P 基准）
+	//	这里是**兜底默认值**：model/option.go 的 InitOptionMap 会用本表初始化
+	//	options.ModelPrice，relay/helper/price.go 也会在查不到时回落到这里 ——
+	//	所以改价必须改这里，否则 DB 被重置时会回落到旧价。
+	"wan3.0-video-tj":       0.138 / USD2RMB, // ¥0.138/秒（480P 基准）
+	"wan3.0-video-prime-tj": 0.24 / USD2RMB,  // ¥0.24/秒（480P 基准）
 	// 有赞渠道新独立模型（2026-11-18 上架）：上游与旧标准版 wan3.0-video
 	// 是**两个并列模型**，不是改名关系。
 	//

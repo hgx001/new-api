@@ -126,6 +126,22 @@ export function getWan3SampleResolution(modelName: string): string | null {
   if (modelName === 'wan3.0-video' || modelName === 'wan3.0-smart') {
     return '720P'
   }
+  // 客美 Kemeitv（渠道 71）的两个万相特价变体：
+  // `wan3.0-video-tj` / `wan3.0-video-prime-tj`。
+  //
+  // ⚠️ 必须**精确匹配**且排在下面的 `startsWith('wan3.0-video')` **之前**：
+  // 那个前缀分支给的是 480P（官网 DashScope 的缺省），而客美的缺省是 **720P**，
+  // 且 480P 是最低价档（tj ¥0.138/秒）。示例是客户**直接照抄**的东西，
+  // 写 480P 会让客户照抄出一个比预期便宜但分辨率更低的单子。
+  //
+  // ⚠️ 也不能用 startsWith('wan3.0-video')：那会连站内标准版
+  // wan3.0-video / wan3.0-video-prime 一起吃掉 —— 那些要的是 720P/1080P。
+  if (
+    modelName === 'wan3.0-video-tj' ||
+    modelName === 'wan3.0-video-prime-tj'
+  ) {
+    return '720P'
+  }
   // 官网 DashScope 通道（wan3.0-video-官网）不受有赞切换影响，仍三档齐全。
   if (modelName.startsWith('wan3.0-video')) {
     return '480P'

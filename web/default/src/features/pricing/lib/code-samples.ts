@@ -606,6 +606,16 @@ export function buildVideoSample(lang: Lang, ctx: SampleContext): string {
     if (name === 'wan3.0-video-prime' || name === 'wan3.0-video-prime-1080p') {
       return '30'
     }
+    // 客美 Kemeitv（渠道 71）的两个万相特价变体：
+    // 上游时长 **2-30 秒整数秒**（缺省 5 秒）。示例写 5 秒 —— 合法且便宜，
+    // 客户照抄最不容易失败。
+    //
+    // ⚠️ 必须**精确匹配**：这两个名字以 "wan3.0-video" 开头，但**不是**
+    // wan3 系标准版（标准版 10-30 秒、只有 720P/1080P），走的是客美自己的
+    // OpenAI 兼容协议。别让下面的 startsWith 分支把它们带成 10 秒。
+    if (name === 'wan3.0-video-tj' || name === 'wan3.0-video-prime-tj') {
+      return '5'
+    }
     // 有赞 wan-3.0-yz（2026-11-18 上架，公开名带 yz 后缀区分渠道）：
     // 上游新独立模型，时长 **10-30 秒整数秒**（实测硬边界，低于 10 秒上游
     // 直接拒单）。示例写 10 秒 —— 最短合法值，客户照抄最不容易失败，也最便宜。

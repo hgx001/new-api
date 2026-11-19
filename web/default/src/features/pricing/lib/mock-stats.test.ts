@@ -291,6 +291,70 @@ describe('Wan3 Model Square API parameters', () => {
     assert.notEqual(wan30.duration.range, pro.duration.range)
   })
 
+  // 回归守卫：客美 Kemeitv（渠道 71）的两个万相特价变体
+  // `wan3.0-video-tj` / `wan3.0-video-prime-tj`。
+  //
+  // 它们的名字以 "wan3.0-video" 开头，会被 `startsWith` 命中 —— 但它们走的是
+  // **客美自己的 OpenAI 兼容协议**，契约与站内 wan3 系标准版完全不同：
+  //   - 时长 2—30 秒（标准版是 10—30 秒）
+  //   - 分辨率 **480P / 720P / 1080P 三档齐全**（标准版只有 720P/1080P）
+  //   - 画幅 5 档（含 4:3 / 3:4）
+  // 落进通用表会**少显示 480P** —— 而 480P 恰好是最低价档
+  // （tj ¥0.138/秒 vs 720P ¥0.25/秒），客户按表选就选不到最便宜的档位。
+  test('describes wan3.0-video-tj and wan3.0-video-prime-tj with the kemeitv contract', () => {
+    for (const modelName of [
+      'wan3.0-video-tj',
+      'wan3.0-video-prime-tj',
+    ]) {
+      const params = parametersByName(modelName)
+      assert.deepEqual(parameterNames(modelName), [
+        'prompt',
+        'duration',
+        'resolution',
+        'aspect_ratio',
+        'images',
+        'videos',
+        'audios',
+      ])
+      // 2—30 秒整数秒，缺省 5 秒。
+      assert.equal(params.duration.range, '2 ~ 30')
+      assert.equal(params.duration.defaultValue, 5)
+      // 三档齐全，缺省 720P。
+      assert.deepEqual(params.resolution.enumValues, [
+        '480P',
+        '720P',
+        '1080P',
+      ])
+      assert.equal(params.resolution.defaultValue, '720P')
+      // 画幅 5 档（上游无 adaptive）。
+      assert.deepEqual(params.aspect_ratio.enumValues, [
+        '16:9',
+        '9:16',
+        '4:3',
+        '3:4',
+        '1:1',
+      ])
+      assert.equal(params.aspect_ratio.defaultValue, '16:9')
+      // 参考素材上限与上游文档一致。
+      assert.equal(params.images.range, '0 ~ 10')
+      assert.equal(params.videos.range, '0 ~ 5')
+      assert.equal(params.audios.range, '0 ~ 5')
+      // 该模型没有 fps 参数，通用表的 fps 必须消失。
+      assert.equal(params.fps, undefined)
+    }
+  })
+
+  // 回归守卫：客美两档必须**留在**通用 wan3 判定之外 ——
+  // 否则站内标准版 wan3.0-video / wan3.0-video-prime 的时长下界会被改成 2 秒，
+  // 而它们 2026-11-15 上游切换后最低 10 秒。
+  test('keeps the kemeitv tiers from overriding the wan3 standard contract', () => {
+    const standard = parametersByName('wan3.0-video')
+    assert.equal(standard.duration.range, '10 ~ 30')
+    assert.deepEqual(standard.resolution.enumValues, ['720P', '1080P'])
+    const prime = parametersByName('wan3.0-video-prime')
+    assert.equal(prime.duration.range, '30')
+  })
+
   test('describes wan2.7-r2v limits including the required reference images', () => {
     const params = parametersByName('wan2.7-r2v')
     assert.deepEqual(parameterNames('wan2.7-r2v'), [

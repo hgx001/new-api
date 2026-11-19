@@ -262,6 +262,15 @@ describe('AutoDL H3 resolution tier note', () => {
     // ⚠️ 判定必须精确匹配：wan-3.0-pro / wan-3.0-特惠 的合法档位与本模型
     // 不同，前缀匹配会把它们的示例分辨率一起带过来。
     assert.equal(getWan3SampleResolution('wan-3.0-yz'), '720P')
+    // 客美 Kemeitv 的两个万相特价变体（渠道 71）：名字以 "wan3.0-video" 开头，
+    // 会落进官网分支拿 480P —— 但客美的缺省是 **720P**，且 480P 是最低价档
+    // （tj ¥0.138/秒 vs 720P ¥0.25/秒），示例是客户直接照抄的东西，
+    // 写 480P 会照抄出比预期便宜但分辨率更低的单子。
+    assert.equal(getWan3SampleResolution('wan3.0-video-tj'), '720P')
+    assert.equal(
+      getWan3SampleResolution('wan3.0-video-prime-tj'),
+      '720P'
+    )
     // 非 wan3 系模型没有该参数，示例里不应出现 resolution。
     assert.equal(getWan3SampleResolution('autodl:minimax-h3-u24'), null)
     assert.equal(getWan3SampleResolution('gpt-6-luna'), null)

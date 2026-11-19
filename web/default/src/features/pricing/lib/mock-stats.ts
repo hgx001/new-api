@@ -1043,6 +1043,69 @@ function buildWan30VideoParameters(): SupportedParameter[] {
  * 收窄到单一比例后「模型名 → 交付尺寸」一一对应，客户不会拿到预期外的画幅。
  * 非 9:16 的请求由后端 400 明确拒单（不静默改比例）。
  */
+/**
+ * 客美 Kemeitv（渠道 71）的两个万相特价变体：
+ * `wan3.0-video-tj` / `wan3.0-video-prime-tj`。
+ *
+ * ⚠️ **必须单列**，不能落进上面的通用 wan3 表：
+ * 通用表是「10—30 秒、720P/1080P 两档」（2026-11-15 有赞切换后的口径），
+ * 而客美走的是**另一套协议**（OpenAI 兼容视频）——
+ * 时长 2—30 秒、分辨率 **480P / 720P / 1080P 三档齐全**、缺省 720P。
+ * 落进通用表会少显示 480P（最低价档），客户按表选就选不到最便宜的档位。
+ *
+ * 画幅 5 档（16:9 / 9:16 / 4:3 / 3:4 / 1:1），上游**没有 adaptive**，
+ * 缺省 16:9 —— 与通用表一致，无需单列。
+ *
+ * 定价（按秒，480P 基准）：tj ¥0.138/秒、prime-tj ¥0.24/秒。
+ */
+const KEMEITV_RESOLUTIONS = ['480P', '720P', '1080P']
+
+function buildKemeitvVideoParameters(): SupportedParameter[] {
+  return [
+    VIDEO_PARAMS[0],
+    {
+      name: 'duration',
+      // 上游《WAN视频生成》：2—30 秒整数秒，缺省 5 秒。
+      type: 'integer',
+      range: '2 ~ 30',
+      defaultValue: 5,
+      descriptionKey: 'Video length in seconds',
+    },
+    {
+      name: 'resolution',
+      type: 'enum',
+      enumValues: KEMEITV_RESOLUTIONS,
+      defaultValue: '720P',
+      descriptionKey: 'Output video resolution',
+    },
+    {
+      name: 'aspect_ratio',
+      type: 'enum',
+      enumValues: ['16:9', '9:16', '4:3', '3:4', '1:1'],
+      defaultValue: '16:9',
+      descriptionKey: 'Output aspect ratio',
+    },
+    {
+      name: 'images',
+      type: 'array',
+      range: '0 ~ 10',
+      descriptionKey: 'Image input',
+    },
+    {
+      name: 'videos',
+      type: 'array',
+      range: '0 ~ 5',
+      descriptionKey: 'Video input',
+    },
+    {
+      name: 'audios',
+      type: 'array',
+      range: '0 ~ 5',
+      descriptionKey: 'Audio input',
+    },
+  ]
+}
+
 function buildWan3Official720PVideoParameters(): SupportedParameter[] {
   return [
     VIDEO_PARAMS[0],
@@ -1371,6 +1434,19 @@ export function buildSupportedParameters(
     }
     if (model.model_name === 'wan3.0-720p-特惠') {
       return buildWan3Official720PVideoParameters()
+    }
+    // 客美 Kemeitv（渠道 71）的两个万相特价变体：2—30 秒、480P/720P/1080P 三档。
+    //
+    // ⚠️ 必须在通用 wan3 表**之前**判定：通用表是 10—30 秒、只有 720P/1080P，
+    // 少显示 480P 就会让客户选不到最低价档（tj 480P ¥0.138/秒 vs 720P ¥0.25/秒）。
+    //
+    // ⚠️ 用**精确匹配**：不能用 startsWith('wan3.0-video')，那会连站内标准版
+    // wan3.0-video / wan3.0-video-prime 一起吃掉，把它们的 10—30 秒改成 2—30 秒。
+    if (
+      model.model_name === 'wan3.0-video-tj' ||
+      model.model_name === 'wan3.0-video-prime-tj'
+    ) {
+      return buildKemeitvVideoParameters()
     }
     if (isWan3VideoModel(model.model_name)) {
       return buildWan3VideoParameters()

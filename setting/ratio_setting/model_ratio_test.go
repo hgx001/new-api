@@ -102,8 +102,42 @@ func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
 	require.InDelta(t, 1.5*price, primePrice, 1e-8, "Prime price must be 1.5x standard")
 }
 
-// wan3.0-video-官网（官网渠道独立模型名）2026-10-22 单独调价：
-// 480P ¥0.20/秒、720P ¥0.45/秒、1080P ¥0.80/秒，分辨率倍率 1 / 2.25 / 4。
+// 客美 Kemeitv（渠道 71）的两个万相特价变体：tj ¥0.138/秒、prime-tj ¥0.24/秒
+// （480P 基准，内部按 USD 等值存储）。
+//
+// ⚠️ 这两个是**特价档**，与站内标准版 wan3.0-video（¥0.27）/ prime（¥0.405）
+// 价格不同 —— 早先的兜底值照抄了标准档的 ¥0.27/¥0.405，是**错价**。
+//
+// 为什么这条兜底值必须准：
+//   - model/option.go 的 InitOptionMap 用 defaultModelPrice 初始化
+//     options.ModelPrice，代码默认值会直接写进 DB；
+//   - relay/helper/price.go 的 ModelPriceHelperPerCall 在 DB 查不到时回落到
+//     GetDefaultModelPriceMap()。
+// 兜底值错了 = DB 被重置/迁移后价格静默回退到旧价。
+func TestDefaultModelPriceKemeitvSpecialTier(t *testing.T) {
+	InitRatioSettings()
+
+	tj, ok := GetModelPrice("wan3.0-video-tj", false)
+	require.True(t, ok, "wan3.0-video-tj must have an explicit per-second price")
+	require.InDelta(t, 0.138/USD2RMB, tj, 1e-9, "tj 480P base must equal ¥0.138/sec in USD")
+	// 生产库 options.ModelPrice 里的值，兜底值必须与之一致。
+	require.InDelta(t, 0.0189041095890411, tj, 1e-12, "tj 480P base must match the production ModelPrice value")
+
+	primeTJ, ok := GetModelPrice("wan3.0-video-prime-tj", false)
+	require.True(t, ok, "wan3.0-video-prime-tj must have an explicit per-second price")
+	require.InDelta(t, 0.24/USD2RMB, primeTJ, 1e-9, "prime-tj 480P base must equal ¥0.24/sec in USD")
+	require.InDelta(t, 0.03287671232876712, primeTJ, 1e-12, "prime-tj 480P base must match the production ModelPrice value")
+
+	// 特价档必须**低于**站内标准档 —— 写错成标准价就是错价。
+	standard, ok := GetModelPrice("wan3.0-video", false)
+	require.True(t, ok, "wan3.0-video must have an explicit per-second price")
+	require.Less(t, tj, standard, "kemeitv tj must stay cheaper than the standard wan3.0-video tier")
+	standardPrime, ok := GetModelPrice("wan3.0-video-prime", false)
+	require.True(t, ok, "wan3.0-video-prime must have an explicit per-second price")
+	require.Less(t, primeTJ, standardPrime, "kemeitv prime-tj must stay cheaper than the standard prime tier")
+}
+
+// wan3.0-video-官网（官网渠道独立模型名）2026-10-22 单独调价：// 480P ¥0.20/秒、720P ¥0.45/秒、1080P ¥0.80/秒，分辨率倍率 1 / 2.25 / 4。
 // 与标准版 wan3.0-video（¥0.27 / ¥0.54 / ¥1.08）**不同价**，两者互不影响。
 func TestDefaultModelPriceWan3OfficialPerSecond(t *testing.T) {
 	InitRatioSettings()
