@@ -1,12 +1,15 @@
 package kemeitv
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -52,8 +55,8 @@ func TestResolveDuration(t *testing.T) {
 			want: 8,
 		},
 		{
-			name: "metadata.duration 越界拒绝",
-			req:  relaycommon.TaskSubmitReq{Metadata: map[string]any{"duration": 99}},
+			name:    "metadata.duration 越界拒绝",
+			req:     relaycommon.TaskSubmitReq{Metadata: map[string]any{"duration": 99}},
 			wantErr: true,
 		},
 	}
@@ -297,7 +300,7 @@ func TestBuildRequestBody(t *testing.T) {
 	})
 	a := newAdaptor()
 	body, err := a.BuildRequestBody(c, &relaycommon.RelayInfo{
-		ChannelMeta:    &relaycommon.ChannelMeta{ChannelType: 71},
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: 71},
 		OriginModelName: ModelNameTJ,
 	})
 	require.NoError(t, err)
@@ -323,7 +326,7 @@ func TestBuildRequestBody_上游模型名锁定(t *testing.T) {
 	c := newTestContext(t, relaycommon.TaskSubmitReq{Prompt: "x"})
 	a := newAdaptor()
 	body, err := a.BuildRequestBody(c, &relaycommon.RelayInfo{
-		ChannelMeta:    &relaycommon.ChannelMeta{ChannelType: 71},
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: 71},
 		OriginModelName: ModelNamePrimeTJ,
 	})
 	require.NoError(t, err)
@@ -557,4 +560,95 @@ func TestConvertToOpenAIVideo_失败带上游原因(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "InvalidParameter", errObj["code"])
 	assert.NotEmpty(t, errObj["message"])
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// 素材后缀校验
+//
+// ⚠️ 上游按后缀判格式（2026-11-19 真机实测：.m4a 被拒，提示只收 wav/mp3），
+//	且这个拒绝发生在建单之后 —— 本地必须提前拦。
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestCollectMedia_音频m4a被拒(t *testing.T) {
+	_, err := collectMedia(relaycommon.TaskSubmitReq{
+		Media: []relaycommon.TaskMedia{
+			{Type: roleReferenceImage, URL: "https://cdn.example.com/a.png"},
+			{Type: roleReferenceAudio, URL: "https://cdn.example.com/a.m4a"},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "m4a")
+	assert.Contains(t, err.Error(), "wav")
+}
+
+func TestCollectMedia_音频mp3通过(t *testing.T) {
+	bundle, err := collectMedia(relaycommon.TaskSubmitReq{
+		Media: []relaycommon.TaskMedia{
+			{Type: roleReferenceImage, URL: "https://cdn.example.com/a.png"},
+			{Type: roleReferenceAudio, URL: "https://cdn.example.com/a.mp3"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, bundle.Audios, 1)
+}
+
+func TestCollectMedia_带签名参数仍能判后缀(t *testing.T) {
+	_, err := collectMedia(relaycommon.TaskSubmitReq{
+		Media: []relaycommon.TaskMedia{
+			{Type: roleReferenceImage, URL: "https://cdn.example.com/a.png?sig=xyz&expires=123"},
+			{Type: roleReferenceVideo, URL: "https://cdn.example.com/b.avi?sig=xyz"},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "avi")
+}
+
+func TestCollectMedia_无后缀不拦(t *testing.T) {
+	// 无后缀的签名 URL 很常见（部分 CDN 用 /object/<id> 形态），
+	// 本地过度拦截会误杀合法素材 —— 取不到后缀就放行。
+	bundle, err := collectMedia(relaycommon.TaskSubmitReq{
+		Media: []relaycommon.TaskMedia{
+			{Type: roleReferenceImage, URL: "https://cdn.example.com/object/abc"},
+			{Type: roleReferenceAudio, URL: "https://cdn.example.com/object/def"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Len(t, bundle.Audios, 1)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// DoResponse 必须写出响应体
+//
+// ⚠️ 渠道框架不替适配器回写 body。缺 c.JSON 时客户端拿到 HTTP 200 + 空 body，
+//	连 task id 都取不到 —— 2026-11-19 真机踩过。
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestDoResponse_写出OpenAIVideo响应体(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+
+	a := newAdaptor()
+	respBody := []byte(`{"id":"up-1","task_id":"up-1","status":"pending"}`)
+	resp := &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(respBody))}
+
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_1"},
+		OriginModelName: ModelNameTJ,
+	}
+
+	upstreamID, _, taskErr := a.DoResponse(c, resp, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, "up-1", upstreamID)
+
+	require.Equal(t, 200, recorder.Code)
+	body := recorder.Body.String()
+	require.NotEmpty(t, body, "响应体不能为空：客户端要靠它拿 task id")
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal([]byte(body), &out))
+	assert.Equal(t, "task_public_1", out["id"])
+	assert.Equal(t, "video", out["object"])
+	// 对外不能出现上游单号。
+	assert.NotContains(t, body, "up-1")
 }

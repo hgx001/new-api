@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -260,7 +263,41 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			fmt.Errorf("task id is empty, body: %s", truncate(responseBody)),
 			"invalid_response", http.StatusInternalServerError)
 	}
+
+	// ⚠️ 必须在这里写出响应体。渠道框架**不会**替适配器回写 body ——
+	//	缺了这一句，客户端拿到 HTTP 200 但 body 为空，连 task id 都取不到，
+	//	只能回数据库/日志捞单，其他适配器（wan3 / manwu）也都在 DoResponse 里
+	//	自己 c.JSON。
+	//
+	// 回的是 OpenAI Video 形状，且 id 用**对外公开单号**（不是上游单号）：
+	//	上游单号会暴露真实货源，公开单号才是客户该拿到的东西。
+	ov := dto.NewOpenAIVideo()
+	ov.ID = publicTaskID(info)
+	ov.TaskID = publicTaskID(info)
+	ov.CreatedAt = time.Now().Unix()
+	ov.Model = publicModelName(info)
+	c.JSON(http.StatusOK, ov)
+
 	return upstreamID, responseBody, nil
+}
+
+// publicTaskID 取对外公开单号。
+//
+// ⚠️ 优先用 info.PublicTaskID —— 它是本站生成的 task_xxx，客户按它查任务。
+//
+//	取不到才退回上游单号（此时至少还能查得到结果）。
+func publicTaskID(info *relaycommon.RelayInfo) string {
+	// ⚠️ 必须走 PublicTaskIDOrEmpty()：PublicTaskID 挂在**内嵌指针** TaskRelayInfo 上，
+	//	直接访问 info.PublicTaskID 在 TaskRelayInfo 为 nil 时会 panic。
+	return strings.TrimSpace(info.PublicTaskIDOrEmpty())
+}
+
+// publicModelName 取对外模型名（改派过就报客户请求的源模型）。
+func publicModelName(info *relaycommon.RelayInfo) string {
+	if info == nil {
+		return ""
+	}
+	return info.PublicModelName()
 }
 
 // ────────────────────────────── 轮询 ──────────────────────────────
@@ -347,6 +384,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 // ConvertToOpenAIVideo 把库里的任务回执转成 OpenAI video 对象。
 //
 // ⚠️ 这个方法是 **/v1/videos/{id} 查询能不能用的前提**：
+//
 //	relay_task.go 的 videoFetchByIDRespBodyBuilder 走 OpenAI Video API 分支时，
 //	先问适配器要不要实现 channel.OpenAIVideoConverter；没实现就直接返回
 //	`not_implemented:<platform>`（HTTP 501）。
@@ -729,6 +767,11 @@ func collectMedia(req relaycommon.TaskSubmitReq) (*mediaBundle, error) {
 // ⚠️ 上游文档明确「首尾帧与参考类素材不可混用」，混用上游报 400。
 // 本地先拦：上游一建单就计费，混用请求不该走到那里。
 func validateMedia(bundle *mediaBundle) error {
+	// 先查素材后缀 —— 上游按后缀判格式，拒单发生在建单之后（钱已预扣）。
+	if err := validateMediaExtensions(bundle); err != nil {
+		return err
+	}
+
 	// 分别统计首帧 / 尾帧 / 参考图的数量。
 	//
 	// ⚠️ 首帧与尾帧**各最多一张**，两者**合计可以有两张**（首尾帧场景）。
@@ -786,4 +829,75 @@ func validateMedia(bundle *mediaBundle) error {
 		return fmt.Errorf("reference audio requires at least one reference image or reference video")
 	}
 	return nil
+}
+
+// validateMediaExtensions 校验素材 URL 的文件后缀是否被上游接受。
+//
+// ⚠️ 上游**按后缀**判素材格式（2026-11-19 真机实测）：
+//
+//	传 .m4a 音频 → 上游回 "format m4a is not supported. Supported formats: ['wav', 'mp3']"。
+//	这个拒绝发生在**建单之后**：钱已预扣、客户要等退款，体验最差。
+//	所以本地校验阶段就拦，并明确告诉客户该用什么格式。
+//
+// ⚠️ 只看 URL 的**路径后缀**，不看 query：素材 URL 常带签名参数
+//
+//	（?sig=...&expires=...），不能因为有 query 就判不出后缀。
+//	取不到后缀时**不拦** —— 上游那边还有一层真实下载校验，
+//	本地过度拦截会误杀合法素材（改用无后缀的 COS 签名 URL 就很常见）。
+func validateMediaExtensions(bundle *mediaBundle) error {
+	checks := []struct {
+		kind    string
+		items   []mediaItem
+		allowed []string
+	}{
+		{"image", bundle.Images, allowedImageExts},
+		{"video", bundle.Videos, allowedVideoExts},
+		{"audio", bundle.Audios, allowedAudioExts},
+	}
+	for _, check := range checks {
+		for _, item := range check.items {
+			ext := mediaExtension(item.URL)
+			if ext == "" {
+				continue
+			}
+			if !containsString(check.allowed, ext) {
+				return fmt.Errorf("reference %s format %q is not supported, supported formats: %s",
+					check.kind, strings.TrimPrefix(ext, "."), formatExtList(check.allowed))
+			}
+		}
+	}
+	return nil
+}
+
+// mediaExtension 取 URL 路径里的文件后缀（小写，含点）。
+//
+// 取不到就返回空串 —— 见 validateMediaExtensions 的说明：宁可不拦，也不误杀。
+func mediaExtension(rawURL string) string {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return ""
+	}
+	ext := strings.ToLower(path.Ext(parsed.Path))
+	if ext == "." {
+		return ""
+	}
+	return ext
+}
+
+// formatExtList 把允许后缀列表拼成给客户看的说明。
+func formatExtList(allowed []string) []string {
+	out := make([]string, 0, len(allowed))
+	for _, ext := range allowed {
+		out = append(out, strings.TrimPrefix(ext, "."))
+	}
+	return out
+}
+
+func containsString(list []string, target string) bool {
+	for _, item := range list {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }

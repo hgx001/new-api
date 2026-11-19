@@ -33,6 +33,7 @@ const (
 //	这是与 wan3 / youzanwan3 一致的做法：语义固定的名字在代码里锁死。
 //
 // ⚠️ 只认这两个名字，别的一律放行原值：万一将来上游再上新变体，
+//
 //	让它走「原样透传」比静默改名安全 —— 改名会连带算错价。
 func upstreamModelFor(modelName string) string {
 	switch strings.TrimSpace(modelName) {
@@ -67,6 +68,7 @@ func isPrimeModel(modelName string) bool {
 // 规格常量 —— 取自上游《WAN视频生成》文档（2026-11-19 核对）。
 //
 // ⚠️ 上游文档对「wan3.0-video」写的时长是 `duration` 默认 5 秒，
+//
 //	未明确写上限；这里取阿里百炼万相视频的通行档位 [2, 30]，
 //	超出本地 400 拒单（上游也会拒，但本地拒单不建单不扣费）。
 const (
@@ -106,9 +108,30 @@ const (
 	maxReferenceLinks = 5
 )
 
+// 素材允许的文件后缀 —— 取自上游《WAN视频生成》的素材规格表。
+//
+// ⚠️ 上游是**按后缀**判格式的（2026-11-19 真机实测：传 .m4a 会被拒，
+//
+//	原文 "format m4a is not supported. Supported formats: ['wav', 'mp3']"）。
+//	所以在**本地校验阶段**就要拦下来 ——
+//	上游拒单发生在建单之后，钱已经预扣、客户还要等退款。
+//
+// ⚠️ 音频只收 wav / mp3：m4a / aac / flac 虽是常见音频容器，上游不收。
+var (
+	// allowedImageExts 参考图允许的后缀。
+	allowedImageExts = []string{".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+	// allowedVideoExts 参考视频允许的后缀。
+	allowedVideoExts = []string{".mp4", ".mov"}
+
+	// allowedAudioExts 参考音频允许的后缀。
+	allowedAudioExts = []string{".wav", ".mp3"}
+)
+
 // 分辨率档位。
 //
 // ⚠️ 上游文档写的是 `resolution`（如 "720P"、"1080P"，`size` 会转大写），
+//
 //	且 Wan3 支持 480P / 720P / 1080P 三档。基准档取 480P（最低档），
 //	720P / 1080P 走分辨率倍率（与站内 wan3 系口径一致：1 / 2 / 4）。
 const (
@@ -132,6 +155,7 @@ var resolutionSizeRatio = map[string]float64{
 // defaultRatio 缺省画幅。
 //
 // ⚠️ 不用 adaptive：上游文档的 ratio 取值是「16:9、9:16、1:1 等」，
+//
 //	没有列 adaptive。缺省取 16:9（横屏），与上游「不传 ratio」的默认一致。
 const defaultRatio = "16:9"
 
