@@ -14,9 +14,13 @@
 --     tj = 上游「特价」供应商档，与阿里云直连的 wan3.0-video /
 --     wan3.0-video-prime 是两条独立货源，只是上游 rate 档位结构相同。
 --
--- 定价：与对应标准档对齐（480P 基准，720P/1080P 走 2 / 4 倍率）
---     wan3.0-video-tj       ¥0.27/秒  （0.27/7.3 = 0.0369863）
---     wan3.0-video-prime-tj ¥0.405/秒 （0.405/7.3 = 0.05547945）
+-- 定价：480P 基准价（内部按 USD 等值存储，展示层 ×7.3 换回 RMB），
+--       720P / 1080P 默认走 2 / 4 倍率（见 adaptor.go EstimateBilling）。
+--     wan3.0-video-tj       ¥0.138/秒  （0.138/7.3 = 0.0189041095890411）
+--     wan3.0-video-prime-tj ¥0.24/秒   （0.24/7.3  = 0.03287671232876712）
+-- ⚠️ tj 的 720P 是人工特价 ¥0.25/秒（不走标准 2 倍 = ¥0.276）：
+--    由代码 modelResolutionSizeRatio 对 tj 720P 用倍率 0.25/0.138 ≈ 1.8116 覆盖，
+--    480P/1080P 与 prime-tj 全档不变。改此价须同步 constants.go。
 --
 -- 幂等：可重复执行。每一步都带存在性判断。
 -- 备份：执行前落 bak_20261119_kemeitv_* 快照表。
@@ -81,8 +85,8 @@ WHERE c.type = 71
 UPDATE options
 SET value = (value::jsonb ||
              jsonb_build_object(
-                 'wan3.0-video-tj',       0.0369863,
-                 'wan3.0-video-prime-tj', 0.05547945
+                 'wan3.0-video-tj',       0.0189041095890411,
+                 'wan3.0-video-prime-tj', 0.03287671232876712
              ))::text
 WHERE key = 'ModelPrice';
 
@@ -91,7 +95,7 @@ INSERT INTO models (model_name, description, tags, endpoints, icon,
                     name_rule, sync_official, status, created_time, updated_time)
 SELECT 'wan3.0-video-tj',
        'Wan3.0 特价档视频生成（客美独立上游模型，非 Wan3 标准版别名）。' ||
-       '按秒计费：480P ¥0.27/秒、720P ¥0.54/秒、1080P ¥1.08/秒。' ||
+       '按秒计费：480P ¥0.138/秒、720P ¥0.25/秒、1080P ¥0.552/秒。' ||
        '时长 2-30 秒整数秒可选（不传默认 5 秒）。' ||
        '画幅支持 16:9 / 9:16 / 4:3 / 3:4 / 1:1。' ||
        '支持文生视频、首尾帧生视频与多图参考生视频；' ||
@@ -108,7 +112,7 @@ INSERT INTO models (model_name, description, tags, endpoints, icon,
                     name_rule, sync_official, status, created_time, updated_time)
 SELECT 'wan3.0-video-prime-tj',
        'Wan3.0 特价满血档视频生成（客美独立上游模型，非 Wan3 prime 版别名）。' ||
-       '按秒计费：480P ¥0.405/秒、720P ¥0.81/秒、1080P ¥1.62/秒。' ||
+       '按秒计费：480P ¥0.24/秒、720P ¥0.48/秒、1080P ¥0.96/秒。' ||
        '时长 2-30 秒整数秒可选（不传默认 5 秒）。' ||
        '画幅支持 16:9 / 9:16 / 4:3 / 3:4 / 1:1。' ||
        '支持文生视频、首尾帧生视频与多图参考生视频；' ||

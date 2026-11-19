@@ -152,6 +152,20 @@ var resolutionSizeRatio = map[string]float64{
 	resolution1080P: 4.0,
 }
 
+// modelResolutionSizeRatio 按模型覆盖某分辨率档的倍率。
+//
+// 背景（2026-11-19）：wan3.0-video-tj 的 720P 是人工特价 ¥0.25/秒，
+// 不等于基准价 ¥0.138/秒 × 标准 2 倍（¥0.276/秒）。因此对该模型的
+// 720P 档用倍率 0.25/0.138 ≈ 1.8116，其余档位（480P=1.0、1080P=4.0）
+// 与 prime-tj 全档仍走 resolutionSizeRatio，不动基准价。
+//
+// 只对显式列出的「模型 + 分辨率」生效；未列出的组合回落到标准倍率。
+var modelResolutionSizeRatio = map[string]map[string]float64{
+	ModelNameTJ: {
+		resolution720P: 0.25 / 0.138,
+	},
+}
+
 // defaultRatio 缺省画幅。
 //
 // ⚠️ 不用 adaptive：上游文档的 ratio 取值是「16:9、9:16、1:1 等」，

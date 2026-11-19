@@ -102,7 +102,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 // EstimateBilling 返回计费倍率。
 //
 // 返回 seconds + size：按秒计费（基准价是 480P 的每秒价），
-// 分辨率倍率按 1 : 2 : 4 走。
+// 分辨率倍率默认按 1 : 2 : 4 走；个别模型可对单档覆盖
+// （modelResolutionSizeRatio，如 tj 的 720P 特价 ¥0.25/秒）。
 //
 // ⚠️ 不返回 nil：返回 nil 会被当成 1 秒，30 秒的请求只收 1 秒的钱。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
@@ -122,6 +123,14 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		resolution = defaultResolution
 	}
 	ratio := resolutionSizeRatio[resolution]
+	// 按模型对单档覆盖倍率；info 可能为 nil（如单测/缺省路径），此时走标准倍率。
+	if info != nil {
+		if override, ok := modelResolutionSizeRatio[info.OriginModelName]; ok {
+			if custom, ok := override[resolution]; ok {
+				ratio = custom
+			}
+		}
+	}
 	if ratio == 0 {
 		ratio = 1.0
 	}

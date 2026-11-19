@@ -372,6 +372,40 @@ func TestEstimateBilling(t *testing.T) {
 	assert.Equal(t, 4.0, ratios["size"])
 }
 
+// tj 的 720P 是人工特价 ¥0.25/秒：基准 ¥0.138 × 倍率(0.25/0.138) = ¥0.25。
+// 该覆盖只作用于 tj 的 720P —— 480P/1080P 与 prime-tj 全档必须保持标准 1/2/4。
+func TestEstimateBilling_模型覆盖倍率(t *testing.T) {
+	a := newAdaptor()
+	tjInfo := &relaycommon.RelayInfo{OriginModelName: ModelNameTJ}
+	primeInfo := &relaycommon.RelayInfo{OriginModelName: ModelNamePrimeTJ}
+
+	want720P := 0.25 / 0.138
+
+	// tj 720P：走特价倍率。
+	c := newTestContext(t, relaycommon.TaskSubmitReq{
+		Prompt: "x", Duration: 10, Resolution: resolution720P,
+	})
+	ratios := a.EstimateBilling(c, tjInfo)
+	assert.Equal(t, float64(10), ratios["seconds"])
+	assert.InDelta(t, want720P, ratios["size"], 1e-9)
+
+	// tj 480P / 1080P：标准倍率，不受覆盖影响。
+	c = newTestContext(t, relaycommon.TaskSubmitReq{
+		Prompt: "x", Duration: 10, Resolution: resolution480P,
+	})
+	assert.Equal(t, 1.0, a.EstimateBilling(c, tjInfo)["size"])
+	c = newTestContext(t, relaycommon.TaskSubmitReq{
+		Prompt: "x", Duration: 10, Resolution: resolution1080P,
+	})
+	assert.Equal(t, 4.0, a.EstimateBilling(c, tjInfo)["size"])
+
+	// prime-tj 720P：标准 2 倍，不受 tj 覆盖影响。
+	c = newTestContext(t, relaycommon.TaskSubmitReq{
+		Prompt: "x", Duration: 10, Resolution: resolution720P,
+	})
+	assert.Equal(t, 2.0, a.EstimateBilling(c, primeInfo)["size"])
+}
+
 // 缺省（context 里没有请求）时必须返回缺省秒数，绝不能返回 nil ——
 // 返回 nil 会被当成 1 秒，30 秒的请求只收 1 秒的钱。
 func TestEstimateBilling_缺省不返回nil(t *testing.T) {
