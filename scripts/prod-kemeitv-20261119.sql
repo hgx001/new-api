@@ -94,8 +94,7 @@ WHERE key = 'ModelPrice';
 INSERT INTO models (model_name, description, tags, endpoints, icon,
                     name_rule, sync_official, status, created_time, updated_time)
 SELECT 'wan3.0-video-tj',
-       'Wan3.0 特价档视频生成（客美独立上游模型，非 Wan3 标准版别名）。' ||
-       '按秒计费：480P ¥0.138/秒、720P ¥0.25/秒、1080P ¥0.552/秒。' ||
+       'Wan3.0 特价档视频生成。按秒计费：480P ¥0.138/秒、720P ¥0.25/秒、1080P ¥0.552/秒。' ||
        '时长 2-30 秒整数秒可选（不传默认 5 秒）。' ||
        '画幅支持 16:9 / 9:16 / 4:3 / 3:4 / 1:1。' ||
        '支持文生视频、首尾帧生视频与多图参考生视频；' ||
@@ -111,8 +110,7 @@ WHERE NOT EXISTS (
 INSERT INTO models (model_name, description, tags, endpoints, icon,
                     name_rule, sync_official, status, created_time, updated_time)
 SELECT 'wan3.0-video-prime-tj',
-       'Wan3.0 特价满血档视频生成（客美独立上游模型，非 Wan3 prime 版别名）。' ||
-       '按秒计费：480P ¥0.24/秒、720P ¥0.48/秒、1080P ¥0.96/秒。' ||
+       'Wan3.0 特价满血档视频生成。按秒计费：480P ¥0.24/秒、720P ¥0.48/秒、1080P ¥0.96/秒。' ||
        '时长 2-30 秒整数秒可选（不传默认 5 秒）。' ||
        '画幅支持 16:9 / 9:16 / 4:3 / 3:4 / 1:1。' ||
        '支持文生视频、首尾帧生视频与多图参考生视频；' ||
