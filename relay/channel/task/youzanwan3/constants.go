@@ -82,6 +82,24 @@ const (
 	//   - 画幅支持 16:9 / 9:16 / 1:1 / 4:3 / 3:4（实测 21:9 与 adaptive 不可用）。
 	sjWan3PrimeModel = "SJ-wan3-prime"
 
+	// hkWan3Model 是上游 2026-11-19 在售的 **hk-wan3**（WAN3 官渠，满血满参，
+	// 支持参考视频）。公开名与上游 ID 完全一致，不需要别名映射。
+	//
+	// 上游契约（api.youzan666.vip/docs 2026-11-19 版 + /api/pricing 核对）：
+	//   - 时长 **4–30 整数秒**，缺省 5 秒；
+	//   - 分辨率 480p / 720p / 1080p（上游成本 0.11 / 0.21 / 0.41 ⚡/秒）；
+	//   - 画幅 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / auto，缺省 16:9；
+	//   - 参数形态是 **resolution + ratio**（不是 size）：文档示例就是
+	//     {"resolution":"720p","ratio":"16:9"}；
+	//   - 素材可走 media（reference_image / reference_video / reference_audio），
+	//     也可走顶层 images / videos / audios；上限 10 图 / 5 视频 / 5 音频、合计 20；
+	//   - 首尾帧用 first_frame / last_frame（尾帧需要首帧，且与普通参考素材互斥）。
+	//
+	// 定价（老板 2026-11-19 口径）：**720P 钉死 ¥0.25/秒**；其余档在上游成本上
+	// 加 ¥0.07 → 480P ¥0.18、1080P ¥0.48。上游 720P 成本是 0.21，所以 720P 的
+	// 实际加价是 ¥0.04 —— 这是老板明确给的对外报价，不要按「+0.07」反推去改它。
+	hkWan3Model = "hk-wan3"
+
 	// wan30ProModel 是有赞 2026-11-17 文档里的 wan-3.0-pro（与 wan-3.0 并列的
 	// 独立上游模型，不是 wan3.0-video 的别名）。
 	//
@@ -164,6 +182,7 @@ var ModelList = []string{
 	wan30ProModel,
 	wan30UpstreamModel,
 	sjWan3PrimeModel,
+	hkWan3Model,
 }
 
 // videoResolutionSizeRatio：上游 wan3.0-video 三档同价（0.18 ⚡/秒 = ¥0.18/秒），
@@ -266,6 +285,30 @@ var sjWan3PrimeSizeByRatio = map[string]string{
 	"1:1":  "720x720",
 	"4:3":  "960x720",
 	"3:4":  "720x960",
+}
+
+// hkWan3Ratios 是 hk-wan3 允许的成片画幅。
+// 上游用 "auto"（不是其它模型的 "adaptive"）；adaptive 不在白名单里，
+// 由 resolveRatio 回退到缺省 16:9，老客户沿用 adaptive 写法不会 400。
+var hkWan3Ratios = []string{"16:9", "9:16", "1:1", "4:3", "3:4", "auto"}
+
+// hkWan3DefaultRatio 是 hk-wan3 没传画幅时的缺省值（与上游文档一致）。
+const hkWan3DefaultRatio = "16:9"
+
+// hkWan3ResolutionSizeRatio：hk-wan3 按秒分档计价。
+//
+// 对外售价（老板 2026-11-19 定）：480P ¥0.18、720P ¥0.25、1080P ¥0.48 ——
+// 720P 是钉死的对外价（上游成本 0.21，加价 ¥0.04），其余两档按「上游 + ¥0.07」。
+//
+// 基准档取**最低价档 480P**（与 ModelPrice「基准档配最低价」的口径一致），
+// ModelPrice 配 0.18/7.3 ≈ 0.0246575，720P / 1080P 用倍率表达。
+//
+// ⚠️ 改价时 ModelPrice 与本表必须一起改，否则档位价会错位。
+// ⚠️ 这里只是**动态倍率读不到时的兜底**；生产实际走 YouzanWan3Pricing 的 ratios。
+var hkWan3ResolutionSizeRatio = map[string]float64{
+	"480P":  1.0,
+	"720P":  0.25 / 0.18,
+	"1080P": 0.48 / 0.18,
 }
 
 // wan30ProResolutionSizeRatio：wan-3.0-pro **按条**计费（与时长无关），
@@ -519,6 +562,14 @@ const (
 	// 差异，统一到 5 秒只对后两者成立，对 wan-3.0 只会造出「建单后才失败」。
 	wan30MinDuration     = 10
 	wan30DefaultDuration = 10
+
+	// hkWan3MinDuration / hkWan3DefaultDuration 是 hk-wan3 的时长口径。
+	//
+	// 上游文档（2026-11-19 版）写 4–30 整数秒，缺省 5 秒；与 wan-3.0 的 10 秒
+	// 下界不同 —— 这是上游商品本身的差异，不能统一按 10 秒拦（会把能跑的单挡掉），
+	// 也不能按 5 秒夹紧（客户要 4 秒拿到 5 秒，按秒计费下等于多收一秒的钱）。
+	hkWan3MinDuration     = 4
+	hkWan3DefaultDuration = 5
 
 	// sjWan3PrimeMinDuration / sjWan3PrimeDefaultDuration 是 SJ-wan3-prime 的
 	// 时长口径：上游 2-30 秒。老板 2026-11-18 口径「最小时长统一 ≥5 秒」，

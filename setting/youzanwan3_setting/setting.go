@@ -74,6 +74,11 @@ func defaultPolicy() Policy {
 			// ⚠️ 键是**上游 ID**：wan-3.0-yz 的上游 ID 是 wan-3.0。
 			"wan-3.0":       {"*": 0.05},
 			"SJ-wan3-prime": {"720P": 0.10},
+			// hk-wan3（2026-11-19 接入）：上游 480P/720P/1080P = 0.11/0.21/0.41。
+			// 老板口径「上游 + ¥0.07」，但 720P 另外钉死对外价 ¥0.25（= 成本 +0.04），
+			// 所以这里的分档加价是 0.07 / 0.04 / 0.07 —— 与 FixedPrices 保持一致，
+			// 万一将来把 hk-wan3 从 FixedPrices 拿掉，算出来的价也不会突然跳档。
+			"hk-wan3": {"480P": 0.07, "720P": 0.04, "1080P": 0.07},
 		},
 		// FixedPrices 钉死对外承诺价的模型（键是**对外公开名**）。
 		//
@@ -85,6 +90,9 @@ func defaultPolicy() Policy {
 		// ModelPrice 的键与 EstimateBilling 读倍率的键都是对外名。
 		FixedPrices: map[string]map[string]float64{
 			"wan-3.0-yz": {"720P": 0.20, "1080P": 0.25},
+			// hk-wan3（2026-11-19 老板口径）：720P ¥0.25/秒 是对外报价；
+			// 480P / 1080P 按「上游 + ¥0.07」→ ¥0.18 / ¥0.48。
+			"hk-wan3": {"480P": 0.18, "720P": 0.25, "1080P": 0.48},
 		},
 		MaxChangeRatio: 0.30,
 		AutoApply:      true,
@@ -95,6 +103,8 @@ func defaultPolicy() Policy {
 			"wan-3.0-yz": {"720P": 1.0, "1080P": 1.25},
 			// SJ-wan3-prime：上游仅 720P 一档（1080p/480p 被禁用）→ 倍率恒为 1。
 			"SJ-wan3-prime": {"720P": 1.0},
+			// hk-wan3：基准档 480P ¥0.18 → 720P 0.25/0.18、1080P 0.48/0.18。
+			"hk-wan3": {"480P": 1.0, "720P": 0.25 / 0.18, "1080P": 0.48 / 0.18},
 		},
 	}
 }

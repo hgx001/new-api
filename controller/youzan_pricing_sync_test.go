@@ -111,6 +111,7 @@ func TestUpstreamCatalogWarningsQuietWhenUnchanged(t *testing.T) {
 		{ID: "wan-3.0"},
 		{ID: "SJ-wan3-prime"},
 		{ID: "wan-3.0-pro"},
+		{ID: "hk-wan3"},
 	}
 	assert.Empty(t, upstreamCatalogWarnings(models))
 }

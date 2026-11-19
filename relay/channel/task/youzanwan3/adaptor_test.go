@@ -859,9 +859,10 @@ func TestGetModelListExposesYouzanModels(t *testing.T) {
 	// ⚠️ 这里列的是**上游真名** wan-3.0，不是对外公开名 wan-3.0-yz ——
 	// ModelList 必须与上游 /v1/models 逐字一致，否则「同步上游模型」会把
 	// 别名当成真实上游模型写回渠道配置，上游直接 404。
+	// 2026-11-19 上游在售 hk-wan3（公开名 == 上游 ID），一并列入。
 	require.Equal(t, []string{
 		"wan3.0-video", "wan3.0-video-prime", "wan-3.0-pro",
-		"wan-3.0", "SJ-wan3-prime",
+		"wan-3.0", "SJ-wan3-prime", "hk-wan3",
 	}, adaptor.GetModelList())
 }
 

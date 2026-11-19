@@ -170,6 +170,8 @@ func upstreamCatalogWarnings(models []youzanwan3.UpstreamModel) []string {
 		"wan-3.0":            true,
 		"SJ-wan3-prime":      true,
 		"wan-3.0-pro":        true,
+		// hk-wan3（2026-11-19 接入）：公开名 == 上游 ID。
+		"hk-wan3": true,
 	}
 	for id := range upstream {
 		if !knownUpstreamIDs[id] {

@@ -374,6 +374,10 @@ func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskEr
 	case isSJWan3PrimeModel(req.Model):
 		// SJ-wan3-prime 上游允许 2 秒起；对外统一收口到 5 秒（老板口径）。
 		lowerBound = sjWan3PrimeMinDuration
+	case isHkWan3Model(req.Model):
+		// hk-wan3 上游 4 秒起（文档 2026-11-19），不夹紧：夹到 5 秒等于
+		// 「客户要 4 秒多付一秒的钱」。
+		lowerBound = hkWan3MinDuration
 	case isPromoFamilyModel(req.Model):
 		lowerBound = promoMinDuration
 	}
@@ -684,6 +688,18 @@ func isSJWan3PrimeModel(model string) bool {
 	return strings.TrimSpace(model) == sjWan3PrimeModel
 }
 
+// isHkWan3Model 判断是不是 hk-wan3（上游 2026-11-19 在售，WAN3 官渠）。
+//
+// 它与 wan-3.0 的区别是**参数形态**：hk-wan3 认 resolution + ratio
+// （文档示例 {"resolution":"720p","ratio":"16:9"}），wan-3.0 只认 size。
+// 落错分支的表现是「上游回 unsupported resolution or ratio / unsupported size」。
+//
+// 能力边界（文档 2026-11-19）：时长 4–30 秒、480P/720P/1080P、
+// 画幅 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / auto、支持参考图/视频/音频与首尾帧。
+func isHkWan3Model(model string) bool {
+	return strings.TrimSpace(model) == hkWan3Model
+}
+
 func isPrimeModel(model string) bool {
 	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起**默认**由标准版执行：
 	// 分辨率档位与默认值仍与 prime 旧口径一致（720P/1080P、缺省 720P），
@@ -797,6 +813,9 @@ func upstreamModelFor(model string) (string, error) {
 	case wan30ProModel:
 		// 公开名与上游 ID 完全一致（文档要求「请求使用精确模型 ID」）。
 		return wan30ProModel, nil
+	case hkWan3Model:
+		// 公开名 == 上游 ID，恒等映射（与 /v1/models 逐字一致）。
+		return hkWan3Model, nil
 	case r2vModel:
 		return "", errors.New("youzan wan2.7-r2v is not exposed by the current upstream API")
 	default:
@@ -890,6 +909,17 @@ func normalizeResolutionForModel(model, resolution string) string {
 		}
 		return ""
 	}
+	if isHkWan3Model(model) {
+		// hk-wan3：480P / 720P / 1080P 三档都在售（上游分档计价 0.11/0.21/0.41）。
+		// 三档全部放行 —— 480P 是三档里最便宜的一档，不能像旧标准版那样
+		// 静默升到 720P（那是「客户要便宜档、我们按贵档收」）。
+		switch resolution {
+		case "480P", "720P", "1080P":
+			return resolution
+		default:
+			return ""
+		}
+	}
 	if isPrimeModel(model) {
 		// 上游 prime 只提供 720P / 1080P：480P 请求按最低档 720P 执行，
 		// 既不静默升到更贵的 1080P，也让请求能够成功。
@@ -932,6 +962,10 @@ func defaultResolutionForModel(model string) string {
 	if isSJWan3PrimeModel(model) {
 		// SJ-wan3-prime 仅 720P。
 		return primeDefaultResolution
+	}
+	if isHkWan3Model(model) {
+		// hk-wan3 文档缺省 720p（不是最低档 480P，也不是更贵的 1080P）。
+		return "720P"
 	}
 	if isPrimeModel(model) {
 		return primeDefaultResolution
@@ -1032,6 +1066,9 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 			return wan30DefaultDuration
 		case isSJWan3PrimeModel(model):
 			return sjWan3PrimeDefaultDuration
+		case isHkWan3Model(model):
+			// hk-wan3 文档缺省 5 秒（上游 4 秒起，5 秒是文档示例值）。
+			return hkWan3DefaultDuration
 		}
 		if isPerCallModel(model) || isPrimeOnlyModel(model) {
 			return perCallFixedDuration
@@ -1065,6 +1102,17 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	if isSJWan3PrimeModel(model) {
 		if duration < sjWan3PrimeMinDuration {
 			return sjWan3PrimeMinDuration
+		}
+		if duration > maxDuration {
+			return maxDuration
+		}
+		return duration
+	}
+	if isHkWan3Model(model) {
+		// hk-wan3：上游 4–30 秒。显式越界已在 validate 阶段 400，
+		// 这里夹紧只是兜底（例如路由层改写进来的秒数）。
+		if duration < hkWan3MinDuration {
+			return hkWan3MinDuration
 		}
 		if duration > maxDuration {
 			return maxDuration
@@ -1151,6 +1199,13 @@ func resolveRatio(req relaycommon.TaskSubmitReq) string {
 	if isR2VModel(req.Model) {
 		allowedRatios = r2vRatios
 		fallback = r2vDefaultRatio
+	}
+	// hk-wan3：16:9 / 9:16 / 1:1 / 4:3 / 3:4 / auto，缺省 16:9。
+	// ⚠️ 它认的是 "auto"，不是其它模型的 "adaptive" —— adaptive 写法不在
+	// 白名单，会回退到 16:9（不 400，老客户照旧能跑）。
+	if isHkWan3Model(req.Model) {
+		allowedRatios = hkWan3Ratios
+		fallback = hkWan3DefaultRatio
 	}
 	candidates := make(relaycommon.TaskRatioCandidates, len(allowedRatios))
 	for _, ratio := range allowedRatios {
@@ -1267,7 +1322,7 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 	// 「wan-3.0、wan-3.0-pro、seedance-2.0 支持 images / videos / audios 数组」
 	// —— wan-3.0 同样吃顶层音视频数组。只放 pro 会让 wan-3.0 的
 	// 顶层 videos/audios 静默丢失（任务成功、成片无参考素材）。
-	if isWan30ProModel(req.Model) || isWan30Model(req.Model) {
+	if isWan30ProModel(req.Model) || isWan30Model(req.Model) || isHkWan3Model(req.Model) {
 		media = append(media, legacyVideoAudioMedia(req)...)
 	}
 	return media, validateMedia(media, req.Model)
@@ -1331,11 +1386,23 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 		case "first_frame", "last_frame":
 			// 2026-10-28 上游取消首尾帧（firstFrameAssetId/lastFrameAssetId 已不存在），
 			// media 只认 reference_image / reference_video / reference_audio 三类；
-			// 2026-11-15 切到 New API 协议后素材契约不变。静默降级成参考图会让客户端
-			// 以为做了首尾帧控制（实际只是普通参考），故本地直接拒绝。
-			return errors.New("youzan wan3 no longer supports first_frame/last_frame, use reference_image instead")
+			// 2026-11-15 切到 New API 协议后素材契约不变。
+			//
+			// ⚠️ hk-wan3 例外（2026-11-19）：上游文档明确它支持首帧 / 首尾帧
+			// （first_frame / last_frame，兼容 startImage / endImage）。拦掉等于
+			// 把这个模型的一半能力禁掉；但仍要走组合校验（见
+			// validateHkWan3FrameMedia），避免把上游必拒的组合放进去。
+			if !isHkWan3Model(model) {
+				return errors.New("youzan wan3 no longer supports first_frame/last_frame, use reference_image instead")
+			}
+			counts[item.Type]++
 		default:
 			return errors.Errorf("youzan wan3 media type %q is unsupported", item.Type)
+		}
+	}
+	if isHkWan3Model(model) {
+		if err := validateHkWan3FrameMedia(counts); err != nil {
+			return err
 		}
 	}
 	if counts["reference_image"] > maxReferenceImages {
@@ -1356,7 +1423,9 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	// seedance-2.0 支持 images、videos、audios 数组」把这两个模型并列，
 	// 素材契约一致。不放行的话，客户照文档传顶层 videos/audios 会被本地
 	// 400 拦下（文案还在说「已不再支持」，与事实相反）。
-	if !isPrimeOnlyModel(model) && !isWan30ProModel(model) && !isWan30Model(model) &&
+	// ⚠️ hk-wan3 同样例外（2026-11-19）：文档写明它「可参考视频」，media 收
+	// reference_image / reference_video / reference_audio，顶层三数组也收。
+	if !isPrimeOnlyModel(model) && !isWan30ProModel(model) && !isWan30Model(model) && !isHkWan3Model(model) &&
 		(counts["reference_video"] > 0 || counts["reference_audio"] > 0) {
 		return errors.New("参考视频/参考音频已不再支持：上游 2026-11-15 切换后该链路仅接受 reference_image 参考图，请去掉视频/音频素材后重试（需要参考音视频请改用支持它们的模型）")
 	}
@@ -1368,6 +1437,27 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	}
 	if total := counts["reference_image"] + counts["reference_video"] + counts["reference_audio"]; total > maxTotalMedia {
 		return errors.Errorf("youzan wan3 accepts at most %d media items in total", maxTotalMedia)
+	}
+	return nil
+}
+
+// validateHkWan3FrameMedia 校验 hk-wan3 的首尾帧组合。
+//
+// 上游文档（2026-11-19）：「尾帧需要首帧，首尾帧模式与普通参考素材互斥」。
+// 这三条都是**上游必然拒绝**的组合，本地 400 比让客户走完
+// 「建单 → 预扣 → 上游拒 → 退款」便宜得多。
+func validateHkWan3FrameMedia(counts map[string]int) error {
+	if counts["first_frame"]+counts["last_frame"] == 0 {
+		return nil
+	}
+	if counts["first_frame"] > 1 || counts["last_frame"] > 1 {
+		return errors.New("hk-wan3 的首帧 / 尾帧各只能传一张")
+	}
+	if counts["last_frame"] > 0 && counts["first_frame"] == 0 {
+		return errors.New("hk-wan3 传尾帧时必须同时传首帧（last_frame 依赖 first_frame）")
+	}
+	if counts["reference_image"]+counts["reference_video"]+counts["reference_audio"] > 0 {
+		return errors.New("hk-wan3 的首尾帧模式与普通参考素材互斥：请只用首尾帧，或只用 reference_* 参考素材")
 	}
 	return nil
 }
@@ -1551,6 +1641,10 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 		return buildWan30RequestBody(req, upstreamModel, prompt, media)
 	case isSJWan3PrimeModel(req.Model):
 		return buildSJWan3PrimeRequestBody(req, upstreamModel, prompt, media)
+	case isHkWan3Model(req.Model):
+		// hk-wan3 走回 resolution + ratio 契约（与旧标准版同形态），
+		// 但分辨率要还原成文档示例的小写写法（480p / 720p / 1080p）。
+		return buildHkWan3RequestBody(req, upstreamModel, prompt, media)
 	}
 	body := map[string]interface{}{
 		"model":      upstreamModel,
@@ -1661,6 +1755,44 @@ func buildSJWan3PrimeRequestBody(
 		"prompt":  prompt,
 		"seconds": strconv.Itoa(resolveDurationForModel(req, req.Model)),
 		"size":    size,
+	}
+	if len(media) > 0 {
+		body["media"] = media
+	}
+	return common.Marshal(body)
+}
+
+// buildHkWan3RequestBody 按上游 hk-wan3 的契约构造请求体。
+//
+// 上游文档（2026-11-19 版）示例：
+//
+//	{"model":"hk-wan3","prompt":"...","seconds":5,"resolution":"720p",
+//	 "ratio":"16:9","media":[{"type":"first_frame","url":"..."}]}
+//
+// 要点：
+//   - 参数形态是 **resolution + ratio**（不是 size）—— 发 size 会被上游当
+//     非法参数拒；这与 wan-3.0 / SJ-wan3-prime 的 size 契约相反；
+//   - resolution 按文档示例下发**小写**（480p / 720p / 1080p）；
+//   - seconds 下发整数（文档示例是数字）；
+//   - 素材统一走 media 数组：reference_* 与首尾帧都能放在里面，
+//     比顶层三个数组少一层「到底认哪个字段」的不确定性。
+func buildHkWan3RequestBody(
+	req relaycommon.TaskSubmitReq,
+	upstreamModel, prompt string,
+	media []relaycommon.TaskMedia,
+) ([]byte, error) {
+	resolution := strings.ToLower(resolveResolutionForModel(req, req.Model))
+	if resolution == "" {
+		// 理论上到不了：分辨率已归一为 480P/720P/1080P。
+		// 真到了说明调用顺序被人改坏了 —— 明确报错，不要发一个上游不认的档位。
+		return nil, errors.Errorf("hk-wan3 无法推导合法分辨率：resolution=%q", req.Resolution)
+	}
+	body := map[string]interface{}{
+		"model":      upstreamModel,
+		"prompt":     prompt,
+		"seconds":    resolveDurationForModel(req, req.Model),
+		"resolution": resolution,
+		"ratio":      resolveRatio(req),
 	}
 	if len(media) > 0 {
 		body["media"] = media
@@ -1845,6 +1977,17 @@ func resolutionRatioForModel(model, resolution string) float64 {
 			return ratio
 		}
 		if ratio := sjWan3PrimeResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
+	if isHkWan3Model(model) {
+		// hk-wan3：基准档 480P（¥0.18），720P ¥0.25（≈1.389×）、1080P ¥0.48（≈2.667×）。
+		// 与其它模型一样先读动态倍率，读不到再用常量表。
+		if ratio, ok := youzanwan3_setting.GetResolutionRatio(hkWan3Model, resolution); ok {
+			return ratio
+		}
+		if ratio := hkWan3ResolutionSizeRatio[resolution]; ratio > 0 {
 			return ratio
 		}
 		return 1
