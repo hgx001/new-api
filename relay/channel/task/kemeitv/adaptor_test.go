@@ -481,3 +481,80 @@ func readAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
 		}
 	}
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// ConvertToOpenAIVideo
+//
+// ⚠️ 这个方法缺失时 /v1/videos/{id} 会返回 not_implemented:71 ——
+//	任务照跑照扣费，客户端却永远查不到结果。所以必须有回归守卫。
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestConvertToOpenAIVideo_成功给代理地址(t *testing.T) {
+	a := newAdaptor()
+	task := &model.Task{
+		TaskID:   "task_test",
+		Status:   model.TaskStatusSuccess,
+		Progress: "100%",
+		Data:     []byte(`{"id":"up1","status":"completed","data":[{"url":"https://up.example/v.mp4?sig=abc"}]}`),
+	}
+	task.Properties.OriginModelName = ModelNameTJ
+
+	body, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(body, &out))
+	assert.Equal(t, "task_test", out["id"])
+	assert.Equal(t, "completed", out["status"])
+	assert.Equal(t, "video", out["object"])
+	assert.Equal(t, float64(100), out["progress"])
+	assert.Equal(t, ModelNameTJ, out["model"])
+	// 成片地址必须是本站代理，不能是上游的签名直链（会过期）。
+	meta, ok := out["metadata"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, meta["url"], "/v1/videos/task_test/content")
+}
+
+func TestConvertToOpenAIVideo_未完成不给地址(t *testing.T) {
+	a := newAdaptor()
+	task := &model.Task{
+		TaskID:   "task_test",
+		Status:   model.TaskStatusInProgress,
+		Progress: "30%",
+		Data:     []byte(`{"id":"up1","status":"running"}`),
+	}
+
+	body, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(body, &out))
+	assert.Equal(t, "in_progress", out["status"])
+	meta, _ := out["metadata"].(map[string]any)
+	// 未完成时给地址等于给半成品/会过期的链接。
+	if meta != nil {
+		assert.NotContains(t, meta, "url")
+	}
+}
+
+func TestConvertToOpenAIVideo_失败带上游原因(t *testing.T) {
+	a := newAdaptor()
+	task := &model.Task{
+		TaskID:     "task_test",
+		Status:     model.TaskStatusFailure,
+		Progress:   "100%",
+		FailReason: "Failed to download reference image",
+		Data:       []byte(`{"id":"up1","status":"failed","error":{"message":"Failed to download reference image","code":"InvalidParameter"}}`),
+	}
+
+	body, err := a.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(body, &out))
+	assert.Equal(t, "failed", out["status"])
+	errObj, ok := out["error"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "InvalidParameter", errObj["code"])
+	assert.NotEmpty(t, errObj["message"])
+}

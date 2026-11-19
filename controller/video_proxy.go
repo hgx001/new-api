@@ -368,6 +368,22 @@ func VideoProxy(c *gin.Context) {
 			c.Writer.WriteHeader(http.StatusFound)
 			return
 		}
+	case constant.ChannelTypeKemeitv:
+		// 客美 Kemeitv：**没有** /content 端点 —— 成片地址在
+		// GET /v1/video/generations/{id} 的 data[0].url 里，且是**带签名的临时直链**。
+		//
+		// ⚠️ 为什么必须回查而不是用库里存的地址：
+		//	签名直链有有效期，任务完成到客户来取片可能隔很久，
+		//	库里存的那份早就过期 → 404。这里每次取片都实时回上游要最新地址。
+		//
+		// 回查要带渠道密钥（上游鉴权是 Bearer），所以 needsAuth=true。
+		resolved, rerr := resolveKemeitvResultURL(baseURL, channel.Key, channel.GetSetting().Proxy, task)
+		if rerr != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve kemeitv result URL for task %s: %s", taskID, rerr.Error()))
+			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
+			return
+		}
+		videoURL = resolved
 	default:
 		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 		videoURL = task.GetResultURL()
@@ -564,6 +580,80 @@ func resolveManwuResultURL(baseURL, key, proxy string, task *model.Task) (string
 		source = baseURL + "/" + strings.TrimLeft(source, "/")
 	}
 	return source, true, nil
+}
+
+// resolveKemeitvResultURL 回查客美 Kemeitv 的任务详情，取最新的成片直链。
+//
+// 为什么每次取片都回查，而不是直接用库里存的 ResultURL：
+//
+//	客美的上游成片地址是**带签名的临时直链**（上游存储，签名有有效期）。
+//	任务完成到客户来取片可能隔很久，库里存的那份签名早就过期 → 404。
+//	实时回查能拿到上游当前有效的地址。
+//
+// 回查要带渠道密钥（上游是 Bearer 鉴权），所以返回的 needsAuth=true ——
+// 但注意：取到的是**上游存储的公网直链**，带 Authorization 回源本身没问题
+// （同 host），只是不能把它透传给客户端。
+func resolveKemeitvResultURL(baseURL, key, proxy string, task *model.Task) (string, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = "https://ai.kemeitv.cn"
+	}
+
+	queryURL := fmt.Sprintf("%s/v1/video/generations/%s", baseURL, url.PathEscape(task.GetUpstreamTaskID()))
+	req, err := http.NewRequest(http.MethodGet, queryURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return "", fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("kemeitv task query returned status %d: %s", resp.StatusCode, truncateForError(body))
+	}
+
+	var detail struct {
+		Status string `json:"status"`
+		Data   []struct {
+			URL string `json:"url"`
+		} `json:"data"`
+		URL   string `json:"url"`
+		Error *struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := common.Unmarshal(body, &detail); err != nil {
+		return "", fmt.Errorf("unmarshal kemeitv task detail: %w", err)
+	}
+
+	for _, item := range detail.Data {
+		if u := strings.TrimSpace(item.URL); u != "" {
+			return u, nil
+		}
+	}
+	if u := strings.TrimSpace(detail.URL); u != "" {
+		return u, nil
+	}
+
+	// 没有成片地址：区分「上游还在生成」与「上游明确失败」，
+	// 否则客户端只会看到一个笼统的 502，定位不到原因。
+	if detail.Error != nil && strings.TrimSpace(detail.Error.Message) != "" {
+		return "", fmt.Errorf("kemeitv task failed (status=%s): %s", detail.Status, detail.Error.Message)
+	}
+	return "", fmt.Errorf("kemeitv task has no result url yet (status=%s)", detail.Status)
 }
 
 // isSelfProxyPath 判断地址是否指向本服务的 /v1/videos/{task_id}/content 代理。

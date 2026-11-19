@@ -344,6 +344,64 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return result, nil
 }
 
+// ConvertToOpenAIVideo 把库里的任务回执转成 OpenAI video 对象。
+//
+// ⚠️ 这个方法是 **/v1/videos/{id} 查询能不能用的前提**：
+//	relay_task.go 的 videoFetchByIDRespBodyBuilder 走 OpenAI Video API 分支时，
+//	先问适配器要不要实现 channel.OpenAIVideoConverter；没实现就直接返回
+//	`not_implemented:<platform>`（HTTP 501）。
+//	后果是：任务照跑照扣费，但客户端**永远查不到结果** —— 只有本站轮询能出片。
+//
+// 成片地址口径：
+//
+//	· 上游给的 data[0].url 是**带签名的临时直链**（上游存储，签名有有效期）。
+//	  但库里存的是轮询那一刻的地址，客户端可能过一会儿才来取片，
+//	  签名过期就 404 —— 所以对外统一给**本站 /content 代理地址**，
+//	  由 controller.VideoProxy 用渠道密钥回源实时取。
+//	· 任务没成功时不给地址：给了也是错的（客户端应该继续轮询）。
+func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
+	detail := taskDetail{}
+	if len(originTask.Data) > 0 {
+		// 解不开不算致命：库里还有状态与失败原因，足以回一个可读的响应。
+		_ = common.Unmarshal(originTask.Data, &detail)
+	}
+
+	openAIVideo := dto.NewOpenAIVideo()
+	openAIVideo.ID = originTask.TaskID
+	openAIVideo.TaskID = originTask.TaskID
+	openAIVideo.Status = originTask.Status.ToVideoStatus()
+	openAIVideo.SetProgressStr(originTask.Progress)
+	openAIVideo.CreatedAt = originTask.CreatedAt
+	openAIVideo.CompletedAt = originTask.UpdatedAt
+	openAIVideo.Model = originTask.Properties.OriginModelName
+
+	if originTask.Status == model.TaskStatusSuccess {
+		if publicURL := taskcommon.BuildProxyURL(originTask.TaskID); publicURL != "" {
+			openAIVideo.SetMetadata("url", publicURL)
+		}
+	}
+
+	// 失败原因优先取上游回执原文（它更具体，比如「Failed to download ...」），
+	// 回执里没有才用本站记的 FailReason。
+	if originTask.Status == model.TaskStatusFailure {
+		message := firstNonEmpty(
+			errorMessage(detail.Error),
+			strings.TrimSpace(originTask.FailReason),
+			taskcommon.ReasonContentModeration,
+		)
+		code := ""
+		if detail.Error != nil {
+			code = detail.Error.Code
+		}
+		openAIVideo.Error = &dto.OpenAIVideoError{
+			Message: taskcommon.NormalizeFailureReason(message),
+			Code:    code,
+		}
+	}
+
+	return common.Marshal(openAIVideo)
+}
+
 func (a *TaskAdaptor) GetModelList() []string {
 	return ModelList
 }
