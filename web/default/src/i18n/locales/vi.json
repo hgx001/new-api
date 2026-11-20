@@ -5573,7 +5573,8 @@
     "Reference videos stay on the source chain": "Video tham chiếu giữ nguyên chuỗi gốc",
     "Requests to {{sources}} with a reference video run on {{target}} ({{min}}–{{max}} seconds); {{target}} does not charge for reference video, and billing stays on the requested model": "Yêu cầu tới {{sources}} có video tham chiếu được chạy trên {{target}} ({{min}}–{{max}} giây); {{target}} không tính phí video tham chiếu và vẫn tính phí theo mô hình được yêu cầu",
     "Requests to {{sources}} with a reference video stay on the source chain: the official channel drops the media and tj bills the reference video seconds": "Yêu cầu tới {{sources}} có video tham chiếu vẫn ở chuỗi gốc: kênh chính thức bỏ qua tư liệu và tj cộng số giây video tham chiếu vào hóa đơn",
-    "Not rerouted when the duration is outside 4–15 seconds, the aspect ratio is adaptive, frames are used, media exceeds the limits, or the target has no available channel.": "Không chuyển khi thời lượng ngoài 4–15 giây, tỉ lệ khung hình là adaptive, dùng khung hình, tư liệu vượt giới hạn, hoặc mục tiêu không có kênh khả dụng."
+    "Not rerouted when the duration is outside 4–15 seconds, the aspect ratio is adaptive, frames are used, media exceeds the limits, or the target has no available channel.": "Không chuyển khi thời lượng ngoài 4–15 giây, tỉ lệ khung hình là adaptive, dùng khung hình, tư liệu vượt giới hạn, hoặc mục tiêu không có kênh khả dụng.",
+    "Requests carrying a reference video are not rerouted here: Kemeitv bills reference video seconds, so they go to the hk-wan3 card instead.": "Yêu cầu có video tham chiếu không được chuyển ở đây: Kemeitv tính phí số giây video tham chiếu nên chúng đi qua thẻ hk-wan3 bên dưới."
   },
   "Integration Tutorial": "Hướng dẫn tích hợp",
   "Claude Code Installation": "Cài đặt Claude Code",

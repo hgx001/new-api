@@ -177,6 +177,11 @@ export function Wan3GuanwangTjCard({ channelModels }: Wan3GuanwangTjCardProps) {
           'Requests with an adaptive aspect ratio, or when the target has no available channel, stay on the official channel.'
         )}
       </p>
+      <p className='text-muted-foreground mt-1 text-[11px]'>
+        {t(
+          'Requests carrying a reference video are not rerouted here: Kemeitv bills reference video seconds, so they go to the hk-wan3 card instead.'
+        )}
+      </p>
     </div>
   )
 }

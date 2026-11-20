@@ -37,7 +37,10 @@ package middleware
 //     钉死了一个画幅；
 //  3. 不能带首尾帧：hk-wan3 的首尾帧与普通参考素材互斥（必 400）；
 //  4. 素材数量在 hk-wan3 上限内：图 ≤10 / 视频 ≤5 / 音频 ≤5 / 合计 ≤20；
-//  5. 目标模型在当前分组有可用渠道。
+//  5. 参考视频全是公网 http(s) 地址：hk-wan3 的 validateMediaURL 对 data URI /
+//     裸路径一律本地 400，而官网适配器根本不读素材（data URI 被丢弃、请求
+//     照常出片）。不拦就把「以前能跑」变成「直接报错」；
+//  6. 目标模型在当前分组有可用渠道。
 //
 // ⚠️ 参考视频**总时长 ≤15 秒**这条闸门这里不判：解析 mvhd 要真的抓素材头，
 // 放在路由层会给每个请求加一次网络往返。它由 hk-wan3 的 validate 在预扣费之前
@@ -53,6 +56,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/task/dashscope"
 	"github.com/QuantumNous/new-api/relay/channel/task/kemeitv"
+	"github.com/QuantumNous/new-api/relay/channel/task/youzanwan3"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/gin-gonic/gin"
@@ -125,6 +129,8 @@ func Wan3RefVideoHkRoute() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		targetModel := seedanceroute_setting.Wan3RefVideoHkTargetModel
+
 		modelName, _ := body["model"].(string)
 		sourceModel := strings.TrimSpace(modelName)
 		profile, known := hkRefVideoSourceProfiles[sourceModel]
@@ -173,19 +179,22 @@ func Wan3RefVideoHkRoute() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		// 首尾帧与参考素材在 hk-wan3 上互斥（必 400）。
-		if hasFrameMedia(body) {
-			logger.LogInfo(c, "条件路由跳过参考视频→hk-wan3：请求带首尾帧，hk-wan3 与参考素材互斥")
-			c.Next()
-			return
-		}
-		if reason := hkRefVideoMediaOutOfLimits(req); reason != "" {
-			logger.LogInfo(c, "条件路由跳过参考视频→hk-wan3："+reason)
+		// 素材能不能被 hk-wan3 接住 —— 直接用**目标链路的校验器**判，
+		// 不在路由层另写一套：
+		//   · 首尾帧与参考素材互斥（带参考视频 + first_frame/last_frame 会 400）；
+		//   · 数量上限（图 10 / 视频 5 / 音频 5 / 合计 20）；
+		//   · 只收公网 http(s)（data URI / 裸路径本地 400）。
+		//
+		// 为什么必须判：官网适配器**根本不读素材**（data URI、超限素材都被静默
+		// 丢弃、请求照常出片）。不预检就会把「以前能跑」变成「直接报错」——
+		// 路由层绝不能制造这种回归。
+		if err := youzanwan3.ValidateIncomingMedia(req, targetModel); err != nil {
+			logger.LogInfo(c, fmt.Sprintf(
+				"条件路由跳过参考视频→hk-wan3：目标链路的素材校验不通过（%v），保持原链路", err))
 			c.Next()
 			return
 		}
 
-		targetModel := seedanceroute_setting.Wan3RefVideoHkTargetModel
 		if !channelAvailabilityProbe(c, targetModel) {
 			logger.LogInfo(c, fmt.Sprintf(
 				"条件路由跳过参考视频→hk-wan3：目标 %s 在当前分组下没有可用渠道", targetModel))
@@ -240,37 +249,4 @@ func hasReferenceVideoRequest(req relaycommon.TaskSubmitReq) bool {
 		}
 	}
 	return false
-}
-
-// hkRefVideoMediaOutOfLimits 检查素材数量是否超出 hk-wan3 的上限，超了返回原因。
-//
-// 上限（上游文档 2026-11-19）：图 10 / 视频 5 / 音频 5 / 合计 20。
-// 超限的请求留在原链路 —— 改派过去就是一次必然的 400。
-func hkRefVideoMediaOutOfLimits(req relaycommon.TaskSubmitReq) string {
-	images, videos, audios := len(req.Images), len(req.Videos), len(req.Audios)
-	if strings.TrimSpace(req.Image) != "" && images == 0 {
-		images = 1
-	}
-	if strings.TrimSpace(req.Video) != "" && videos == 0 {
-		videos = 1
-	}
-	if strings.TrimSpace(req.Audio) != "" && audios == 0 {
-		audios = 1
-	}
-	for _, item := range req.Media {
-		switch strings.TrimSpace(item.Type) {
-		case "reference_image", "first_frame", "last_frame":
-			images++
-		case "reference_video":
-			videos++
-		case "reference_audio":
-			audios++
-		}
-	}
-	if images > 10 || videos > 5 || audios > 5 || images+videos+audios > 20 {
-		return fmt.Sprintf(
-			"素材数量超出 hk-wan3 上限（图 %d/10、视频 %d/5、音频 %d/5、合计 %d/20），保持原链路",
-			images, videos, audios, images+videos+audios)
-	}
-	return ""
 }

@@ -1328,6 +1328,26 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 	return media, validateMedia(media, req.Model)
 }
 
+// ValidateIncomingMedia 用本渠道在 model 上的素材契约预检一份「还没改派」的请求。
+//
+// 为什么导出：条件路由（middleware/wan3_ref_video_hk_route.go 等）必须在改派
+// 之前判断「目标链路会不会直接 400」。源链路的宽容度常常更高（官网适配器
+// 根本不读素材：data URI、超限素材都被静默丢弃、请求照常出片），不预检就会把
+// 「以前能跑」变成「直接报错」。
+//
+// 复用 buildMedia（含按 model 决定的顶层 videos/audios 合并）+ validateMedia
+// 这两份实现：数量上限、首尾帧互斥、只收公网 http(s) 都在里面。
+// 不另写一套判据 —— 两套判据迟早漂。
+//
+// ⚠️ 只做**纯解析**校验：不碰网络（参考图尺寸探测、参考视频时长探测都不在这里，
+// 那是 validate 阶段的事）。
+func ValidateIncomingMedia(req relaycommon.TaskSubmitReq, model string) error {
+	probe := req
+	probe.Model = model
+	_, err := buildMedia(probe)
+	return err
+}
+
 // legacyVideoAudioMedia 把 wan-3.0-pro 的顶层 videos / audios（含单数写法）
 // 转成 reference_video / reference_audio。
 //

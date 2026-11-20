@@ -125,10 +125,13 @@ export function Wan3RefVideoHkCard({ channelModels }: Wan3RefVideoHkCardProps) {
     : 'border-slate-500/40 bg-slate-500/[0.05]'
   const toneText = on ? 'text-violet-600' : 'text-slate-600'
   const sources = sourceModels.join(' / ')
+  // 时段边界由后端给值（旧版本后端没有这两个字段时回退到 4/15）。
+  const minSeconds = policy.wan3_ref_video_hk_min_seconds ?? 4
+  const maxSeconds = policy.wan3_ref_video_hk_max_seconds ?? 15
   const detail = on
     ? t(
         'Requests to {{sources}} with a reference video run on {{target}} ({{min}}–{{max}} seconds); {{target}} does not charge for reference video, and billing stays on the requested model',
-        { sources, target: targetModel, min: 4, max: 15 }
+        { sources, target: targetModel, min: minSeconds, max: maxSeconds }
       )
     : t(
         'Requests to {{sources}} with a reference video stay on the source chain: the official channel drops the media and tj bills the reference video seconds',

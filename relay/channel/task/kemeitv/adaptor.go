@@ -870,6 +870,20 @@ func collectMedia(req relaycommon.TaskSubmitReq) (*mediaBundle, error) {
 	return bundle, nil
 }
 
+// ValidateIncomingMedia 用本渠道的素材契约预检一份「还没改派」的请求。
+//
+// 为什么导出：条件路由（middleware 里把请求改派到本渠道的那些规则）必须在
+// **改派之前**判断「目标链路会不会直接 400」。源链路与目标链路对素材的宽容度
+// 常常不同（官网适配器根本不读素材、data URI 与超限素材都被静默丢弃），
+// 不预检就会把「以前能跑」的请求变成 400。
+//
+// 复用 collectMedia 的同一份实现（数量上限、首尾帧互斥、后缀白名单），
+// 不另写一套判据 —— 两套判据迟早漂。
+func ValidateIncomingMedia(req relaycommon.TaskSubmitReq) error {
+	_, err := collectMedia(req)
+	return err
+}
+
 // validateMedia 做场景互斥与数量上限校验。
 //
 // ⚠️ 上游文档明确「首尾帧与参考类素材不可混用」，混用上游报 400。

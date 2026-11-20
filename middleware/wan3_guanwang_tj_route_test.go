@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -215,20 +216,53 @@ func TestWan3GuanwangTjWorksWithRulesDisabled(t *testing.T) {
 	assert.Equal(t, seedanceroute_setting.Wan3GuanwangModel, rec.originModel)
 }
 
-// 素材字段必须原样带到客美（官网 adaptor 会丢弃它们，客美会真的用上）。
-func TestWan3GuanwangTjKeepsMedia(t *testing.T) {
+// 参考图必须原样带到客美（官网 adaptor 会丢弃它，客美会真的用上）。
+func TestWan3GuanwangTjKeepsReferenceImages(t *testing.T) {
 	setWan3GuanwangTj(t, true, nil)
 	stubChannelAvailable(t, true)
 
 	body := `{"model":"wan3.0-video-官网","prompt":"a cat","duration":2,` +
-		`"images":["https://example.com/a.png"],"videos":["https://example.com/a.mp4"],` +
-		`"audios":["https://example.com/a.mp3"]}`
+		`"images":["https://example.com/a.png"]}`
 	rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json", body)
 
 	decoded := decodeBody(t, rec.body)
+	assert.Equal(t, seedanceroute_setting.Wan3TjTargetModel, decoded["model"])
 	assert.Equal(t, []interface{}{"https://example.com/a.png"}, decoded["images"])
-	assert.Equal(t, []interface{}{"https://example.com/a.mp4"}, decoded["videos"])
-	assert.Equal(t, []interface{}{"https://example.com/a.mp3"}, decoded["audios"])
+	assert.Equal(t, seedanceroute_setting.Wan3GuanwangModel, rec.originModel)
+}
+
+// 带参考视频的请求**不改派**到客美：客美会把参考视频秒数并入计费，
+// 而官网只按生成秒数收 —— 改派等于给同一个模型名静默涨价。
+// 这类请求归 wan3_ref_video_hk_route（hk-wan3，参考视频不计费）。
+func TestWan3GuanwangTjSkipsReferenceVideo(t *testing.T) {
+	setWan3GuanwangTj(t, true, nil)
+	stubChannelAvailable(t, true)
+
+	body := `{"model":"wan3.0-video-官网","prompt":"a cat","duration":5,` +
+		`"media":[{"type":"reference_video","url":"https://example.com/a.mp4"}]}`
+	rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json", body)
+
+	assert.Equal(t, body, rec.body, "带参考视频必须留在官网链路")
+	assert.Empty(t, rec.originModel)
+}
+
+// 素材过不了客美校验（这里用 11 条 reference_video 之外的显式 media 参考图，
+// 超过 10 张上限）→ 不改派：官网会静默丢素材照常出片，改派过去就是硬 400。
+func TestWan3GuanwangTjSkipsMediaRejectedByTarget(t *testing.T) {
+	setWan3GuanwangTj(t, true, nil)
+	stubChannelAvailable(t, true)
+
+	entries := make([]string, 0, 11)
+	for i := 0; i < 11; i++ {
+		entries = append(entries, `{"type":"reference_image","url":"https://example.com/`+
+			string(rune('a'+i))+`.png"}`)
+	}
+	body := `{"model":"wan3.0-video-官网","prompt":"a cat","duration":2,"media":[` +
+		strings.Join(entries, ",") + `]}`
+	rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json", body)
+
+	assert.Equal(t, body, rec.body, "超过客美图片上限时必须留在官网链路")
+	assert.Empty(t, rec.originModel)
 }
 
 // 引擎里同时挂别名与促销规则时，本中间件仍然只处理官网模型（顺序无关）。

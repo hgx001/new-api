@@ -47,6 +47,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/task/dashscope"
+	"github.com/QuantumNous/new-api/relay/channel/task/kemeitv"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/gin-gonic/gin"
@@ -110,6 +111,31 @@ func Wan3GuanwangTjRoute() gin.HandlerFunc {
 				ratio))
 			c.Next()
 			return
+		}
+
+		// ── 两条「不路由」的硬条件（都是为了避免**静默改价 / 静默改报错**）──
+		//
+		// 1. 带参考视频：客美自 2026-11-20 起把参考视频秒数并入计费，
+		//    而官网适配器**根本不读素材**（只按生成秒数收）。改派过去会让同一个
+		//    模型名的账单变高 —— 与「改派不改变对客价格」的口径冲突。
+		//    这类请求交给 wan3_ref_video_hk_route 那条规则（走 hk-wan3，
+		//    参考视频不计费、素材也真的生效）；那条没接住就留在官网。
+		// 2. 素材过不了客美的校验（数量上限 / 首尾帧互斥 / 后缀白名单 /
+		//    参考音频不能单独存在 …）：官网会静默丢素材、请求照常出片，
+		//    改派过去则是硬 400。直接用目标链路的校验器判，不另写一套。
+		var mediaReq relaycommon.TaskSubmitReq
+		if raw, err := common.Marshal(body); err == nil && common.Unmarshal(raw, &mediaReq) == nil {
+			if hasReferenceVideoRequest(mediaReq) {
+				logger.LogInfo(c, "条件路由跳过官网→客美改派：请求带参考视频（客美会把它并入计费），交给 hk-wan3 那条规则")
+				c.Next()
+				return
+			}
+			if err := kemeitv.ValidateIncomingMedia(mediaReq); err != nil {
+				logger.LogInfo(c, fmt.Sprintf(
+					"条件路由跳过官网→客美改派：目标链路的素材校验不通过（%v），保持官网链路", err))
+				c.Next()
+				return
+			}
 		}
 
 		// 目标模型没有可用渠道 → 不路由。

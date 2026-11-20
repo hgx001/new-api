@@ -149,6 +149,10 @@ export type VideoRoutePolicy = {
   wan3_ref_video_hk_target_model: string
   /** 适用的源模型清单（官网 / tj / prime-tj）。 */
   wan3_ref_video_hk_source_models: string[]
+  /** 可路由的生成时长下界（秒，hk-wan3 上游 4 秒起）。 */
+  wan3_ref_video_hk_min_seconds?: number
+  /** 可路由的生成时长上界（秒，带参考视频时 hk-wan3 上限 15 秒）。 */
+  wan3_ref_video_hk_max_seconds?: number
   /**
    * 「9:16 比例」入口对应的比例 —— 由后端给出唯一事实源，
    * 前端不硬编码比例字符串（两处各写一份必然漂）。

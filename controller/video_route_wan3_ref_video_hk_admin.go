@@ -87,4 +87,7 @@ func appendWan3RefVideoHkState(state gin.H) {
 	state["wan3_ref_video_hk_configured"] = policy.Wan3RefVideoHkEnabled != nil
 	state["wan3_ref_video_hk_target_model"] = seedanceroute_setting.Wan3RefVideoHkTargetModel
 	state["wan3_ref_video_hk_source_models"] = seedanceroute_setting.Wan3FamilySourceModels
+	// 可路由时段的两个边界：由后端给值，前端不硬编码（两处各写一份必然漂）。
+	state["wan3_ref_video_hk_min_seconds"] = seedanceroute_setting.Wan3RefVideoHkMinSeconds
+	state["wan3_ref_video_hk_max_seconds"] = seedanceroute_setting.Wan3RefVideoHkMaxSeconds
 }

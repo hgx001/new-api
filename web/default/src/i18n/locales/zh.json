@@ -5573,7 +5573,8 @@
     "Reference videos stay on the source chain": "参考视频留在原链路",
     "Requests to {{sources}} with a reference video run on {{target}} ({{min}}–{{max}} seconds); {{target}} does not charge for reference video, and billing stays on the requested model": "发往 {{sources}} 且带参考视频的请求由 {{target}} 执行（{{min}}–{{max}} 秒）；{{target}} 不额外收参考视频的费用，计费仍按客户请求的模型",
     "Requests to {{sources}} with a reference video stay on the source chain: the official channel drops the media and tj bills the reference video seconds": "发往 {{sources}} 且带参考视频的请求留在原链路：官网会丢弃素材，客美 tj 会把参考视频秒数并入计费",
-    "Not rerouted when the duration is outside 4–15 seconds, the aspect ratio is adaptive, frames are used, media exceeds the limits, or the target has no available channel.": "以下情况不改派：时长不在 4–15 秒、画幅为自适应、带首尾帧、素材超出上限，或目标模型没有可用渠道。"
+    "Not rerouted when the duration is outside 4–15 seconds, the aspect ratio is adaptive, frames are used, media exceeds the limits, or the target has no available channel.": "以下情况不改派：时长不在 4–15 秒、画幅为自适应、带首尾帧、素材超出上限，或目标模型没有可用渠道。",
+    "Requests carrying a reference video are not rerouted here: Kemeitv bills reference video seconds, so they go to the hk-wan3 card instead.": "带参考视频的请求不在此列：客美会把参考视频秒数并入计费，这类请求走下面那张 hk-wan3 卡"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",

@@ -304,3 +304,30 @@ func TestWan3RefVideoHkWinsOverGuanwangTj(t *testing.T) {
 		"带参考视频必须落 hk-wan3，而不是被换货卡改成 tj")
 	assert.Equal(t, seedanceroute_setting.Wan3GuanwangModel, rec.originModel)
 }
+
+// data URI 参考视频：官网根本不读素材（请求照常出片），而 hk-wan3 会本地 400 —
+// 不拦就是「以前能跑 → 现在报错」的回归。
+func TestWan3RefVideoHkSkipsDataURIRefVideo(t *testing.T) {
+	setWan3RefVideoHk(t, nil)
+	stubChannelAvailable(t, true)
+
+	body := `{"model":"wan3.0-video-官网","prompt":"a cat","duration":5,"media":[` +
+		`{"type":"reference_video","url":"data:video/mp4;base64,AAAA"}]}`
+	rec := runRefVideoHk(t, "/v1/video/generations", "application/json", body)
+
+	assert.Equal(t, body, rec.body, "data URI 参考视频必须留在原链路")
+	assert.Empty(t, rec.originModel)
+}
+
+// 混着一条非 http(s)：整体不路由（hk-wan3 会为那一条 400）。
+func TestWan3RefVideoHkSkipsMixedSchemes(t *testing.T) {
+	setWan3RefVideoHk(t, nil)
+	stubChannelAvailable(t, true)
+
+	body := `{"model":"wan3.0-video-tj","prompt":"a cat","duration":5,"videos":[` +
+		`"https://example.com/a.mp4","/local/b.mp4"]}`
+	rec := runRefVideoHk(t, "/v1/video/generations", "application/json", body)
+
+	assert.Equal(t, body, rec.body)
+	assert.Empty(t, rec.originModel)
+}
