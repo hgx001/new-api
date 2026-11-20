@@ -4642,7 +4642,7 @@
     "succeeded": "успешно",
     "Success": "Успешно",
     "Success rate": "Доля успешных запросов",
-    "Success rate (last 12 hours)": "Доля успешных запросов (за последние 12 часов)",
+    "Success rate (last {{hours}} hours)": "Доля успешных запросов (за последние {{hours}} часов)",
     "Successfully created {{count}} API Key(s)": "Успешно создано {{count}} API-ключ(а/ей)",
     "Successfully created {{count}} redemption codes": "Успешно создано {{count}} кодов активации",
     "Successfully deleted {{count}} API key(s)": "Успешно удалено {{count}} API-ключ(а/ей)",

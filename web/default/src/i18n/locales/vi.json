@@ -4642,7 +4642,7 @@
     "succeeded": "thành công",
     "Success": "Thành công",
     "Success rate": "Tỷ lệ thành công",
-    "Success rate (last 12 hours)": "Tỷ lệ thành công (12 giờ gần nhất)",
+    "Success rate (last {{hours}} hours)": "Tỷ lệ thành công ({{hours}} giờ gần nhất)",
     "Successfully created {{count}} API Key(s)": "Đã tạo thành công {{count}} khóa API",
     "Successfully created {{count}} redemption codes": "Đã tạo thành công {{count}} mã đổi thưởng",
     "Successfully deleted {{count}} API key(s)": "Đã xóa thành công {{count}} khóa API",

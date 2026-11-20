@@ -193,7 +193,13 @@ export function ModelHealthPanel(props: ModelHealthPanelProps) {
     <div className={cn('flex flex-col gap-2', props.className)}>
       <div className='grid grid-cols-2 gap-3'>
         <HealthMetric
-          label={t('Success rate (last 12 hours)')}
+          // ⚠️ 文案必须跟着**实际查询窗口**走：历史上这里写死「近 12 小时」，
+          // 而 model-card-grid / model-details-performance 查的是 hours=24，
+          // 同一块里还写着「24 小时样本趋势」，口径自相矛盾（2026-11-20 修）。
+          // barCount 就是趋势条覆盖的小时数，直接拿它插值即不会漂。
+          label={t('Success rate (last {{hours}} hours)', {
+            hours: barCount,
+          })}
           value={
             successRate === null
               ? '—'

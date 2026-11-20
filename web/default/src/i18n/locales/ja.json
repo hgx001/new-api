@@ -4642,7 +4642,7 @@
     "succeeded": "成功",
     "Success": "成功",
     "Success rate": "成功率",
-    "Success rate (last 12 hours)": "成功率（過去12時間）",
+    "Success rate (last {{hours}} hours)": "成功率（過去{{hours}}時間）",
     "Successfully created {{count}} API Key(s)": "{{count}}個のAPIキーが正常に作成されました",
     "Successfully created {{count}} redemption codes": "{{count}}件の引き換えコードが正常に作成されました",
     "Successfully deleted {{count}} API key(s)": "{{count}}個のAPIキーが正常に削除されました",

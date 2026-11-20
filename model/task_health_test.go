@@ -395,3 +395,100 @@ func TestGetTaskHealthSummary_MergesTaskSubmitFailures(t *testing.T) {
 	assert.EqualValues(t, 2, model.FailureCount)
 	assert.InDelta(t, 50.0, *model.SuccessRate, 0.001)
 }
+
+// ---------------------------------------------------------------------------
+// 模型名口径：只统计「模型广场在售」的模型
+// ---------------------------------------------------------------------------
+//
+// 背景（2026-11-20）：models.status = 0 只是「从广场隐藏」，**不禁用调用** ——
+// cp-seedance-* 这类内部档位仍有真实流量，若原样返回，接口里会出现一批广场上
+// 没有卡片的模型（实测 n=11/7/2/1/1），排查时被误读成「这些卡片缺了成功率」。
+
+const (
+	healthListedModel = "wan3.0-video-tj"
+	healthHiddenModel = "cp-seedance-2.0mini"
+	healthNoMetaModel = "MiniMax-M3.1"
+)
+
+// seedModelMeta 插一行模型元数据。
+//
+// ⚠️ 不能直接 Create(&Model{Status: 0})：Status 有 `gorm:"default:1"`，
+// GORM 会把零值当「没填」交给数据库默认值，status=0 会被写成 1，
+// 于是「下架」用例永远造不出来（实测踩过）。所以先建行再显式 UPDATE。
+func seedModelMeta(t *testing.T, modelName string, status int) {
+	t.Helper()
+	require.NoError(t, DB.Create(&Model{ModelName: modelName}).Error)
+	require.NoError(t,
+		DB.Model(&Model{}).Where("model_name = ?", modelName).Update("status", status).Error)
+}
+
+func TestGetTaskHealthSummary_SkipsModelsHiddenFromPricing(t *testing.T) {
+	truncateTables(t)
+
+	seedModelMeta(t, healthListedModel, 1)
+	seedModelMeta(t, healthHiddenModel, 0)
+
+	base := int64(1_700_000_000)
+	base -= base % 3600
+	now := base + 3600
+	start := base
+
+	seedTaskHealth(t, "listed-1", TaskStatusSuccess, now-100, now-100, now-50,
+		Properties{OriginModelName: healthListedModel}, TaskPrivateData{})
+	seedTaskHealth(t, "hidden-1", TaskStatusSuccess, now-100, now-100, now-50,
+		Properties{OriginModelName: healthHiddenModel}, TaskPrivateData{})
+	seedSyncLog(t, LogTypeConsume, healthHiddenModel, "", 8, now-60)
+
+	summary, err := GetTaskHealthSummary(TaskHealthQueryParams{
+		StartTs: start, EndTs: now, BucketSeconds: 3600,
+	})
+	require.NoError(t, err)
+
+	assert.Nil(t, findHealthModel(summary, healthHiddenModel),
+		"广场已下架的内部档位没有卡片承载，不该出现在统计接口里")
+	require.NotNil(t, findHealthModel(summary, healthListedModel))
+	require.Len(t, summary.Models, 1, "只应返回在售模型")
+}
+
+func TestGetTaskHealthSummary_KeepsModelWithoutMetaRow(t *testing.T) {
+	truncateTables(t)
+
+	// MiniMax-M3.1 没有 models 元数据行（定价走 abilities + 模型倍率），
+	// 不能因为「查不到 meta」就被当成已下架过滤掉 —— 那等于把在售模型的数据抹掉。
+	seedModelMeta(t, healthListedModel, 0)
+
+	base := int64(1_700_000_000)
+	base -= base % 3600
+	now := base + 3600
+	start := base
+
+	seedSyncLog(t, LogTypeConsume, healthNoMetaModel, "", 20, now-60)
+	seedTaskHealth(t, "listed-2", TaskStatusSuccess, now-100, now-100, now-50,
+		Properties{OriginModelName: healthListedModel}, TaskPrivateData{})
+
+	summary, err := GetTaskHealthSummary(TaskHealthQueryParams{
+		StartTs: start, EndTs: now, BucketSeconds: 3600,
+	})
+	require.NoError(t, err)
+
+	require.NotNil(t, findHealthModel(summary, healthNoMetaModel),
+		"没有 meta 行的在售模型必须保留")
+	assert.Nil(t, findHealthModel(summary, healthListedModel))
+}
+
+func TestHiddenHealthModelNames_EmptyTableMeansNoFilter(t *testing.T) {
+	truncateTables(t)
+
+	// 一条下架记录都没有 → nil（调用方据此不做任何过滤）。
+	assert.Nil(t, hiddenHealthModelNames())
+
+	seedModelMeta(t, healthHiddenModel, 0)
+	seedModelMeta(t, healthListedModel, 1)
+
+	hidden := hiddenHealthModelNames()
+	require.Len(t, hidden, 1)
+	_, ok := hidden[healthHiddenModel]
+	assert.True(t, ok)
+	_, ok = hidden[healthListedModel]
+	assert.False(t, ok, "在售模型不能被当成下架")
+}
