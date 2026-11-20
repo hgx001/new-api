@@ -52,10 +52,10 @@ func TestHuoDong_上游已是标准版(t *testing.T) {
 	require.Equal(t, "wan3.0-video", got,
 		"活动版上游必须是 wan3.0-video（标准版）")
 
-	// 母本同样如此（回归守卫）。
+	// 母本 2026-11-20 起常驻 mw-sd2.5-flash（活动版仍是标准版，见上一条断言）。
 	got, err = upstreamModelFor(tehuiModel)
 	require.NoError(t, err)
-	require.Equal(t, "wan3.0-video", got)
+	require.Equal(t, "mw-sd2.5-flash", got)
 
 	// prime 直连不受影响：仍然映射到 prime。
 	got, err = upstreamModelFor("wan3.0-video-prime")

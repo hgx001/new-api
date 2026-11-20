@@ -136,6 +136,15 @@ var upstreamVendorLiterals = []string{
 // 顺序敏感：长词必须排在前面，保证 "wan3.0-video-prime-1080p" 这类组合词
 // 被整体替换，而不是先命中短词、留下 "上游-prime-1080p" 这种碎片。
 var upstreamModelLiterals = []string{
+	// 妙物（mw）系列（2026-11-20 加）：促销族母本的常驻上游换成
+	// mw-sd2.5-flash 后，它只作为**内部执行模型**存在 —— 对客仍是
+	// seedance2.5-特惠。上游报错/回执里一旦出现这个名字，等于把
+	// 「你调 A、实际跑 B」直接告诉客户，货源也就暴露了。
+	//
+	// 长词在前：mw-sd2.5-flash 必须先整体命中，否则会留下
+	// 「上游-flash」这种碎片。
+	"mw-sd2.5-flash",
+	"mw-sd2.5",
 	// 组合写法（供应商部分由 upstreamVendorLiterals 负责）
 	"aliyun:wan-3.0",
 	"aliyun:wan3.0",

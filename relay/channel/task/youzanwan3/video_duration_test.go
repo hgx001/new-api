@@ -194,11 +194,13 @@ func TestEstimateBillingIgnoresZeroReferenceVideoSeconds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, value := range []interface{}{0, -1, "3", nil} {
 		context, _ := gin.CreateTestContext(httptest.NewRecorder())
-		context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
+		// 2026-11-20：特惠常驻上游换成 mw-sd2.5-flash（仅 720P），1080P 已 400，
+		// 夹具不能再用 1080P —— 否则量的是「降档后的倍率」，与用例本意无关。
+		context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "720P"})
 		context.Set(refVideoSecondsContextKey, value)
 
 		info := &relaycommon.RelayInfo{OriginModelName: tehuiModel}
-		require.Equal(t, map[string]float64{"seconds": 10, "size": 1.5},
+		require.Equal(t, map[string]float64{"seconds": 10, "size": 1.0},
 			(&TaskAdaptor{}).EstimateBilling(context, info), "value=%v", value)
 	}
 }

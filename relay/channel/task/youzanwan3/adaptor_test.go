@@ -384,9 +384,9 @@ func TestUpstreamModelFor(t *testing.T) {
 		{smartLegacyModel, "wan3.0-video"},
 		{primeModel, "wan3.0-video-prime"},
 		{legacyPrimeModel, "wan3.0-video-prime"},
-		// 对外别名 seedance2.5-特惠 2026-11-15 起由标准版执行
-		//（上游 prime 收窄为仅 30 秒、仅 720P），上游只能收到真实模型名。
-		{tehuiModel, "wan3.0-video"},
+		// 对外别名 seedance2.5-特惠：2026-11-20 起常驻 mw-sd2.5-flash
+		//（4-30 秒、480p/720p；对客恒定交付 720P）。
+		{tehuiModel, "mw-sd2.5-flash"},
 	}
 	for _, tc := range cases {
 		got, err := upstreamModelFor(tc.input)
@@ -430,10 +430,10 @@ func TestNewModelsAreIndependent(t *testing.T) {
 		require.NotEqual(t, wan30UpstreamModel, got, "旧名 %s 不能落到新模型 wan-3.0", legacy)
 		require.NotEqual(t, sjWan3PrimeModel, got, "旧名 %s 不能落到新模型 SJ-wan3-prime", legacy)
 	}
-	// 促销族仍落旧标准版。
+	// 促销族母本 2026-11-20 起常驻 mw-sd2.5-flash（活动版仍落标准版）。
 	got, err := upstreamModelFor(tehuiModel)
 	require.NoError(t, err)
-	require.Equal(t, videoModel, got)
+	require.Equal(t, mwSd25FlashModel, got)
 }
 
 func TestResolutionDurationRatio(t *testing.T) {
@@ -722,10 +722,11 @@ func TestEstimateBillingChargesResolutionTiers(t *testing.T) {
 		// SJ-wan3-prime（2026-11-18 新上架）：沿用旧 prime 同价 ¥0.25/秒，
 		// 上游仅 720P 一档 → 倍率恒为 1。
 		{sjWan3PrimeModel, "720P", 1.0, 5},
-		// 对外别名 seedance2.5-特惠 **独立定价**（老板 2026-10-29 明确）：
-		// 720P ¥0.20 / 1080P ¥0.30，倍率 1.0 / 1.5，不跟 prime 联动。
+		// 对外别名 seedance2.5-特惠：720P ¥0.20/秒，基准倍率 1.0。
+		// 2026-11-20 起常驻 mw-sd2.5-flash（仅 480p/720p）—— 1080P 在 validate
+		// 阶段 400，即使走到计费也已归一为 720P，倍率只会是 1.0。
 		{tehuiModel, "720P", 1.0, 10},
-		{tehuiModel, "1080P", 1.5, 10},
+		{tehuiModel, "1080P", 1.0, 10},
 		{tehuiModel, "480P", 1.0, 10},
 		// 未知档位回退 1，避免多扣费。
 		{videoModel, "4K", 1.0, 10},
@@ -766,8 +767,10 @@ func TestPrimeBillsPerSecondNotPerCall(t *testing.T) {
 // 为什么单独立一条：别名一旦在某个分支上漏判（例如 isPrimeModel 没认它），
 // 表现是「480P 请求被放行到不支持的上游」（400），不报错的另一种
 // 是静默算错价。这类偏差只能靠断言钉住。
-func TestTehuiAliasMirrorsPrime(t *testing.T) {
+func TestTehuiMwFlashResolutionDurationRatio(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	// 2026-11-20：特惠常驻 mw-sd2.5-flash —— 只有 480p/720p、对客恒定交付 720P，
+	// 缺省时长 5 秒、缺省画幅 16:9（上游不认历史写法 adaptive）。
 	for _, tc := range []struct {
 		name      string
 		req       relaycommon.TaskSubmitReq
@@ -775,21 +778,23 @@ func TestTehuiAliasMirrorsPrime(t *testing.T) {
 		wantDur   int
 		wantRatio string
 	}{
-		{"default", relaycommon.TaskSubmitReq{Model: tehuiModel}, "720P", 10, "adaptive"},
-		{"1080p", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "1080p"}, "1080P", 10, "adaptive"},
-		{"480p falls back to 720P", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "480P"}, "720P", 10, "adaptive"},
-		// 促销族下界 4 秒（2026-11-17 老板口径）：<4 秒夹到 4（兜底夹紧；
-		// 显式越界请求在 validate 阶段已 fail-loud 400，不会走到这里），
-		// ≥4 秒原样透传（<10 秒正常会被路由层改派到 CapCut 满血档）。
-		{"duration clamped low", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 1}, "720P", 4, "adaptive"},
-		{"duration 4 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 4}, "720P", 4, "adaptive"},
-		{"duration 5 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 5}, "720P", 5, "adaptive"},
-		{"duration 8 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 8}, "720P", 8, "adaptive"},
-		{"duration clamped high", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 99}, "720P", 30, "adaptive"},
+		{"default", relaycommon.TaskSubmitReq{Model: tehuiModel}, "720P", 5, "16:9"},
+		// 1080P 在 validate 阶段 400（见 validatePromoResolutionForModel）；
+		// 归一层只保证「绝不会把 1080P 原样发给只支持 480p/720p 的上游」。
+		{"1080p normalized", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "1080p"}, "720P", 5, "16:9"},
+		{"480p upgraded", relaycommon.TaskSubmitReq{Model: tehuiModel, Resolution: "480P"}, "720P", 5, "16:9"},
+		// 促销族下界 5 秒：<5 秒夹到 5（兜底夹紧；显式越界在 validate 阶段 400），
+		// ≥5 秒原样透传。
+		{"duration clamped low", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 1}, "720P", 5, "16:9"},
+		{"duration 4 clamped to 5", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 4}, "720P", 5, "16:9"},
+		{"duration 5 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 5}, "720P", 5, "16:9"},
+		{"duration 8 kept", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 8}, "720P", 8, "16:9"},
+		{"duration clamped high", relaycommon.TaskSubmitReq{Model: tehuiModel, Duration: 99}, "720P", 30, "16:9"},
 		{"21:9 allowed", relaycommon.TaskSubmitReq{
 			Model:    tehuiModel,
 			Metadata: map[string]interface{}{"ratio": "21:9"},
-		}, "720P", 10, "21:9"},
+		}, "720P", 5, "21:9"},
+		{"auto allowed", relaycommon.TaskSubmitReq{Model: tehuiModel, Ratio: "auto"}, "720P", 5, "auto"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.wantRes, resolveResolution(tc.req))
@@ -797,11 +802,14 @@ func TestTehuiAliasMirrorsPrime(t *testing.T) {
 			require.Equal(t, tc.wantRatio, resolveRatio(tc.req))
 		})
 	}
-	// 首尾帧与 prime 一样被拒绝（上游 2026-10-28 已取消该能力）。
-	require.Error(t, validateMedia([]relaycommon.TaskMedia{{
-		Type: "first_frame",
-		URL:  "https://cdn.example/f.png",
-	}}, tehuiModel))
+	// 首尾帧：mw-sd2.5-flash 支持，成对出现必须放行；孤儿尾帧仍 400。
+	require.NoError(t, validateMedia([]relaycommon.TaskMedia{
+		{Type: "first_frame", URL: "https://cdn.example/f.png"},
+		{Type: "last_frame", URL: "https://cdn.example/l.png"},
+	}, tehuiModel))
+	require.Error(t, validateMedia([]relaycommon.TaskMedia{
+		{Type: "last_frame", URL: "https://cdn.example/l.png"},
+	}, tehuiModel))
 }
 
 func TestConvertToOpenAIVideoIncludesFailureReason(t *testing.T) {
@@ -860,9 +868,10 @@ func TestGetModelListExposesYouzanModels(t *testing.T) {
 	// ModelList 必须与上游 /v1/models 逐字一致，否则「同步上游模型」会把
 	// 别名当成真实上游模型写回渠道配置，上游直接 404。
 	// 2026-11-19 上游在售 hk-wan3（公开名 == 上游 ID），一并列入。
+	// 2026-11-20 上游在售 mw-sd2.5-flash（促销族母本的常驻上游），一并列入。
 	require.Equal(t, []string{
 		"wan3.0-video", "wan3.0-video-prime", "wan-3.0-pro",
-		"wan-3.0", "SJ-wan3-prime", "hk-wan3",
+		"wan-3.0", "SJ-wan3-prime", "hk-wan3", "mw-sd2.5-flash",
 	}, adaptor.GetModelList())
 }
 
@@ -943,10 +952,16 @@ func TestTehuiPriceIsIndependent(t *testing.T) {
 		"wan3.0-video-prime": {"720P": 1.0, "1080P": 2.0},
 	}, 0)
 
+	// 2026-11-20：特惠常驻上游换成 mw-sd2.5-flash（仅 720P），1080P 已 400。
+	// 这里直接测倍率函数而不是 EstimateBilling —— 后者会把 1080P 归一成 720P，
+	// 量到的是「降档后的 1.0」，钉不住分支顺序。
+	require.Equal(t, 1.5, resolutionRatioForModel(tehuiModel, "1080P"),
+		"特惠的倍率表必须独立于 prime：1080P 仍是自己的 1.5（0.30/0.20），不是 prime 的 2.0")
+
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
-	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "1080P"})
+	context.Set("task_request", relaycommon.TaskSubmitReq{Duration: 10, Resolution: "720P"})
 	info := &relaycommon.RelayInfo{OriginModelName: tehuiModel}
-	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.5},
+	require.Equal(t, map[string]float64{"seconds": 10, "size": 1.0},
 		(&TaskAdaptor{}).EstimateBilling(context, info),
-		"特惠 1080P 必须按自己的 1.5 倍率算（0.30/0.20），不能跟 prime 的 2.0")
+		"特惠 720P 按自己的倍率 1.0 结算")
 }

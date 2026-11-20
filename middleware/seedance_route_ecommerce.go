@@ -233,7 +233,9 @@ func prepareRefAVRoute(c *gin.Context, body map[string]interface{}, targetModel 
 // 返回 false = 不归规则九管（没带音视频 / 开关关闭 / 准入没过），
 // 请求保持原样继续走后续规则或源链路。
 func tryRefAVCapcutRoute(c *gin.Context, body map[string]interface{}, sourceModel string) bool {
-	if !seedanceroute_setting.IsRefAVRouteEnabled() {
+	// 2026-11-20 起按**源模型**判：促销族母本换成 mw-sd2.5-flash 后自己收
+	// 参考音视频，不再需要改派；wan3.0-video 直连仍只收参考图，规则九对它保留。
+	if !seedanceroute_setting.IsRefAVRouteEnabledFor(sourceModel) {
 		return false
 	}
 	// 触发判定必须**两种素材形态都收**：

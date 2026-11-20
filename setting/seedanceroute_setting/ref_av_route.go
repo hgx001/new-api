@@ -68,3 +68,20 @@ func IsRefAVRouteEnabled() bool {
 	defer mu.RUnlock()
 	return refAVCapcutEnabled(current)
 }
+
+// IsRefAVRouteEnabledFor 判断「规则九对这个源模型是否生效」。
+//
+// 2026-11-20 起是两层与：全局开关（ref_av_capcut_enabled）**且**
+// 该源模型没被单独关掉（source_overrides[模型].ref_av_rule_enabled）。
+//
+// 为什么需要按源模型关：规则九原本给「有赞链路仅收参考图」补位；
+// 促销族母本换成 mw-sd2.5-flash 后它自己收 5 视频 + 5 音频，不改派反而更短、
+// 更便宜。但 wan3.0-video 直连依旧只收参考图，规则九对它仍然必要 ——
+// 所以只能按源模型停，不能动全局开关。
+//
+// ⚠️ 仍然**不要求** Policy.Enabled（规则总开关）：理由与 IsRefAVRouteEnabled 相同。
+func IsRefAVRouteEnabledFor(sourceModel string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return refAVCapcutEnabled(current) && current.refAVRuleEnabledFor(sourceModel)
+}

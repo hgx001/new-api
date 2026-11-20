@@ -59,6 +59,13 @@ func TestRedactUpstreamIdentity_AliasModel(t *testing.T) {
 			in:   `status_code=500, model wan2.7-r2v is busy`,
 			want: `status_code=500, model wan2.7-r2v is busy`,
 		},
+		{
+			// 2026-11-20：特惠常驻上游换成 mw-sd2.5-flash（内部执行模型，
+			// 不对外售卖）。它的名字出现在对客响应里 = 直接暴露改派关系。
+			name: "mw-sd2.5-flash 必须被遮蔽",
+			in:   `status_code=400, model mw-sd2.5-flash rejected duration 45`,
+			want: `status_code=400, model 上游 rejected duration 45`,
+		},
 	}
 
 	for _, tc := range cases {

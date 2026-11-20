@@ -82,6 +82,28 @@ const (
 	//   - 画幅支持 16:9 / 9:16 / 1:1 / 4:3 / 3:4（实测 21:9 与 adaptive 不可用）。
 	sjWan3PrimeModel = "SJ-wan3-prime"
 
+	// mwSd25FlashModel 是上游在售的 **mw-sd2.5-flash**（妙物 Seedance 2.5 Flash）。
+	//
+	// 2026-11-20 老板口径：把有赞的这个模型接进平台，**促销族母本
+	//（seedance2.5-特惠）的请求全部路由到它**，同时撤掉原来的
+	// CapCut 出口 cp-seedance-2.5flash。活动版（seedance2.5-活动）下架。
+	//
+	// 上游契约（api.youzan666.vip/docs 2026-11-19 版 + /v1/models 实核）：
+	//   - 时长 **4–30 整数秒**，缺省 5 秒（对外下界仍收口到 5 秒，与旧口径一致）；
+	//   - 分辨率 **只有 480p / 720p**（上游 0.10 / 0.15 ⚡每秒）。
+	//     对客特惠恒定交付 720P：480P 请求按最低交付档 720P 执行（升档不亏客户），
+	//     1080P 显式请求 400（上游没有这一档）；
+	//   - 画幅 16:9 / 9:16 / 4:3 / 3:4 / 1:1 / 21:9 / auto，缺省 16:9；
+	//   - 素材：最多 10 图 / 5 视频 / 5 音频；首尾帧也支持
+	//     （尾帧依赖首帧、首尾帧与普通参考素材互斥）；
+	//   - 参数形态是 **duration（兼容 seconds）+ 小写 resolution + ratio + media**；
+	//   - 计费：按（输出秒数 + 参考视频计时秒数）× 该分辨率每秒单价。
+	//
+	// ⚠️ 它与 SJ-wan3-prime 的边界完全不同：SJ 是 15–30 秒、仅 720P、且**不收
+	// 参考视频/音频与首尾帧**。mw 把这几项全放开了，所以促销族的素材闸门
+	// 也要跟着放开（见 validateMedia）—— 否则「模型支持、本地先拦」。
+	mwSd25FlashModel = "mw-sd2.5-flash"
+
 	// hkWan3Model 是上游 2026-11-19 在售的 **hk-wan3**（WAN3 官渠，满血满参，
 	// 支持参考视频）。公开名与上游 ID 完全一致，不需要别名映射。
 	//
@@ -183,6 +205,8 @@ var ModelList = []string{
 	wan30UpstreamModel,
 	sjWan3PrimeModel,
 	hkWan3Model,
+	// 2026-11-20：妙物 Seedance 2.5 Flash，促销族母本的常驻上游。
+	mwSd25FlashModel,
 }
 
 // videoResolutionSizeRatio：上游 wan3.0-video 三档同价（0.18 ⚡/秒 = ¥0.18/秒），
@@ -295,6 +319,17 @@ var hkWan3Ratios = []string{"16:9", "9:16", "1:1", "4:3", "3:4", "auto"}
 // hkWan3DefaultRatio 是 hk-wan3 没传画幅时的缺省值（与上游文档一致）。
 const hkWan3DefaultRatio = "16:9"
 
+// mwSd25FlashRatios 是 mw-sd2.5-flash 支持的成片画幅。
+//
+// 上游文档（2026-11-19 版）：16:9 / 9:16 / 4:3 / 3:4 / 1:1 / 21:9 / auto。
+// 与 hk-wan3 同形态 —— 它认的也是 "auto"（不是其它模型的历史写法 "adaptive"）。
+var mwSd25FlashRatios = []string{"16:9", "9:16", "4:3", "3:4", "1:1", "21:9", "auto"}
+
+// mwSd25FlashDefaultRatio 是 mw-sd2.5-flash 没传画幅时的缺省值。
+//
+// 取 16:9：与文档示例一致，也与促销族此前的缺省口径一致。
+const mwSd25FlashDefaultRatio = "16:9"
+
 // hkWan3ResolutionSizeRatio：hk-wan3 按秒分档计价。
 //
 // 对外售价（老板 2026-11-19 定）：480P ¥0.18、720P ¥0.25、1080P ¥0.48 ——
@@ -404,20 +439,39 @@ const (
 	maxDuration     = 30
 	defaultDuration = 10
 
-	// promoMinDuration 是**促销族**（seedance2.5-特惠 / -活动）的时长下界（秒）。
+	// promoResidentModel 是**促销族母本**（seedance2.5-特惠）的常驻上游模型。
 	//
-	// 2026-11-17 老板口径：促销族对外支持 **4-30 秒**，低于 4 秒 fail-loud 报错。
+	// 2026-11-20 老板口径：换成有赞的 **mw-sd2.5-flash**（原 SJ-wan3-prime 退出）。
+	// 上游契约见 mwSd25FlashModel 的注释：4–30 秒、480p/720p、支持音视频与首尾帧。
 	//
-	// 为什么促销族能低于标准版的 10 秒：促销族 <10 秒的请求**不会**走到有赞 ——
-	// 路由层（middleware/seedance_route.go 规则六第三分支）会把它们改派到
-	// CapCut 满血档 cp-seedance-2.0（区间 4–15 秒），正好覆盖 4–9 秒。
-	// 有赞标准版只接 **≥10 秒**。
+	// 与旧常驻模型的差别：SJ 只接 15–30 秒、仅 720P、且**拒收音视频与首尾帧**，
+	// 所以历史上 5–14 秒要靠路由层改派豆包 Fast、1080P 靠改派、音视频靠规则九
+	// 改派 CapCut。mw 把这些能力一次补齐 —— 这些改派**全部不再需要**，
+	// 促销族的请求应在适配器内直达本模型（路由层相应开关由运营关掉）。
+	promoResidentModel = mwSd25FlashModel
+
+	// promoMinDuration 是**促销族母本**（seedance2.5-特惠）的时长下界（秒）。
 	//
-	// ⚠️ 所以这里的 4 秒**不是**「有赞能跑 4 秒」—— 4 秒请求必须先被路由层
-	//   改派走 CapCut；任何漏过路由层、直接落到有赞标准版的 4-9 秒请求，
-	//   都会被上游拒（fail-loud，不夹紧）。
-	//   路由层那道门槛就是 seedanceroute_setting.ShortCapcutMinSeconds。
-	promoMinDuration = 4
+	// 2026-11-20 起上游换成 mw-sd2.5-flash（4–30 秒），对外仍按 **5 秒**收口 ——
+	// 与改版前的对外承诺逐字节一致，老客户不会因为换上游而被改掉可用区间。
+	promoMinDuration = 5
+
+	// perCallPromoMinDuration 是**活动版**（按次档 seedance2.5-活动）的时长下界。
+	//
+	// 2026-11-18 调整常驻模型时只动母本特惠，活动版保持 4 秒：
+	// 它按条卖 ¥4.5、时长 4-30 秒，短时长路由（short_rule_enabled）本就关闭，
+	// 4-14 秒仍由原标准版执行。跟着特惠改成 5 秒会把能卖的单挡掉。
+	perCallPromoMinDuration = 4
+
+	// promoShortRouteMaxSeconds 是促销族「短请求改派」的上界（秒，**含**）。
+	//
+	// 2026-11-18 老板口径：15 秒以下 → seedance-2-0-fast，15 秒及以上 → SJ-wan3-prime。
+	// 因此 ≤14 秒必须由路由层改派，SJ 只接 15–30 秒。
+	//
+	// ⚠️ 这个值必须与 seedanceroute_setting 的短时长阈值保持一致：
+	//   路由层用 short_trigger_seconds 判定，这里用于本地兜底校验；
+	//   两处分叉会出现「路由层认为该改派、适配器认为该拒」的错位。
+	promoShortRouteMaxSeconds = 14
 
 	// primeFixedDuration 是 2026-11-15 上游切换后 prime 唯一接受的时长。
 	// 旧协议的「2-30 逐秒」已失效：非 30 秒的 prime 请求上游一律拒单。
@@ -577,6 +631,14 @@ const (
 	// 与 wan-3.0-pro 一致）。
 	sjWan3PrimeMinDuration     = 5
 	sjWan3PrimeDefaultDuration = 5
+
+	// mwSd25FlashMinDuration / mwSd25FlashDefaultDuration 是 mw-sd2.5-flash
+	// 的时长口径：上游 4–30 秒、缺省 5 秒。
+	//
+	// ⚠️ 上游 4 秒虽可跑，但**对外仍从 5 秒起卖**（promoMinDuration）——
+	// 换上游不是改对外承诺的理由；放宽到 4 秒是独立的商业决定。
+	mwSd25FlashMinDuration     = 4
+	mwSd25FlashDefaultDuration = 5
 )
 
 // 导出的限制值，供条件路由中间件（middleware/seedance_route.go）在**改派前**

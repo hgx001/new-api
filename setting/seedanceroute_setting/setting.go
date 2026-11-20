@@ -595,6 +595,25 @@ type SourceOverride struct {
 	// 电商流量导到 CapCut 快档对两者的成本收益不一样 ——
 	// 老板需要能**只停一个**。公共 ecommerce_enabled 一改就是所有源模型一起改。
 	EcommerceRuleEnabled *bool `json:"ecommerce_rule_enabled,omitempty"`
+
+	// FramesRuleEnabled 是该源模型专属的「首尾帧改派」开关（2026-11-20 起）。
+	//
+	// 语义与上面几个开关一致（三态指针）：nil = 默认开启，显式 false = 只停这个源模型。
+	//
+	// 为什么现在需要它：规则三原本是**能力补位** —— 有赞链路不收首尾帧，
+	// 只有 wan3 直连能跑，所以带首尾帧的请求一律改派。2026-11-20 促销族母本
+	// 换成 mw-sd2.5-flash 后，它自己支持首尾帧，这条改派反而把请求从
+	// 「能跑的上游」拉走了。但 wan3.0-video 直连仍不支持首尾帧，规则三对
+	// 它依然必要 —— 所以只能按源模型关，不能动全局。
+	FramesRuleEnabled *bool `json:"frames_rule_enabled,omitempty"`
+
+	// RefAVRuleEnabled 是该源模型专属的「音视频参考改派」开关（2026-11-20 起）。
+	//
+	// 语义同上：nil = 默认开启，显式 false = 只停这个源模型。
+	//
+	// 与 FramesRuleEnabled 同一背景：规则九是给「源链路仅收参考图」补位的，
+	// mw-sd2.5-flash 支持 5 视频 + 5 音频，促销族不再需要改派 CapCut。
+	RefAVRuleEnabled *bool `json:"ref_av_rule_enabled,omitempty"`
 }
 
 // overrideFor 返回「这个源模型的专属覆盖」以及是否存在。
@@ -1650,7 +1669,29 @@ func framesRuleReady(p Policy) bool {
 func framesRuleReadyFor(p Policy, sourceModel string) bool {
 	return p.Enabled &&
 		p.hasSourceModel() &&
+		p.framesRuleEnabledFor(sourceModel) &&
 		p.FramesTargetModelFor(sourceModel) != ""
+}
+
+// framesRuleEnabledFor 判断该源模型的规则三是否被单独关掉。默认 = 开启。
+//
+// 与 secondsRuleEnabledFor 同口径（三态指针）：没写这个字段时保持
+// 「改版前行为逐字节不变」，显式 false 才停这个源模型。
+func (p Policy) framesRuleEnabledFor(sourceModel string) bool {
+	override, ok := p.overrideFor(sourceModel)
+	if !ok || override.FramesRuleEnabled == nil {
+		return true
+	}
+	return *override.FramesRuleEnabled
+}
+
+// refAVRuleEnabledFor 判断该源模型的规则九是否被单独关掉。默认 = 开启。
+func (p Policy) refAVRuleEnabledFor(sourceModel string) bool {
+	override, ok := p.overrideFor(sourceModel)
+	if !ok || override.RefAVRuleEnabled == nil {
+		return true
+	}
+	return *override.RefAVRuleEnabled
 }
 
 func clonePolicy(p Policy) Policy {
@@ -1698,6 +1739,14 @@ func clonePolicy(p Policy) Policy {
 			if value.EcommerceRuleEnabled != nil {
 				enabled := *value.EcommerceRuleEnabled
 				value.EcommerceRuleEnabled = &enabled
+			}
+			if value.FramesRuleEnabled != nil {
+				enabled := *value.FramesRuleEnabled
+				value.FramesRuleEnabled = &enabled
+			}
+			if value.RefAVRuleEnabled != nil {
+				enabled := *value.RefAVRuleEnabled
+				value.RefAVRuleEnabled = &enabled
 			}
 			out.SourceOverrides[key] = value
 		}

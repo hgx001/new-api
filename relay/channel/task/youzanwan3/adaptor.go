@@ -237,6 +237,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if taskErr := validateSJWan3PrimeExplicitResolution(req); taskErr != nil {
 		return taskErr
 	}
+	// 促销族 1080P 兜底：常驻上游 SJ-wan3-prime 仅 720P。
+	// 正常流量会在路由层被改派到 seedance-2-0-fast，走到这里说明没改派成功。
+	if taskErr := validatePromoResolutionForModel(req); taskErr != nil {
+		return taskErr
+	}
 	// 按次档（seedance2.5-活动）的档位锁定必须在**校验阶段**拒掉，
 	// 不能等到计费或建单之后 —— 否则会走完「建单 → 预扣 → 上游拒绝 → 退款」，
 	// 客户白占一次余额还要等退款。
@@ -277,10 +282,11 @@ func validatePerCallFixedTier(req relaycommon.TaskSubmitReq) *dto.TaskError {
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 	}
-	if duration != 0 && (duration < promoMinDuration || duration > maxDuration) {
+	// 活动版下界保持 4 秒（2026-11-18 只调整母本特惠，见 perCallPromoMinDuration）。
+	if duration != 0 && (duration < perCallPromoMinDuration || duration > maxDuration) {
 		return service.TaskErrorWrapperLocal(
 			errors.Errorf("视频时长必须在 %d 到 %d 秒之间，当前传入 %d 秒",
-				promoMinDuration, maxDuration, duration),
+				perCallPromoMinDuration, maxDuration, duration),
 			"invalid_duration", http.StatusBadRequest)
 	}
 	// 分辨率：只在客户端**显式**给了非 720P 时报错。
@@ -379,7 +385,13 @@ func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskEr
 		// 「客户要 4 秒多付一秒的钱」。
 		lowerBound = hkWan3MinDuration
 	case isPromoFamilyModel(req.Model):
-		lowerBound = promoMinDuration
+		// 母本特惠 5 秒起（常驻 SJ-wan3-prime 只接 15-30 秒，5-14 秒由
+		// 路由层改派豆包 Fast）；活动版按次档保持 4 秒下界。
+		if isPerCallModel(req.Model) {
+			lowerBound = perCallPromoMinDuration
+		} else {
+			lowerBound = promoMinDuration
+		}
 	}
 	if duration < lowerBound {
 		return service.TaskErrorWrapperLocal(
@@ -455,6 +467,29 @@ func validateSJWan3PrimeExplicitResolution(req relaycommon.TaskSubmitReq) *dto.T
 		}
 	}
 	return nil
+}
+
+// validatePromoResolutionForModel 是促销族母本 1080P 的**硬闸门**。
+//
+// 2026-11-20 起常驻上游换成 mw-sd2.5-flash，而上游**只有 480p / 720p 两档**。
+// 对客特惠恒定交付 720P：480P 请求按 720P 执行（升档），1080P 一律 400 ——
+// 没有任何一条出口能交付 1080P，静默降 720P 就是「收 1080P 的钱给 720P 的片」。
+//
+// ⚠️ 与改版前的差别：此前 1080P 还能靠路由层改派豆包 Fast 执行；2026-11-20
+// 起改派链全部撤掉（老板口径「特惠就路由到 mw-sd2.5-flash」），所以这里必须
+// fail-loud，文案也不再提「检查改派开关」—— 已经没有那个开关了。
+//
+// ⚠️ 按次档（活动）不在这里判：它的 1080P 由 validatePerCallFixedTier 拒。
+func validatePromoResolutionForModel(req relaycommon.TaskSubmitReq) *dto.TaskError {
+	if !isPromoFamilyModel(req.Model) || isPerCallModel(req.Model) {
+		return nil
+	}
+	if normalizeResolution(req.Resolution) != "1080P" {
+		return nil
+	}
+	return service.TaskErrorWrapperLocal(
+		errors.New("该模型目前仅支持 720P 交付（不支持 1080P），请把分辨率改为 720P 后重试"),
+		"invalid_resolution", http.StatusBadRequest)
 }
 
 // validateNewModelExplicitRatio 校验两个新模型（wan-3.0 / SJ-wan3-prime）
@@ -774,6 +809,18 @@ func isPromoFamilyModel(model string) bool {
 	return constant.IsSeedance25Family(model)
 }
 
+// isPromoResidentMw 判断「这个模型是否由 mw-sd2.5-flash 执行」。
+//
+// 判定口径是「促销族 **且不是按次档**」：促销族里按次的那个（活动版）
+// 走的是标准版 wan3.0-video，与 mw 的契约不同（时长下界、素材、计费都不一套），
+// 不能一起套 mw 的分支。
+//
+// 为什么按能力组判而不是写模型名：促销族新增成员时这里自动跟进 ——
+// 逐个列名正是「母本加了能力、另一个没加」的根源（见 constant 包头注释）。
+func isPromoResidentMw(model string) bool {
+	return isPromoFamilyModel(model) && !isPerCallModel(model)
+}
+
 // upstreamModelFor maps the public aliases retained by new-api to the model
 // IDs exposed by the current Youzan API.  The mapping is explicit so the
 // public name remains stable while the upstream protocol can evolve.
@@ -782,15 +829,24 @@ func isPromoFamilyModel(model string) bool {
 // 哪个上游模型」。促销族 30 秒落 prime 的逐秒判断在 upstreamModelForRequest 里
 // （那条路径还要同时看时长与分辨率档位）。
 func upstreamModelFor(model string) (string, error) {
-	// seedance2.5 促销族（母本 + 活动版）2026-11-15 起**默认**由标准版执行。
-	// 背景：上游 api.youzan666.vip 切换上游后，prime 收窄为「仅 30 秒、仅 720P」，
-	// 而促销族按秒卖（特惠）/按时长可选（活动），必须落到 10-30 秒区间完整的
-	// 标准版 wan3.0-video 上。判定走能力组 —— 新增族成员时这里自动跟着生效。
+	// seedance2.5 促销族（母本 + 活动版）2026-11-18 起由 **SJ-wan3-prime** 常驻执行。
 	//
-	// ⚠️ 促销族的**30 秒**是例外：走 prime（见 upstreamModelForRequest）。
-	// 这里返回标准版是「默认档」，逐秒例外在上一层的请求级判断里做。
+	// 历史：2026-11-15 上游切换后曾默认落标准版 wan3.0-video，只有恰好 30 秒
+	// 例外走旧 prime；2026-11-18 老板口径改为「特惠常驻换 SJ-wan3-prime」，
+	// 旧 prime 通道同时被上游禁用，逐秒例外一并取消。
+	//
+	// ⚠️ SJ 只接 15–30 秒、仅 720P：5–14 秒与 1080P 由路由层分流，
+	//   见 constants.go 的 promoResidentModel 注释。
+	//   判定走能力组 —— 新增族成员时这里自动跟着生效。
 	if constant.IsSeedance25Family(model) {
-		return videoModel, nil
+		// ⚠️ 本次只调整**母本特惠**（按秒档）；活动版（按次档）保持原标准版映射。
+		// 两者虽然同族，但商品与计费口径不同：活动按条卖 ¥4.5、时长 4-30 秒，
+		// 改成 SJ（15-30 秒）会把 4-14 秒的按次单打坏，而活动的短时长路由
+		//（short_rule_enabled）本来就是关闭的。
+		if isPerCallModel(model) {
+			return videoModel, nil
+		}
+		return promoResidentModel, nil
 	}
 	switch strings.TrimSpace(model) {
 	case wan30Model:
@@ -845,7 +901,12 @@ func upstreamModelFor(model string) (string, error) {
 // 1080P 时静默降到 720P = 「收 1080P 的钱给 720P 的片」——
 // 所以 1080P 留在标准版（它两档齐全），而不是降档进 prime。
 func upstreamModelForRequest(req relaycommon.TaskSubmitReq) (string, error) {
-	if isPromoFamilyModel(req.Model) {
+	// 活动版（按次档）的 **30 秒**仍走旧 prime：按条 ¥4.5 的成本基准就是
+	// prime 的 ¥0.15/秒 × 30 = ¥4.5；改走标准版 ¥0.18/秒会亏 ¥0.9/单。
+	//
+	// ⚠️ 母本特惠不再有此例外：2026-11-18 起常驻 SJ-wan3-prime 本身就覆盖
+	// 15–30 秒，而旧 prime 的画质增强档只对按次商品保留。
+	if isPerCallModel(req.Model) {
 		duration := resolveDurationForModel(req, req.Model)
 		resolution := resolveResolutionForModel(req, req.Model)
 		if duration == tehuiPrimeSeconds && resolution != "1080P" {
@@ -881,6 +942,15 @@ func normalizeResolutionForModel(model, resolution string) string {
 		default:
 			return ""
 		}
+	}
+	if isPromoResidentMw(model) {
+		// mw-sd2.5-flash：上游只有 480p / 720p 两档，对客恒定交付 720P。
+		//
+		// 任何写法都归一到 720P：
+		//   - 480P → 720P 是**升档**，客户不会拿到比承诺更糊的片；
+		//   - 1080P 在校验阶段就被 validatePromoResolutionForModel 400 拦掉，
+		//     走不到这里（静默降档 = 「收 1080P 的钱给 720P 的片」）。
+		return defaultResolution
 	}
 	if isWan30Model(model) {
 		// wan-3.0：720P / 1080P 两档（size 四个值覆盖）。480P 按最低档 720P 执行。
@@ -1069,6 +1139,10 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 		case isHkWan3Model(model):
 			// hk-wan3 文档缺省 5 秒（上游 4 秒起，5 秒是文档示例值）。
 			return hkWan3DefaultDuration
+		case isPromoResidentMw(model):
+			// mw-sd2.5-flash 文档缺省 5 秒；与对外下界同值，
+			// 客户不传时长时拿到的片长不会低于承诺。
+			return mwSd25FlashDefaultDuration
 		}
 		if isPerCallModel(model) || isPrimeOnlyModel(model) {
 			return perCallFixedDuration
@@ -1139,8 +1213,14 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	//   是**兜底**（路由层那档开关关掉、或者路由层没生效时），
 	//   避免把「本来能跑的 4 秒单」在源链路就拒掉。
 	if isPromoFamilyModel(model) {
-		if duration < promoMinDuration {
-			return promoMinDuration
+		// 母本特惠 5 秒起（2026-11-18，常驻 SJ 只接 15-30 秒，5-14 秒改派豆包 Fast）；
+		// 活动版按次档保持 4 秒下界。
+		lower := promoMinDuration
+		if isPerCallModel(model) {
+			lower = perCallPromoMinDuration
+		}
+		if duration < lower {
+			return lower
 		}
 		if duration > maxDuration {
 			return maxDuration
@@ -1206,6 +1286,13 @@ func resolveRatio(req relaycommon.TaskSubmitReq) string {
 	if isHkWan3Model(req.Model) {
 		allowedRatios = hkWan3Ratios
 		fallback = hkWan3DefaultRatio
+	}
+	// mw-sd2.5-flash：7 档画幅（含 21:9 与 auto），缺省 16:9。
+	// ⚠️ 它认 "auto" 而不是历史写法 "adaptive"；adaptive 不在白名单 →
+	// 回退 16:9（不 400，老客户照旧能跑）。
+	if isPromoResidentMw(req.Model) {
+		allowedRatios = mwSd25FlashRatios
+		fallback = mwSd25FlashDefaultRatio
 	}
 	candidates := make(relaycommon.TaskRatioCandidates, len(allowedRatios))
 	for _, ratio := range allowedRatios {
@@ -1322,7 +1409,7 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 	// 「wan-3.0、wan-3.0-pro、seedance-2.0 支持 images / videos / audios 数组」
 	// —— wan-3.0 同样吃顶层音视频数组。只放 pro 会让 wan-3.0 的
 	// 顶层 videos/audios 静默丢失（任务成功、成片无参考素材）。
-	if isWan30ProModel(req.Model) || isWan30Model(req.Model) || isHkWan3Model(req.Model) {
+	if isWan30ProModel(req.Model) || isWan30Model(req.Model) || isHkWan3Model(req.Model) || isPromoResidentMw(req.Model) {
 		media = append(media, legacyVideoAudioMedia(req)...)
 	}
 	return media, validateMedia(media, req.Model)
@@ -1412,7 +1499,7 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 			// （first_frame / last_frame，兼容 startImage / endImage）。拦掉等于
 			// 把这个模型的一半能力禁掉；但仍要走组合校验（见
 			// validateHkWan3FrameMedia），避免把上游必拒的组合放进去。
-			if !isHkWan3Model(model) {
+			if !isHkWan3Model(model) && !isPromoResidentMw(model) {
 				return errors.New("youzan wan3 no longer supports first_frame/last_frame, use reference_image instead")
 			}
 			counts[item.Type]++
@@ -1421,7 +1508,17 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 		}
 	}
 	if isHkWan3Model(model) {
-		if err := validateHkWan3FrameMedia(counts); err != nil {
+		if err := validateFrameMedia(counts, hkWan3Model); err != nil {
+			return err
+		}
+	}
+	// mw-sd2.5-flash 的首尾帧组合约束与 hk-wan3 同一条上游规则
+	//（尾帧依赖首帧、首尾帧与普通参考素材互斥）。
+	//
+	// ⚠️ 文案用「该模型」而不是上游 ID：促销族的对外名是 seedance2.5-特惠，
+	// 报错里出现 mw-sd2.5-flash 等于告诉客户「你调 A 实际跑 B」。
+	if isPromoResidentMw(model) {
+		if err := validateFrameMedia(counts, "该模型"); err != nil {
 			return err
 		}
 	}
@@ -1443,9 +1540,15 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	// seedance-2.0 支持 images、videos、audios 数组」把这两个模型并列，
 	// 素材契约一致。不放行的话，客户照文档传顶层 videos/audios 会被本地
 	// 400 拦下（文案还在说「已不再支持」，与事实相反）。
+	//
 	// ⚠️ hk-wan3 同样例外（2026-11-19）：文档写明它「可参考视频」，media 收
 	// reference_image / reference_video / reference_audio，顶层三数组也收。
+	// ⚠️ mw-sd2.5-flash 同样例外（2026-11-20）：促销族母本改由它执行，
+	// 上游文档明确它收 reference_image / reference_video / reference_audio
+	// （10 图 / 5 视频 / 5 音频）与首尾帧。不放行等于把「换更宽的上游」
+	// 变成「比原来更窄的能力」—— 原来音视频靠规则九改派 CapCut，现在直达。
 	if !isPrimeOnlyModel(model) && !isWan30ProModel(model) && !isWan30Model(model) && !isHkWan3Model(model) &&
+		!isPromoResidentMw(model) &&
 		(counts["reference_video"] > 0 || counts["reference_audio"] > 0) {
 		return errors.New("参考视频/参考音频已不再支持：上游 2026-11-15 切换后该链路仅接受 reference_image 参考图，请去掉视频/音频素材后重试（需要参考音视频请改用支持它们的模型）")
 	}
@@ -1461,23 +1564,26 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	return nil
 }
 
-// validateHkWan3FrameMedia 校验 hk-wan3 的首尾帧组合。
+// validateFrameMedia 校验支持首尾帧的模型（hk-wan3 / mw-sd2.5-flash）的帧组合。
 //
-// 上游文档（2026-11-19）：「尾帧需要首帧，首尾帧模式与普通参考素材互斥」。
+// 上游文档：「尾帧需要首帧，首尾帧模式与普通参考素材互斥」。
 // 这三条都是**上游必然拒绝**的组合，本地 400 比让客户走完
 // 「建单 → 预扣 → 上游拒 → 退款」便宜得多。
-func validateHkWan3FrameMedia(counts map[string]int) error {
+//
+// name 是报错里显示的模型称呼：公开名（hk-wan3）可以直接写，
+// 上游内部名（mw-sd2.5-flash）必须用「该模型」代指，避免泄露改派关系。
+func validateFrameMedia(counts map[string]int, name string) error {
 	if counts["first_frame"]+counts["last_frame"] == 0 {
 		return nil
 	}
 	if counts["first_frame"] > 1 || counts["last_frame"] > 1 {
-		return errors.New("hk-wan3 的首帧 / 尾帧各只能传一张")
+		return errors.Errorf("%s 的首帧 / 尾帧各只能传一张", name)
 	}
 	if counts["last_frame"] > 0 && counts["first_frame"] == 0 {
-		return errors.New("hk-wan3 传尾帧时必须同时传首帧（last_frame 依赖 first_frame）")
+		return errors.Errorf("%s 传尾帧时必须同时传首帧（last_frame 依赖 first_frame）", name)
 	}
 	if counts["reference_image"]+counts["reference_video"]+counts["reference_audio"] > 0 {
-		return errors.New("hk-wan3 的首尾帧模式与普通参考素材互斥：请只用首尾帧，或只用 reference_* 参考素材")
+		return errors.Errorf("%s 的首尾帧模式与普通参考素材互斥：请只用首尾帧，或只用 reference_* 参考素材", name)
 	}
 	return nil
 }
@@ -1665,6 +1771,10 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 		// hk-wan3 走回 resolution + ratio 契约（与旧标准版同形态），
 		// 但分辨率要还原成文档示例的小写写法（480p / 720p / 1080p）。
 		return buildHkWan3RequestBody(req, upstreamModel, prompt, media)
+	case isPromoResidentMw(req.Model):
+		// mw-sd2.5-flash 是 resolution + ratio 契约，但**参数名与取值不同**：
+		// 时长用 duration（整数）、分辨率小写、素材统一走 media。
+		return buildMwSd25FlashRequestBody(req, upstreamModel, prompt, media)
 	}
 	body := map[string]interface{}{
 		"model":      upstreamModel,
@@ -1825,6 +1935,46 @@ func buildHkWan3RequestBody(
 	// 见 hkWan3AudioEnabled。
 	if hkWan3AudioEnabled(req) {
 		body["audio"] = true
+	}
+	if len(media) > 0 {
+		body["media"] = media
+	}
+	return common.Marshal(body)
+}
+
+// buildMwSd25FlashRequestBody 按上游 mw-sd2.5-flash 的契约构造请求体。
+//
+// 上游文档（2026-11-19 版）示例：
+//
+//	{"model":"mw-sd2.5-flash","prompt":"...","duration":5,
+//	 "resolution":"480p","ratio":"16:9","media":[...]}
+//
+// 要点：
+//   - 时长字段是 **duration**（整数）。文档说兼容 seconds，但我们只发一个字段 ——
+//     两个都发时上游认哪个没有明确约定，多一份就是多一份不确定性；
+//   - resolution 按文档示例下发**小写**（480p / 720p）。对客恒定 720p：
+//     480P 请求在归一阶段已升档，1080P 在校验阶段 400；
+//   - ratio 走七档白名单（含 auto），缺省 16:9；
+//   - 素材统一走 media：reference_* 与首尾帧都能放进去，
+//     比顶层 images/videos/audios 少一层「到底认哪个字段」的歧义。
+func buildMwSd25FlashRequestBody(
+	req relaycommon.TaskSubmitReq,
+	upstreamModel, prompt string,
+	media []relaycommon.TaskMedia,
+) ([]byte, error) {
+	resolution := strings.ToLower(resolveResolutionForModel(req, req.Model))
+	if resolution == "" {
+		// 理论上到不了：分辨率已归一为 720P。
+		// 真到了说明调用顺序被人改坏了 —— 明确报错，不要发一个上游不认的档位。
+		return nil, errors.Errorf(
+			"mw-sd2.5-flash 无法推导合法分辨率：resolution=%q", req.Resolution)
+	}
+	body := map[string]interface{}{
+		"model":      upstreamModel,
+		"prompt":     prompt,
+		"duration":   resolveDurationForModel(req, req.Model),
+		"resolution": resolution,
+		"ratio":      resolveRatio(req),
 	}
 	if len(media) > 0 {
 		body["media"] = media
