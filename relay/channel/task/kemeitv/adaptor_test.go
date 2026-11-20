@@ -6,15 +6,27 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain 先灌一遍代码内置的默认 ModelPrice。
+//
+// 计费断言依赖「基准价 × 倍率」的绝对价：测试环境没有 options 表，
+// 不初始化就查不到 kemeitv 两个模型的基准价，倍率会回落标准 1:2:4，
+// 断言就变成假通过/假失败。
+func TestMain(m *testing.M) {
+	ratio_setting.InitRatioSettings()
+	os.Exit(m.Run())
+}
 
 func newTestContext(t *testing.T, req relaycommon.TaskSubmitReq) *gin.Context {
 	t.Helper()
@@ -397,13 +409,83 @@ func TestEstimateBilling_模型覆盖倍率(t *testing.T) {
 	c = newTestContext(t, relaycommon.TaskSubmitReq{
 		Prompt: "x", Duration: 10, Resolution: resolution1080P,
 	})
-	assert.Equal(t, 4.0, a.EstimateBilling(c, tjInfo)["size"])
+	assert.InDelta(t, 4.0, a.EstimateBilling(c, tjInfo)["size"], 1e-9)
 
-	// prime-tj 720P：标准 2 倍，不受 tj 覆盖影响。
+	// prime-tj 720P：¥0.48 / ¥0.24 = 2 倍，与 tj 的档位价互不影响。
 	c = newTestContext(t, relaycommon.TaskSubmitReq{
 		Prompt: "x", Duration: 10, Resolution: resolution720P,
 	})
-	assert.Equal(t, 2.0, a.EstimateBilling(c, primeInfo)["size"])
+	assert.InDelta(t, 2.0, a.EstimateBilling(c, primeInfo)["size"], 1e-9)
+}
+
+// 2026-11-20 老服务器调价：tj 480P ¥0.138→¥0.15、prime-tj ¥0.24→¥0.25，
+// 但 720P / 1080P 的绝对价必须保持原样。
+//
+// 两台生产服务器共用同一份代码、基准价却不同（老 0.15/0.25、新 0.138/0.24），
+// 所以倍率不能写死 —— 本用例把两种基准价都跑一遍，断言「基准 × 倍率」得到的
+// 每档绝对价一致。
+func TestEstimateBilling_绝对档位价随基准价反推(t *testing.T) {
+	a := newAdaptor()
+
+	original := ratio_setting.GetModelPriceMap()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(
+			mapJSON(t, original)))
+	})
+
+	cases := []struct {
+		name         string
+		tjBaseCNY    float64
+		primeBaseCNY float64
+	}{
+		{name: "老服务器调价后", tjBaseCNY: 0.15, primeBaseCNY: 0.25},
+		{name: "新服务器维持原价", tjBaseCNY: 0.138, primeBaseCNY: 0.24},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(mapJSON(t, map[string]float64{
+				ModelNameTJ:      tc.tjBaseCNY / ratio_setting.USD2RMB,
+				ModelNamePrimeTJ: tc.primeBaseCNY / ratio_setting.USD2RMB,
+			})))
+
+			tjInfo := &relaycommon.RelayInfo{OriginModelName: ModelNameTJ}
+			primeInfo := &relaycommon.RelayInfo{OriginModelName: ModelNamePrimeTJ}
+
+			// (模型, 分辨率, 期望绝对价 CNY/秒)
+			assertions := []struct {
+				model    string
+				info     *relaycommon.RelayInfo
+				res      string
+				baseCNY  float64
+				wantCNY  float64
+			}{
+				{ModelNameTJ, tjInfo, resolution480P, tc.tjBaseCNY, tc.tjBaseCNY},
+				{ModelNamePrimeTJ, primeInfo, resolution480P, tc.primeBaseCNY, tc.primeBaseCNY},
+				{ModelNameTJ, tjInfo, resolution720P, tc.tjBaseCNY, 0.25},
+				{ModelNameTJ, tjInfo, resolution1080P, tc.tjBaseCNY, 0.552},
+				{ModelNamePrimeTJ, primeInfo, resolution720P, tc.primeBaseCNY, 0.48},
+				{ModelNamePrimeTJ, primeInfo, resolution1080P, tc.primeBaseCNY, 0.96},
+			}
+			for _, want := range assertions {
+				c := newTestContext(t, relaycommon.TaskSubmitReq{
+					Prompt: "x", Duration: 1, Resolution: want.res,
+				})
+				ratio := a.EstimateBilling(c, want.info)["size"]
+				gotCNY := want.baseCNY * ratio
+				assert.InDelta(t, want.wantCNY, gotCNY, 1e-9,
+					"%s %s 绝对价应为 ¥%.4f/秒", want.model, want.res, want.wantCNY)
+			}
+		})
+	}
+}
+
+// mapJSON 把价格表序列化成 UpdateModelPriceByJSONString 需要的 JSON。
+func mapJSON(t *testing.T, m map[string]float64) string {
+	t.Helper()
+	raw, err := json.Marshal(m)
+	require.NoError(t, err)
+	return string(raw)
 }
 
 // 缺省（context 里没有请求）时必须返回缺省秒数，绝不能返回 nil ——

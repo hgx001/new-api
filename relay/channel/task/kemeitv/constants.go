@@ -1,6 +1,10 @@
 package kemeitv
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+)
 
 // ChannelName 后台展示名。
 const ChannelName = "Kemeitv"
@@ -152,18 +156,53 @@ var resolutionSizeRatio = map[string]float64{
 	resolution1080P: 4.0,
 }
 
-// modelResolutionSizeRatio 按模型覆盖某分辨率档的倍率。
+// modelResolutionPriceCNY 按「模型 + 分辨率」声明**绝对对外单价（CNY/秒）**。
 //
-// 背景（2026-11-19）：wan3.0-video-tj 的 720P 是人工特价 ¥0.25/秒，
-// 不等于基准价 ¥0.138/秒 × 标准 2 倍（¥0.276/秒）。因此对该模型的
-// 720P 档用倍率 0.25/0.138 ≈ 1.8116，其余档位（480P=1.0、1080P=4.0）
-// 与 prime-tj 全档仍走 resolutionSizeRatio，不动基准价。
+// 背景（2026-11-20 客户调价）：wan3.0-video-tj 的 480P 基准价 ¥0.138→¥0.15、
+// wan3.0-video-prime-tj ¥0.24→¥0.25，但 720P / 1080P 的**绝对价必须保持不变**
+// （0.25 / 0.552 与 0.48 / 0.96）。基准价存在库里的 ModelPrice（USD 等值），
+// 而两台生产服务器的基准价并不相同（新服务器要求维持原价），只要把倍率写死，
+// 改任一侧的基准价都会把高档位一起带偏：
 //
-// 只对显式列出的「模型 + 分辨率」生效；未列出的组合回落到标准倍率。
-var modelResolutionSizeRatio = map[string]map[string]float64{
+//	基准 0.138 时 720P 倍率 0.25/0.138 ≈ 1.8116
+//	若基准改 0.15 而倍率不动 → 720P 变成 ¥0.2717（客户没让涨）
+//
+// 所以这里存绝对目标价，运行时按**当前**基准价反推倍率：
+//
+//	size = 目标价(CNY) / (ModelPrice(USD) × USD2RMB)
+//
+// 同一份代码下：480P 各取各库里的基准价；720P/1080P 锁死在目标价，
+// 与基准价怎么调无关。
+//
+// 只对显式列出的「模型 + 分辨率」生效；未列出的组合（含 480P）回落到
+// resolutionSizeRatio 的标准倍率。
+var modelResolutionPriceCNY = map[string]map[string]float64{
 	ModelNameTJ: {
-		resolution720P: 0.25 / 0.138,
+		resolution720P:  0.25,
+		resolution1080P: 0.552,
 	},
+	ModelNamePrimeTJ: {
+		resolution720P:  0.48,
+		resolution1080P: 0.96,
+	},
+}
+
+// resolutionRatioForModel 返回「模型 + 分辨率」相对基准档（480P）的倍率。
+//
+// 有绝对价声明且能读到基准价时按绝对价反推；读不到 ModelPrice（未配置 /
+// 单测环境）必须回落标准倍率，绝不能返回 0 —— 倍率为 0 等于整单免费。
+func resolutionRatioForModel(modelName, resolution string) float64 {
+	if targets, ok := modelResolutionPriceCNY[modelName]; ok {
+		if targetCNY, ok := targets[resolution]; ok && targetCNY > 0 {
+			if baseUSD, ok := ratio_setting.GetModelPrice(modelName, false); ok && baseUSD > 0 {
+				baseCNY := baseUSD * ratio_setting.USD2RMB
+				if baseCNY > 0 {
+					return targetCNY / baseCNY
+				}
+			}
+		}
+	}
+	return resolutionSizeRatio[resolution]
 }
 
 // defaultRatio 缺省画幅。

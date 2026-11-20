@@ -154,8 +154,9 @@ func (a *TaskAdaptor) setReferenceVideoSeconds(c *gin.Context, bundle *mediaBund
 // EstimateBilling 返回计费倍率。
 //
 // 返回 seconds + size：按秒计费（基准价是 480P 的每秒价），
-// 分辨率倍率默认按 1 : 2 : 4 走；个别模型可对单档覆盖
-// （modelResolutionSizeRatio，如 tj 的 720P 特价 ¥0.25/秒）。
+// 分辨率倍率默认按 1 : 2 : 4 走；个别模型的档位是人工定价，
+// 由 modelResolutionPriceCNY 声明绝对价、运行时按基准价反推倍率
+// （如 tj 的 720P 特价 ¥0.25/秒、1080P ¥0.552/秒）。
 //
 // ⚠️ 不返回 nil：返回 nil 会被当成 1 秒，30 秒的请求只收 1 秒的钱。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
@@ -174,15 +175,14 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		resolution = defaultResolution
 	}
-	ratio := resolutionSizeRatio[resolution]
-	// 按模型对单档覆盖倍率；info 可能为 nil（如单测/缺省路径），此时走标准倍率。
+	// 分辨率倍率：先取标准 1 : 2 : 4，再按模型的绝对档位价反推倍率
+	// （modelResolutionPriceCNY）。info 可能为 nil（单测/缺省路径），
+	// 此时没有模型名，直接走标准倍率。
+	modelName := ""
 	if info != nil {
-		if override, ok := modelResolutionSizeRatio[info.OriginModelName]; ok {
-			if custom, ok := override[resolution]; ok {
-				ratio = custom
-			}
-		}
+		modelName = info.OriginModelName
 	}
+	ratio := resolutionRatioForModel(modelName, resolution)
 	if ratio == 0 {
 		ratio = 1.0
 	}
@@ -607,7 +607,7 @@ func RequestResolution(req relaycommon.TaskSubmitReq) (string, error) {
 }
 
 // BillingSizeRatioForResolution 返回该模型该分辨率档相对 480P 基准价的倍率，
-// 包含按模型覆盖的特价档（tj 的 720P）。
+// 包含按模型声明的绝对档位价（tj 的 720P/1080P、prime-tj 的 720P/1080P）。
 //
 // 供条件路由写进 constant.ContextKeyRouteBillingSizeRatio：计费按客户请求的
 // 源模型算，目标 adaptor 给的自己的倍率必须被覆盖。
@@ -616,12 +616,7 @@ func BillingSizeRatioForResolution(model, resolution string) float64 {
 	if resolution == "" {
 		resolution = defaultResolution
 	}
-	if override, ok := modelResolutionSizeRatio[strings.TrimSpace(model)]; ok {
-		if custom, ok := override[resolution]; ok && custom > 0 {
-			return custom
-		}
-	}
-	if ratio, ok := resolutionSizeRatio[resolution]; ok && ratio > 0 {
+	if ratio := resolutionRatioForModel(strings.TrimSpace(model), resolution); ratio > 0 {
 		return ratio
 	}
 	return 1.0
