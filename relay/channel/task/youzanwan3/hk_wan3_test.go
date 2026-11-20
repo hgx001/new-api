@@ -223,6 +223,32 @@ func TestHkWan3AudioAlwaysOn(t *testing.T) {
 	assert.Equal(t, true, parsed["audio"], "字符串 false 不当作开关")
 }
 
+// TestHkWan3TopLevelAudioBool 客户照上游文档传 {"audio": false} 时要真静音，
+// 传 {"audio": true} 时照常有声；布尔值走 AudioEnabled，不能被当成参考音频 URL。
+func TestHkWan3TopLevelAudioBool(t *testing.T) {
+	buildFrom := func(payload string) map[string]interface{} {
+		var req relaycommon.TaskSubmitReq
+		require.NoError(t, common.Unmarshal([]byte(payload), &req))
+		body, err := (&TaskAdaptor{}).buildRequestBody(req)
+		require.NoError(t, err)
+		var parsed map[string]interface{}
+		require.NoError(t, common.Unmarshal(body, &parsed))
+		return parsed
+	}
+
+	parsed := buildFrom(`{"model":"hk-wan3","prompt":"有声","seconds":"4","audio":true}`)
+	assert.Equal(t, true, parsed["audio"])
+	assert.NotContains(t, parsed, "media", "布尔 audio 不应变成参考音频素材")
+
+	parsed = buildFrom(`{"model":"hk-wan3","prompt":"静音","seconds":"4","audio":false}`)
+	assert.NotContains(t, parsed, "audio", "顶层 audio:false 要能关掉音轨")
+
+	// metadata 口径优先于顶层布尔（两者冲突时以更明确的 metadata 为准）。
+	parsed = buildFrom(`{"model":"hk-wan3","prompt":"p","seconds":"4","audio":false,
+		"metadata":{"with_audio":true}}`)
+	assert.Equal(t, true, parsed["audio"])
+}
+
 // TestHkWan3AudioNotSentToOtherModels audio 是 hk-wan3 的专属开关，
 // 不能漏到同渠道其它模型（它们不认这个字段，可能整单 400）。
 func TestHkWan3AudioNotSentToOtherModels(t *testing.T) {

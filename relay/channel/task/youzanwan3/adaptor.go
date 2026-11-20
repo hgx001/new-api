@@ -1799,9 +1799,10 @@ func buildHkWan3RequestBody(
 	// 拿到的是无声成片（2026-11-19 实测：同参数不加 audio 出 1.73MB 纯视频，
 	// 加 audio:true 出 1.80MB、AAC 44.1kHz 双声道）。
 	//
-	// 因此这里**无条件下发 true**。需要静音版的客户走 metadata.with_audio=false，
-	// 不开放顶层 audio 字段：本站 TaskSubmitReq.Audio 是「单个参考音频 URL」
-	// 的字符串字段，接不住上游文档里那个布尔值（传 true 会在解码阶段 400）。
+	// 因此这里**无条件下发 true**。关闭只能走显式口径：metadata 里
+	// with_audio=false / audio_output=false，或顶层 {"audio": false}
+	// （布尔值在解码层收进 TaskSubmitReq.AudioEnabled，不会混进参考音频 URL）。
+	// 见 hkWan3AudioEnabled。
 	if hkWan3AudioEnabled(req) {
 		body["audio"] = true
 	}
@@ -1813,10 +1814,11 @@ func buildHkWan3RequestBody(
 
 // hkWan3AudioEnabled 返回本次 hk-wan3 请求是否要成片音轨。
 //
-// 默认 true（见 buildHkWan3RequestBody 的说明）；只有客户在 metadata 里显式
-// 写 with_audio=false / audio_output=false 时才关闭，用来给「我只要画面、
-// 自己后期配音」的场景留出口。取不到就按有声道处理 —— 少一段音轨比多一段
-// 更容易被当成故障。
+// 优先级（高 → 低）：
+//  1. metadata.with_audio / metadata.audio_output —— 本站文档口径，布尔。
+//  2. 顶层 {"audio": true|false} —— 上游文档口径，解码时收进 AudioEnabled。
+//  3. 默认 true：业务要求成片必须有声，取不到就按有声道处理 ——
+//     少一段音轨比多一段更容易被当成故障。
 func hkWan3AudioEnabled(req relaycommon.TaskSubmitReq) bool {
 	for _, key := range []string{"with_audio", "audio_output"} {
 		value, ok := req.Metadata[key]
@@ -1826,6 +1828,9 @@ func hkWan3AudioEnabled(req relaycommon.TaskSubmitReq) bool {
 		if wantAudio, ok := value.(bool); ok {
 			return wantAudio
 		}
+	}
+	if req.AudioEnabled != nil {
+		return *req.AudioEnabled
 	}
 	return true
 }

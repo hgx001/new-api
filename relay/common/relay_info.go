@@ -755,13 +755,25 @@ type TaskMedia struct {
 }
 
 type TaskSubmitReq struct {
-	Prompt         string                 `json:"prompt"`
-	Model          string                 `json:"model,omitempty"`
-	Mode           string                 `json:"mode,omitempty"`
-	Image          string                 `json:"image,omitempty"`
-	Images         []string               `json:"images,omitempty"`
-	Audio          string                 `json:"audio,omitempty"`
-	Audios         []string               `json:"audios,omitempty"`
+	Prompt string   `json:"prompt"`
+	Model  string   `json:"model,omitempty"`
+	Mode   string   `json:"mode,omitempty"`
+	Image  string   `json:"image,omitempty"`
+	Images []string `json:"images,omitempty"`
+	Audio  string   `json:"audio,omitempty"`
+	Audios []string `json:"audios,omitempty"`
+
+	// AudioEnabled 承接客户按上游文档传来的**布尔** audio 开关
+	// （{"audio": true} / {"audio": false}）。
+	//
+	// ⚠️ 为什么要单独一个字段（2026-11-20）：本站的 Audio 是「参考音频 URL」
+	// 字符串，与上游 hk-wan3 文档里那个「成片要不要音轨」的布尔 audio
+	// **同名不同义**。此前布尔值走到 UnmarshalJSON 的字符串分支 →
+	// 直接 400「audio must be a string or array」，客户照文档传参就报错，
+	// 看着像我们接口坏了。布尔值没有 URL 语义，不能塞进 Audio（否则下游
+	// 会把 true 当参考音频地址去抓取），所以单独存这里；json 标签留 "-"，
+	// 真正的解析在 UnmarshalJSON 里按类型分派。
+	AudioEnabled   *bool                  `json:"-"`
 	Video          string                 `json:"video,omitempty"`
 	Videos         []string               `json:"videos,omitempty"`
 	Media          []TaskMedia            `json:"media,omitempty"`
@@ -880,15 +892,24 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	}
 
 	if len(aux.Audio) > 0 && string(aux.Audio) != "null" {
-		values, err := parseStringValues(aux.Audio)
-		if err != nil {
-			return fmt.Errorf("audio must be a string or array")
-		}
-		if len(values) > 0 {
-			if len(values) == 1 {
-				t.Audio = values[0]
-			} else {
-				t.Audios = append(t.Audios, values...)
+		// audio 既是合作方常见的「参考音频 URL」字符串，也是上游 hk-wan3 文档里的
+		// 「成片是否带音轨」布尔开关。两种形态都要接住：以前只认字符串/数组，
+		// 客户照上游文档传 {"audio": true} 会拿到 400 "audio must be a string or array"，
+		// 被当成我们的接口故障。布尔值单独收进 AudioEnabled，不进 Audio（那里是 URL）。
+		var audioEnabled bool
+		if boolErr := common.Unmarshal(aux.Audio, &audioEnabled); boolErr == nil {
+			t.AudioEnabled = &audioEnabled
+		} else {
+			values, err := parseStringValues(aux.Audio)
+			if err != nil {
+				return fmt.Errorf("audio must be a string, array or boolean")
+			}
+			if len(values) > 0 {
+				if len(values) == 1 {
+					t.Audio = values[0]
+				} else {
+					t.Audios = append(t.Audios, values...)
+				}
 			}
 		}
 	}
