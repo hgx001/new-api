@@ -49,6 +49,13 @@ func SetVideoRouter(router *gin.Engine) {
 		middleware.Wan3TehuiAliasRoute(),
 		middleware.Seedance25TeHuiRoute(),
 		middleware.Wan3PromptCompress(),
+		// 带参考视频的万相请求 → hk-wan3（2026-11-20）。
+		//
+		// 为什么排在最前（在任何万相改派之前）：它判的是客户**原始请求**的
+		// 特征（带不带 reference_video），先定出口；要是等「官网→客美 tj」
+		// 先改了名，源头模型已经变成 tj，计费原点也叫别人写过了。
+		// 促销族规则只认 seedance2.5-*，与它无交集。
+		middleware.Wan3RefVideoHkRoute(),
 		// 万相官网 → 客美 tj 的手动换货开关（2026-11-19）。
 		//
 		// 为什么排在最后（紧贴 Distribute）：它是「最终出口选择」而不是一条

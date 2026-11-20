@@ -5567,7 +5567,13 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Reference video → hk-wan3 reroute": "Перенаправление референсного видео → hk-wan3",
+    "Reference videos run on hk-wan3": "Референсное видео выполняется на hk-wan3",
+    "Reference videos stay on the source chain": "Референсное видео остаётся в исходной цепочке",
+    "Requests to {{sources}} with a reference video run on {{target}} ({{min}}–{{max}} seconds); {{target}} does not charge for reference video, and billing stays on the requested model": "Запросы к {{sources}} с референсным видео выполняются на {{target}} ({{min}}–{{max}} секунд); {{target}} не берёт плату за референсное видео, а биллинг остаётся по запрошенной модели",
+    "Requests to {{sources}} with a reference video stay on the source chain: the official channel drops the media and tj bills the reference video seconds": "Запросы к {{sources}} с референсным видео остаются в исходной цепочке: официальный канал отбрасывает материалы, а tj включает секунды референсного видео в биллинг",
+    "Not rerouted when the duration is outside 4–15 seconds, the aspect ratio is adaptive, frames are used, media exceeds the limits, or the target has no available channel.": "Перенаправление не выполняется, если длительность вне 4–15 секунд, соотношение сторон adaptive, используются кадры, материалы превышают лимиты или у цели нет доступного канала."
   },
   "Integration Tutorial": "Руководство по интеграции",
   "Claude Code Installation": "Установка Claude Code",

@@ -588,6 +588,45 @@ func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
 	return defaultDuration, nil
 }
 
+// RequestDuration 按本渠道的口径解析请求时长（2–30 秒，缺省 5 秒）。
+//
+// 为什么导出：条件路由（middleware/wan3_ref_video_hk_route.go）把一份
+// tj / prime-tj 的请求改派到 hk-wan3 时，必须把**本渠道解析出来的秒数**
+// 显式写成目标请求里的 `duration`（hk-wan3 的下界是 4 秒、且只认 duration）。
+// 同一份解析被 adaptor 与路由层共用，才不会出现「路由层按一个数、adaptor 按另一个数」。
+func RequestDuration(req relaycommon.TaskSubmitReq) (int, error) {
+	return resolveDuration(req)
+}
+
+// RequestResolution 按本渠道的口径解析输出分辨率档位（缺省 720P）。
+//
+// 导出理由同 RequestDuration：路由层要用**源模型的档位**去覆盖目标 adaptor
+// 的 size 倍率，否则 1080P 会按 hk-wan3 的 2.667 倍收（tj 口径是 4 倍）。
+func RequestResolution(req relaycommon.TaskSubmitReq) (string, error) {
+	return resolveResolution(req)
+}
+
+// BillingSizeRatioForResolution 返回该模型该分辨率档相对 480P 基准价的倍率，
+// 包含按模型覆盖的特价档（tj 的 720P）。
+//
+// 供条件路由写进 constant.ContextKeyRouteBillingSizeRatio：计费按客户请求的
+// 源模型算，目标 adaptor 给的自己的倍率必须被覆盖。
+func BillingSizeRatioForResolution(model, resolution string) float64 {
+	resolution = normalizeResolution(resolution)
+	if resolution == "" {
+		resolution = defaultResolution
+	}
+	if override, ok := modelResolutionSizeRatio[strings.TrimSpace(model)]; ok {
+		if custom, ok := override[resolution]; ok && custom > 0 {
+			return custom
+		}
+	}
+	if ratio, ok := resolutionSizeRatio[resolution]; ok && ratio > 0 {
+		return ratio
+	}
+	return 1.0
+}
+
 // toInt 把 metadata 里可能是数字或数字字符串的值转成 int。
 func toInt(raw any) (int, bool) {
 	switch v := raw.(type) {

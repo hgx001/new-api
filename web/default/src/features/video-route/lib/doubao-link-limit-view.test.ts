@@ -70,6 +70,15 @@ function policy(overrides: Partial<VideoRoutePolicy> = {}): VideoRoutePolicy {
     wan3_guanwang_tj_enabled: false,
     wan3_guanwang_tj_source_model: 'wan3.0-video-官网',
     wan3_guanwang_tj_target_model: 'wan3.0-video-tj',
+    // 带参考视频 → hk-wan3（2026-11-20）：默认开启，旧 option 没配过。
+    wan3_ref_video_hk_enabled: true,
+    wan3_ref_video_hk_configured: false,
+    wan3_ref_video_hk_target_model: 'hk-wan3',
+    wan3_ref_video_hk_source_models: [
+      'wan3.0-video-官网',
+      'wan3.0-video-tj',
+      'wan3.0-video-prime-tj',
+    ],
     ecommerce_ratio_condition_default: '9:16',
     ecommerce_keywords: [],
     ecommerce_keywords_default: [],

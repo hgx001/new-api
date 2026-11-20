@@ -116,6 +116,7 @@ import { ShortLinkCard } from '@/features/video-route/components/short-link-card
 import { ShortYouzanCard } from '@/features/video-route/components/short-youzan-card'
 import { TotalFallbackCard } from '@/features/video-route/components/total-fallback-card'
 import { Wan3GuanwangTjCard } from '@/features/video-route/components/wan3-guanwang-tj-card'
+import { Wan3RefVideoHkCard } from '@/features/video-route/components/wan3-ref-video-hk-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
@@ -3596,7 +3597,19 @@ export function ChannelMutateDrawer({
                               两颗按钮不同商品、不连坐，视觉上也不该混在一起。
                               只在本渠道承载源模型（wan3.0-video-官网，ch12）
                               或目标模型（wan3.0-video-tj，ch32）时渲染。 */}
-                          <Wan3GuanwangTjCard channelModels={currentModels ?? ''} />
+                          <Wan3GuanwangTjCard
+                            channelModels={currentModels ?? ''}
+                          />
+
+                          {/* 带参考视频的万相请求 → hk-wan3（2026-11-20，默认开）。
+                              三条万相链路对参考视频的处置不同：官网适配器把
+                              音视频素材整段丢弃、tj 把参考视频秒数并入计费、
+                              只有 hk-wan3 不收参考视频的钱。关掉就退回现状。
+                              只在本渠道承载源模型（官网 / tj / prime-tj）
+                              或目标模型（hk-wan3）时渲染。 */}
+                          <Wan3RefVideoHkCard
+                            channelModels={currentModels ?? ''}
+                          />
 
                           {/* 豆包链路开关（合并原「跨模型改派」+「故障转移」两卡）：
                               一个开关 = 豆包通不通。开着：超时长改派豆包、额度
@@ -3630,7 +3643,9 @@ export function ChannelMutateDrawer({
                               ⚠️ 三条短时长分支同时只能有一条生效：
                               打开本条会自动关掉另外两条（后端写入口保证），
                               读侧还有「心笔 > 有赞 > CapCut」的优先级兜底。 */}
-                          <ShortCapcutCard channelModels={currentModels ?? ''} />
+                          <ShortCapcutCard
+                            channelModels={currentModels ?? ''}
+                          />
 
                           {/* 规则七（电商/产品推荐内容 → 有赞优先，接不住才 CapCut 2.5）：
                               提示词命中电商关键词，或勾选的参数条件（9:16
@@ -3638,7 +3653,9 @@ export function ChannelMutateDrawer({
                               只有 <10 秒或带参考音视频才改派 CapCut。源渠道与
                               目标渠道都显示 —— 源渠道是决策入口，目标渠道是
                               排查入口。 */}
-                          <EcommerceRouteCard channelModels={currentModels ?? ''} />
+                          <EcommerceRouteCard
+                            channelModels={currentModels ?? ''}
+                          />
 
                           {/* 规则八（全量兜底 → cp-seedance-2.5）：
                               源链路（有赞）彻底不能用时的逃生口 —— 打开后
@@ -3646,14 +3663,18 @@ export function ChannelMutateDrawer({
                               放在电商卡之后：它是救火开关，不该抢日常调度的视线；
                               但卡片本身用红色警示色调，开了就是全量改派。
                               源渠道与目标渠道都显示（同电商卡口径）。 */}
-                          <TotalFallbackCard channelModels={currentModels ?? ''} />
+                          <TotalFallbackCard
+                            channelModels={currentModels ?? ''}
+                          />
 
                           {/* 规则五（故障转移）的**备选备胎**开关：豆包不可用时
                               改派 cp-seedance-2.5flash（480p 生成 + 超分 720P
                               交付），关闭仍走班车。与豆包卡不同，这张卡在
                               豆包源渠道和 CapCut 目标渠道里都显示 —— 运营是在
                               豆包渠道排查「挂了怎么办」的。 */}
-                          <FailoverAltCard channelModels={currentModels ?? ''} />
+                          <FailoverAltCard
+                            channelModels={currentModels ?? ''}
+                          />
 
                           <div
                             id={ADVANCED_SETTINGS_SECTION_IDS.internalNotes}

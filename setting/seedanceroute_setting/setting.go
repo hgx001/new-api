@@ -487,6 +487,22 @@ type Policy struct {
 	// 这个字段，解析后零值 false = 不改派，升级当天线上流量逐字节不变。
 	Wan3GuanwangTJEnabled bool `json:"wan3_guanwang_tj_enabled,omitempty"`
 
+	// Wan3RefVideoHkEnabled 是「带参考视频的万相请求 → hk-wan3」开关（2026-11-20 起）。
+	//
+	// 打开：官网 / tj / prime-tj 这条万相族上带 `reference_video` 的请求
+	// （生成时长 4–15 秒）改派 hk-wan3（渠道 17 有赞）执行 —— hk-wan3
+	// **不收参考视频的钱**（上游只按生成秒数计价），而 tj 自 11-20 起会把
+	// 参考视频秒数并入计费、官网适配器则是直接把音视频素材丢掉。
+	// 关闭：完全不做这件事，请求留在原链路（与加这个开关之前逐字节一致）。
+	//
+	// ⚠️ 三态指针且 **nil = 默认开启**：与 RefAVCapcutEnabled 同一口径。
+	// 理由：这不是价格试验而是**链路纠正** —— 带参考视频的请求留在官网
+	// 等于素材被静默丢弃（客户付了钱拿不到带素材的片），留在 tj 会多收
+	// 参考视频秒数。默认关闭等于把已知的错交付继续做着。
+	//
+	// ⚠️ 与 Enabled（促销族规则总开关）无关：不同商品、不同源模型。
+	Wan3RefVideoHkEnabled *bool `json:"wan3_ref_video_hk_enabled,omitempty"`
+
 	// UpdatedAt 最近一次修改的 Unix 时间戳，0 表示从未改过。
 	UpdatedAt int64 `json:"updated_at"`
 }
@@ -1645,6 +1661,11 @@ func clonePolicy(p Policy) Policy {
 	if p.ShortLinkEnabled != nil {
 		enabled := *p.ShortLinkEnabled
 		out.ShortLinkEnabled = &enabled
+	}
+	// Wan3RefVideoHkEnabled 同理（三态指针，nil 表示「未配 = 默认开启」）。
+	if p.Wan3RefVideoHkEnabled != nil {
+		enabled := *p.Wan3RefVideoHkEnabled
+		out.Wan3RefVideoHkEnabled = &enabled
 	}
 	// EcommercePromptKeywords 是切片：浅拷贝会让 Get() 返回的副本与全局状态
 	// 共享底层数组，调用方改一个元素就悄悄改到了全局配置。

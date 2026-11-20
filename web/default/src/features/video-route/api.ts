@@ -135,6 +135,21 @@ export type VideoRoutePolicy = {
   /** 换货开关的目标模型（实际执行的渠道上的那个名字）。 */
   wan3_guanwang_tj_target_model: string
   /**
+   * 「带参考视频的万相请求 → hk-wan3」开关（2026-11-20）。
+   *
+   * **缺省开启**（后端 nil = 开）：带 reference_video 的官网/tj/prime-tj
+   * 请求（生成 4–15 秒）改派 hk-wan3 执行 —— hk-wan3 不收参考视频的钱，
+   * 而官网适配器会把音视频素材整段丢弃、tj 会把参考视频秒数并入计费。
+   * 关掉 = 这类请求留在原链路（即现状）。
+   */
+  wan3_ref_video_hk_enabled: boolean
+  /** 这个开关有没有被显式配过（false = 一直在吃缺省「开启」）。 */
+  wan3_ref_video_hk_configured: boolean
+  /** 目标模型（固定 hk-wan3）。 */
+  wan3_ref_video_hk_target_model: string
+  /** 适用的源模型清单（官网 / tj / prime-tj）。 */
+  wan3_ref_video_hk_source_models: string[]
+  /**
    * 「9:16 比例」入口对应的比例 —— 由后端给出唯一事实源，
    * 前端不硬编码比例字符串（两处各写一份必然漂）。
    */
@@ -528,6 +543,26 @@ export async function setWan3GuanwangTjEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/wan3-guanwang-tj', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换「带参考视频的万相请求 → hk-wan3」开关（2026-11-20）。
+ *
+ * 打开（默认）：`wan3_ref_video_hk_source_models`（官网 / tj / prime-tj）上带
+ * `reference_video`、生成时长 4–15 秒的请求改派 `wan3_ref_video_hk_target_model`
+ * （hk-wan3）执行 —— 该模型**不收参考视频的钱**，计费仍按客户请求的源模型。
+ * 关闭：这类请求留在原链路（官网会丢弃素材、tj 会把参考视频秒数并入计费）。
+ *
+ * 准入不满足的请求即使开关开着也留在原链路：时长不在 4–15 秒、画幅 adaptive、
+ * 带首尾帧、素材超 hk-wan3 上限、目标模型无可用渠道。
+ */
+export async function setWan3RefVideoHkEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/wan3-ref-video-hk', {
     enabled,
   })
   return res.data.data
