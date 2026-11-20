@@ -44,9 +44,9 @@ function names(models: PricingModel[]): string[] {
 }
 
 describe('sortModels 置顶', () => {
-  // wan3.0-video-tj 是客美最便宜的视频档，运营要求放首屏。
-  // 字母序上 'prime' < 'tj'，不置顶会被 prime-tj 压住。
-  test('置顶模型排在首位（字母序本应靠后）', () => {
+  // 客美两个 WAN3 档位是运营指定的首屏推荐位。字母序上 'prime' < 'tj'，
+  // 不置顶会被 prime-tj 压住，而 tj 更便宜、更该先被看到。
+  test('置顶模型按名单顺序排在最前（字母序本应相反）', () => {
     const models = [
       pricingModel('wan3.0-video-prime-tj', 0.96),
       pricingModel('wan3.0-video-tj', 0.552),
@@ -55,8 +55,8 @@ describe('sortModels 置顶', () => {
 
     assert.deepEqual(names(sortModels(models, SORT_OPTIONS.NAME)), [
       'wan3.0-video-tj',
-      'hailuo-h3',
       'wan3.0-video-prime-tj',
+      'hailuo-h3',
     ])
   })
 

@@ -115,12 +115,13 @@ function getModelPrice(model: PricingModel): number {
  * 模型广场置顶名单，按数组顺序排在列表最前。
  *
  * 用途是把客单价更低、更值得推荐的模型放到首屏。这里写的是对外
- * model_name（客户实际调用的名字），不是展示名。
+ * model_name（客户实际调用的名字），不是展示名。当前两者都是客美 WAN3
+ * 视频档，按价格从低到高排列（tj ¥0.138/秒 → prime-tj ¥0.24/秒）。
  *
  * 只作用于默认的「按名称」排序。用户主动切到按价格排序时尊重其选择，
  * 不强行插入置顶项 —— 否则「价格从低到高」里冒出一个更贵的模型会显得排序坏了。
  */
-const PINNED_MODELS = ['wan3.0-video-tj']
+const PINNED_MODELS = ['wan3.0-video-tj', 'wan3.0-video-prime-tj']
 
 /** 置顶项的排序权重：越小越前；未置顶的统一排在所有置顶项之后。 */
 function pinnedRank(model: PricingModel): number {
