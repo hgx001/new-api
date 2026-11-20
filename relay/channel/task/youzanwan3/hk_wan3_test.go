@@ -186,12 +186,56 @@ func TestHkWan3Billing(t *testing.T) {
 	got = billing(relaycommon.TaskSubmitReq{Model: hkWan3Model, Duration: 10, Resolution: "1080P"})
 	assert.InDelta(t, 0.48/0.18, got["size"], 1e-6, "1080P 相对 480P 的倍率")
 
-	// 参考视频秒数并入计费（与同渠道其它按秒模型同口径）。
+	// 参考视频**不额外收费**（2026-11-20 老板口径）：10 秒生成 + 12 秒参考视频
+	// 仍按 10 秒计费。参考视频照旧在 validate 阶段探测时长（上游能力约束），
+	// 但不并入 seconds —— 这里钉死，防止有人照同渠道其它模型的写法把秒数加回来。
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set("task_request", relaycommon.TaskSubmitReq{Model: hkWan3Model, Duration: 10, Resolution: "720P"})
 	c.Set(refVideoSecondsContextKey, 12)
 	got = adaptor.EstimateBilling(c, &relaycommon.RelayInfo{OriginModelName: hkWan3Model})
-	assert.InDelta(t, 22, got["seconds"], 1e-9, "10 秒生成 + 12 秒参考视频 = 按 22 秒计费")
+	assert.InDelta(t, 10, got["seconds"], 1e-9, "参考视频不计费：只按生成秒数收")
+}
+
+// TestHkWan3AudioAlwaysOn 成片必须有声：上游 audio 默认 false，不显式下发
+// true 就交付无声片（2026-11-19 实测：同参数 1.73MB 纯视频 vs 1.80MB 带 AAC）。
+func TestHkWan3AudioAlwaysOn(t *testing.T) {
+	build := func(metadata map[string]interface{}) map[string]interface{} {
+		body, err := (&TaskAdaptor{}).buildRequestBody(relaycommon.TaskSubmitReq{
+			Model:    hkWan3Model,
+			Prompt:   "有声成片",
+			Seconds:  "4",
+			Metadata: metadata,
+		})
+		require.NoError(t, err)
+		var parsed map[string]interface{}
+		require.NoError(t, common.Unmarshal(body, &parsed))
+		return parsed
+	}
+
+	parsed := build(nil)
+	assert.Equal(t, true, parsed["audio"], "默认必须下发 audio:true")
+
+	parsed = build(map[string]interface{}{"with_audio": false})
+	assert.NotContains(t, parsed, "audio", "显式 with_audio=false 才允许静音")
+
+	// 非布尔值不改变默认：宁可有声，也不要因为一个坏参数交付无声片。
+	parsed = build(map[string]interface{}{"with_audio": "false"})
+	assert.Equal(t, true, parsed["audio"], "字符串 false 不当作开关")
+}
+
+// TestHkWan3AudioNotSentToOtherModels audio 是 hk-wan3 的专属开关，
+// 不能漏到同渠道其它模型（它们不认这个字段，可能整单 400）。
+func TestHkWan3AudioNotSentToOtherModels(t *testing.T) {
+	body, err := (&TaskAdaptor{}).buildRequestBody(relaycommon.TaskSubmitReq{
+		Model:   wan30ProModel,
+		Prompt:  "按条模型",
+		Seconds: "10",
+		Ratio:   "16:9",
+	})
+	require.NoError(t, err)
+	var parsed map[string]interface{}
+	require.NoError(t, common.Unmarshal(body, &parsed))
+	assert.NotContains(t, parsed, "audio")
 }
 
 // TestHkWan3ResolutionRatioTablePinsPrices 直接把「倍率 × 基准价」换算回人民币，

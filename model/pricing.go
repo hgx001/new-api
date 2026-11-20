@@ -450,6 +450,13 @@ func isAllowedPricingModel(name string) bool {
 	if name == "wan-3.0-pro" {
 		return true
 	}
+	// 有赞渠道的 hk-wan3（2026-11-19 上架，2026-11-20 补广场与描述）：
+	// WAN3 官渠满血满参，按秒计费 480P ¥0.18 / 720P ¥0.25 / 1080P ¥0.48
+	// （基准档 480P），时长 4-30 秒。参考视频**不额外收费**，只按生成秒数收。
+	// 精确匹配，不与上面的 wan-3.0-yz / wan-3.0-pro 互相命中。
+	if name == "hk-wan3" {
+		return true
+	}
 	// 有赞 Wan3 的对外别名：客户看到 seedance2.5-特惠，实际由 wan3.0-video-prime
 	// 执行（2026-10-29 起）。此前它挂在 MegaAI 渠道按次卖 ¥5.0/条，2026-10-26
 	// 随该渠道停售而空置。现计费为**独立定价**：按秒 720P ¥0.20 / 1080P ¥0.30，

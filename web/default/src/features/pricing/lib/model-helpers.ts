@@ -237,6 +237,13 @@ export function isPerSecondModel(model: PricingModel): boolean {
   if (name === 'wan-3.0-yz') {
     return true
   }
+  // 有赞 hk-wan3（2026-11-20 上广场）：WAN3 官渠，按**秒**计费
+  // （480P ¥0.18 / 720P ¥0.25 / 1080P ¥0.48），参考视频不额外收费。
+  // 与 wan-3.0-yz 同样必须精确匹配：不能用 startsWith('wan-3.0')，
+  // 否则 wan-3.0-pro（按条）会被误显示成 /秒。
+  if (name === 'hk-wan3') {
+    return true
+  }
   return (
     name.startsWith('wan3.0-video') ||
     name.startsWith('wan3.0-smart') ||

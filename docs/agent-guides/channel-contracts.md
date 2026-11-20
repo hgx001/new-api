@@ -105,6 +105,29 @@ wan3.0-video **不是同一套**，adaptor 里按模型名分支处理（`isWan3
 ¥5.0/¥7.0，只改 `ModelPrice` 与卡片描述）。改完等 `SyncChannelCache` /
 `SyncOptions` 的 60 秒周期生效，不用重启容器。
 
+## 有赞 hk-wan3：有声成片默认开、参考视频不计费（2026-11-19/20）
+
+上游 https://api.youzan666.vip/docs/ 的 `hk-wan3`（WAN3 官渠）。
+
+- 参数形态 `resolution`(小写) + `ratio`，**不是** size；时长 4–30 整数秒，缺省 5；
+  画幅 16:9 / 9:16 / 1:1 / 4:3 / 3:4 / auto；素材走 `media`（顶层三数组也并进去）。
+- **成片音轨必须显式开**：上游 `audio` 布尔值**默认 false**，不传就交付无声片
+  （2026-11-19 实测：同参数 1,733,466 B 纯视频 vs 1,795,562 B 带 AAC 44.1k 双声道）。
+  `buildHkWan3RequestBody` 无条件下发 `"audio": true`；只有 metadata 里
+  `with_audio=false` / `audio_output=false` 才关。注意本站 `TaskSubmitReq.Audio`
+  是**参考音频 URL 字符串**，接不了上游文档里那个布尔 `audio` —— 客户传
+  `"audio": true` 会在解码阶段 400，别把两个字段混为一谈。
+- **参考视频不额外收费**（2026-11-20 老板口径）：`EstimateBilling` 对 hk-wan3
+  只取生成秒数，**不并入** `refVideoSecondsContextKey`。参考视频仍在 validate
+  阶段探测时长（上游能力约束：单条/合计 ≤15 秒、带参考视频时生成 ≤15 秒），
+  只是不进售价。同渠道其它按秒模型（wan-3.0-yz 等）仍是「生成 + 参考视频」。
+- 售价：480P ¥0.18/秒（基准档，ModelPrice=0.0246575342）/ 720P ¥0.25 / 1080P ¥0.48。
+- 上架/描述台账：`scripts/prod-hk-wan3-square-20261120.sql`（双机各跑一次，
+  幂等；含 `channels.models` / `abilities` / `ModelPrice` / `YouzanWan3Pricing`
+  / `models` 卡片与描述）。广场展示还需 `model/pricing.go` 的
+  `isAllowedPricingModel` 与前端 `isPerSecondModel` 同时放行，否则要么不显示、
+  要么把 ¥/秒 挂成「/次」。
+
 ## wan3.0-720p-特惠 按能力分流到心笔（2026-11-06，⚠️ 2026-11-16 已下线）
 
 > **2026-11-16 下线**：心笔不稳定，用户要求特惠全部走 Wan3 官网链路（480P 生成 +

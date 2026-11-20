@@ -1794,10 +1794,40 @@ func buildHkWan3RequestBody(
 		"resolution": resolution,
 		"ratio":      resolveRatio(req),
 	}
+	// audio 是 hk-wan3 的「成片是否带音轨」开关，上游**默认 false**（无声）。
+	// 业务口径是必须有声：不显式传 true，客户传了参考音频也只影响风格、
+	// 拿到的是无声成片（2026-11-19 实测：同参数不加 audio 出 1.73MB 纯视频，
+	// 加 audio:true 出 1.80MB、AAC 44.1kHz 双声道）。
+	//
+	// 因此这里**无条件下发 true**。需要静音版的客户走 metadata.with_audio=false，
+	// 不开放顶层 audio 字段：本站 TaskSubmitReq.Audio 是「单个参考音频 URL」
+	// 的字符串字段，接不住上游文档里那个布尔值（传 true 会在解码阶段 400）。
+	if hkWan3AudioEnabled(req) {
+		body["audio"] = true
+	}
 	if len(media) > 0 {
 		body["media"] = media
 	}
 	return common.Marshal(body)
+}
+
+// hkWan3AudioEnabled 返回本次 hk-wan3 请求是否要成片音轨。
+//
+// 默认 true（见 buildHkWan3RequestBody 的说明）；只有客户在 metadata 里显式
+// 写 with_audio=false / audio_output=false 时才关闭，用来给「我只要画面、
+// 自己后期配音」的场景留出口。取不到就按有声道处理 —— 少一段音轨比多一段
+// 更容易被当成故障。
+func hkWan3AudioEnabled(req relaycommon.TaskSubmitReq) bool {
+	for _, key := range []string{"with_audio", "audio_output"} {
+		value, ok := req.Metadata[key]
+		if !ok {
+			continue
+		}
+		if wantAudio, ok := value.(bool); ok {
+			return wantAudio
+		}
+	}
+	return true
 }
 
 // buildWan30ProRequestBody 按上游 wan-3.0-pro 文档构造请求体。
@@ -1881,6 +1911,12 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	resolution := resolveResolutionForModel(req, modelName)
 	ratio := resolutionRatioForModel(modelName, resolution)
 	seconds := resolveDurationForModel(req, modelName)
+	// hk-wan3 的参考视频**不额外收费**（2026-11-20 老板口径）：seconds 只取
+	// 生成时长，不并入 refVideoSeconds。参考视频照样在 validate 阶段探测并
+	// 校验时长上限（那是上游的能力约束，与售价无关）。
+	if isHkWan3Model(modelName) {
+		return map[string]float64{"seconds": float64(seconds), "size": ratio}
+	}
 	if value, ok := c.Get(refVideoSecondsContextKey); ok {
 		if refSeconds, ok := value.(int); ok && refSeconds > 0 {
 			seconds += refSeconds
