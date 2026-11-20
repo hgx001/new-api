@@ -43,6 +43,10 @@ func SetVideoRouter(router *gin.Engine) {
 	// 不再挂载。
 	videoV1Router.Use(
 		middleware.TokenAuth(),
+		// 已下线模型必须在**最前面**拦：下面每一个条件路由都会改写 body 的
+		// model（活动版 → 特惠链路），改写之后「已下线」的提示就永远发不出去。
+		// 放在 TokenAuth 之后而不是之前：未鉴权的调用方不该借此探测模型清单。
+		middleware.RejectRetiredModel(),
 		// 必须在所有条件路由之前：它们会改写 body 的 model/seconds，
 		// 之后捕获到的就不是客户原始请求参数了（日志详情要按原始请求展示）。
 		middleware.CaptureTaskRequestParams(),
