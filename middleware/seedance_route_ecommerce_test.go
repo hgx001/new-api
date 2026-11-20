@@ -23,7 +23,7 @@ import (
 // 规则六（≤10 秒 → cp-seedance-2.0）也有一组独立用例（见 TestShortCapcut* 系列）。
 
 const (
-	testEcommerceTarget   = "cp-seedance-2.5flash"
+	testEcommerceTarget = "cp-seedance-2.5flash"
 	// 2026-11-15 老板口径：<10 秒改派 CapCut **满血档** cp-seedance-2.0
 	// （不是快速档 2.0fast）。与 setting 层的 DefaultShortCapcutTargetModel 同源。
 	testShortCapcutTarget = "cp-seedance-2.5flash"
@@ -53,6 +53,7 @@ func enableEcommerce(t *testing.T, ratioEnabled, secondsEnabled bool, triggerSec
 		"ecommerce_seconds_condition": secondsEnabled,
 		"ecommerce_trigger_seconds":   triggerSeconds,
 	}
+	withSecondsRuleOff(payload, testSourceModel, testSourceModelAlt)
 	encoded, err := common.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal policy: %v", err)
@@ -187,6 +188,9 @@ func TestEcommerceSecondsConditionKeepsLongRequestsOnYouzan(t *testing.T) {
 // 没有这组对照，「留在源模型」的断言可能因为规则一被误关而假通过。
 func TestEcommerceSecondsConditionOffFallsToDurationRule(t *testing.T) {
 	enableEcommerce(t, false, false, 20)
+	// enableEcommerce 默认关着规则一（它开着会盖住规则七）。本条是「没勾
+	// 电商时长条件时照旧走规则一」的对照组，所以把它显式打开。
+	mustEnableSecondsRule(t, testSourceModel)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`)
 	body := decodeBody(t, seen)
@@ -235,6 +239,7 @@ func enableEcommerceWithRatioRule(t *testing.T) {
 		"trigger_ratio":      "9:16",
 		"ecommerce_enabled":  true,
 	}
+	withSecondsRuleOff(payload, testSourceModel, testSourceModelAlt)
 	encoded, err := common.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal policy: %v", err)
@@ -311,6 +316,7 @@ func enableEcommerceWithShortCapcut(t *testing.T) {
 		"ecommerce_seconds_condition": false,
 		"ecommerce_trigger_seconds":   20,
 	}
+	withSecondsRuleOff(payload, testSourceModel, testSourceModelAlt)
 	encoded, err := common.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal policy: %v", err)
@@ -698,6 +704,7 @@ func enableShortCapcut(t *testing.T, xinbi, youzan, capcut bool) {
 		"short_youzan_enabled":  youzan,
 		"short_capcut_enabled":  capcut,
 	}
+	withSecondsRuleOff(payload, testSourceModel)
 	encoded, err := common.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal policy: %v", err)

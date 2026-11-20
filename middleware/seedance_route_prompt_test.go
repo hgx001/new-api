@@ -41,8 +41,10 @@ func buildPromptBody(t *testing.T, prompt string, extra map[string]interface{}) 
 // 超长提示词 + 短时长：不该有任何改派，body 一个字节都不能动。
 //
 // 这条是「规则四已删除」的主断言：以前它会改派到 testTargetModel。
+// ⚠️ 规则一必须关掉 —— 它现在的触发条件是「无参考音视频」，与提示词长度无关，
+// 开着会让请求因为别的原因被改派，掩盖掉「提示词长度不是条件」这个结论。
 func TestLongPromptDoesNotTriggerRoute(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
+	enableRouteWithoutSecondsRule(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds": 10,
@@ -62,7 +64,7 @@ func TestLongPromptDoesNotTriggerRoute(t *testing.T) {
 
 // 中文按字符算 6001 字（旧规则同样会命中），也必须留在源模型。
 func TestLongChinesePromptDoesNotTriggerRoute(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
+	enableRouteWithoutSecondsRule(t, testSourceModel, testTargetModel, 20)
 
 	body := buildPromptBody(t, strings.Repeat("汉", promptRouteLimit+1000), map[string]interface{}{
 		"seconds": 12,
@@ -94,7 +96,7 @@ func TestLongPromptStillHitsSecondsRule(t *testing.T) {
 
 // 长提示词 + 9:16：仍然由规则二改派（目标模型由配置决定）。
 func TestLongPromptStillHitsRatioRule(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testRatioTargetModel, "9:16")
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
 		"seconds":  10,

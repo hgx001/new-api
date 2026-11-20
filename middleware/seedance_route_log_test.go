@@ -66,7 +66,9 @@ func TestSecondsRouteEmitsLog(t *testing.T) {
 
 // 超长提示词本身不该产生任何路由日志（规则四已删除）。
 func TestLongPromptEmitsNoRouteLog(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
+	// 规则一按源关掉：它现在是「无音视频即全量改派」，开着会让 10 秒请求
+	// 真的被改派、真的打日志，这条用例就测不到「提示词长度不产生路由」。
+	enableRouteWithoutSecondsRule(t, testSourceModel, testTargetModel, 20)
 	readLogs := captureRouteLogs(t)
 
 	body := buildPromptBody(t, strings.Repeat("a", promptRouteLimit+1), map[string]interface{}{
@@ -149,7 +151,8 @@ func TestFramesRouteEmitsLog(t *testing.T) {
 
 // 没命中任何规则时不该有路由日志 —— 避免日志噪音掩盖真正的路由事件。
 func TestNoRouteLogWhenNoRuleMatches(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
+	// 规则一按源关掉，让这条 10 秒请求真的「一条规则都不命中」。
+	enableRouteWithoutSecondsRule(t, testSourceModel, testTargetModel, 20)
 	readLogs := captureRouteLogs(t)
 
 	runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat"}`)

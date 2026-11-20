@@ -69,10 +69,10 @@ type EcommerceRouteCardProps = {
  *     才改派 CapCut（有赞标准版下界 10 秒、prime 只接 30 秒、两者都只收参考图）。
  *  2. **计费不变**：客户仍按源模型（seedance2.5-特惠 / 活动）付费，
  *     改派只是内部调度。
- *  3. **规则七优先于规则一**：勾上「时长超过阈值」后，超长请求会被规则七
- *     先接住并留在有赞，不会再走规则一的豆包链路。这不是 bug，
- *     是刻意的优先级 —— 否则「时长超过阈值」这个入口永远轮不到，
- *     后台看着勾着的、代码里是死配置。
+ *  3. **规则七优先于规则一**：规则一自 2026-11-20 起是「不带参考视频/音频
+ *     即改派豆包」（不再看时长与比例）。命中的电商请求会被规则七先接住并留在
+ *     有赞，不会进豆包。这不是 bug，是刻意的优先级 —— 否则「电商留在有赞」
+ *     这个开关永远轮不到，后台看着开着、代码里是死配置。
  */
 export function EcommerceRouteCard({ channelModels }: EcommerceRouteCardProps) {
   const { t } = useTranslation()
@@ -369,11 +369,12 @@ export function EcommerceRouteCard({ channelModels }: EcommerceRouteCardProps) {
               </Button>
             </div>
 
-            {/* 优先级说明：这条入口与规则一（超时长改派豆包）区间重叠，
-                规则七先接。不写清楚，运营会以为「勾了也没生效」。 */}
+            {/* 优先级说明：规则七排在规则一之前。规则一自 2026-11-20 起是
+                「不带参考视频/音频即改派豆包」，所以只要电商命中，请求就
+                留在有赞、不会进豆包。不写清楚，运营会以为「勾了也没生效」。 */}
             <p className='mt-2 text-[11px] text-amber-600'>
               {t(
-                'This entry takes priority over the duration rule: long requests stay on the Youzan link and will not reach the Doubao link.'
+                'This entry takes priority over the Doubao reroute: matched requests stay on the Youzan link and will not reach the Doubao link.'
               )}
             </p>
           </div>

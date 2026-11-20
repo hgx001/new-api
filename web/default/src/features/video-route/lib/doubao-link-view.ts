@@ -47,16 +47,6 @@ export type DoubaoLinkView = {
    * 原请求（仍打已宣布关闭的豆包）—— 卡片必须据此禁用开关，否则承诺落空。
    */
   fallbackReady: boolean
-  /**
-   * 规则一「可选比例条件」是否勾上。
-   *
-   * 与 `on` 是两件事：这里表达「哪些请求有资格改派」，
-   * `on` 表达「目标链路通不通」。勾上条件不等于关掉链路，
-   * 取消条件也不等于打开链路 —— 混成一个布尔会让运营误判影响面。
-   */
-  ratioGateOn: boolean
-  /** 勾选框标签里显示的比例；未勾选时给默认值，让运营知道勾上会要求什么。 */
-  ratioGateValue: string
 
   // ─────────────────── 豆包链路接单上限（2026-11-13） ───────────────────
 
@@ -91,27 +81,6 @@ export type DoubaoLinkView = {
    * 视图说成「会自动恢复」就是在骗运营。
    */
   hasAutoRecover: boolean
-}
-
-/**
- * 从策略派生勾选状态。
- *
- * 配置值带首尾空格也算「已勾上」（生产上出现过带空格的模型名，
- * 配置侧一律 Trim）；但显示给运营时要用 Trim 后的值，否则标签上
- * 会莫名多出空白。
- *
- * 未勾选时显示的默认比例取自后端给的 seconds_rule_ratio_gate_default，
- * 比例只有一个事实源，改默认值不用改前后端两处。末尾的 '9:16' 是
- * 后端没给这个字段时的兜底（前后端同版本发布，正常走不到）。
- */
-function ratioGateState(
-  policy: VideoRoutePolicy
-): Pick<DoubaoLinkView, 'ratioGateOn' | 'ratioGateValue'> {
-  const value = (policy.seconds_rule_ratio_gate ?? '').trim()
-  return {
-    ratioGateOn: value.length > 0,
-    ratioGateValue: value || policy.seconds_rule_ratio_gate_default || '9:16',
-  }
 }
 
 /** 源模型清单：按源开关列表取，回落到单值字段。 */
@@ -184,7 +153,6 @@ export function buildDoubaoLinkView(
       },
       quotaDown: false,
       fallbackReady,
-      ...ratioGateState(policy),
       ...limit,
       accepting: false,
       offReason,
@@ -210,7 +178,6 @@ export function buildDoubaoLinkView(
       },
       quotaDown: true,
       fallbackReady,
-      ...ratioGateState(policy),
       ...limit,
       accepting: true,
       offReason,
@@ -222,16 +189,17 @@ export function buildDoubaoLinkView(
     on: true,
     tone: 'on',
     statusKey: 'Doubao link is on',
+    // 2026-11-20 口径变更：触发条件从「超过 N 秒」改成「不带参考音视频」。
+    // 文案必须跟着改 —— 运营看的是这句话来决定要不要拨这个开关，
+    // 写着「超过 20 秒」而实际全量改派，是最容易亏钱的那种误判。
     detailKey:
-      'Requests longer than {{seconds}}s route to {{target}}; auto-fallback to {{backup}} when the source chain goes down',
+      'Requests without reference video/audio route to {{target}}; auto-fallback to {{backup}} when the source chain goes down',
     detailParams: {
-      seconds: policy.trigger_seconds,
       target: policy.target_model,
       backup,
     },
     quotaDown: false,
     fallbackReady,
-    ...ratioGateState(policy),
     ...limit,
     accepting: true,
     offReason,

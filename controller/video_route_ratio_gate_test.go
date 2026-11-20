@@ -13,15 +13,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 后台「可选比例条件」勾选的接口契约（2026-11-12）。
+// 后台「可选比例条件」写入口的接口契约（2026-11-12 建，2026-11-20 起失效）。
 //
-// 勾上 = 只有指定比例的请求才走规则一改派；取消 = 清空闸门、恢复不限比例。
-// 这条线此前只能靠 SQL 改 options 表，运营看不到也改不动。
+// ⚠️ 2026-11-20 规则一改成「不带参考音视频就全部改派」后，这个闸门不再参与
+// 任何判定（middleware.secondsRatioGatePasses 已删除）。接口保留只为兼容
+// 老脚本：**写得进去、但没有任何效果**，管理状态也不再回显它。
 //
-// 重点锁死两件事：
-//   - 少传 enabled 或比例写错必须 400，且**一次都不能写库**；
-//     静默写进一个永远匹配不上的比例值，等于悄悄停掉整条改派链；
-//   - 接口返回的管理状态必须回显新闸门，前端才能立刻把勾选画成已勾上。
+// 因此这里锁死的不再是「改派收窄」，而是三件与兼容有关的事：
+//   - 少传 enabled 或比例写错仍必须 400，且一次都不写库（别让老脚本静默写脏值）；
+//   - 合法请求仍能落库（历史配置链路还在，回退口径时不用重写）；
+//   - 管理状态**不再下发**这两个字段 —— 继续下发会让下一个人以为 9:16 还生效。
 
 const ratioGateAdminBaseline = `{
 	"enabled": true,
@@ -102,7 +103,7 @@ func TestSetSecondsRuleRatioGateAdminRejectsMalformedJSON(t *testing.T) {
 	require.Zero(t, *calls, "解析失败不能写库")
 }
 
-// 勾上：写进 9:16，返回的状态里也要带 9:16（前端据此立即刷新勾选）。
+// 勾上：仍能写进 9:16（兼容老脚本），但管理状态不再回显 —— 字段已下线。
 func TestSetSecondsRuleRatioGateAdminEnables(t *testing.T) {
 	withAdminRoutePolicy(t, ratioGateAdminBaseline)
 	c, recorder := newRatioGateRequest(t, `{"enabled":true}`)
@@ -115,7 +116,8 @@ func TestSetSecondsRuleRatioGateAdminEnables(t *testing.T) {
 	require.Equal(t, "9:16", saved.SecondsRuleRatioGate)
 	require.Equal(t, "9:16", saved.TriggerRatio, "规则二的触发比例不能被顺手改掉")
 	require.Equal(t, "wan3.0-720p-特惠", saved.RatioTargetModel, "其它经营配置不能丢")
-	require.Equal(t, "9:16", ratioGateStateFromBody(t, recorder))
+	require.Empty(t, ratioGateStateFromBody(t, recorder),
+		"闸门已下线，管理状态不应再回显（前端也没有读它的地方了）")
 }
 
 // 取消：清空闸门，且不校验传进来的比例值（运营关条件不需要先填比例）。
@@ -133,11 +135,11 @@ func TestSetSecondsRuleRatioGateAdminDisables(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, 1, *calls)
 	require.Empty(t, saved.SecondsRuleRatioGate)
-	require.Equal(t, "", ratioGateStateFromBody(t, recorder))
 }
 
-// 管理状态本身必须回显闸门：卡片刷新时读的就是这个字段。
-func TestDoubaoRouteAdminStateReportsSecondsRuleRatioGate(t *testing.T) {
+// 管理状态必须**不再**下发闸门：配置里还留着 9:16，也不能让前端看到，
+// 否则下一个人会以为这条条件还在起作用（2026-11-20 口径变更）。
+func TestDoubaoRouteAdminStateOmitsSecondsRuleRatioGate(t *testing.T) {
 	withAdminRoutePolicy(t, `{
 		"enabled": true, "source_model": "seedance2.5-特惠",
 		"target_model": "seedance-2-5", "trigger_seconds": 20,
@@ -146,21 +148,20 @@ func TestDoubaoRouteAdminStateReportsSecondsRuleRatioGate(t *testing.T) {
 
 	state := doubaoRouteAdminState()
 
-	require.Equal(t, "9:16", state["seconds_rule_ratio_gate"])
+	_, hasGate := state["seconds_rule_ratio_gate"]
+	_, hasDefault := state["seconds_rule_ratio_gate_default"]
+	require.False(t, hasGate, "闸门字段已下线，不应继续下发")
+	require.False(t, hasDefault, "闸门默认值同样不再下发")
 }
 
-// 管理状态必须把「勾上会要求什么比例」一起下发：前端不硬编码比例，
-// 比例只有一个事实源（后端常量）。少了这个字段，前端就只能自己写死
-// 一份 9:16，改默认值要改前后端两处。
-func TestDoubaoRouteAdminStateReportsRatioGateDefault(t *testing.T) {
+// trigger_seconds 仍必须下发：它虽不再参与阈值比较，但仍是
+// 「规则一配全了没有」的哨兵（secondsRuleConfiguredFor 要求 > 0）。
+func TestDoubaoRouteAdminStateStillReportsTriggerSeconds(t *testing.T) {
 	withAdminRoutePolicy(t, ratioGateAdminBaseline)
 
 	state := doubaoRouteAdminState()
 
-	require.Equal(t,
-		seedanceroute_setting.DefaultSecondsRuleRatioGate,
-		state["seconds_rule_ratio_gate_default"])
-	require.Equal(t, "9:16", state["seconds_rule_ratio_gate_default"])
+	require.Equal(t, 20, state["trigger_seconds"])
 }
 
 func ratioGateStateFromBody(t *testing.T, recorder *httptest.ResponseRecorder) string {

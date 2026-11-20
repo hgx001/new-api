@@ -44,6 +44,7 @@ func enableTotalFallback(t *testing.T) {
 		"source_models":          []string{testSourceModel, "seedance2.5-活动"},
 		"total_fallback_enabled": true,
 	}
+	withSecondsRuleOff(payload, testSourceModel, testSourceModelAlt)
 	encoded, err := common.Marshal(payload)
 	require.NoError(t, err)
 	require.NoError(t, seedanceroute_setting.UpdateFromJSONString(string(encoded)))
@@ -300,8 +301,11 @@ func TestTotalFallbackDisabledKeepsBodyByteIdentical(t *testing.T) {
 		restored, _ := common.Marshal(previous)
 		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
 	})
+	// 规则一按源关掉：本条验的是「规则八关着时不要因为规则八改派」。
+	// 规则一自 2026-11-20 起是「无音视频即全量改派」，开着会把 12 秒请求
+	// 送去豆包，掩盖掉规则八的行为。
 	require.NoError(t, seedanceroute_setting.UpdateFromJSONString(
-		`{"enabled":true,"source_models":["seedance2.5-特惠"],"target_model":"seedance-2-5","trigger_seconds":20}`))
+		`{"enabled":true,"source_models":["seedance2.5-特惠"],"target_model":"seedance-2-5","trigger_seconds":20,"source_overrides":{"seedance2.5-特惠":{"seconds_rule_enabled":false}}}`))
 
 	const body = `{"model":"seedance2.5-特惠","seconds":12,"prompt":"a cat"}`
 	rewritten, origin := runRoute(t, body)

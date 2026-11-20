@@ -28,7 +28,7 @@ import (
 //
 // ⚠️ 必须一次写完：本包多个 enableXxx 辅助函数各自会 UpdateFromJSONString
 // 写入一份完整 policy，连续调用时后写的会把先写的整个冲掉
-//（症状是「规则七开着却没生效」或「备选开着却走班车」，看起来像代码 bug）。
+// （症状是「规则七开着却没生效」或「备选开着却走班车」，看起来像代码 bug）。
 func enablePromoAndDoubaoSplit(t *testing.T) {
 	t.Helper()
 	previous := seedanceroute_setting.Get()
@@ -54,9 +54,9 @@ func enablePromoAndDoubaoSplit(t *testing.T) {
 func TestPromoAndDoubaoTargetsAreUnified(t *testing.T) {
 	enablePromoAndDoubaoSplit(t)
 	stubChannelAvailableByModel(t, map[string]bool{
-		testEcommerceTarget:       true,
-		failoverSourceModel:       false,
-		failoverBackupModel:       true,
+		testEcommerceTarget: true,
+		failoverSourceModel: false,
+		failoverBackupModel: true,
 	})
 	// 2026-11-17 起豆包备胎也改 720p 原生直出、不再依赖 MPS：探针已不被
 	// 生产代码读取，这里无需（也无法）再桩它。
@@ -86,9 +86,9 @@ func TestPromoAndDoubaoTargetsAreUnified(t *testing.T) {
 func TestPromoTargetGenerates720pNatively(t *testing.T) {
 	enablePromoAndDoubaoSplit(t)
 	stubChannelAvailableByModel(t, map[string]bool{
-		testEcommerceTarget:       true,
-		failoverSourceModel:       false,
-		failoverBackupModel:       true,
+		testEcommerceTarget: true,
+		failoverSourceModel: false,
+		failoverBackupModel: true,
 	})
 
 	body := decodeBody(t, runAltRoute(t,

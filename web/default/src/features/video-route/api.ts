@@ -187,16 +187,15 @@ export type VideoRoutePolicy = {
   /** 短档允许的最大参考图张数；超过时仍走长档，不丢回源链路。 */
   total_fallback_short_max_reference_images: number
   /**
-   * 规则一的可选比例条件（后台勾选）。
-   * 非空 = 只有该比例的请求才改派目标链路；空 = 不限比例。
-   * 与 `trigger_ratio`（规则二自己的触发比例）是两个独立字段。
+   * 规则一的历史比例闸门。
+   *
+   * **2026-11-20 起已失效**：规则一不再看时长与比例，只按「带不带参考音视频」
+   * 判定。后端也不再下发这两个字段（判定函数已删除），类型标记为可选只是为了
+   * 兼容旧版本后端返回的策略快照。前端不展示、也不写入。
    */
-  seconds_rule_ratio_gate: string
-  /**
-   * 闸门为空时「勾上会要求什么比例」——由后端给出唯一事实源，
-   * 前端不硬编码比例字符串（两处各写一份必然漂）。
-   */
-  seconds_rule_ratio_gate_default: string
+  seconds_rule_ratio_gate?: string
+  /** 同上，历史字段，后端已停发，仅供旧快照解析。 */
+  seconds_rule_ratio_gate_default?: string
   updated_at: number
   /**
    * 豆包链路开关：true = 运营关闭了豆包（规则一停用 + 故障转移强制生效），
@@ -404,28 +403,6 @@ export async function setShortYouzanEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/short-youzan-link', {
-    enabled,
-  })
-  return res.data.data
-}
-
-/**
- * 切换规则一的「可选比例条件」（后台勾选）。
- *
- * 勾上 = 只有指定比例（后端默认 9:16）且时长超阈值的请求才改派目标链路；
- * 取消 = 清空闸门，任何比例超阈值都改派。
- *
- * 刻意不传 ratio：运营看到的是一个勾选框，比例由后端给默认值，
- * 前端再写一份 "9:16" 就是两个事实源，迟早会漂。需要换比例时
- * 由管理员改配置，不在抽屉里开放输入框。
- *
- * 与豆包链路开关分开：这个条件决定「哪些请求有资格改派」，
- * 开关决定「目标链路通不通」，两者互不覆盖。
- */
-export async function setSecondsRuleRatioGate(
-  enabled: boolean
-): Promise<VideoRoutePolicy> {
-  const res = await api.post('/api/video-route/policy/ratio-gate', {
     enabled,
   })
   return res.data.data

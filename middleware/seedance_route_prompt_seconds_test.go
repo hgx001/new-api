@@ -48,7 +48,10 @@ func TestLongPromptNeverReroutesWhateverTheDuration(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			enableRoute(t, testSourceModel, testTargetModel, 20)
+			// 规则一按源关掉：它自 2026-11-20 起是「无音视频即全量改派」，
+			// 开着会把 2 秒/12 秒的请求送去豆包，与「提示词长度不触发改派」
+			// 这个结论无关，只会让断言失败得更偶然。
+			enableRouteWithoutSecondsRule(t, testSourceModel, testTargetModel, 20)
 			rewritten, origin := runRoute(t, tc.body)
 
 			if origin != "" {
@@ -74,7 +77,9 @@ func TestLongPromptNeverReroutesWhateverTheDuration(t *testing.T) {
 // 活动版是固定 30 秒档：非 30 秒会被路由层的 fail-loud 门控提前放行，
 // 长提示词同样不该把它改派到任何链路。
 func TestLongPromptDoesNotRerouteHuoDongWithWrongDuration(t *testing.T) {
-	enableRoute(t, constant.Seedance25HuoDongModel, testTargetModel, 20)
+	// 规则一按源关掉：活动版 10 秒现在会被规则一改派豆包（不再看时长），
+	// 开着就测不到「长提示词本身不改派」这件事。
+	enableRouteWithoutSecondsRule(t, constant.Seedance25HuoDongModel, testTargetModel, 20)
 
 	body := fmt.Sprintf(`{"model":%q,"seconds":10,"prompt":%q}`,
 		constant.Seedance25HuoDongModel, promptRouteTestPrompt())

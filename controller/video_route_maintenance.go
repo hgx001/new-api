@@ -514,7 +514,7 @@ func doubaoRouteState() gin.H {
 // 改派规则本身。
 //
 // 为什么要带上规则配置：后台按钮旁边必须能读出「改派的是什么」
-// （谁 → 谁、几秒触发）。只给一个 paused 布尔值，运营看到的是一个
+// （谁 → 谁、什么条件触发）。只给一个 paused 布尔值，运营看到的是一个
 // 没有主语的开关 —— 不敢按，也不知道按了影响哪些请求。
 func doubaoRouteAdminState() gin.H {
 	policy := seedanceroute_setting.Get()
@@ -523,12 +523,12 @@ func doubaoRouteAdminState() gin.H {
 	state["pause_reason"] = policy.PauseReason
 	state["source_model"] = policy.SourceModel
 	state["target_model"] = policy.TargetModel
+	// 规则一 2026-11-20 起不再按秒数卡阈值，但 trigger_seconds 仍是
+	// 「规则一配全了没有」的哨兵（见 secondsRuleConfiguredFor），照旧下发。
 	state["trigger_seconds"] = policy.TriggerSeconds
-	// 规则一的比例闸门：运营要能看出「超时长为什么只改派了一部分请求」。
-	state["seconds_rule_ratio_gate"] = policy.SecondsRuleRatioGate
-	// 闸门为空 = 条件没勾。后端把「勾上会要求什么比例」一起给出来，
-	// 前端就不必再硬编码一份 9:16 —— 两处各写一份必然漂。
-	state["seconds_rule_ratio_gate_default"] = seedanceroute_setting.DefaultSecondsRuleRatioGate
+	// 规则一的历史比例闸门不再下发（2026-11-20 该条件已下线）：
+	// 判定函数已删除，前端也没有读它的地方，继续下发只会让下一个人
+	// 以为「9:16 还在起作用」。配置里的值仍保留，只做兼容读取。
 	state["ratio_target_model"] = policy.RatioTargetModel
 	state["trigger_ratio"] = policy.TriggerRatio
 	state["frames_target_model"] = policy.FramesTargetModel

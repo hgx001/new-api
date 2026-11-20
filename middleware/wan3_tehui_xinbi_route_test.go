@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relay/channel/task/xinbiapi"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -338,6 +339,15 @@ func TestWan3TehuiXinbiRoute_SkipsWhenTargetUnavailable(t *testing.T) {
 // 且计费原点仍是客户请求的 seedance2.5-特惠。
 func TestWan3TehuiXinbiRoute_AfterRatioRuleKeepsPromoOrigin(t *testing.T) {
 	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	// 2026-11-20 起规则一（改派豆包）改成「开关打开 + 不带参考音视频即全部改派」，
+	// 开着会抢占规则二：这条 15 秒无音视频的请求会直接进 seedance-2-5，
+	// 根本轮不到比例改派。本条要验的是「规则二之后的分流仍带着促销族原点」，
+	// 所以先把规则一按源关掉，让请求确实走规则二。
+	policy, err := seedanceroute_setting.WithSourceSecondsRuleEnabled(testSourceModel, false)
+	require.NoError(t, err)
+	encoded, err := common.Marshal(policy)
+	require.NoError(t, err)
+	require.NoError(t, seedanceroute_setting.UpdateFromJSONString(string(encoded)))
 	stubChannelAvailable(t, true)
 
 	rec := &routeRecorder{}

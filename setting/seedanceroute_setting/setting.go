@@ -48,8 +48,8 @@ const MaintenanceKeyOption = "VideoRouteMaintenanceKey"
 //	                   不依赖 Enabled，是「源链路彻底不可用」时的逃生口）
 //	规则五（故障转移）：FailoverSourceModel 源链路不可用 → FailoverTargetModel（独立字段）
 //	规则三（首尾帧）：SourceModel + media 含 first_frame/last_frame → FramesTargetModel
-//	规则一（时长）：SourceModel + 时长 > TriggerSeconds → TargetModel（豆包按次）
-//	               （2026-11-09 起时长原样下发，不再吸附档位）
+//	规则一（改派豆包）：SourceModel + 不带参考视频/音频 → TargetModel（豆包按次）
+//	                   （2026-11-20 起不再看时长与比例，只看有没有参考音视频）
 //	规则二（比例）：SourceModel + TriggerRatio 比例 → RatioTargetModel
 //	               生产 2026-11-11 起：9:16 → wan3.0-720p-特惠-内链（心笔 480P 链路）
 //
@@ -92,20 +92,24 @@ type Policy struct {
 	SourceModels []string `json:"source_models,omitempty"`
 	// TargetModel 目标模型名（对外名），规则一用。
 	TargetModel string `json:"target_model"`
-	// TriggerSeconds 触发阈值（秒）。**请求时长大于该值即路由**，规则一用。
+	// TriggerSeconds 历史阈值（秒），2026-11-20 起**规则一不再读取**。
 	//
-	// 2026-11-08 起语义由「等于」改为「大于」：豆包按次成本固定（¥3.50/次），
-	// 源链路按秒计价（¥0.20/秒），超过 20 秒以后源链路已经比豆包更贵，
-	// 没必要非等到 30 秒整才改派。2026-11-09 起命中后的时长**原样下发**，
-	// 不再吸附到豆包的旧四档（用户口径：传多少秒就多少秒）。
+	// 规则一口径改成「带不带参考音视频」后，时长不再是门槛。这个字段留在
+	// 结构里有两个不能删的理由：
+	//   · 生产 options 里存着 20，删字段会让旧策略 JSON 解析失败；
+	//   · secondsRuleConfiguredFor 仍用 `TriggerSeconds > 0` 判「规则一配全了
+	//     没有」。⚠️ 把它改成 0 会让规则一被判成未配全而**静默停机**（
+	//     没有任何报错），所以不要以为它没用了就去清零。
 	TriggerSeconds int `json:"trigger_seconds"`
 
-	// SecondsRuleRatioGate 规则一的比例闸门（如 "9:16"）。空 = 不限比例。
+	// SecondsRuleRatioGate 规则一的历史比例闸门（如 "9:16"）。
 	//
-	// 非空时规则一必须「时长超阈值 **且** 比例命中闸门」才改派豆包；
-	// 请求没写比例视为不命中（留在常驻链路）。
+	// **2026-11-20 起已失效**：规则一不再看比例，只按「带不带参考音视频」判定。
+	// 字段留着是因为生产 options 里存过值，删字段会让旧策略 JSON 解析失败；
+	// 判定函数（原 middleware.secondsRatioGatePasses）已随这次改口径删除，
+	// 后台的 /policy/ratio-gate 写入口也只写不读。
 	//
-	// 与 TriggerRatio（规则二的触发比例）**分开存**：规则二在生产是关的，
+	// 与 TriggerRatio（规则二的触发比例）始终是**两个字段**：规则二在生产是关的，
 	// 但两条规则的语义独立 —— 共用一个字段会让「开规则二」顺带改掉规则一的
 	// 改派范围，属于隐式耦合。
 	SecondsRuleRatioGate string `json:"seconds_rule_ratio_gate,omitempty"`
@@ -704,7 +708,9 @@ func (p Policy) ShortTriggerSecondsOrDefault() int {
 // WithinShortTrigger 判断请求时长是否落在规则六的分流区间内。
 //
 // 语义是**小于等于**（闭区间）：阈值 10 时，10 秒命中、11 秒不命中。
-// 与规则一的 ExceedsTriggerSeconds（严格大于）正好互补，两条规则不会打架。
+//
+// 历史上与规则一的「时长 > 阈值」互补；规则一 2026-11-20 改口径后时长已是
+// 规则六独占的判定维度，这里不需要再考虑与规则一的分界。
 //
 // 时长 <= 0 一律不命中：0 秒不是「很短的任务」，而是客户没填或填错了 ——
 // 拿它去触发改派等于替客户猜意图。
@@ -1513,16 +1519,7 @@ func (p Policy) IsSourceModel(model string) bool {
 	return false
 }
 
-// ExceedsTriggerSeconds 判断请求时长是否超过规则一的改派阈值。
-//
-// 语义是**严格大于**：阈值配 20 时，21–30 秒改派、20 秒及以下留在源链路。
-// 与「等于」相比的好处：豆包按次成本固定，源链路按秒计价，时长越长源链路越贵，
-// 没必要为了对齐 30 秒整档而让 21–29 秒的请求继续跑在更贵的源链路上。
-func (p Policy) ExceedsTriggerSeconds(seconds int) bool {
-	return p.TriggerSeconds > 0 && seconds > p.TriggerSeconds
-}
-
-// TargetModelFor 返回「规则一（时长）对某个源模型生效的目标模型名」。
+// TargetModelFor 返回「规则一对某个源模型生效的目标模型名」。
 //
 // 优先级：源模型专属覆盖 > 公共 TargetModel。
 // 为什么要按源模型区分：促销族的两个成员可以各自配兜底链路

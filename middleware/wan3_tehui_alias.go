@@ -118,10 +118,10 @@ func Wan3TehuiAliasRoute() gin.HandlerFunc {
 				"条件路由：%s 只支持 %s 画幅，当前请求 %s，已拒单",
 				wan3TehuiModelName, wan3TehuiAllowedRatio, ratio))
 			c.JSON(http.StatusBadRequest, gin.H{
-				"code":    "invalid_parameter",
+				"code": "invalid_parameter",
 				"message": fmt.Sprintf("%s 只支持 %s 画幅，当前请求为 %s；请改传 %s",
 					wan3TehuiModelName, wan3TehuiAllowedRatio, ratio, wan3TehuiAllowedRatio),
-				"data":    nil,
+				"data": nil,
 			})
 			c.Abort()
 			return

@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	retiredTestModel     = "seedance2.5-活动"
+	retiredTestModel       = "seedance2.5-活动"
 	retiredTestReplacement = "seedance2.5-特惠"
 )
 

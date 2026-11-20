@@ -38,6 +38,52 @@ func enableRoute(t *testing.T, source, target string, seconds int) {
 	enableRouteWithGate(t, source, target, seconds, "")
 }
 
+// mustEnableSecondsRule 显式打开某个源模型的规则一（测试用）。
+//
+// 很多 helper 现在默认关着规则一（否则它会抢走其它规则的用例），
+// 需要验「规则一照常生效」的对照组用它单独打开。
+func mustEnableSecondsRule(t *testing.T, source string) {
+	t.Helper()
+	policy, err := seedanceroute_setting.WithSourceSecondsRuleEnabled(source, true)
+	if err != nil {
+		t.Fatalf("enable seconds rule for %s: %v", source, err)
+	}
+	encoded, err := common.Marshal(policy)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+}
+
+// enableRouteWithoutSecondsRule 配一条策略但**按源关掉规则一**。
+//
+// 用途：验证「某个条件本身不会触发改派」（例如长提示词、电商关键词）。
+// 规则一自 2026-11-20 起是「无音视频即全量改派」，开着会把所有无音视频请求
+// 送去豆包，盖住这些用例真正想守的东西 —— 所以必须显式关掉它。
+func enableRouteWithoutSecondsRule(t *testing.T, source, target string, seconds int) {
+	t.Helper()
+	previous := seedanceroute_setting.Get()
+	payload := withSecondsRuleOff(map[string]interface{}{
+		"enabled":         true,
+		"source_model":    source,
+		"target_model":    target,
+		"trigger_seconds": seconds,
+	}, source)
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+}
+
 // enableRouteWithGate 额外配置规则一的比例闸门（空串 = 不限比例）。
 func enableRouteWithGate(t *testing.T, source, target string, seconds int, ratioGate string) {
 	t.Helper()
@@ -193,7 +239,7 @@ func TestSeedanceRouteRecordsBillingSecondsForPerCallTarget(t *testing.T) {
 // 规则二（9:16 → wan3）不记计费秒数：目标 adaptor 自己会给 seconds，
 // 记了反而可能覆盖它的判断（relay_task.go 只在缺失时补）。
 func TestSeedanceRouteRatioRuleDoesNotForceBillingSeconds(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testRatioTargetModel, "9:16")
 
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"},"prompt":"a cat"}`)
 	if rec.hasBillingSec {
@@ -203,12 +249,17 @@ func TestSeedanceRouteRatioRuleDoesNotForceBillingSeconds(t *testing.T) {
 
 // 规则一没命中（时长不是 30）时也不能留下计费秒数，
 // 否则后续若因比例规则改派，会带着一个错的秒数去算钱。
+// 规则一未命中时不能留计费秒数。
+//
+// 2026-11-20 之后「未命中」只剩两种情形：没有秒数、带参考音视频。
+// 不能用「带参考视频」来验 —— 那类请求会被规则九接走并正常记计费秒数。
+// 所以这里显式关掉规则一，让 12 秒请求既不进豆包也不进 CapCut。
 func TestSeedanceRouteNoBillingSecondsWhenSecondsRuleMisses(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRouteWithoutSecondsRule(t, testSourceModel, testTargetModel, 20)
 
 	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","seconds":"12","prompt":"a cat"}`)
 	if rec.hasBillingSec {
-		t.Fatalf("未命中时长规则却记录了计费秒数 %v", rec.billingSeconds)
+		t.Fatalf("规则一按源关闭，却记录了计费秒数 %v", rec.billingSeconds)
 	}
 }
 
@@ -288,14 +339,19 @@ func TestSeedanceRouteMatchesAllSecondsSpellings(t *testing.T) {
 	}
 }
 
-func TestSeedanceRouteSkipsNonTriggerSeconds(t *testing.T) {
+// 规则一不再看时长，但仍然要求「能取到秒数」：没有秒数就既记不了账、
+// 也决定不了目标链路的下发时长，只能放行原请求。非源模型一律不碰。
+//
+// 历史：这条用例原名 TestSeedanceRouteSkipsNonTriggerSeconds，把「15 秒」
+// 也算成不命中；口径变更后 15 秒必须改派，只剩下「无秒数」和「非源模型」
+// 两种情况仍然不路由。
+func TestSeedanceRouteSkipsWithoutSecondsOrNonSource(t *testing.T) {
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
 		body string
 	}{
-		{"15 seconds", `{"model":"seedance2.5-特惠","seconds":"15"}`},
 		{"no seconds", `{"model":"seedance2.5-特惠","prompt":"a cat"}`},
 		{"other model", `{"model":"wan3.0-video","seconds":"30"}`},
 	}
@@ -708,7 +764,36 @@ func TestSeedanceRouteIncompletePolicyStaysDisabled(t *testing.T) {
 
 const testRatioTargetModel = "wan3.0-720p-特惠"
 
-// enableBothRules 同时打开时长规则与比例规则，测试结束时恢复原状。
+// withSecondsRuleOff 在策略 payload 里显式关掉若干源模型的规则一。
+//
+// 为什么每个「测别的规则」的用例都必须调它：规则一在 2026-11-20 改成
+// 「开关打开 + 不带参考视频/音频即全部改派豆包」，不再看时长与比例。
+// 于是只要 seconds_rule_enabled 保持默认值 true，任何无音视频的请求都会被
+// 规则一先接走 —— 规则二/三/六/七/八的用例全都轮不到自己那条规则，
+// 测试会以「本该命中比例规则却跑去了豆包」的形式失败。
+//
+// 口径：**规则一的用例显式打开它，其它用例显式关掉它**，不靠默认值。
+func withSecondsRuleOff(payload map[string]interface{}, sources ...string) map[string]interface{} {
+	overrides, _ := payload["source_overrides"].(map[string]interface{})
+	if overrides == nil {
+		overrides = map[string]interface{}{}
+	}
+	for _, source := range sources {
+		entry, _ := overrides[source].(map[string]interface{})
+		if entry == nil {
+			entry = map[string]interface{}{}
+		}
+		entry["seconds_rule_enabled"] = false
+		overrides[source] = entry
+	}
+	payload["source_overrides"] = overrides
+	return payload
+}
+
+// enableBothRules 同时打开比例规则与规则一，测试结束时恢复原状。
+//
+// 注意：规则一自 2026-11-20 起是「无音视频即全量改派」，开着会抢占比例规则。
+// 需要测比例规则时请用 enableRatioRuleOnly；本函数只给规则一的用例用。
 func enableBothRules(t *testing.T, secondsTarget string, seconds int, ratioTarget string, ratio string) {
 	t.Helper()
 	previous := seedanceroute_setting.Get()
@@ -733,6 +818,35 @@ func enableBothRules(t *testing.T, secondsTarget string, seconds int, ratioTarge
 	})
 }
 
+// enableRatioRuleOnly 只打开比例规则（规则一按源关掉）。
+//
+// 比例规则是「9:16 → ratio_target_model」，与规则一的「无音视频全量改派」
+// 区间完全重叠；两条同时开时规则一先命中（代码顺序在规则二之前），
+// 所以测比例规则的用例必须显式关掉规则一。
+func enableRatioRuleOnly(t *testing.T, ratioTarget string, ratio string) {
+	t.Helper()
+	previous := seedanceroute_setting.Get()
+	payload := withSecondsRuleOff(map[string]interface{}{
+		"enabled":            true,
+		"source_model":       testSourceModel,
+		"target_model":       testTargetModel,
+		"trigger_seconds":    20,
+		"ratio_target_model": ratioTarget,
+		"trigger_ratio":      ratio,
+	}, testSourceModel)
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal policy: %v", err)
+	}
+	if err := seedanceroute_setting.UpdateFromJSONString(string(encoded)); err != nil {
+		t.Fatalf("update policy: %v", err)
+	}
+	t.Cleanup(func() {
+		restored, _ := common.Marshal(previous)
+		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
+	})
+}
+
 func decodeBody(t *testing.T, body string) map[string]interface{} {
 	t.Helper()
 	var out map[string]interface{}
@@ -743,7 +857,7 @@ func decodeBody(t *testing.T, body string) map[string]interface{} {
 }
 
 func TestSeedanceRouteRatioRoutesNon30sToWan3(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testRatioTargetModel, "9:16")
 
 	// 15 秒 + 9:16：时长规则不命中（15≠30），比例规则命中 → 走 wan3。
 	body := `{"model":"seedance2.5-特惠","seconds":"15","metadata":{"ratio":"9:16"},"prompt":"a cat"}`
@@ -787,7 +901,7 @@ func TestSeedanceRouteSecondsRuleWinsOverRatio(t *testing.T) {
 }
 
 func TestSeedanceRouteRatioFromAspectRatioAndSize(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testRatioTargetModel, "9:16")
 
 	cases := []struct {
 		name string
@@ -811,7 +925,7 @@ func TestSeedanceRouteRatioFromAspectRatioAndSize(t *testing.T) {
 }
 
 func TestSeedanceRouteRatioSkipsOtherRatios(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testRatioTargetModel, "9:16")
 
 	cases := []struct {
 		name string
@@ -838,7 +952,7 @@ func TestSeedanceRouteRatioSkipsOtherRatios(t *testing.T) {
 
 func TestSeedanceRouteRatioSkipsExplicit1080P(t *testing.T) {
 	// 目标模型固定交付 720P（480P 生成 + 提升），要 1080P 时路由过去等于降级交付。
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testRatioTargetModel, "9:16")
 
 	cases := []struct {
 		name string
@@ -861,7 +975,7 @@ func TestSeedanceRouteRatioSkipsExplicit1080P(t *testing.T) {
 func TestSeedanceRouteRatioKeepsMediaUntouched(t *testing.T) {
 	// wan3 渠道的 buildWan3Media 素材优先级与源链路一致（顶层 media > metadata.media），
 	// 所以**不需要**转换格式 —— 原样保留即可，绝不能像豆包规则那样改写成 input_reference。
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":"10","metadata":{"ratio":"9:16"},"media":[{"type":"reference_image","url":"https://example.com/a.png"}]}`
 	seen, _ := runRoute(t, body)
@@ -918,7 +1032,10 @@ func TestSeedanceRouteLegacyPolicyKeepsRatioRuleOff(t *testing.T) {
 		restored, _ := common.Marshal(previous)
 		_ = seedanceroute_setting.UpdateFromJSONString(string(restored))
 	})
-	legacy := `{"enabled":true,"source_model":"seedance2.5-特惠","target_model":"seedance-2-5","trigger_seconds":30}`
+	// 旧 JSON 同样没有 source_overrides —— 但规则一自 2026-11-20 起是
+	// 「无音视频即全量改派」，不关掉它的话 10 秒请求会先去豆包，
+	// 这条用例就变成了在测规则一、而不是「比例规则不生效」。
+	legacy := `{"enabled":true,"source_model":"seedance2.5-特惠","target_model":"seedance-2-5","trigger_seconds":30,"source_overrides":{"seedance2.5-特惠":{"seconds_rule_enabled":false}}}`
 	if err := seedanceroute_setting.UpdateFromJSONString(legacy); err != nil {
 		t.Fatalf("update policy: %v", err)
 	}
@@ -1001,7 +1118,7 @@ func TestSeedanceRouteSecondsRulePausedFallsBackToSource(t *testing.T) {
 }
 
 func TestSeedanceRoutePauseDoesNotAffectRatioRule(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testRatioTargetModel, "9:16")
 	pauseSecondsRule(t, time.Now().Unix()+3600)
 
 	// 暂停只针对「按时长改派到豆包」，比例规则必须照常生效 ——
@@ -1051,10 +1168,15 @@ func TestSeedanceRouteExpiredPauseRoutesAgain(t *testing.T) {
 const testFramesTargetModel = "wan3.0-video-官网"
 
 // enableAllRules 打开全部三条规则，测试结束时恢复原状。
+// enableAllRules 打开比例、首尾帧等规则（**规则一按源关掉**），测试结束恢复原状。
+//
+// 为什么不含规则一：它自 2026-11-20 起是「无音视频即全量改派」，开着会让
+// 所有无音视频请求都进豆包，其它规则一条都轮不到。规则一的用例请用
+// enableBothRules（显式打开）。
 func enableAllRules(t *testing.T, secondsTarget string, seconds int, ratioTarget, ratio, framesTarget string) {
 	t.Helper()
 	previous := seedanceroute_setting.Get()
-	payload := map[string]interface{}{
+	payload := withSecondsRuleOff(map[string]interface{}{
 		"enabled":             true,
 		"source_model":        testSourceModel,
 		"target_model":        secondsTarget,
@@ -1062,7 +1184,7 @@ func enableAllRules(t *testing.T, secondsTarget string, seconds int, ratioTarget
 		"ratio_target_model":  ratioTarget,
 		"trigger_ratio":       ratio,
 		"frames_target_model": framesTarget,
-	}
+	}, testSourceModel)
 	encoded, err := common.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal policy: %v", err)
@@ -1334,48 +1456,79 @@ func TestSeedanceRoutePassesRequestedSecondsThrough(t *testing.T) {
 	}
 }
 
-func TestSeedanceRouteKeepsSourceAtOrBelowThreshold(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
-
-	for _, requested := range []int{5, 10, 15, 20} {
-		body := `{"model":"seedance2.5-特惠","seconds":"` + strconv.Itoa(requested) + `","prompt":"a cat"}`
-		seen, _ := runRoute(t, body)
-		if seen != body {
-			t.Fatalf("%d 秒：不应改派（阈值是严格大于 20），body 被改成了 %s", requested, seen)
-		}
-	}
-}
-
-// ─────────────────────────────────────────────────────────────
-// 规则一比例闸门（2026-11-12）：只有 9:16 且超阈值才改派豆包。
+// 规则一的硬约束：带参考视频/音频或首尾帧时不改派。
 //
-// 2026-11-12 用户口径：豆包官网 9:16 出片效果最好，其它比例的长时长
-// 请求留在常驻链路（有赞原生 720P）。非 9:16 的 21~30 秒请求**不再**改派
-// （此前无条件改派）—— 这是主动收窄，不是回滚。
-// ─────────────────────────────────────────────────────────────
-
-func TestSeedanceRouteRatioGateBlocksNonNineSixteen(t *testing.T) {
-	enableRouteWithGate(t, testSourceModel, testTargetModel, 20, "9:16")
+// 2026-11-20 放宽的是「时长与比例」，不是这两条。它们不是业务条件，
+// 而是目标链路物理上做不到 —— 硬改派过去就是静默错交付：
+//
+//	· 参考视频/音频：豆包链路只收参考图，混进去会被整段丢掉；
+//	· 首尾帧：目标链路把 first_frame/last_frame 当 input_reference 收，
+//	  语义从「首帧/尾帧」变成「参考图」，客户拿到的片对不上意图。
+func TestSeedanceRouteSecondsRuleSkipsAVAndFrames(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	cases := []struct {
 		name string
 		body string
 	}{
-		{"16:9", `{"model":"seedance2.5-特惠","seconds":25,"metadata":{"ratio":"16:9"},"prompt":"a cat"}`},
-		{"1:1", `{"model":"seedance2.5-特惠","seconds":25,"ratio":"1:1","prompt":"a cat"}`},
-		{"无比例", `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`},
-		{"adaptive 不算命中", `{"model":"seedance2.5-特惠","seconds":25,"metadata":{"ratio":"adaptive"},"prompt":"a cat"}`},
+		{"参考视频", `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat","media":[{"type":"reference_video","url":"https://x/a.mp4"}]}`},
+		{"参考音频", `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat","media":[{"type":"reference_audio","url":"https://x/a.mp3"}]}`},
+		{"首帧", `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat","media":[{"type":"first_frame","url":"https://x/a.png"}]}`},
+		{"尾帧", `{"model":"seedance2.5-特惠","seconds":15,"prompt":"a cat","media":[{"type":"last_frame","url":"https://x/b.png"}]}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			seen, originModel := runRoute(t, tc.body)
-			if seen != tc.body {
-				t.Fatalf("有闸门时非 9:16 不应改派，body 被改成了 %s", seen)
-			}
-			if originModel != "" {
-				t.Fatalf("RouteOriginModel() = %q, want empty", originModel)
+			seen, _ := runRoute(t, tc.body)
+			if got := decodeBody(t, seen)["model"]; got == testTargetModel {
+				t.Fatalf("%s 不该被规则一改派到 %s（会导致素材丢失或语义变化）", tc.name, testTargetModel)
 			}
 		})
+	}
+}
+
+// 规则一自 2026-11-20 起不再看时长：只要开关打开、不带参考音视频、
+// 且能取到秒数，任何时长都改派。这里把 5–30 秒的常规档全部过一遍。
+//
+// 历史：这条用例原名 TestSeedanceRouteKeepsSourceAtOrBelowThreshold，
+// 守的是「≤20 秒留在源」。口径变更后同一批输入的期望整个反过来。
+func TestSeedanceRouteRoutesAllDurationsWithoutAVMedia(t *testing.T) {
+	enableRoute(t, testSourceModel, testTargetModel, 20)
+
+	for _, requested := range []int{5, 10, 15, 20, 25, 30} {
+		body := `{"model":"seedance2.5-特惠","seconds":"` + strconv.Itoa(requested) + `","prompt":"a cat"}`
+		seen, _ := runRoute(t, body)
+		if got := decodeBody(t, seen)["model"]; got != testTargetModel {
+			t.Fatalf("%d 秒无参考音视频应改派到 %s，实际 %v (body=%s)",
+				requested, testTargetModel, got, seen)
+		}
+	}
+}
+
+// ─────────────────────────────────────────────────────────────
+// 规则一的比例闸门已于 2026-11-20 **撤销**。
+//
+// 历程：2026-11-12 用「只有 9:16 才改派」收窄过一轮（豆包官网 9:16 出片
+// 最好）；2026-11-20 老板要求整体放宽为「不带参考音视频即改派」，
+// 时长与比例都不再是条件。字段 seconds_rule_ratio_gate 仍保留在配置里
+// （老 JSON 可解析、管理接口仍可写），但判定侧不再读取 —— 下面两条用例
+// 把「写了也不生效」钉死，避免有人日后误以为它还在起作用。
+// ─────────────────────────────────────────────────────────────
+
+func TestSeedanceRouteIgnoresRatioGate(t *testing.T) {
+	enableRouteWithGate(t, testSourceModel, testTargetModel, 20, "9:16")
+
+	for _, ratio := range []string{"16:9", "1:1", "adaptive", ""} {
+		body := `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`
+		if ratio != "" {
+			body = `{"model":"seedance2.5-特惠","seconds":25,"metadata":{"ratio":"` + ratio + `"},"prompt":"a cat"}`
+		}
+		seen, originModel := runRoute(t, body)
+		if got := decodeBody(t, seen)["model"]; got != testTargetModel {
+			t.Fatalf("比例 %q：闸门已撤销，25 秒无音视频应改派 %s，实际 %v", ratio, testTargetModel, got)
+		}
+		if originModel != testSourceModel {
+			t.Fatalf("比例 %q：改派后计费原点应为 %s，实际 %q", ratio, testSourceModel, originModel)
+		}
 	}
 }
 
@@ -1408,13 +1561,14 @@ func TestSeedanceRouteRatioGatePassesNineSixteen(t *testing.T) {
 }
 
 // 9:16 但没超阈值：两条闸门都要过，缺一不改派。
-func TestSeedanceRouteRatioGateStillRequiresThreshold(t *testing.T) {
+// 阈值同样不再是条件：正好等于原阈值（20 秒）也改派。
+func TestSeedanceRouteNoLongerRequiresDurationThreshold(t *testing.T) {
 	enableRouteWithGate(t, testSourceModel, testTargetModel, 20, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":20,"metadata":{"ratio":"9:16"},"prompt":"a cat"}`
 	seen, _ := runRoute(t, body)
-	if seen != body {
-		t.Fatalf("9:16 但 20 秒未超阈值不应改派，body 被改成了 %s", seen)
+	if got := decodeBody(t, seen)["model"]; got != testTargetModel {
+		t.Fatalf("阈值已撤销，20 秒应改派 %s，实际 %v（body=%s）", testTargetModel, got, seen)
 	}
 }
 
@@ -1505,7 +1659,7 @@ func TestSeedanceRouteForwardsSupportedResolution(t *testing.T) {
 const testXinbiRatioTargetModel = "wan3.0-720p-特惠-内链"
 
 func TestRatioRuleRoutesToXinbiTehuiTarget(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testXinbiRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat",` +
 		`"metadata":{"ratio":"9:16","media":[{"type":"reference_image","url":"https://example.com/a.png"}]}}`
@@ -1526,7 +1680,7 @@ func TestRatioRuleRoutesToXinbiTehuiTarget(t *testing.T) {
 }
 
 func TestRatioRuleXinbiKeepsNonTierSeconds(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testXinbiRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":7,"prompt":"a cat","ratio":"9:16"}`
 	seen, _ := runRoute(t, body)
@@ -1537,7 +1691,7 @@ func TestRatioRuleXinbiKeepsNonTierSeconds(t *testing.T) {
 }
 
 func TestRatioRuleXinbiSkipsWhenChannelUnavailable(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testXinbiRatioTargetModel, "9:16")
 	stubChannelAvailable(t, false)
 
 	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"9:16"}}`
@@ -1548,7 +1702,7 @@ func TestRatioRuleXinbiSkipsWhenChannelUnavailable(t *testing.T) {
 }
 
 func TestRatioRuleXinbiSkipsFrameMedia(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testXinbiRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"9:16"},` +
 		`"media":[{"type":"first_frame","url":"https://example.com/first.png"}]}`
@@ -1559,7 +1713,7 @@ func TestRatioRuleXinbiSkipsFrameMedia(t *testing.T) {
 }
 
 func TestRatioRuleXinbiSkipsReferenceVideo(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testXinbiRatioTargetModel, "9:16")
 	disableRefAVRoute(t) // 规则九默认开会接走带视频的请求，这里隔离规则二守卫
 
 	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"9:16"},` +
@@ -1570,7 +1724,7 @@ func TestRatioRuleXinbiSkipsReferenceVideo(t *testing.T) {
 }
 
 func TestRatioRuleXinbiSkipsNonTriggerRatio(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testXinbiRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat","metadata":{"ratio":"16:9"}}`
 	seen, originModel := runRoute(t, body)
@@ -1585,7 +1739,7 @@ func TestRatioRuleXinbiSkipsNonTriggerRatio(t *testing.T) {
 // 规则六已有同款用例（TestShortRouteAcceptsDataURLInWan3InputMedia），
 // 这里锁规则二（PerCall 改写），防止两条心笔路径只修一条。
 func TestRatioRuleXinbiAcceptsDataURLInWan3InputMedia(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testXinbiRatioTargetModel, "9:16")
 
 	body := `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat",
 		"metadata":{"ratio":"9:16","input":{"media":[
@@ -1612,7 +1766,7 @@ func TestRatioRuleXinbiAcceptsDataURLInWan3InputMedia(t *testing.T) {
 // （TestShortRouteRewriteSurvivesTaskSubmitReqDecode），这里锁规则二路径：
 // 以后任何把参考图挪到 TaskSubmitReq 不认识位置的改动都会在这里炸。
 func TestRatioRuleXinbiRewriteSurvivesTaskSubmitReqDecode(t *testing.T) {
-	enableBothRules(t, testTargetModel, 20, testXinbiRatioTargetModel, "9:16")
+	enableRatioRuleOnly(t, testXinbiRatioTargetModel, "9:16")
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":10,"prompt":"a cat",
 		"metadata":{"ratio":"9:16","media":[{"type":"reference_image","url":"https://example.com/a.png"}]}}`)
@@ -1658,6 +1812,7 @@ func enableRatioRuleWithSwitch(t *testing.T, switchedOffSource string) {
 			},
 		},
 	}
+	withSecondsRuleOff(payload, testSourceModel, testSourceModelAlt)
 	encoded, err := common.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal policy: %v", err)

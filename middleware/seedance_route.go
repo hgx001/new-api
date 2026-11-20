@@ -114,7 +114,7 @@ func RouteOriginModel(c *gin.Context) string {
 //	规则六（短时长）：  源模型 + 时长 ≤ 阈值（默认 10 秒）→ 心笔内链；
 //	                    心笔接不住且 short_youzan_enabled 打开 → 有赞标准版 wan3.0-video；
 //	                    再接不住且 short_capcut_enabled 打开 → CapCut 满血档 cp-seedance-2.0
-//	规则一（时长）：    源模型 + 时长 > 阈值（生产 20 秒）→ target_model（seedance-2-5 按次）
+//	规则一（改派豆包）：开关打开 + 不带参考视频/音频（秒数必填）→ target_model（seedance-2-5 按次）
 //	规则二（比例）：    源模型 + 命中 trigger_ratio → ratio_target_model
 //	                    生产配 9:16 → wan3.0-720p-特惠-内链（心笔 480P 链路，ch25）
 //
@@ -673,15 +673,24 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			}
 		}
 
-		// ── 规则一（时长）──
+		// ── 规则一（改派豆包）：开关打开 + 不带参考音视频 → 全部改派 ──
 		//
-		// 阈值是**严格大于** TriggerSeconds（生产配 20 秒），不再要求恰好等于 30 秒。
-		// 成本动机：源链路按秒计价（¥0.20/秒），目标 seedance-2-5 按次计费 ——
-		// 21 秒以后源链路成本已超过目标的按次成本，非等到 30 秒整才改派纯属亏钱。
-		// ⚠️ 20 秒这个阈值是 2026-10-30 按豆包官网成本口径拍板的；2026-11-12
-		// 常驻渠道在「班车 ch27 ↔ 豆包 ch20」之间来回搬过一趟，阈值始终没按
-		// 搬运后的上游成本重算（要调只改 seedanceroute_setting 的
-		// trigger_seconds，不用改代码）。
+		// 2026-11-20 口径变更（老板）：触发条件由「时长 > 20 秒 且 9:16」
+		// **放宽为「不带参考视频/音频的全部改派」** —— 时长与比例不再是门槛。
+		// 理由：母本换成 mw-sd2.5-flash 之后，豆包链路对促销族的价值已经从
+		// 「长时长省成本」变成「一条额度可控的备用出口」；再按 20 秒 / 9:16 卡，
+		// 运营把开关打开后大半请求仍留在有赞，界面承诺的影响面和实际不符。
+		//
+		// 保留两条硬约束（不是「条件」，是「物理上做不到就别改派」）：
+		//   · 必须取得到秒数：规则一按秒计费（ContextKeyRouteBillingSeconds），
+		//     没有秒数既记不了账、也决定不了目标链路下发多少秒 → 不路由；
+		//   · 不能带参考视频/音频：豆包链路只收参考图，改派过去会静默丢素材。
+		//     首尾帧同样排除 —— 目标链路会把 first_frame/last_frame 当
+		//     input_reference 收下，语义从「首尾帧」变成「参考图」，
+		//     属于静默错交付（见 collectReferenceImagesInternal 的注释）。
+		//
+		// ⚠️ trigger_seconds 字段仍在配置里，但规则一不再读它。留着是给
+		// 规则七（电商的「时长超过阈值」入口）用，别看到字段就以为还有阈值。
 		//
 		// 目标模型按**源模型**取：两个源模型的**兜底目标都是 seedance-2-5**，
 		// 但它们是两条不同的商品：
@@ -696,8 +705,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		// 两者的计费口径不同，所以仍按源模型分别取目标，不能共用一个字段。
 		secondsTarget := policy.TargetModelFor(sourceModel)
 		if seedanceroute_setting.IsSecondsRuleEnabledFor(sourceModel) {
-			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds && policy.ExceedsTriggerSeconds(seconds) &&
-				secondsRatioGatePasses(body, policy.SecondsRuleRatioGate) {
+			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds &&
+				!hasUnsupportedMedia(body) && !hasFrameMedia(body) {
 				if newBody, routed := prepareSecondsRoute(c, body, policy, secondsTarget, seconds); routed {
 					if applyRewrittenBody(c, newBody, billingOriginModel) {
 						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
@@ -709,8 +718,8 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 						// 改派后下游只能看到目标模型名，不打日志就分不清是
 						// 「时长超阈值」还是「故障转移」把它送过去的。
 						logger.LogInfo(c, fmt.Sprintf(
-							"条件路由：命中时长 %d 秒（超过阈值 %d 秒），改派 %s → %s",
-							seconds, policy.TriggerSeconds, sourceModel, secondsTarget))
+							"条件路由：未带参考音视频（%d 秒），改派 %s → %s",
+							seconds, sourceModel, secondsTarget))
 						// 规则五的第二段：目标链路本身也不可用（渠道被关 /
 						// 额度探针标记）且源与备胎不同渠道时，继续降级到备胎。
 						// 迁移后源备同渠道时这一段被 failoverSharedChannelChain
@@ -1979,19 +1988,6 @@ func matchesTriggerRatio(body map[string]interface{}, trigger string) bool {
 		return false
 	}
 	return got == want
-}
-
-// secondsRatioGatePasses 规则一的比例闸门。
-//
-// gate 为空 = 不限比例（2026-11-12 之前的生产 JSON 没有该字段，
-// 必须保持「任何比例超阈值都改派」的旧行为）。非空时只有比例命中
-// 才放行 —— 没写比例的请求也**不放行**：客户没要求 9:16，
-// 就不该替他改派到只对 9:16 效果好的链路上。
-func secondsRatioGatePasses(body map[string]interface{}, gate string) bool {
-	if strings.TrimSpace(gate) == "" {
-		return true
-	}
-	return matchesTriggerRatio(body, gate)
 }
 
 // resolveRequestRatio 从请求里推断比例。

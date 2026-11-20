@@ -30,15 +30,16 @@ func enableRefAVRoute(t *testing.T, refAVEnabled bool) {
 	t.Helper()
 	previous := seedanceroute_setting.Get()
 	payload := map[string]interface{}{
-		"enabled":        true,
-		"source_models":  []string{testSourceModel, testSourceModelAlt},
-		"target_model":   testTargetModel,
+		"enabled":         true,
+		"source_models":   []string{testSourceModel, testSourceModelAlt},
+		"target_model":    testTargetModel,
 		"trigger_seconds": 20,
 		// 隔离其它规则，保证断言只反映规则九的行为：
 		"short_link_enabled":   false,
 		"short_youzan_enabled": false,
 		"ecommerce_enabled":    false,
 	}
+	withSecondsRuleOff(payload, testSourceModel, testSourceModelAlt)
 	if !refAVEnabled {
 		payload["ref_av_capcut_enabled"] = false
 	}

@@ -99,7 +99,9 @@ func TestTeHuiRouteUnaffectedByHuoDongOverride(t *testing.T) {
 // 心笔常驻链路自己吃 20000 字符提示词；超长提示词统一交给后面的压缩中间件，
 // 不再走「悄悄换一条链路」这条路。
 func TestHuoDongLongPromptDoesNotRerouteToDoubao(t *testing.T) {
-	enableDoubaoFallbackRoute(t)
+	// 规则一按源关掉：活动版 10 秒现在会被规则一改派（不再看时长），
+	// 这条用例要守的是「长提示词本身不是改派理由」。
+	enableRouteWithoutSecondsRule(t, constant.Seedance25HuoDongModel, doubaoTargetModel, 20)
 
 	longPrompt := strings.Repeat("字", 6000)
 	body := `{"model":"` + constant.Seedance25HuoDongModel + `","seconds":10,"prompt":"` + longPrompt + `"}`
@@ -117,7 +119,8 @@ func TestHuoDongLongPromptDoesNotRerouteToDoubao(t *testing.T) {
 
 // 母本同理：10 秒 + 超长提示词留在有赞源链路，由压缩中间件处理。
 func TestTeHuiLongPromptDoesNotRerouteToDoubao(t *testing.T) {
-	enableDoubaoFallbackRoute(t)
+	// 同上：关掉规则一，只验「长提示词本身不改派」。
+	enableRouteWithoutSecondsRule(t, constant.Seedance25TeHuiModel, doubaoTargetModel, 20)
 
 	longPrompt := strings.Repeat("字", 6000)
 	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25TeHuiModel+`","seconds":10,"prompt":"`+longPrompt+`"}`)
@@ -266,15 +269,23 @@ func TestHuoDongRouteToDoubaoWhenDurationOmitted(t *testing.T) {
 //
 // 2026-11-11 起活动版支持 2-30 秒逐秒可选，10 秒是**合法请求**，
 // 不该被改派到豆包（规则一只收超过阈值的），也不该被归一成 30 秒。
+// 用户 269 行：活动版 10 秒也走豆包 —— 规则一自 2026-11-20 起不看时长。
+//
+// 历史名 TestHuoDongRouteKeepsShortDurationOnSourceChain，对应旧阈值语义
+// （≤20 秒留在源）。现在要守的是「时长原样下发」：改派可以，改档不行。
 func TestHuoDongRouteKeepsShortDurationOnSourceChain(t *testing.T) {
 	enableDoubaoFallbackRoute(t)
 
 	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":10,"prompt":"a cat"}`)
-	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("10 秒的请求被改派了（model=%v），应该留在源链路", got)
+	body := decodeBody(t, seen)
+	if got := body["model"]; got != doubaoTargetModel {
+		t.Fatalf("10 秒无音视频应改派 %s，实际 model=%v", doubaoTargetModel, got)
 	}
-	if origin != "" {
-		t.Fatalf("10 秒的请求记录了来源模型 %q，应该为空（没发生改派）", origin)
+	if got := body["seconds"]; got != "10" {
+		t.Fatalf("时长必须原样下发 \"10\"，实际 %#v（改派不能改档）", got)
+	}
+	if origin != constant.Seedance25HuoDongModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", origin, constant.Seedance25HuoDongModel)
 	}
 }
 

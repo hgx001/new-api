@@ -88,19 +88,25 @@ func TestProdPolicy_活动版不传时长归一成30秒并命中(t *testing.T) {
 	}
 }
 
-// 活动版显式传 5 秒（2026-11-11 起合法，但没超过阈值 20 秒）→ 不改派，
-// 留在源链路按客户要的 5 秒生成。
+// 活动版显式传 5 秒：2026-11-20 起规则一不再看时长，请求会改派豆包，
+// 但**时长必须原样下发 5 秒**。
 //
-// 绝不能静默改档 —— 客户要 5 秒却出了 30 秒，是错交付。
-func TestProdPolicy_活动版显式传区间内短时长不改派(t *testing.T) {
+// 这条守的是「改派 ≠ 静默改档」：客户要 5 秒却出了 30 秒是错交付，
+// 口径怎么放宽都不能碰这条。历史名 TestProdPolicy_活动版显式传区间内短时长不改派
+// 对应的是旧阈值语义（≤20 秒不路由）。
+func TestProdPolicy_活动版短时长改派豆包但时长不吸附(t *testing.T) {
 	enableProdRoutePolicy(t)
 
 	seen, origin := runRoute(t, `{"model":"`+constant.Seedance25HuoDongModel+`","seconds":5,"prompt":"a cat"}`)
-	if got := decodeBody(t, seen)["model"]; got != constant.Seedance25HuoDongModel {
-		t.Fatalf("显式传 5 秒时不应改派（model=%v）", got)
+	body := decodeBody(t, seen)
+	if got := body["model"]; got != "seedance-2-5" {
+		t.Fatalf("5 秒无音视频应改派豆包，实际 model=%v", got)
 	}
-	if origin != "" {
-		t.Fatalf("RouteOriginModel() = %q, want 空串（没发生改派）", origin)
+	if got := body["seconds"]; got != "5" {
+		t.Fatalf("时长必须原样下发 \"5\"，实际 %#v（改派不能改档）", got)
+	}
+	if origin != constant.Seedance25HuoDongModel {
+		t.Fatalf("RouteOriginModel() = %q, want %q", origin, constant.Seedance25HuoDongModel)
 	}
 }
 

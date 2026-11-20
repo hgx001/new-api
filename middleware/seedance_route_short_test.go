@@ -42,6 +42,7 @@ func enableShortRoute(t *testing.T, target string, triggerSeconds int) {
 		"source_model":       testSourceModel,
 		"short_target_model": target,
 	}
+	withSecondsRuleOff(payload, testSourceModel)
 	if triggerSeconds > 0 {
 		payload["short_trigger_seconds"] = triggerSeconds
 	}
@@ -72,6 +73,7 @@ func enableShortAndOtherRules(t *testing.T, secondsTarget string, seconds int, r
 		"frames_target_model": framesTarget,
 		"short_target_model":  shortTarget,
 	}
+	withSecondsRuleOff(payload, testSourceModel)
 	encoded, err := common.Marshal(payload)
 	if err != nil {
 		t.Fatalf("marshal policy: %v", err)
@@ -276,13 +278,17 @@ func TestShortRouteBeatsRatioRule(t *testing.T) {
 	}
 }
 
-// 长时长仍走规则一，规则六不能抢走它。
+// 长时长不能被规则六抢走。
+//
+// 规则一在本用例里按源关着（enableShortAndOtherRules 的默认），
+// 所以 25 秒应当**原样留在源链路**；要守的是「规则六的 ≤10 秒边界没有上溢」，
+// 不是「25 秒一定去豆包」—— 后者由规则一自己的用例覆盖。
 func TestShortRouteDoesNotStealLongSeconds(t *testing.T) {
 	enableShortAndOtherRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel, testShortTargetModel)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`)
-	if decodeBody(t, seen)["model"] != testTargetModel {
-		t.Fatalf("25 秒应走规则一的目标 %s，实际 %v", testTargetModel, decodeBody(t, seen)["model"])
+	if got := decodeBody(t, seen)["model"]; got == testShortTargetModel {
+		t.Fatalf("25 秒不该被规则六（≤10 秒）抢走，实际 model=%v", got)
 	}
 }
 
@@ -348,8 +354,11 @@ func TestShortRouteEmitsLog(t *testing.T) {
 }
 
 // 规则六没配置时，短请求不能被动到 —— 升级当天行为必须逐字节不变。
+//
+// 规则一按源关掉：它现在是「无音视频即全量改派」，开着会把 5 秒请求也送走，
+// 这条用例就测不到「规则六没配置时不产生任何短时长分流」了。
 func TestShortRouteInactiveWhenUnconfigured(t *testing.T) {
-	enableRoute(t, testSourceModel, testTargetModel, 20)
+	enableRouteWithoutSecondsRule(t, testSourceModel, testTargetModel, 20)
 	readLogs := captureRouteLogs(t)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":5,"prompt":"a cat"}`)
@@ -396,9 +405,12 @@ func TestShortRouteLinkSwitchOffKeepsSourceChain(t *testing.T) {
 	}
 }
 
-// 开关关闭不影响其它规则：规则一（长时长）照常改派。
+// 开关关闭不影响其它规则：25 秒请求照常被规则一改派到豆包。
 func TestShortRouteLinkSwitchOffDoesNotAffectOtherRules(t *testing.T) {
 	enableShortAndOtherRules(t, testTargetModel, 20, testRatioTargetModel, "9:16", testFramesTargetModel, testShortTargetModel)
+	// enableShortAndOtherRules 默认关着规则一（否则它会盖住规则六），
+	// 本条要验的正是「规则六的开关不影响规则一」，所以显式打开它。
+	mustEnableSecondsRule(t, testSourceModel)
 	disableShortLink(t)
 
 	seen, _ := runRoute(t, `{"model":"seedance2.5-特惠","seconds":25,"prompt":"a cat"}`)

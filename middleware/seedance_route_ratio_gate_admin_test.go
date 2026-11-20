@@ -43,23 +43,27 @@ func routedToTarget(t *testing.T, body string) bool {
 
 // 未勾选（旧配置）→ 勾上 → 取消，三个阶段的改派行为必须依次为：
 // 不限比例 / 只有 9:16 / 又回到不限比例。
+// 管理接口仍能写 seconds_rule_ratio_gate（兼容老前端 / 老脚本），
+// 但规则一自 2026-11-20 起不再读它 —— 写了也是无效配置。
+//
+// 这条用例把「接口照常成功、路由不受影响」钉死：日后如果有人想把闸门
+// 复活，必须同时改这里，不可能悄悄恢复生效。
 func TestAdminRatioGateToggleControlsReroute(t *testing.T) {
-	// 基线：规则一开着、阈值 20 秒、没有比例闸门。
-	// enableRoute 的 cleanup 会在用例结束时恢复原全局策略。
 	enableRoute(t, testSourceModel, testTargetModel, 20)
 
 	require.True(t, routedToTarget(t, ratioGateAdminBody16x9),
-		"未勾选时 16:9 的超阈值请求应照旧改派")
+		"基线：16:9 无音视频请求应改派")
 
 	writeRatioGateFromAdmin(t, true)
-	require.Equal(t, "9:16", seedanceroute_setting.Get().SecondsRuleRatioGate)
-	require.False(t, routedToTarget(t, ratioGateAdminBody16x9),
-		"勾上条件后 16:9 不再改派")
+	require.Equal(t, "9:16", seedanceroute_setting.Get().SecondsRuleRatioGate,
+		"管理接口仍应把字段写进策略（仅作留档）")
+	require.True(t, routedToTarget(t, ratioGateAdminBody16x9),
+		"闸门已撤销：勾上之后 16:9 仍要改派")
 	require.True(t, routedToTarget(t, ratioGateAdminBody9x16),
-		"勾上条件后 9:16 仍要改派，条件不是把整条链路关掉")
+		"9:16 当然也照旧改派")
 
 	writeRatioGateFromAdmin(t, false)
 	require.Empty(t, seedanceroute_setting.Get().SecondsRuleRatioGate)
 	require.True(t, routedToTarget(t, ratioGateAdminBody16x9),
-		"取消勾选后恢复不限比例")
+		"取消勾选不影响任何路由")
 }
