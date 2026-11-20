@@ -1731,7 +1731,13 @@ func getHTTPClient(proxy string) (*http.Client, error) {
 // **原样透传**，由上游自己抓取；时长改用上游 TaskSubmitReq 认的 seconds 字符串
 // （2026-11-15 探针实测：body 只带 seconds:"2"，查询响应回显 seconds=2）。
 // 构建过程纯本地、无网络调用 —— 客户 60 秒的提交超时不再受素材体积影响。
+// buildRequestBody 保留「纯本地构造」的旧签名：不做参考图优化。
+// 生产提交走 buildRequestBodyWithOptions。
 func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, error) {
+	return a.buildRequestBodyWithOptions(req, false)
+}
+
+func (a *TaskAdaptor) buildRequestBodyWithOptions(req relaycommon.TaskSubmitReq, optimizeImages bool) ([]byte, error) {
 	upstreamModel, err := upstreamModelForRequest(req)
 	if err != nil {
 		return nil, err
@@ -1739,6 +1745,11 @@ func (a *TaskAdaptor) buildRequestBody(req relaycommon.TaskSubmitReq) ([]byte, e
 	media, err := buildMedia(req)
 	if err != nil {
 		return nil, err
+	}
+	// 参考图体积优化（2026-11-20）：只对促销族母本生效，给自有 CDN 地址追加
+	// CI 质量参数，缩小上游并发回源时的字节数。见 optimizeReferenceMedia。
+	if optimizeImages {
+		media = optimizeReferenceMedia(media)
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" && len(media) == 0 {
@@ -2269,18 +2280,57 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err != nil {
 		return nil, err
 	}
+	// 压缩判断必须在 model 被换成上游名之前做：换成 mw-sd2.5-flash 后
+	// isPromoResidentMw 不再成立，参考图就压不到了。
+	compressImages := isPromoResidentMw(req.Model)
 	if info != nil && strings.TrimSpace(info.UpstreamModelName) != "" {
 		req.Model = info.UpstreamModelName
 	}
-	body, err := a.buildRequestBody(req)
+	body, err := a.buildRequestBodyWithOptions(req, compressImages)
 	if err != nil {
 		return nil, err
 	}
 	return bytes.NewReader(body), nil
 }
 
+// assetDownloadFailedRetryMax / assetDownloadFailedRetryDelay 是「上游抓素材
+// 超时」的重试预算（2026-11-20）。
+//
+// 现场（logs id=18830，客户 arcreel，5 张参考图）：图片 19:25:10 才写进 CDN，
+// 19:26:39 就提交，上游并发回源超时，回 400：
+//
+//	{"code":"asset_download_failed","message":"连接素材服务器超时。尚未提交上游生成。","retryable":false}
+//
+// 复核同一批图：国内 0.3 秒、全球 12 节点全 200 —— 素材本身没问题，是
+// 「刚上传 + 冷缓存 + 多张并发回源」撞在一起。
+//
+// 只对这一个错误码、只重试一次：
+//   - 其它 4xx 重试只会把客户余额和上游额度再烧一遍；
+//   - 上游明确「尚未提交上游生成」，重试没有生成成本，也不会重复计费；
+//   - 第一次失败的上游请求已经把 CDN 填热，原样重发几乎必成。
+//
+// 客户断开（ctx 取消）时立即放弃重试：ArcReel 侧提交预算是 60 秒，而这次
+// 上游 88 秒才回失败，那时客户端早已放弃，重试只是白等。
+const (
+	assetDownloadFailedRetryMax   = 1
+	assetDownloadFailedRetryDelay = 3 * time.Second
+)
+
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
-	resp, err := channel.DoTaskApiRequest(a, c, info, requestBody)
+	// 请求体必须可重放：重试要用同一份字节。上游 400 的响应体很小，
+	// 把它读出来还原给 DoResponse 的代价可以忽略。
+	bodyBytes, err := io.ReadAll(requestBody)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := doWithAssetDownloadRetry(
+		c.Request.Context(),
+		func() (*http.Response, error) {
+			return channel.DoTaskApiRequest(a, c, info, bytes.NewReader(bodyBytes))
+		},
+		assetDownloadFailedRetryMax,
+		assetDownloadFailedRetryDelay,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2290,6 +2340,47 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 		resp.StatusCode = http.StatusOK
 	}
 	return resp, nil
+}
+
+// doWithAssetDownloadRetry 在「上游抓素材失败」时原样重发，最多 maxRetries 次。
+//
+// 响应体读完会原样塞回去：不论重试还是直接返回，调用方（DoResponse）都要
+// 继续读它，不能出现空 body。
+func doWithAssetDownloadRetry(
+	ctx context.Context,
+	attempt func() (*http.Response, error),
+	maxRetries int,
+	delay time.Duration,
+) (*http.Response, error) {
+	for tried := 0; ; tried++ {
+		resp, err := attempt()
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil || tried >= maxRetries {
+			return resp, nil
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		if readErr != nil || !isAssetDownloadFailed(resp.StatusCode, body) {
+			return resp, nil
+		}
+		select {
+		case <-ctx.Done():
+			// 客户端已经走了：把上游这次的真实失败原样交回去。
+			return resp, nil
+		case <-time.After(delay):
+		}
+	}
+}
+
+// isAssetDownloadFailed 判定响应是否为「上游抓不到我们给的素材」。
+//
+// 只认 400 + 该错误码：上游还有 media_invalid / asset_too_large 等同样带
+// 400 的素材类错误，那些重试多少次都一样。
+func isAssetDownloadFailed(statusCode int, body []byte) bool {
+	return statusCode == http.StatusBadRequest && bytes.Contains(body, []byte("asset_download_failed"))
 }
 
 func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
