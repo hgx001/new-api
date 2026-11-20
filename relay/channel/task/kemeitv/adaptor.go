@@ -49,6 +49,9 @@ type TaskAdaptor struct {
 	ChannelType int
 	apiKey      string
 	baseURL     string
+	// proxy 渠道代理：探测参考视频时长要在本地下载素材，必须与提交走同一条出口，
+	// 否则「客户素材只有代理可达」的正常请求会被判成探测失败而拒单。
+	proxy string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -58,6 +61,7 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
 	a.apiKey = info.ApiKey
+	a.proxy = info.ChannelSetting.Proxy
 }
 
 // ────────────────────────────── 校验 ──────────────────────────────
@@ -91,13 +95,61 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	//
 	// ⚠️ 顺序不能反：互斥错误要优先报出来。客户端传了 1 张首帧 + 2 张参考图时，
 	// 先报「图片超上限」会让人误以为加到 11 张就行 —— 真正的问题是场景混用。
-	if _, err := collectMedia(req); err != nil {
+	bundle, err := collectMedia(req)
+	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
+	}
+	// 参考视频按秒加价（生成秒数 + 参考视频总秒数），秒数在这里探测并塞进 context，
+	// 由 EstimateBilling 读出来并入计费。
+	//
+	// 必须在**预扣之前**做：EstimateBilling 没有错误返回值，等到计费阶段才发现
+	// 解析不出时长，就只能按生成时长收钱 —— 不报错、不少一单，只是每条带参考视频
+	// 的单都少收。所以探测放在校验阶段，拿不到时长直接 400（不建单、不扣费）。
+	if refErr := a.setReferenceVideoSeconds(c, bundle); refErr != nil {
+		return service.TaskErrorWrapperLocal(refErr, "invalid_input_reference", http.StatusBadRequest)
 	}
 	return nil
 }
 
 // ────────────────────────────── 计费 ──────────────────────────────
+
+// refVideoSecondsContextKey 是「参考视频计费秒数」在校验阶段写给计费阶段用的键。
+//
+// 口径（2026-11-20 用户拍板）：本渠道两个模型都对参考视频收费 ——
+// 计费秒数 = 生成秒数 + 各条参考视频四舍五入后的整秒之和。
+// 全站模型广场里**只有 hk-wan3 对参考视频不额外收费**（youzanwan3 的
+// isHkWan3Model 分支），其余按秒计费的模型一律并入。
+const refVideoSecondsContextKey = "kemeitv_ref_video_seconds"
+
+// setReferenceVideoSeconds 探测全部参考视频的真实时长，累加后写入 context。
+//
+// 只探测、不在这里拒「超长」：上游 kemeitv 的参考视频时长上限未在文档里给出，
+// 而此前本站也没有这道闸门 —— 贸然加限长会误杀本来能跑的长素材请求。
+// 计费只需要「多长就收多长」，超长与否交给上游判定。
+//
+// ⚠️ 探测失败必须 fail-loud：拿不到时长就没法算钱，放行等于按 0 秒白送。
+func (a *TaskAdaptor) setReferenceVideoSeconds(c *gin.Context, bundle *mediaBundle) error {
+	if bundle == nil || len(bundle.Videos) == 0 {
+		return nil
+	}
+	urls := make([]string, 0, len(bundle.Videos))
+	for _, item := range bundle.Videos {
+		urls = append(urls, item.URL)
+	}
+	client, err := service.GetHttpClientWithProxy(a.proxy)
+	if err != nil {
+		return fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	// maxSeconds 传 0 = 不限长，只算秒数（见 ProbeAndEnforceReferenceVideos）。
+	seconds, err := taskcommon.ProbeAndEnforceReferenceVideos(c.Request.Context(), urls, 0, client)
+	if err != nil {
+		return err
+	}
+	if seconds > 0 {
+		c.Set(refVideoSecondsContextKey, seconds)
+	}
+	return nil
+}
 
 // EstimateBilling 返回计费倍率。
 //
@@ -134,8 +186,16 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if ratio == 0 {
 		ratio = 1.0
 	}
+	// 参考视频按秒并入：2 秒生成 + 11 秒参考 = 按 13 秒收费，再乘分辨率倍率。
+	// 秒数由校验阶段探测写入，这里只读不算（探测失败已在那边 400 拒掉）。
+	seconds := duration
+	if value, ok := c.Get(refVideoSecondsContextKey); ok {
+		if refSeconds, ok := value.(int); ok && refSeconds > 0 {
+			seconds += refSeconds
+		}
+	}
 	return map[string]float64{
-		"seconds": float64(duration),
+		"seconds": float64(seconds),
 		"size":    ratio,
 	}
 }
