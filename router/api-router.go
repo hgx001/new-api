@@ -177,6 +177,12 @@ func SetApiRouter(router *gin.Engine) {
 			// 前者决定「哪些请求有资格」，后者决定「这条路通不通」。
 			videoRouteAdmin.POST("/policy/ratio-gate", controller.SetSecondsRuleRatioGateAdmin)
 
+			// 万相官网 → 客美 tj 的手动换货开关（2026-11-19）：
+			// 打开 = wan3.0-video-官网 的请求改派 wan3.0-video-tj（渠道 32 客美），
+			// 计费仍按客户请求的官网模型；关闭（默认）= 留在官网。
+			// 与上面那批促销族规则不同源模型、不同开关，互不连坐。
+			videoRouteAdmin.POST("/policy/wan3-guanwang-tj", controller.SetWan3GuanwangTjAdmin)
+
 			// 规则五（故障转移）：源链路额度用完 / 渠道被关 → 改派到备胎。
 			//
 			// 与上面四个接口分开：规则五的触发源是**渠道状态**而不是请求特征，

@@ -115,6 +115,7 @@ import { ShortCapcutCard } from '@/features/video-route/components/short-capcut-
 import { ShortLinkCard } from '@/features/video-route/components/short-link-card'
 import { ShortYouzanCard } from '@/features/video-route/components/short-youzan-card'
 import { TotalFallbackCard } from '@/features/video-route/components/total-fallback-card'
+import { Wan3GuanwangTjCard } from '@/features/video-route/components/wan3-guanwang-tj-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
@@ -3587,6 +3588,15 @@ export function ChannelMutateDrawer({
                               )}
                             />
                           </div>
+
+                          {/* 万相官网 → 客美 tj 的手动换货开关（2026-11-19）：
+                              一个开关 = 这个商品由官网还是客美来跑。
+                              放在最前：它管的是「当前渠道上这个模型本身」，
+                              而下面几张卡管的是促销族（seedance2.5）的成本调度 ——
+                              两颗按钮不同商品、不连坐，视觉上也不该混在一起。
+                              只在本渠道承载源模型（wan3.0-video-官网，ch12）
+                              或目标模型（wan3.0-video-tj，ch32）时渲染。 */}
+                          <Wan3GuanwangTjCard channelModels={currentModels ?? ''} />
 
                           {/* 豆包链路开关（合并原「跨模型改派」+「故障转移」两卡）：
                               一个开关 = 豆包通不通。开着：超时长改派豆包、额度

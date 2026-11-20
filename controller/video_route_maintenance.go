@@ -583,6 +583,9 @@ func doubaoRouteAdminState() gin.H {
 	// 规则八（全量兜底 → cp-seedance-2.5）的状态：
 	// 独立成函数，理由同规则七（见 controller/video_route_total_fallback_admin.go）。
 	appendTotalFallbackState(state)
+	// 万相官网 → 客美 tj 的手动换货开关（2026-11-19）：
+	// 与上面那批促销族规则不同族，状态单算（见 controller/video_route_wan3_guanwang_tj_admin.go）。
+	appendWan3GuanwangTjState(state)
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }

@@ -41,6 +41,15 @@
 - SQL涉及 channels/abilities/models/ModelPrice 时用事务、备份及回滚方案；跨渠道搬模型保留 group/priority/weight，不只搬 model 字符串。
 - 退役 `seedance-2.5`、停用 `wan3.0-video-官网` 等不能因代码/旧卡片仍存在而擅自复活。是否在售/有渠道以当次授权和当前配置为准。
 
+## 同源模型的“手动换货”开关
+
+`wan3.0-video-官网`（ch12 DashScope）与 `wan3.0-video-tj`（ch32 客美）是同一商品的两条供货链路。
+
+- 开关：后台 渠道 → 编辑任一承载这两个模型的渠道 → 高级设置 → 路由与覆盖 → 「万相官网 → 客美 tj 换货」（卡片最上面第一张）。接口 `POST /api/video-route/policy/wan3-guanwang-tj`，策略存 `Seedance25TeHuiRoute30s` 的 `wan3_guanwang_tj_enabled`。
+- 打开后中间件把 body 的 model 改名 tj（计费原点仍是 **官网**，客户账单不变）；同时写死 `duration`（官网钳制/认 `seconds`，客美 400/不认）并用官网档位倍率覆盖目标倍率（客美 1080P 是 4 倍，官网 3.148 倍，不覆盖等于多收 27%）。
+- 两类请求**留在官网**：目标模型当前分组无可用渠道；画幅为自适应（客美无此档，会回落 16:9）。
+- 它与促销族规则（`enabled` 及各规则开关）**互不连坐**，换货不等于改价：改价仍要成对改 `ModelPrice` 与档位倍率。
+
 ## 分层验价，不用重复付费采样
 
 1. 确定性单测覆盖所有档位、模型变体、倍率、显式零值、预扣/结算及退款不变量。

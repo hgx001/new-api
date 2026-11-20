@@ -68,6 +68,10 @@ function policy(overrides: Partial<VideoRoutePolicy> = {}): VideoRoutePolicy {
     ecommerce_ratio_condition: false,
     ecommerce_seconds_condition: false,
     ecommerce_trigger_seconds: 20,
+    // 万相官网 → 客美 tj 手动换货（2026-11-19）：默认关闭。
+    wan3_guanwang_tj_enabled: false,
+    wan3_guanwang_tj_source_model: 'wan3.0-video-官网',
+    wan3_guanwang_tj_target_model: 'wan3.0-video-tj',
     ecommerce_ratio_condition_default: '9:16',
     ecommerce_keywords: [],
     ecommerce_keywords_default: [],

@@ -119,6 +119,22 @@ export type VideoRoutePolicy = {
   /** 「时长条件」的阈值（秒），**超过**该值命中。 */
   ecommerce_trigger_seconds: number
   /**
+   * 「万相官网 → 客美 tj」手动换货开关（2026-11-19）。
+   *
+   * 打开：`wan3_guanwang_tj_source_model`（wan3.0-video-官网）的请求
+   * 内部改名为 `wan3_guanwang_tj_target_model`（wan3.0-video-tj，渠道 32
+   * 客美 Kemeitv）执行，计费仍按客户请求的官网模型；
+   * 关闭（默认）：留在官网渠道。
+   *
+   * ⚠️ 与上面那批促销族规则**不同商品、不同源模型**，也不依赖
+   * `enabled`（规则总开关）—— 两个按钮互不连坐。
+   */
+  wan3_guanwang_tj_enabled: boolean
+  /** 换货开关的源模型（客户请求的那个名字）。 */
+  wan3_guanwang_tj_source_model: string
+  /** 换货开关的目标模型（实际执行的渠道上的那个名字）。 */
+  wan3_guanwang_tj_target_model: string
+  /**
    * 「9:16 比例」入口对应的比例 —— 由后端给出唯一事实源，
    * 前端不硬编码比例字符串（两处各写一份必然漂）。
    */
@@ -452,7 +468,9 @@ export async function setEcommerceConditions(
   const res = await api.post('/api/video-route/policy/ecommerce/conditions', {
     ratio_enabled: ratioEnabled,
     seconds_enabled: secondsEnabled,
-    ...(triggerSeconds === undefined ? {} : { trigger_seconds: triggerSeconds }),
+    ...(triggerSeconds === undefined
+      ? {}
+      : { trigger_seconds: triggerSeconds }),
   })
   return res.data.data
 }
@@ -488,6 +506,28 @@ export async function setTotalFallbackEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/total-fallback', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换「万相官网 → 客美 tj」手动换货开关（2026-11-19）。
+ *
+ * 打开：wan3.0-video-官网 的请求内部改名为 wan3.0-video-tj（渠道 32 客美
+ * Kemeitv）执行，计费仍按客户请求的官网模型；
+ * 关闭（默认）：请求留在官网渠道。
+ *
+ * 与豆包/规则六七八那批**不同商品、不同源模型**，也**不受它们的总开关
+ * Enabled 影响** —— 两个按钮互不连坐。
+ *
+ * 中间件会放行两类请求（留在官网）：目标模型在当前分组没有可用渠道、
+ * 请求画幅是 adaptive（客美没有这一档）。
+ */
+export async function setWan3GuanwangTjEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/wan3-guanwang-tj', {
     enabled,
   })
   return res.data.data

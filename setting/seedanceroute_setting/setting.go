@@ -471,6 +471,22 @@ type Policy struct {
 	// 行为与改造前逐字节一致。
 	SourceOverrides map[string]SourceOverride `json:"source_overrides,omitempty"`
 
+	// Wan3GuanwangTJEnabled 是「万相官网 → 客美 tj」改派开关（2026-11-19 起）。
+	//
+	// 打开：客户请求 wan3.0-video-官网 时，内部改名为 wan3.0-video-tj
+	// （渠道 32 客美 Kemeitv），计费仍按客户请求的官网模型算；
+	// 关闭（默认）：请求留在官网渠道，行为与改造前逐字节一致。
+	//
+	// 与上面那批规则**不是同一族**：那批是促销族（seedance2.5）的成本调度，
+	// 本开关是万相官网与客美两条同源链路的**手动换货**开关。所以它独立于
+	// Enabled（规则总开关）—— 打开总开关不该顺手把万相流量换渠道，
+	// 关掉总开关也不该让这个按钮失灵（与 TotalFallbackEnabled / RefAVCapcutEnabled
+	// 同一口径：用途完全不同的开关不能互相连坐）。
+	//
+	// 用 bool 而不是三态指针：这是**全新**开关，旧的生产 option JSON 里没有
+	// 这个字段，解析后零值 false = 不改派，升级当天线上流量逐字节不变。
+	Wan3GuanwangTJEnabled bool `json:"wan3_guanwang_tj_enabled,omitempty"`
+
 	// UpdatedAt 最近一次修改的 Unix 时间戳，0 表示从未改过。
 	UpdatedAt int64 `json:"updated_at"`
 }

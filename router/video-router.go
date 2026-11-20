@@ -49,6 +49,14 @@ func SetVideoRouter(router *gin.Engine) {
 		middleware.Wan3TehuiAliasRoute(),
 		middleware.Seedance25TeHuiRoute(),
 		middleware.Wan3PromptCompress(),
+		// 万相官网 → 客美 tj 的手动换货开关（2026-11-19）。
+		//
+		// 为什么排在最后（紧贴 Distribute）：它是「最终出口选择」而不是一条
+		// 促销族优化规则 —— 上游若将来给 wan3.0-video-官网 也加了改派规则，
+		// 该开关仍应是最后一个说话的人（运营手动换货的意图优先于自动调度）。
+		// 与上面三个中间件的模型名没有交集：源模型是 wan3.0-video-官网，
+		// 促销族只认 seedance2.5-*，别名中间件只认 wan3.0-720p-特惠。
+		middleware.Wan3GuanwangTjRoute(),
 		middleware.Distribute(),
 	)
 	{

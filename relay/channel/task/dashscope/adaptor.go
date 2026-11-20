@@ -101,13 +101,17 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return relaycommon.ValidateMultipartDirect(c, info)
 }
 
-// resolveResolution 从请求参数解析分辨率，优先级：
-// 1. 顶层 resolution（"480P" / "720P" / "1080P"）
-// 2. metadata.resolution（"480P" / "720P" / "1080P"）
-// 3. size 映射（"960x540" → 480P, "1280x720" → 720P）
-// 4. Init 阶段通过模型名设置的值（兼容旧调用方式）
-// 5. 默认 480P
-func (a *TaskAdaptor) resolveResolution(req relaycommon.TaskSubmitReq) string {
+// ResolutionFromRequest 按 adaptor 的优先级解析客户声明的分辨率档位，
+// 解析不出返回空串（**不**回落到默认值）。
+//
+// 为什么要把这段抽成导出函数：条件路由（middleware.Wan3GuanwangTjRoute）
+// 改派到客美渠道后，计费倍率要按**源模型（本渠道）的档位倍率**覆盖目标
+// adaptor 给的那一份 —— 否则 1080P 会按客美的 4.0 倍收官网客的钱（官网口径
+// 是 3.148 倍，多收 27%）。路由层拿不到 TaskAdaptor 实例，只能复用同一份解析。
+//
+// 同一份代码被 adaptor 与路由层共用，才不会出现「路由层按一个档位算、
+// adaptor 按另一个档位执行」的双事实源。
+func ResolutionFromRequest(req relaycommon.TaskSubmitReq) string {
 	// 1. 顶层 resolution（AutoDL 等任务模型使用）
 	if r := strings.ToUpper(strings.TrimSpace(req.Resolution)); r != "" {
 		if _, valid := resolutionSizeRatio[r]; valid {
@@ -115,7 +119,7 @@ func (a *TaskAdaptor) resolveResolution(req relaycommon.TaskSubmitReq) string {
 		}
 	}
 
-	// 2. metadata.resolution 优先
+	// 2. metadata.resolution
 	if req.Metadata != nil {
 		if r, ok := req.Metadata["resolution"].(string); ok {
 			r = strings.ToUpper(strings.TrimSpace(r))
@@ -132,6 +136,33 @@ func (a *TaskAdaptor) resolveResolution(req relaycommon.TaskSubmitReq) string {
 		}
 	}
 
+	return ""
+}
+
+// BillingSizeRatioForResolution 返回该分辨率档相对 480P 基准价的倍率。
+//
+// 供条件路由改派时写进 constant.ContextKeyRouteBillingSizeRatio：
+// 客户买的是 wan3.0-video-官网（480P ¥0.20/秒、1080P ¥0.63/秒），
+// 改派到客美 tj 后目标 adaptor 会给出它自己的 1/1.81/4 档倍率 —— 不覆盖
+// 就会把官网 1080P 按 4 倍收（¥0.80/秒），比官网口径贵 27%。
+func BillingSizeRatioForResolution(resolution string) float64 {
+	if ratio, ok := resolutionSizeRatio[strings.ToUpper(strings.TrimSpace(resolution))]; ok {
+		return ratio
+	}
+	return resolutionSizeRatio[defaultResolution]
+}
+
+// resolveResolution 从请求参数解析分辨率，优先级：
+// 1. 顶层 resolution（"480P" / "720P" / "1080P"）
+// 2. metadata.resolution（"480P" / "720P" / "1080P"）
+// 3. size 映射（"960x540" → 480P, "1280x720" → 720P）
+// 4. Init 阶段通过模型名设置的值（兼容旧调用方式）
+// 5. 默认 480P
+func (a *TaskAdaptor) resolveResolution(req relaycommon.TaskSubmitReq) string {
+	if r := ResolutionFromRequest(req); r != "" {
+		return r
+	}
+
 	// 4. 模型名映射（兼容旧调用方式）
 	if a.resolution != "" {
 		return a.resolution
@@ -141,8 +172,19 @@ func (a *TaskAdaptor) resolveResolution(req relaycommon.TaskSubmitReq) string {
 	return defaultResolution
 }
 
-// resolveDuration 解析时长并钳制到 2 秒 ~ 30 秒（wan3.0-video 官方范围）
-func (a *TaskAdaptor) resolveDuration(req relaycommon.TaskSubmitReq) int {
+// RequestDuration 按本渠道的口径解析请求时长并钳制到 2 秒 ~ 30 秒
+// （wan3.0-video 官方范围），不传时取 5 秒。
+//
+// 为什么导出：条件路由（middleware.Wan3GuanwangTjRoute）把请求改派到客美
+// 渠道时，必须把**本渠道解析出来的秒数**显式写成目标请求里的 `duration`：
+//
+//  1. 本渠道会**钳制**越界时长（1 → 2、60 → 30），客美渠道是直接 400 ——
+//     不写死就会把「以前能出片」的请求变成报错；
+//  2. 本渠道认顶层 `seconds`，客美的 resolveDuration **不读**它（只读
+//     duration / metadata）—— 不写死就会出现「客户买 10 秒、实收 5 秒」。
+//
+// 同一份钳制逻辑被 adaptor 与路由层共用，避免两边各算一次。
+func RequestDuration(req relaycommon.TaskSubmitReq) int {
 	d := req.Duration
 	if d <= 0 {
 		if s, err := strconv.Atoi(req.Seconds); err == nil {
@@ -159,6 +201,11 @@ func (a *TaskAdaptor) resolveDuration(req relaycommon.TaskSubmitReq) int {
 		return maxDuration
 	}
 	return d
+}
+
+// resolveDuration 解析时长并钳制到 2 秒 ~ 30 秒（wan3.0-video 官方范围）
+func (a *TaskAdaptor) resolveDuration(req relaycommon.TaskSubmitReq) int {
+	return RequestDuration(req)
 }
 
 // resolveRatio 解析客户端要求的画面比例。
