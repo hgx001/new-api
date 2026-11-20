@@ -57,6 +57,9 @@ func TestMain(m *testing.M) {
 		&ServerOrder{},
 		&ServerInstance{},
 		&ServerInstanceEvent{},
+		// 模型广场可见性（models.status）影响任务健康度统计口径，健康度用例要能
+		// 自己插入 meta 行来区分「在售 / 已从广场下架」。
+		&Model{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -85,6 +88,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM system_instances")
 		DB.Exec("DELETE FROM system_task_locks")
 		DB.Exec("DELETE FROM system_tasks")
+		DB.Exec("DELETE FROM models")
 		DB.Exec("DELETE FROM server_orders")
 		DB.Exec("DELETE FROM server_instances")
 		DB.Exec("DELETE FROM server_instance_events")

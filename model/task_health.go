@@ -2,6 +2,7 @@ package model
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -46,6 +47,13 @@ import (
 //     不算进来会把视频模型的提交失败漏掉。
 //     logs 里带 task_id 的行是任务提交时写的消费日志，其成败已由 tasks 表统计，
 //     必须排除，否则同一单会重复计数。
+//
+// 模型名口径（2026-11-20 补充）：
+//
+//	统计范围 = **模型广场实际在售的模型**。models.status = 0 表示「只从广场隐藏，
+//	不禁用调用」，这类名字（cp-seedance-* 是 App 直连的内部档位）仍有真实流量，
+//	若原样返回，接口里会出现一批广场上根本没有卡片的模型，排查时看着像
+//	「卡片缺了统计」。因此聚合时剔除已下架名字，见 hiddenHealthModelNames。
 
 // TaskHealthBucket 是趋势里的一个小时桶。
 type TaskHealthBucket struct {
@@ -157,8 +165,14 @@ func GetTaskHealthSummary(params TaskHealthQueryParams) (*TaskHealthSummary, err
 	}
 
 	aggByModel := map[string]*healthAgg{}
+	// 广场已下架的模型名：只隐藏展示、不禁用调用，所以它们仍有真实流量。
+	// 本接口只服务模型广场，这些条目没有卡片承载，剔除出去。
+	hiddenModels := hiddenHealthModelNames()
 	record := func(modelName string, isSuccess bool, durationSec int64, eventTs int64) {
 		if modelName == "" {
+			return
+		}
+		if _, hidden := hiddenModels[modelName]; hidden {
 			return
 		}
 		current, ok := aggByModel[modelName]
@@ -286,6 +300,35 @@ func taskHealthModelName(task *Task) string {
 		return billingContext.OriginModelName
 	}
 	return task.Properties.OriginModelName
+}
+
+// hiddenHealthModelNames 返回「已从模型广场下架」的模型名集合。
+//
+// models.status = 0 的语义是**仅隐藏展示**，不禁用调用 —— cp-seedance-* 这类内部
+// 档位就靠它隐藏，App 仍可直连并按自己的价格卖。健康度接口只喂模型广场，因此要把
+// 这些名字剔出去，否则接口会返回一批永远没有卡片承载的条目（n=11 / n=7 …），
+// 让人误判成「卡片缺了统计」。
+//
+// 只在**能确认已下架**（查到了 meta 行且 status=0）时剔除：
+//   - 查不到 meta 行的模型（MiniMax-M3 / MiniMax-M3.1 这类定价走 abilities +
+//     模型倍率、没有元数据行的）保持可见 —— 它们确实在售，误杀等于把数据抹掉。
+//   - 查询失败一律返回 nil（不过滤）：宁可多算几个幽灵条目，也不能因为一次 DB
+//     抖动把全站在售模型的成功率清空。
+func hiddenHealthModelNames() map[string]struct{} {
+	var metas []Model
+	if err := DB.Select("model_name").Where("status = ?", 0).Find(&metas).Error; err != nil {
+		return nil
+	}
+	if len(metas) == 0 {
+		return nil
+	}
+	hidden := make(map[string]struct{}, len(metas))
+	for _, meta := range metas {
+		if name := strings.TrimSpace(meta.ModelName); name != "" {
+			hidden[name] = struct{}{}
+		}
+	}
+	return hidden
 }
 
 // TaskHealthWindowStart 返回统计窗口起点。

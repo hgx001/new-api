@@ -4349,7 +4349,7 @@
     "succeeded": "réussi",
     "Success": "Succès",
     "Success rate": "Taux de réussite",
-    "Success rate (last 12 hours)": "Taux de réussite (12 dernières heures)",
+    "Success rate (last {{hours}} hours)": "Taux de réussite ({{hours}} dernières heures)",
     "Successfully created {{count}} API Key(s)": "{{count}} clé(s) API créée(s) avec succès",
     "Successfully created {{count}} redemption codes": "{{count}} codes de réduction créés avec succès",
     "Successfully deleted {{count}} API key(s)": "{{count}} clé(s) API supprimée(s) avec succès",

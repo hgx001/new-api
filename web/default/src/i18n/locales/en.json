@@ -4349,7 +4349,7 @@
     "succeeded": "succeeded",
     "Success": "Success",
     "Success rate": "Success rate",
-    "Success rate (last 12 hours)": "Success rate (last 12 hours)",
+    "Success rate (last {{hours}} hours)": "Success rate (last {{hours}} hours)",
     "Successfully created {{count}} API Key(s)": "Successfully created {{count}} API Key(s)",
     "Successfully created {{count}} redemption codes": "Successfully created {{count}} redemption codes",
     "Successfully deleted {{count}} API key(s)": "Successfully deleted {{count}} API key(s)",
