@@ -143,3 +143,13 @@ export type ViewMode = (typeof VIEW_MODES)[keyof typeof VIEW_MODES]
 
 /** Default page size for pricing table */
 export const DEFAULT_PRICING_PAGE_SIZE = 20
+
+/**
+ * 需要在模型卡片上用「醒目」样式强调的高亮标签（免费额度、限时让利类）。
+ *
+ * 这些 key 仍由 getModelHighlightKeys 提供、仍走 i18n，只是渲染时换成高对比度
+ * 的实心色块加图标，避免和普通规格标签（时长、分辨率）混在一起被忽略。
+ */
+export const PROMO_HIGHLIGHT_KEYS: ReadonlySet<string> = new Set([
+  'Reference video is free',
+])

@@ -26,10 +26,12 @@ import ru from '../../../i18n/locales/ru.json'
 import vi from '../../../i18n/locales/vi.json'
 import zh from '../../../i18n/locales/zh.json'
 import type { PricingModel } from '../types'
+import { PROMO_HIGHLIGHT_KEYS } from '../constants'
 import {
   H3_RESOLUTION_TIER_NOTE,
   getModelDisplayName,
   getModelDescriptionKey,
+  getModelHighlightKeys,
   getResolutionTierNoteKey,
   getResolutionTieredModels,
   getWan3SampleResolution,
@@ -288,4 +290,22 @@ describe('AutoDL H3 resolution tier note', () => {
       )
     })
   }
+})
+
+describe('hk-wan3 参考视频免费标注', () => {
+  // 全站唯一不收参考视频时长的档位（客美 tj 是「输出秒数 + 参考视频秒数」）。
+  // 这条卖点必须排在第一条并走醒目样式，否则会和时长/分辨率标签混在一起被忽略。
+  test('免费标注排在第一条高亮', () => {
+    const keys = getModelHighlightKeys(autoDLModel('hk-wan3'))
+    assert.equal(keys[0], 'Reference video is free')
+  })
+
+  test('该高亮被登记进醒目样式名单', () => {
+    // key 拼错或漏登记时会退回普通灰色标签，卖点就失效了。
+    assert.ok(PROMO_HIGHLIGHT_KEYS.has('Reference video is free'))
+  })
+
+  test('中文有对应翻译，不会退回英文原文', () => {
+    assert.equal(zh.translation['Reference video is free'], '参考视频不收费')
+  })
 })

@@ -14,7 +14,7 @@ GNU Affero General Public License for more details.
 You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
-import { ChevronRight, Copy } from 'lucide-react'
+import { ChevronRight, Copy, Gift } from 'lucide-react'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -24,7 +24,7 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
-import { DEFAULT_TOKEN_UNIT } from '../constants'
+import { DEFAULT_TOKEN_UNIT, PROMO_HIGHLIGHT_KEYS } from '../constants'
 import {
   getDynamicDisplayGroupRatio,
   getDynamicPricingSummary,
@@ -287,14 +287,23 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
 
       {modelHighlightKeys.length > 0 && (
         <div className='mt-3 flex flex-wrap gap-1.5 sm:mt-4'>
-          {modelHighlightKeys.map((key) => (
-            <span
-              key={key}
-              className='bg-primary/10 text-primary/80 ring-primary/10 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset'
-            >
-              {t(key)}
-            </span>
-          ))}
+          {modelHighlightKeys.map((key) => {
+            const isPromo = PROMO_HIGHLIGHT_KEYS.has(key)
+            return (
+              <span
+                key={key}
+                className={cn(
+                  'inline-flex items-center rounded-full px-2 py-0.5 text-xs ring-1 ring-inset',
+                  isPromo
+                    ? 'gap-1 bg-emerald-600 font-semibold text-white shadow-sm ring-emerald-500/40'
+                    : 'bg-primary/10 text-primary/80 ring-primary/10 font-medium'
+                )}
+              >
+                {isPromo && <Gift aria-hidden className='size-3 shrink-0' />}
+                {t(key)}
+              </span>
+            )
+          })}
         </div>
       )}
 

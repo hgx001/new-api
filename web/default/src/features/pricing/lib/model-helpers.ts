@@ -411,6 +411,16 @@ export function getModelHighlightKeys(model: PricingModel): string[] {
         '1080p supported',
         'No prompt',
       ]
+    // hk-wan3 是当前唯一不收参考视频时长的档位：上游只按输出秒数计费，
+    // 参考视频不额外收钱（客美 tj 是「输出秒数 + 参考视频秒数」合并计费）。
+    // 这条差异直接影响客户成本，排在高亮列表第一位。
+    case 'hk-wan3':
+      return [
+        'Reference video is free',
+        '4-30s',
+        '1080p supported',
+        '1:1 supported',
+      ]
     default:
       return []
   }
