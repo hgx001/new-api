@@ -28,7 +28,7 @@ import { getSuccessRateDotClass } from '@/features/performance-metrics/lib/forma
 import type { TaskHealthBucket, TaskHealthModel } from '@/features/performance-metrics/types'
 import { cn } from '@/lib/utils'
 
-import { splitTaskDuration } from '../lib/task-health'
+import { shouldShowTaskHealth, splitTaskDuration } from '../lib/task-health'
 
 // ---------------------------------------------------------------------------
 // 模型健康度面板
@@ -181,12 +181,13 @@ export function ModelHealthPanel(props: ModelHealthPanelProps) {
     [props.health?.buckets, bucketSeconds, barCount]
   )
 
-  if (!props.health) {
+  // 没有已完成样本就整块不渲染：空面板只有 24 个灰块 +「暂无完成请求」，
+  // 不传递任何信息。产品口径见 shouldShowTaskHealth 的注释。
+  if (!shouldShowTaskHealth(props.health)) {
     return null
   }
 
   const health = props.health
-  const hasSamples = health.request_count > 0
   const successRate = health.success_rate
 
   return (
@@ -222,11 +223,9 @@ export function ModelHealthPanel(props: ModelHealthPanelProps) {
         <div className='text-muted-foreground/70 flex items-center justify-between text-[11px]'>
           <span>{t('24-hour sample trend')}</span>
           <span>
-            {hasSamples
-              ? t('{{count}} completed requests', {
-                  count: health.request_count,
-                })
-              : t('No completed requests yet')}
+            {t('{{count}} completed requests', {
+              count: health.request_count,
+            })}
           </span>
         </div>
 

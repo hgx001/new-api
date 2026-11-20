@@ -40,6 +40,7 @@ import type { PerformanceGroup } from '@/features/performance-metrics/types'
 import { cn } from '@/lib/utils'
 
 import type { UptimeDayPoint } from '../lib/mock-stats'
+import { shouldShowTaskHealth } from '../lib/task-health'
 import type { PricingModel } from '../types'
 import { LatencyTrendChart, UptimeTrendChart } from './model-details-charts'
 import { ModelHealthPanel } from './model-health-panel'
@@ -211,8 +212,10 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
 
   // 异步模型（视频/音频/图片任务协议）没有同步 relay 采样，只有任务健康度数据。
   // 所以「没有同步指标」不等于「没有性能数据」—— 只要有健康度数据就照常渲染。
+  // 窗口内零样本不算有数据：面板本身也会整块不渲染，这里同步判掉，
+  // 免得留下一个只有标题的空 section / 误判成「暂无性能数据」。
   const hasSyncMetrics = performances.length > 0
-  const hasHealth = Boolean(health)
+  const hasHealth = shouldShowTaskHealth(health)
 
   if (
     (metricsQuery.isLoading && healthQuery.isLoading) ||

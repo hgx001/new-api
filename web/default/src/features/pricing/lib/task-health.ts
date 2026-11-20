@@ -21,6 +21,25 @@ For commercial licensing, please contact support@quantumnous.com
 // 任务健康度面板的纯工具函数
 // ---------------------------------------------------------------------------
 
+/**
+ * 模型卡片上的健康度整块是否该渲染。
+ *
+ * 口径：**没有已完成样本就不显示**（2026-11-20 产品口径）。空面板只会画出
+ * 24 个灰块和「暂无完成请求」，对用户没有任何信息量 —— 广场上「有的卡有
+ * 成功率、有的整块空白」正是这个原因，不是统计数据丢了。
+ *
+ * 注意区分两种"没有"：
+ *   - 窗口内零样本（request_count = 0）→ 不显示；
+ *   - 有样本但全失败（success_rate = 0）→ **必须显示**，那是真实故障信号，
+ *     藏起来等于把「这模型现在不可用」这条最重要的信息删掉。
+ */
+export function shouldShowTaskHealth<T extends { request_count: number }>(
+  health: T | undefined | null
+): health is T {
+  if (!health) return false
+  return Number.isFinite(health.request_count) && health.request_count > 0
+}
+
 /** 拆分后的耗时，用于按语言拼装单位。 */
 export type TaskDurationParts = {
   hours: number

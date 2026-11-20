@@ -39,6 +39,7 @@ import {
   isTokenBasedModel,
 } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
+import { shouldShowTaskHealth } from '../lib/task-health'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelHealthPanel } from './model-health-panel'
 import type { ModelPerfBadgeData } from './model-perf-badge'
@@ -342,8 +343,10 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         )}
       </div>
 
-      {/* 任务健康度：最近一段时间的请求成功率与完成耗时 */}
-      {props.health && (
+      {/* 任务健康度：最近一段时间的请求成功率与完成耗时。
+          没有已完成样本时整块不显示（含分隔线）—— 空的统计区只会让卡片
+          多出一条没有内容的横线。 */}
+      {shouldShowTaskHealth(props.health) && (
         <div className='border-border/60 mt-3 border-t pt-3 sm:mt-4'>
           <ModelHealthPanel health={props.health} compact />
         </div>
