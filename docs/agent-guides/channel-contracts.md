@@ -128,6 +128,26 @@ wan3.0-video **不是同一套**，adaptor 里按模型名分支处理（`isWan3
   `isAllowedPricingModel` 与前端 `isPerSecondModel` 同时放行，否则要么不显示、
   要么把 ¥/秒 挂成「/次」。
 
+## 促销族母本 mw-sd2.5-flash：上游线路间歇缺失 + 提交层重发（2026-11-21）
+
+- `seedance2.5-特惠` 的母本（`promoResidentModel`）由有赞 `mw-sd2.5-flash`
+  执行，该模型名**只发给上游**，不进 `channels.models` / `abilities` / 价表
+  —— 它是内部执行模型，对客仍是特惠、按源模型计价。
+- 上游会**间歇性**对 `mw-sd2.5-flash` 回 503
+  `No available channel for model mw-sd2.5-flash … claimed by a task plugin,
+  which has no enabled channel serving it (distributor)`。2026-11-21 一天内
+  实测 10 个窗口，长度 0–68 秒（中位约 20 秒），窗口之间同样参数能正常出片。
+  用非法分辨率探针直打上游可见可用线路在 `ccxm-video` /
+  `hooksai-seedance-flash` / `xm-seedance25` 之间动态增减 —— **是对方渠道在
+  掉线/恢复，与时长、参考图张数、我方参数无关**（30s 与 15s 探针结果一致）。
+- 该 503 发生在**上游受理之前**：没有 task id、我方不建单不预扣费、上游也不
+  计费，且提交带 `Idempotency-Key`，故重发零成本。youzanwan3 `DoRequest`
+  因此对「503 + no available channel / model_not_found」重发 **4 次 × 5 秒
+  ≈ 20 秒**（覆盖中位窗口，又不吃掉 ArcReel 侧 60 秒提交预算的一半以上）。
+  其它 4xx / 与渠道缺失无关的 503 不重发。
+- **不要**因为这条抖动把母本回退成整条兜底（规则八）：2026-11-20 实测那条
+  无条件兜底到 `cp-seedance-2.5flash` 时「大量失败」，比等对方线路恢复更糟。
+
 ## wan3.0-720p-特惠 按能力分流到心笔（2026-11-06，⚠️ 2026-11-16 已下线）
 
 > **2026-11-16 下线**：心笔不稳定，用户要求特惠全部走 Wan3 官网链路（480P 生成 +

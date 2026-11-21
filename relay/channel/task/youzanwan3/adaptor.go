@@ -2334,6 +2334,31 @@ const (
 	assetDownloadFailedRetryDelay = 12 * time.Second
 )
 
+// noAvailableChannelRetryMax / noAvailableChannelRetryDelay 是「上游瞬时无可用
+// 渠道」的重发预算（2026-11-21）。
+//
+// 现场（logs id=18984~19101、19201~19233，客户 arcreel，促销族 30 秒单）：上游
+// 有赞网关对 mw-sd2.5-flash 间歇性回 503，原文
+//
+//	No available channel for model mw-sd2.5-flash under group default:
+//	the model is claimed by a task plugin, which has no enabled channel serving it
+//
+// 一天内实测 10 个窗口，长度 0~68 秒（中位数约 20 秒），窗口之间同样的请求
+// 能正常出片；同期用非法分辨率探针直打上游，返回的可用线路在
+// ccxm-video / hooksai-seedance-flash / xm-seedance25 之间动态增减 —— 是对方
+// 渠道在掉线/恢复，不是我们的参数或时长有问题（30s 与 15s 探针结果一致）。
+//
+// 该失败发生在**上游受理之前**：没有 task id 返回，我方不建单、不预扣费，
+// 上游也不会为它计费；而且我方提交带 Idempotency-Key，重发不会重复建单。
+// 所以重发是零成本、零副作用的，只需要控制住总耗时。
+//
+// 预算 4 次 × 5 秒 ≈ 20 秒：覆盖中位窗口，又不至于把客户端的提交等待拖到
+// ArcReel 侧 60 秒预算的一半以上。更长的窗口由客户端自己的重试兜住。
+const (
+	noAvailableChannelRetryMax   = 4
+	noAvailableChannelRetryDelay = 5 * time.Second
+)
+
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	// 请求体必须可重放：重试要用同一份字节。上游 400 的响应体很小，
 	// 把它读出来还原给 DoResponse 的代价可以忽略。
@@ -2353,13 +2378,34 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 		bodyBytes = newBody
 	}
 	warmupReferenceMediaFromBody(c.Request.Context(), bodyBytes)
-	resp, err := doWithAssetDownloadRetry(
+	resp, err := doWithSubmitRetry(
 		c.Request.Context(),
 		func() (*http.Response, error) {
 			return channel.DoTaskApiRequest(a, c, info, bytes.NewReader(bodyBytes))
 		},
-		assetDownloadFailedRetryMax,
-		assetDownloadFailedRetryDelay,
+		[]submitRetryRule{
+			{
+				name:       "no_available_channel",
+				maxRetries: noAvailableChannelRetryMax,
+				delay:      noAvailableChannelRetryDelay,
+				match:      isUpstreamNoAvailableChannel,
+			},
+			{
+				name:       "asset_download_failed",
+				maxRetries: assetDownloadFailedRetryMax,
+				delay:      assetDownloadFailedRetryDelay,
+				match:      isAssetDownloadFailed,
+			},
+		},
+		func(rule submitRetryRule, retryNo int, statusCode int, body []byte) {
+			msg := string(body)
+			if runes := []rune(msg); len(runes) > 180 {
+				msg = string(runes[:180]) + "…"
+			}
+			logger.LogWarn(c, fmt.Sprintf(
+				"[SYS] youzan wan3 提交失败后重发（第 %d/%d 次，原因 %s，上游 HTTP %d）：%s",
+				retryNo, rule.maxRetries, rule.name, statusCode, msg))
+		},
 	)
 	if err != nil {
 		return nil, err
@@ -2372,37 +2418,97 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	return resp, nil
 }
 
-// doWithAssetDownloadRetry 在「上游抓素材失败」时原样重发，最多 maxRetries 次。
+// submitRetryRule 描述一类「可以原样重发」的上游提交失败。
 //
-// 响应体读完会原样塞回去：不论重试还是直接返回，调用方（DoResponse）都要
+// maxRetries 是**重发次数**（不含首次请求），每类失败各自计数：一次提交里
+// 素材回源失败和渠道缺失不会同时出现（400 与 503 互斥），但分别计数能保证
+// 任何一类都不会因为另一类的重发被提前耗尽预算。
+//
+// delay 是该类的重发间隔：两类失败的成因不同，等待时长也就不能共用——
+// 素材类要跳出 CDN 404 负缓存（12 秒），渠道类只需等对方线路回来（5 秒）。
+type submitRetryRule struct {
+	name       string
+	maxRetries int
+	delay      time.Duration
+	match      func(statusCode int, body []byte) bool
+}
+
+// doWithSubmitRetry 按规则原样重发提交请求。
+//
+// 响应体读完会原样塞回去：不论重发还是直接返回，调用方（DoResponse）都要
 // 继续读它，不能出现空 body。
+func doWithSubmitRetry(
+	ctx context.Context,
+	attempt func() (*http.Response, error),
+	rules []submitRetryRule,
+	onRetry func(rule submitRetryRule, retryNo int, statusCode int, body []byte),
+) (*http.Response, error) {
+	used := make([]int, len(rules))
+	for {
+		resp, err := attempt()
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil {
+			return resp, nil
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		if readErr != nil {
+			return resp, nil
+		}
+		hit := -1
+		for i := range rules {
+			if used[i] < rules[i].maxRetries && rules[i].match(resp.StatusCode, body) {
+				hit = i
+				break
+			}
+		}
+		if hit < 0 {
+			return resp, nil
+		}
+		used[hit]++
+		if onRetry != nil {
+			onRetry(rules[hit], used[hit], resp.StatusCode, body)
+		}
+		select {
+		case <-ctx.Done():
+			// 客户端已经走了：把上游这次的真实失败原样交回去。
+			return resp, nil
+		case <-time.After(rules[hit].delay):
+		}
+	}
+}
+
+// doWithAssetDownloadRetry 在「上游抓素材失败」时原样重发，最多 maxRetries 次。
 func doWithAssetDownloadRetry(
 	ctx context.Context,
 	attempt func() (*http.Response, error),
 	maxRetries int,
 	delay time.Duration,
 ) (*http.Response, error) {
-	for tried := 0; ; tried++ {
-		resp, err := attempt()
-		if err != nil {
-			return nil, err
-		}
-		if resp == nil || tried >= maxRetries {
-			return resp, nil
-		}
-		body, readErr := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		resp.Body = io.NopCloser(bytes.NewReader(body))
-		if readErr != nil || !isAssetDownloadFailed(resp.StatusCode, body) {
-			return resp, nil
-		}
-		select {
-		case <-ctx.Done():
-			// 客户端已经走了：把上游这次的真实失败原样交回去。
-			return resp, nil
-		case <-time.After(delay):
-		}
+	return doWithSubmitRetry(ctx, attempt, []submitRetryRule{{
+		name:       "asset_download_failed",
+		maxRetries: maxRetries,
+		delay:      delay,
+		match:      isAssetDownloadFailed,
+	}}, nil)
+}
+
+// isUpstreamNoAvailableChannel 判定响应是否为「上游此刻没有可用渠道」。
+//
+// 只认 503：上游对同一条线路的其它失败（额度耗尽会把请求挂起、参数非法、
+// 素材回源失败）都不是重发能解决的，重发只会白烧对方的额度。
+// 消息体按上游原文匹配，大小写不敏感——对方网关的英文措辞随版本变过，
+// 但 code=model_not_found 与 no available channel 这两处关键片段稳定。
+func isUpstreamNoAvailableChannel(statusCode int, body []byte) bool {
+	if statusCode != http.StatusServiceUnavailable {
+		return false
 	}
+	lower := bytes.ToLower(body)
+	return bytes.Contains(lower, []byte("no available channel")) ||
+		bytes.Contains(lower, []byte("model_not_found"))
 }
 
 // isAssetDownloadFailed 判定响应是否为「上游抓不到我们给的素材」。
