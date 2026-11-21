@@ -37,7 +37,18 @@ RUN set -e; \
       fi; \
       echo "OK: $f = $size 字节"; \
     done
-RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
+# -trimpath：把编译期的绝对路径（模块缓存路径、源码目录）替换成模块相对路径。
+#
+# 不加它，同一份源码在两台机器上编出来的二进制**哈希不同**——路径字符串被写进了
+# 产物。老机走 legacy builder、新机走 buildx，两边的路径拼法不一样，差异更大。
+# 后果不是功能问题（go.mod/go.sum、依赖版本、go version -m 全都一致），但
+# 「两台机器是不是同一个版本」就只能靠源码 SHA + 构建信息人工比对，没法用
+# sha256sum 一把梭。加了它，同一 SHA 在任何机器上编出的二进制逐字节相同，
+# 以后核版本就是一条 sha256sum。
+#
+# 2026-11-21 首次落地：此前两机二进制哈希不同（f96c5681… vs 4c2838af…），
+# 排查结论就是缺 -trimpath，不是代码差异。
+RUN go build -trimpath -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
 FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
 

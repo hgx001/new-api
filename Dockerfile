@@ -36,7 +36,10 @@ RUN go mod download
 COPY . .
 COPY --from=builder /build/web/default/dist ./web/default/dist
 COPY --from=builder-classic /build/web/classic/dist ./web/classic/dist
-RUN go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
+# -trimpath：与 Dockerfile.deploy 保持一致，去掉编译期绝对路径。
+# 两条构建路径必须产出同一个二进制，否则「版本是否一致」只能靠人工比对。
+# 详见 Dockerfile.deploy 里同一处的说明。
+RUN go build -trimpath -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" -o new-api
 
 FROM debian:bookworm-slim@sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a
 
