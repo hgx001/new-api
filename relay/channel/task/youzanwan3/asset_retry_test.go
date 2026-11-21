@@ -4,10 +4,12 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -114,4 +116,22 @@ func TestIsAssetDownloadFailed(t *testing.T) {
 	assert.False(t, isAssetDownloadFailed(http.StatusBadRequest, []byte(`{"code":"media_invalid"}`)))
 	assert.False(t, isAssetDownloadFailed(http.StatusOK, []byte(assetDownloadFailedBody)))
 	assert.False(t, isAssetDownloadFailed(http.StatusBadRequest, nil))
+}
+
+// 上游抓素材超时（重发也没成功）时，错误文案必须让运维知道「没扣费、可直
+// 接重试」，而不是丢一段 {"code":"fail_to_fetch_task"} 让人猜是不是参数错了。
+func TestDoResponse_素材超时给可重试结论(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+
+	adaptor := &TaskAdaptor{}
+	taskID, _, taskErr := adaptor.DoResponse(context, newTestResponse(http.StatusBadRequest, assetDownloadFailedBody), nil)
+
+	require.Empty(t, taskID, "没有上游 task id 就不能当成功返回")
+	require.NotNil(t, taskErr)
+	assert.Contains(t, taskErr.Message, "上游抓取参考素材超时")
+	assert.Contains(t, taskErr.Message, "未建单、未扣费")
+	assert.Contains(t, taskErr.Message, "可直接重试")
+	assert.Contains(t, taskErr.Message, "asset_download_failed", "上游原文要保留，排障还得能搜到错误码")
 }

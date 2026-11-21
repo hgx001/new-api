@@ -10,11 +10,11 @@ import (
 func TestOptimizeReferenceImageURL_自有CDN追加质量参数(t *testing.T) {
 	const base = "https://arcmedia.heibaidao.cn/projects/video-studio/refs/image/b1673dd198edf6b4/e2bdbe3b3820447e8dedfd8ab64483c5.jpg"
 	got := optimizeReferenceImageURL(base)
-	assert.Equal(t, base+"?imageMogr2/quality/90", got)
+	assert.Equal(t, base+"?imageMogr2/thumbnail/1280x1280%3E/quality/85", got)
 
 	// 已带查询参数时用 & 续接，不能出现两个 ?。
 	withQuery := base + "?x-version=2"
-	assert.Equal(t, withQuery+"&imageMogr2/quality/90", optimizeReferenceImageURL(withQuery))
+	assert.Equal(t, withQuery+"&imageMogr2/thumbnail/1280x1280%3E/quality/85", optimizeReferenceImageURL(withQuery))
 }
 
 func TestOptimizeReferenceImageURL_外部域名原样返回(t *testing.T) {
@@ -60,7 +60,7 @@ func TestOptimizeReferenceMedia_只动参考图(t *testing.T) {
 		{Type: "reference_image", URL: "https://example.com/b.jpg"},
 	}
 	out := optimizeReferenceMedia(media)
-	assert.Equal(t, "https://arcmedia.heibaidao.cn/a.jpg?imageMogr2/quality/90", out[0].URL)
+	assert.Equal(t, "https://arcmedia.heibaidao.cn/a.jpg?imageMogr2/thumbnail/1280x1280%3E/quality/85", out[0].URL)
 	assert.Equal(t, "https://arcmedia.heibaidao.cn/v.mp4", out[1].URL, "视频不能加图片处理参数")
 	assert.Equal(t, "https://arcmedia.heibaidao.cn/a.mp3", out[2].URL, "音频不能加图片处理参数")
 	assert.Equal(t, "https://example.com/b.jpg", out[3].URL)

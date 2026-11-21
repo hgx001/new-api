@@ -7,10 +7,10 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
-// 参考图体积优化（2026-11-20）。
+// 参考图体积优化（2026-11-20 首版，2026-11-21 加缩放）。
 //
-// 现场（logs id=18830，客户 arcreel，5 张参考图共 2.6MB）：图片 19:25:10 才
-// 写进 CDN，19:26:39 就提交，上游并发回源超时，回 400：
+// 现场（logs id=18830 / 18833 / 18962，客户 arcreel，5~7 张参考图 2.6~3.6MB）：
+// 图片刚写进 CDN 就提交，上游并发回源超时，回 400：
 //
 //	{"code":"asset_download_failed","message":"连接素材服务器超时。尚未提交上游生成。"}
 //
@@ -18,9 +18,8 @@ import (
 // 冷缓存 + 多张并发回源」把窗口拉长了，体积越小越容易一次成功。
 //
 // 做法：**只改 URL，不搬字节**。arcmedia 这个桶挂了腾讯云数据万象（CI），
-// 直接在地址上追加 `imageMogr2/quality/90`，CI 会在回源时按需重编码：
-//
-//	原图 870KB → q90 643KB（-26%）　q88 548KB（-37%）
+// 在地址上追加缩放 + 质量指令，CI 会在回源时按需重编码（实测见下方常量）。
+// 2026-11-21 现场：9c4513e0… 那张 891KB → 300KB，7 张合计 3.6MB → 1.2MB。
 //
 // 好处是链路里没有任何新增环节：不下载、不转存、不占网关出口（老机 3Mbps），
 // 也不引入新的失败点 —— 参数不生效时 CI 原样返图，最坏情况等于没加。
@@ -30,10 +29,21 @@ import (
 //     别人的图床）加参数可能直接 403/404，宁可不动。
 //  2. 带签名参数的地址一律不加：拼一个 `&` 会破坏签名，图就彻底拉不到了。
 const (
-	// referenceImageQualityParam 是腾讯云 CI 的重编码指令。
-	// 取 90 而不是更低：原图多在 q90~95，q90 已经能吃掉大图 20~26% 的冗余，
-	// 而人脸/服装纹理几乎无损（q85 才 -43%，但那是「压太多」的一档）。
-	referenceImageQualityParam = "imageMogr2/quality/90"
+	// referenceImageCIParam 是腾讯云 CI 的重编码指令。
+	//
+	// 2026-11-21 迭代：原来只加 quality/90，对这批参考图几乎没效果 ——
+	// 实测 2048×1152 的图只降 3%（461KB→446KB）。这批图的冗余不在量化，
+	// 而在像素数：客户传的是 2K 图，促销族对客恒定交付 720P（1280×720），
+	// 缩到 1280 长边已经跑在成片分辨率上，再大的像素对成片没有增量。
+	//
+	//	891KB(2048×1152) → 300KB(1280×720)　-66%
+	//	633KB(2048×1152) → 216KB(1280×720)　-66%
+	//	461KB(2048×1152) → 151KB(1280×720)　-67%
+	//
+	// `>` 是「仅缩不放」：比 1280 小的图原样返回，避免把小图放大变糊又变胖。
+	// `%3E` 是 `>` 的百分号编码 —— 裸 `>` 写进 query 有客户端会拒发，
+	// 编码后腾讯云 CI 一样认（2026-11-21 实测 200 / 1280×720）。
+	referenceImageCIParam = "imageMogr2/thumbnail/1280x1280%3E/quality/85"
 )
 
 // referenceImageOptimizableHosts 是允许追加 CI 参数的域名（自有腾讯云 CDN）。
@@ -89,7 +99,7 @@ func optimizeReferenceImageURL(raw string) string {
 	// 手工拼接：CI 的 path 风格参数经 url.Values.Encode 会把 `/` 转义成 %2F，
 	// 腾讯云就不认这条指令了。
 	if parsed.RawQuery == "" {
-		return trimmed + "?" + referenceImageQualityParam
+		return trimmed + "?" + referenceImageCIParam
 	}
-	return trimmed + "&" + referenceImageQualityParam
+	return trimmed + "&" + referenceImageCIParam
 }

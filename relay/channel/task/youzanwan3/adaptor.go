@@ -1746,8 +1746,9 @@ func (a *TaskAdaptor) buildRequestBodyWithOptions(req relaycommon.TaskSubmitReq,
 	if err != nil {
 		return nil, err
 	}
-	// 参考图体积优化（2026-11-20）：只对促销族母本生效，给自有 CDN 地址追加
-	// CI 质量参数，缩小上游并发回源时的字节数。见 optimizeReferenceMedia。
+	// 参考图体积优化（2026-11-20 首版 / 2026-11-21 加缩放）：只对促销族母本生效，
+	// 给自有 CDN 地址追加 CI 缩放+质量参数，缩小上游并发回源时的字节数。
+	// 见 optimizeReferenceMedia。
 	if optimizeImages {
 		media = optimizeReferenceMedia(media)
 	}
@@ -2397,7 +2398,28 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	if taskID == "" {
 		// 先把上游的真实错误透出去：失败响应里没有 task id，
 		// 直接报「空 task id」会掩盖真实原因（入参非法 / 积分不足 / 上游故障）。
-		if upstreamMsg := parsed.Error.text(); upstreamMsg != "" {
+		//
+		// 两种形态都要认：{"error":{...}} 是 OpenAI 风格，{"code":...,"message":...}
+		// 是你赞自己的失败壳（素材回源超时就长这样，错误码藏在字符串化的 message 里）。
+		upstreamMsg := parsed.Error.text()
+		if upstreamMsg == "" {
+			upstreamMsg = strings.TrimSpace(parsed.Message)
+		}
+		if upstreamMsg != "" {
+			// 参考素材回源超时：本渠道 DoRequest 已经自动重发过一次（见
+			// assetDownloadFailedRetryMax），到这里说明重发也没抓住上游那次
+			// 拉取。上游原话「尚未提交上游生成」，我方也没建单、没预扣费，
+			// 客户直接重试就是正确动作 —— 把这句话写进错误里，运维才不用
+			// 对着 {"code":"fail_to_fetch_task"} 猜是不是自己参数错了。
+			if isAssetDownloadFailed(resp.StatusCode, data) {
+				return "", nil, service.TaskErrorWrapper(
+					errors.Errorf(
+						"youzan wan3 rejected the request: 上游抓取参考素材超时（本站已自动重发 %d 次），本次未建单、未扣费，可直接重试；上游原文：%s",
+						assetDownloadFailedRetryMax, upstreamMsg),
+					"upstream_error",
+					http.StatusBadRequest,
+				)
+			}
 			// 上游账户余额耗尽 ≠ 普通失败：实测（2026-11-16）上游此时会把请求
 			// **挂起**而非丢弃，充值后复活执行并计费。我方不建单、不收费，
 			// 上游每复活一笔就是一笔纯亏 —— 必须尽快充值或临时停用渠道止损。
@@ -2409,13 +2431,6 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			}
 			return "", nil, service.TaskErrorWrapper(
 				errors.New("youzan wan3 rejected the request: "+upstreamMsg),
-				"upstream_error",
-				http.StatusBadRequest,
-			)
-		}
-		if parsed.Message != "" {
-			return "", nil, service.TaskErrorWrapper(
-				errors.New("youzan wan3 rejected the request: "+parsed.Message),
 				"upstream_error",
 				http.StatusBadRequest,
 			)
