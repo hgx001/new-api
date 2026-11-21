@@ -99,6 +99,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
+	// data URI 是图片任务通道的上游必然拒收的形状（客美只认公网 URL）。
+	// 在**预扣费之前**转存成暂存图床地址；转存失败直接拒单，不留「扣完钱再失败」的单。
+	staged, stageErr := stageDataURIImages(c, bundle)
+	if stageErr != nil {
+		return service.TaskErrorWrapperLocal(stageErr, "invalid_input_reference", http.StatusBadRequest)
+	}
+	if staged != bundle {
+		c.Set(stagedMediaContextKey, staged)
+	}
 	// 参考视频按秒加价（生成秒数 + 参考视频总秒数），秒数在这里探测并塞进 context，
 	// 由 EstimateBilling 读出来并入计费。
 	//
@@ -270,6 +279,13 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	media, err := collectMedia(req)
 	if err != nil {
 		return nil, &taskcommon.UserError{Err: err, Code: "invalid_input_reference"}
+	}
+	// 校验阶段已把 data URI 转存成公网 URL；命中就用转存结果，
+	// 否则这里重新 collect 会拿到原始 data URI，转存等于白做。
+	if staged, ok := c.Get(stagedMediaContextKey); ok {
+		if bundle, ok := staged.(*mediaBundle); ok {
+			media = bundle
+		}
 	}
 
 	body := submitRequest{
@@ -782,10 +798,43 @@ type mediaBundle struct {
 	Links  []mediaItem
 }
 
+// metadataMedia 解析 metadata.media / metadata.input.media 里的素材。
+//
+// 与 wan3 的 metadataMedia 逐字同口径（metadata.media 优先，input.media 兜底）：
+// 两处读法一旦漂移，同一份请求在官网与客美链路上就会解析出不同素材。
+func metadataMedia(metadata map[string]interface{}) ([]relaycommon.TaskMedia, error) {
+	if metadata == nil {
+		return nil, nil
+	}
+	raw, ok := metadata["media"]
+	if !ok {
+		if input, inputOK := metadata["input"].(map[string]interface{}); inputOK {
+			raw, ok = input["media"]
+		}
+	}
+	if !ok || raw == nil {
+		return nil, nil
+	}
+	encoded, err := common.Marshal(raw)
+	if err != nil {
+		return nil, errors.Wrap(err, "marshal metadata media failed")
+	}
+	var media []relaycommon.TaskMedia
+	if err := common.Unmarshal(encoded, &media); err != nil {
+		return nil, errors.Wrap(err, "unmarshal metadata media failed")
+	}
+	return media, nil
+}
+
 // collectMedia 归一请求里的全部素材，并做场景互斥与数量上限校验。
 //
 // 归一顺序（与站内其它 wan3 渠道一致）：
-// 显式 media → metadata.media → 老字段（images / image / input_reference）。
+// 显式 media → metadata.media / metadata.input.media → 老字段（images / image / input_reference）。
+//
+// ⚠️ metadata.input.media 这一层是 2026-11-21 补的：客户买的是
+// wan3.0-video-官网，ArcReel 按官网契约把首帧放在 metadata.input.media，
+// 网关改派到客美后原实现只读顶层 media，首帧被静默丢弃 ——
+// 任务照建、钱照扣、成片完全没有首帧。形状与 wan3 的 metadataMedia 同口径。
 //
 // ⚠️ 老字段（images / image / input_reference）默认按**首帧**处理：
 // 这三个字段的既有语义就是「第一张图当首帧」，与上游「1 张图 = first_frame」
@@ -794,7 +843,16 @@ type mediaBundle struct {
 func collectMedia(req relaycommon.TaskSubmitReq) (*mediaBundle, error) {
 	bundle := &mediaBundle{}
 
-	for _, item := range req.Media {
+	media := append([]relaycommon.TaskMedia(nil), req.Media...)
+	if len(media) == 0 {
+		fromMetadata, err := metadataMedia(req.Metadata)
+		if err != nil {
+			return nil, err
+		}
+		media = fromMetadata
+	}
+
+	for _, item := range media {
 		url := strings.TrimSpace(item.URL)
 		if url == "" {
 			return nil, fmt.Errorf("media url is required")
