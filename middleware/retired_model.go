@@ -29,6 +29,7 @@ import (
 // 必须与产品/运营口径一致。
 var retiredModelReplacements = map[string]string{
 	"seedance2.5-活动": "seedance2.5-特惠",
+	"wan3.0-720p-特惠": "seedance2.5-特惠",
 }
 
 // RetiredModelMessage 返回该模型的下线提示文案。

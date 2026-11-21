@@ -42,11 +42,21 @@ func TestRetiredModelMessage_命中已下线模型(t *testing.T) {
 	assert.Contains(t, message, retiredTestReplacement, "必须告诉客户该换成哪个型号")
 }
 
+// 2026-11-21 下架：wan3.0-720p-特惠 停售，替代型号是它的别名目标 seedance2.5-特惠。
+// 逐模型精确匹配，"-内链" 是另一条独立 SKU，不能被前缀误伤。
+func TestRetiredModelMessage_wan3720p特惠已下线(t *testing.T) {
+	message, retired := RetiredModelMessage("wan3.0-720p-特惠")
+	require.True(t, retired)
+	assert.Contains(t, message, "已下线")
+	assert.Contains(t, message, "seedance2.5-特惠")
+}
+
 func TestRetiredModelMessage_在售模型不拦截(t *testing.T) {
 	for _, modelName := range []string{
 		"seedance2.5-特惠",
 		"seedance-2-5",
 		"wan3.0-video-tj",
+		"wan3.0-720p-特惠-内链",
 		"",
 	} {
 		message, retired := RetiredModelMessage(modelName)
