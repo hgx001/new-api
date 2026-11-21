@@ -2295,7 +2295,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 }
 
 // assetDownloadFailedRetryMax / assetDownloadFailedRetryDelay 是「上游抓素材
-// 超时」的重试预算（2026-11-20）。
+// 超时」的重试预算（2026-11-20 初版，2026-11-21 调整）。
 //
 // 现场（logs id=18830，客户 arcreel，5 张参考图）：图片 19:25:10 才写进 CDN，
 // 19:26:39 就提交，上游并发回源超时，回 400：
@@ -2305,16 +2305,33 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 // 复核同一批图：国内 0.3 秒、全球 12 节点全 200 —— 素材本身没问题，是
 // 「刚上传 + 冷缓存 + 多张并发回源」撞在一起。
 //
-// 只对这一个错误码、只重试一次：
+// 只对这一个错误码重试：
 //   - 其它 4xx 重试只会把客户余额和上游额度再烧一遍；
-//   - 上游明确「尚未提交上游生成」，重试没有生成成本，也不会重复计费；
-//   - 第一次失败的上游请求已经把 CDN 填热，原样重发几乎必成。
+//   - 上游明确「尚未提交上游生成」，重试没有生成成本，也不会重复计费。
+//
+// 2026-11-21 调整（重试 1 次 / 延迟 3 秒 → 重试 2 次 / 延迟 12 秒）：
+//
+// 真因不是「慢」，是 **CDN 404 负缓存毒化**（详见 reference_warmup.go 的
+// 完整复现）：素材内容相同 → arcmedia 按 sha256 生成幂等 key → 同一个 key
+// 在 COS 还不存在的瞬间被访问过 → CDN 把 404 缓存住 → 后来 put 进去了也
+// 拿不到，要等负缓存过期。
+//
+// 实测负缓存 TTL = **10.4 秒**（建 404 → put → +10s 仍 404 → +15s 才 200）。
+// 所以「延迟 3 秒重试一次」必然还在同一个负缓存窗口里 —— 这正是 11-21
+// 09:53、10:02 两次仍失败的原因（那时生产已上线 1 次重试）。
+//
+// 延迟必须 **> 负缓存 TTL**：12 秒留一点余量。重试 2 次是上限，再多就撞
+// 客户端的提交预算（ArcReel 侧 60 秒）——上游每次失败要等 33~114 秒。
+//
+// 第一层防线是提交前的**预热**（reference_warmup.go）：预热完就是正缓存，
+// 上游直接命中，根本走不到重试。这里只是兜底，防止预热没覆盖到的场景
+// （如素材在别处被引用导致 key 提前建了 404 负缓存）。
 //
 // 客户断开（ctx 取消）时立即放弃重试：ArcReel 侧提交预算是 60 秒，而这次
 // 上游 88 秒才回失败，那时客户端早已放弃，重试只是白等。
 const (
-	assetDownloadFailedRetryMax   = 1
-	assetDownloadFailedRetryDelay = 3 * time.Second
+	assetDownloadFailedRetryMax   = 2
+	assetDownloadFailedRetryDelay = 12 * time.Second
 )
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -2324,6 +2341,18 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 	if err != nil {
 		return nil, err
 	}
+	// 提交上游**之前**给素材 URL 加 cache-buster 并预热（2026-11-21）。
+	//
+	// 顺序很重要：先加 cache-buster 改写 body，再拿改写后的 body 去预热 ——
+	// 预热的 URL 与上游将要请求的 URL 必须是**同一个**，否则就是预热了另一条
+	// 缓存键，等于没预热（详见 reference_compress.go 的 cache-buster 说明）。
+	//
+	// 为什么不能从 req.Media 取 URL：上游请求的是**加工后**的地址
+	// （促销族会追加 CI 参数），CDN 的缓存键包含 query 字符串，两者不是同一条键。
+	if newBody, ok := addReferenceCacheBusterToBody(bodyBytes, time.Now().Unix()); ok {
+		bodyBytes = newBody
+	}
+	warmupReferenceMediaFromBody(c.Request.Context(), bodyBytes)
 	resp, err := doWithAssetDownloadRetry(
 		c.Request.Context(),
 		func() (*http.Response, error) {
@@ -2406,15 +2435,25 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			upstreamMsg = strings.TrimSpace(parsed.Message)
 		}
 		if upstreamMsg != "" {
-			// 参考素材回源超时：本渠道 DoRequest 已经自动重发过一次（见
-			// assetDownloadFailedRetryMax），到这里说明重发也没抓住上游那次
-			// 拉取。上游原话「尚未提交上游生成」，我方也没建单、没预扣费，
-			// 客户直接重试就是正确动作 —— 把这句话写进错误里，运维才不用
-			// 对着 {"code":"fail_to_fetch_task"} 猜是不是自己参数错了。
+			// 参考素材回源超时：本渠道 DoRequest 已经预热过素材并自动重发过
+			// （见 reference_warmup.go / assetDownloadFailedRetryMax），到这里
+			// 说明重发也没抓住上游那次拉取。
+			//
+			// 真因是 CDN 的 **404 负缓存**（不是素材坏了、也不是网络慢）：
+			// arcmedia 按内容 sha256 生成幂等 key，同一素材内容永远是同一个
+			// key；该 key 在对象还不存在时被访问过 → CDN 缓存住 404 → 之后
+			// put 进去了也要等负缓存过期（实测 TTL 10.4 秒）。
+			//
+			// 上游原话「尚未提交上游生成」，我方也没建单、没预扣费，客户直接
+			// 重试就是正确动作 —— 把这句话写进错误里，运维才不用对着
+			// {"code":"fail_to_fetch_task"} 猜是不是自己参数错了。
 			if isAssetDownloadFailed(resp.StatusCode, data) {
 				return "", nil, service.TaskErrorWrapper(
 					errors.Errorf(
-						"youzan wan3 rejected the request: 上游抓取参考素材超时（本站已自动重发 %d 次），本次未建单、未扣费，可直接重试；上游原文：%s",
+						"youzan wan3 rejected the request: 上游抓取参考素材失败（本站已预热素材并自动重发 %d 次）"+
+							"；真因是 CDN 对该素材地址缓存了 404（素材内容相同即同一个幂等 key，"+
+							"对象尚未落盘时被访问过就会缓存住 404，实测负缓存约 10 秒），"+
+							"上游此刻拉到的还是 404。本次未建单、未扣费，可直接重试；上游原文：%s",
 						assetDownloadFailedRetryMax, upstreamMsg),
 					"upstream_error",
 					http.StatusBadRequest,

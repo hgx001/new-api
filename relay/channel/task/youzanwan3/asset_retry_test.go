@@ -118,8 +118,11 @@ func TestIsAssetDownloadFailed(t *testing.T) {
 	assert.False(t, isAssetDownloadFailed(http.StatusBadRequest, nil))
 }
 
-// 上游抓素材超时（重发也没成功）时，错误文案必须让运维知道「没扣费、可直
-// 接重试」，而不是丢一段 {"code":"fail_to_fetch_task"} 让人猜是不是参数错了。
+// 上游抓素材失败（预热+重发也没成功）时，错误文案必须让运维知道「没扣费、
+// 可直接重试」，而不是丢一段 {"code":"fail_to_fetch_task"} 让人猜是不是参数错了。
+//
+// 2026-11-21：文案还要点明真因是 CDN 的 404 负缓存 —— 运维看到「超时」
+// 会去查网络和素材，只有看到「缓存了 404」才知道该往 CDN 方向查。
 func TestDoResponse_素材超时给可重试结论(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -130,8 +133,9 @@ func TestDoResponse_素材超时给可重试结论(t *testing.T) {
 
 	require.Empty(t, taskID, "没有上游 task id 就不能当成功返回")
 	require.NotNil(t, taskErr)
-	assert.Contains(t, taskErr.Message, "上游抓取参考素材超时")
+	assert.Contains(t, taskErr.Message, "上游抓取参考素材失败")
 	assert.Contains(t, taskErr.Message, "未建单、未扣费")
 	assert.Contains(t, taskErr.Message, "可直接重试")
 	assert.Contains(t, taskErr.Message, "asset_download_failed", "上游原文要保留，排障还得能搜到错误码")
+	assert.Contains(t, taskErr.Message, "404", "要写明真因是 CDN 缓存了 404，否则运维会去查网络")
 }

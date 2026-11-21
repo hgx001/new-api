@@ -2,6 +2,7 @@ package youzanwan3
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -56,6 +57,38 @@ var signedQueryMarkers = []string{
 	"sign=", "signature=", "x-amz-", "x-cos-", "q-sign-", "access=", "token=",
 }
 
+// isWarmupableReferenceURL 判断这个参考图地址值不值得预热。
+//
+// 只预热**自有 CDN 域名**下的地址：
+//   - 别人的图床 / 对象存储签名链，预热等于替对方刷流量，且签名链多一次
+//     请求就多一次过期风险，宁可不动；
+//   - 带签名参数的地址一律不动：预热请求本身也是一次带签名的请求，可能
+//     触发对方的风控或把签名提前用掉。
+//
+// 与 optimizeReferenceImageURL 的域名/签名判定保持同一口径 —— 两处都要
+// 用同一份「哪些地址是我们自己的、哪些带签名」的判断，否则会出现
+// 「压缩加了参数但预热没加」这种半吊子状态。
+func isWarmupableReferenceURL(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	if _, ok := referenceImageOptimizableHosts[strings.ToLower(parsed.Host)]; !ok {
+		return false
+	}
+	lowerQuery := strings.ToLower(parsed.RawQuery)
+	for _, marker := range signedQueryMarkers {
+		if strings.Contains(lowerQuery, marker) {
+			return false
+		}
+	}
+	return true
+}
+
 // optimizeReferenceMedia 返回把参考图地址换成 CI 重编码版本后的素材列表。
 //
 // 只动 reference_image：视频/音频不在这里处理（体积与收益结构完全不同）。
@@ -102,4 +135,97 @@ func optimizeReferenceImageURL(raw string) string {
 		return trimmed + "?" + referenceImageCIParam
 	}
 	return trimmed + "&" + referenceImageCIParam
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// cache-buster：让每次提交的素材 URL 都是一条**全新的缓存键**
+// ════════════════════════════════════════════════════════════════════════
+//
+// 为什么需要（2026-11-21）：
+//
+// CDN 会把 404 缓存住（实测第 2 次起就是 X-Cache-Lookup: Cache Hit），
+// 而 arcmedia 的参考素材 key 按**内容 sha256** 生成 —— 同一张图内容相同，
+// key 就永远是同一个。于是「key 在对象还没落盘时被访问过 → CDN 记住 404
+// → 之后 put 进去了也拉不到，要等负缓存过期（实测 10.4 秒）」。
+//
+// 实测三件事：
+//
+//	裸 URL put 后立刻拉   → 404（0.04s，命中负缓存）
+//	带 ?v=xxx 的同一对象  → 200（0.81s，重新回源）
+//	带 ?imageMogr2 的地址  → 200（同样是新缓存键）
+//
+// 也就是说**只有换缓存键才能穿透负缓存**。所以给每次提交追加一个
+// cache-buster 参数，让这条 URL 对 CDN 而言是全新的：
+//
+//   - 负缓存打不到这条键上（它压根没见过这个 URL）；
+//   - 回源时对象已经在 COS 里（源站是 put 完才把 URL 交给我们），直接 200；
+//   - 顺带把这条键填成正缓存，上游随后拉是 Cache Hit（实测 0.04s）。
+//
+// 为什么不能只是「预热裸 URL」：负缓存还在裸 URL 那条键上，预热裸 URL
+// 只会把 404 又刷新一遍。实测预热裸 URL 后立刻拉，仍然是 404。
+//
+// 参数值用**当前秒级时间戳**：素材内容不变时，同一秒内重复提交会复用
+// 同一个键（那时对象早就落盘了，负缓存也过期了，无害）；跨秒则必然是新键。
+//
+// ⚠️ 只对自有 CDN 域名加。外部图床 / 带签名的地址一律不动（签名链多一个
+// 参数就失效了）。
+
+// referenceCacheBusterParam 是 cache-buster 的参数名。
+const referenceCacheBusterParam = "wz"
+
+// addReferenceCacheBuster 给素材地址追加 cache-buster 参数。
+//
+// 已有同名参数时**覆盖**而不是追加第二个 —— 避免 URL 里出现两个 wz=
+// 导致缓存键行为不可预期。
+func addReferenceCacheBuster(raw string, stamp int64) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return raw
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Host == "" {
+		return raw
+	}
+	if _, ok := referenceImageOptimizableHosts[strings.ToLower(parsed.Host)]; !ok {
+		return raw
+	}
+	lowerQuery := strings.ToLower(parsed.RawQuery)
+	for _, marker := range signedQueryMarkers {
+		if strings.Contains(lowerQuery, marker) {
+			return raw
+		}
+	}
+	// 手工拼 query：url.Values.Encode 会把 path 风格的 CI 参数（/）转义成 %2F，
+	// 腾讯云就不认那条指令了。所以这里只处理我们自己加的普通参数，
+	// 保留其余 query 原样。
+	//
+	// 注意 base 必须是**去掉 query 后的地址**：trimmed 里已经带了原 query，
+	// 直接在 trimmed 上拼 `?` 会得到 `...?a=1?wz=2` 这种坏 URL。
+	base := trimmed
+	if i := strings.Index(base, "?"); i >= 0 {
+		base = base[:i]
+	}
+	q := parsed.RawQuery
+	newParam := referenceCacheBusterParam + "=" + strconv.FormatInt(stamp, 10)
+	if q == "" {
+		return base + "?" + newParam
+	}
+	// 去掉已有的 wz=（可能重复），再追加新的。
+	parts := strings.Split(q, "&")
+	kept := parts[:0]
+	for _, p := range parts {
+		if p == "" {
+			continue
+		}
+		key := p
+		if i := strings.Index(p, "="); i >= 0 {
+			key = p[:i]
+		}
+		if strings.EqualFold(key, referenceCacheBusterParam) {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	kept = append(kept, newParam)
+	return base + "?" + strings.Join(kept, "&")
 }
