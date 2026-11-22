@@ -205,6 +205,12 @@ const (
 	//   ModelCapcut20  "cp-seedance-2.0"   —— CapCut 官网（按秒 ¥0.15）
 	//   上游真名也不同：doubao-seedance-2-0-260128。
 	ModelDoubao20 = "seedance-2-0"
+	// ModelDoubao25Flash 是豆包官网 **Seedance 2.5 Flash**（2026-11-22 上架，¥0.25/秒）。
+	//
+	// ⚠️ 与 `seedance-2-5` 只差 `-flash`，与 CapCut 的 `cp-seedance-2.5flash` 也不同物：
+	//   上游真名 doubao-seedance-2-5-flash-260628，时长口径 **4–15 秒**（不是 2.5 本体的
+	//   任意秒数），固定 720p。全程精确匹配，禁止 Contains 判档。
+	ModelDoubao25Flash = "seedance-2-5-flash"
 	// ModelCapcut20 / ModelCapcut20Fast 是 CapCut（剪映国际版）两个对外公开模型。
 	//
 	// ⚠️ 公开名带 `cp-` 前缀是为了与豆包 `seedance-2-0-fast` **区分**：
@@ -317,6 +323,10 @@ const (
 	// doubaoUpstreamModel20 是 2.0 **标准版**真名，与 Fast 只差 `-fast` 后缀：
 	// 归一必须精确匹配（前缀判定会把标准版错认成 Fast，客户按 0.25/秒 付费却跑低价档）。
 	doubaoUpstreamModel20 = "doubao-seedance-2-0-260128"
+	// doubaoUpstreamModel25Flash 是豆包官网 **Seedance 2.5 Flash** 真名
+	// （官网档位 key `seedance_v2.5_flash`「旗舰高性价比视频 • 2倍消耗」）。
+	// ⚠️ 与 2.5 只差 `-flash`：任何 Contains/前缀匹配都会串档。
+	doubaoUpstreamModel25Flash = "doubao-seedance-2-5-flash-260628"
 	// doubaoSeedreamUpstreamModel 是豆包官网图片档位 id（Worker 侧
 	// src/platforms/doubao/params.ts 的 DOUBAO_ALLOWED_IMAGE_MODELS 同口径）。
 	doubaoSeedreamUpstreamModel = "doubao-seedream-5-0-flash"
@@ -460,14 +470,15 @@ type modelSpec struct {
 }
 
 var modelSpecs = map[string]modelSpec{
-	ModelDola:         {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDolaVideo},
-	ModelDola25:       {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDola25Video},
-	ModelDoubao25:     {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel25},
-	ModelDoubao20Fast: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel20Fast},
-	ModelDoubao20:     {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel20},
-	ModelVideo:        {PlatformID: PlatformIDGemini, OutputMode: OutputModeVideo, Kind: kindVeoVideo},
-	ModelImage:        {PlatformID: PlatformIDImage, OutputMode: OutputModeImage, Kind: kindImage},
-	ModelReverse:      {PlatformID: PlatformIDJimeng, OutputMode: OutputModeText, Kind: kindReverse},
+	ModelDola:          {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDolaVideo},
+	ModelDola25:        {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDola25Video},
+	ModelDoubao25:      {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel25},
+	ModelDoubao20Fast:  {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel20Fast},
+	ModelDoubao20:      {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel20},
+	ModelDoubao25Flash: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel25Flash},
+	ModelVideo:         {PlatformID: PlatformIDGemini, OutputMode: OutputModeVideo, Kind: kindVeoVideo},
+	ModelImage:         {PlatformID: PlatformIDImage, OutputMode: OutputModeImage, Kind: kindImage},
+	ModelReverse:       {PlatformID: PlatformIDJimeng, OutputMode: OutputModeText, Kind: kindReverse},
 	// 万相两个模型共用 tongyiwan 平台，差异在 Kind（→ 校验分支 / DOM 路线）。
 	ModelWan27I2V:  {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanI2VVideo},
 	ModelWan27Edit: {PlatformID: PlatformIDTongyiwan, OutputMode: OutputModeVideo, Kind: kindWanEditVideo},
@@ -489,17 +500,17 @@ var modelSpecs = map[string]modelSpec{
 	// 计价：五档**统一按秒**（EstimateBilling 返回 seconds 倍率），720p 再乘 size 倍率。
 	// ElevenLabs（2026-11-21 上架，只一档）：公开名 = 上游真名，故不设 UpstreamModel。
 	// 计价：按秒（EstimateBilling 给 seconds 倍率），720p 再乘 size 倍率 2.0。
-	ModelElevenlabs25: {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
-	ModelElevenlabs20Mini:  {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
-	ModelElevenlabsGemini:  {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
-	ModelCapcut25:          {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
-	ModelCapcut25Flash:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25Flash},
-	ModelCapcut20:          {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
-	ModelCapcut20Fast:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
-	ModelCapcut20Mini:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
-	ModelTikTokSymphony:    {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstreamModel},
-	ModelTiktok20Fast:      {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstream20Fast},
-	ModelTiktok20:          {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstream20},
+	ModelElevenlabs25:     {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
+	ModelElevenlabs20Mini: {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
+	ModelElevenlabsGemini: {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
+	ModelCapcut25:         {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
+	ModelCapcut25Flash:    {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25Flash},
+	ModelCapcut20:         {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
+	ModelCapcut20Fast:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
+	ModelCapcut20Mini:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
+	ModelTikTokSymphony:   {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstreamModel},
+	ModelTiktok20Fast:     {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstream20Fast},
+	ModelTiktok20:         {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstream20},
 }
 
 // capcutOfficialToPublic 是「官网档位真名 → 对外公开名」的**反向**映射
@@ -596,6 +607,11 @@ const (
 	// ⚠️ 与 Fast 的 4–30 是两档，不要合并常量。
 	doubao20MinDuration = 4
 	doubao20MaxDuration = 15
+	// doubao25FlashMinDuration / MaxDuration：Seedance 2.5 Flash 与 2.0 标准版
+	// **同口径 4–15 秒**（官网同属 2 倍消耗档）。
+	// ⚠️ 与 2.5 本体的「任意正整数秒」是两档，不要合并。
+	doubao25FlashMinDuration = 4
+	doubao25FlashMaxDuration = 15
 )
 
 // validateDoubao20FastDuration 校验豆包 2.0 Fast 的 4–30 秒区间：
@@ -1028,9 +1044,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		// 分辨率归一成链路档位字面量（480p/720p）；空串 = 未指定，不下发键。
 		norm.Resolution = normalizeDoubaoResolution(req.Resolution)
-		if norm.Model == ModelDoubao20 {
-			// Seedance 2.0 标准版**固定 720p**（用户 2026-11-22 口径）：该档没有
-			// 分辨率档位可切，官网出片就是 720p。
+		if norm.Model == ModelDoubao20 || norm.Model == ModelDoubao25Flash {
+			// Seedance 2.0 标准版 / 2.5 Flash **固定 720p**（用户 2026-11-22 口径）：
+			// 该两档没有分辨率档位可切，官网出片就是 720p。
 			//   · 未指定 → 补 720p（这是该商品的**唯一规格**，不是改编用户选择）；
 			//   · 显式传了别的（480p/1080p/…）→ 400，绝不静默改成 720p 交付。
 			rawResolution := strings.ToUpper(strings.TrimSpace(req.Resolution))
@@ -1441,9 +1457,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	if (req.Kind == kindImage || req.Kind == kindSeedreamImage) && req.Count > 1 {
 		return map[string]float64{"n": float64(req.Count)}
 	}
-	// 豆包两档按秒（2026-11-22 起）：2.0 Fast ¥0.10/秒、2.0 标准版 ¥0.25/秒。
+	// 豆包三档按秒（2026-11-22）：2.0 Fast ¥0.10/秒、2.0 标准版 / 2.5 Flash ¥0.25/秒。
 	// 漏给 seconds 就会按「1 秒」收费（30 秒的片子只收 1 秒的钱）。
-	if req.Kind == kindDoubaoVideo && (req.Model == ModelDoubao20Fast || req.Model == ModelDoubao20) && req.Duration > 0 {
+	if req.Kind == kindDoubaoVideo && (req.Model == ModelDoubao20Fast || req.Model == ModelDoubao20 || req.Model == ModelDoubao25Flash) && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
 	}
 	// CapCut 五档模型**统一按秒**：ModelPrice 配 480p 基准单价（元/秒），
@@ -2997,6 +3013,14 @@ func checkDoubaoDuration(field string, value int, model string) (int, error) {
 		// Seedance 2.0 **标准版**只到 15 秒（用户 2026-11-22 口径）。
 		// ⚠️ 与 Fast 的 4–30 是两档，合并常量会把 30 秒下发给标准版。
 		if value < doubao20MinDuration || value > doubao20MaxDuration {
+			return 0, fmt.Errorf("%s must be between 4 and 15 for %s, got %d", field, model, value)
+		}
+		return value, nil
+	}
+	if model == ModelDoubao25Flash {
+		// Seedance 2.5 Flash：4–15 秒（与 2.0 标准版同口径）。
+		// 必须在「2.5 任意秒」分支之前拦，否则 30/99 秒会被当成合法值下发。
+		if value < doubao25FlashMinDuration || value > doubao25FlashMaxDuration {
 			return 0, fmt.Errorf("%s must be between 4 and 15 for %s, got %d", field, model, value)
 		}
 		return value, nil

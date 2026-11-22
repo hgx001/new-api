@@ -706,6 +706,10 @@ func TestModelListAndChannelName(t *testing.T) {
 		"seedance-2-0",
 		"seedance-2-0-fast",
 		"seedance-2-5",
+		// 2026-11-22 上架：豆包官网 Seedance 2.5 Flash（¥0.25/秒，4–15s 固定 720p）。
+		// ⚠️ 字节序：`seedance-2-5` 是 `seedance-2-5-flash` 的前缀，短名在前；
+		//   另一个近名是 CapCut 的 `cp-seedance-2.5flash`（不同官网、不同价，不互为别名）。
+		"seedance-2-5-flash",
 		"seedance-2.0",
 		"seedance-2.5",
 		// TikTok Symphony（2026-11-15 接入）：公开名不用 cp- 前缀
@@ -1856,4 +1860,64 @@ func TestReferenceRejectionDoesNotLeakDataURLPayload(t *testing.T) {
 		"错误信息泄露了 base64 图片内容")
 	assert.Contains(t, taskErr.Message, "data:image/png",
 		"错误信息仍应指出素材是 data URL，方便客户定位")
+}
+
+// ── Seedance 2.5 Flash（2026-11-22 上架）──
+//
+// 用户口径：「再加一个 2.5 flash 的模型，机制和 2.0 一样（一个账号可以跑两条），
+// 同样要上架 newapi」。这里锁死三件最容易回归的事：
+//  1. 与 2.5 本体（任意正整数秒）不是同一套时长口径 → 4–15 秒；
+//  2. 固定 720p，显式传别的分辨率 400（不静默改规格交付）；
+//  3. 计费必须给 seconds 倍率（漏了就是「按 1 秒收费」）。
+func TestDoubao25FlashParams(t *testing.T) {
+	spec, ok := SpecFor(ModelDoubao25Flash)
+	require.True(t, ok, "seedance-2-5-flash 必须在路由表里")
+	assert.Equal(t, PlatformIDDoubao, spec.PlatformID)
+	assert.Equal(t, OutputModeVideo, spec.OutputMode)
+	assert.Equal(t, kindDoubaoVideo, spec.Kind)
+	assert.Equal(t, doubaoUpstreamModel25Flash, spec.UpstreamModel)
+	assert.Equal(t, "doubao-seedance-2-5-flash-260628", spec.UpstreamModel)
+
+	// 4–15 秒：区间内任意整数透传
+	for _, d := range []int{4, 5, 7, 12, 15} {
+		c, info, a := postVideoCtx(t, fmt.Sprintf(
+			`{"model":%q,"prompt":"x","duration":%d,"resolution":"720p"}`, ModelDoubao25Flash, d))
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), "duration=%d 应当合法", d)
+		req, err := getNormalizedRequest(c)
+		require.NoError(t, err)
+		assert.Equal(t, d, req.Duration)
+		assert.Equal(t, "720p", req.Resolution)
+	}
+
+	// 区间外：显式 400，绝不静默成了 5 秒 / 30 秒
+	for _, d := range []int{3, 16, 30, 99} {
+		c, info, a := postVideoCtx(t, fmt.Sprintf(
+			`{"model":%q,"prompt":"x","duration":%d}`, ModelDoubao25Flash, d))
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, "duration=%d 必须被拒", d)
+		assert.Equal(t, "invalid_duration", taskErr.Code)
+	}
+
+	// 分辨率：缺省补唯一规格 720p；显式 480p/1080p 一律 400
+	c, info, a := postVideoCtx(t, fmt.Sprintf(`{"model":%q,"prompt":"x","duration":5}`, ModelDoubao25Flash))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "720p", req.Resolution, "未指定分辨率应补该档唯一规格 720p")
+
+	for _, res := range []string{"480p", "1080p"} {
+		c, info, a := postVideoCtx(t, fmt.Sprintf(
+			`{"model":%q,"prompt":"x","duration":5,"resolution":%q}`, ModelDoubao25Flash, res))
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, "resolution=%s 必须被拒", res)
+		assert.Equal(t, "invalid_resolution", taskErr.Code, res)
+	}
+
+	// 计费：5 秒 → seconds 倍率 5（漏了就会按 1 秒收钱）
+	c, info, a = postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"x","duration":5,"resolution":"720p"}`, ModelDoubao25Flash))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	billing := a.EstimateBilling(c, info)
+	require.NotNil(t, billing)
+	assert.Equal(t, float64(5), billing["seconds"])
 }
