@@ -603,6 +603,15 @@ func isAllowedPricingModel(name string) bool {
 	if name == "seedance-2-0" {
 		return true
 	}
+	// 豆包 Seedance **2.5 Flash**（2026-11-22 上架，按秒 ¥0.25、4–15 秒、固定 720p）。
+	//
+	// ⚠️ 三个近名互不命中：按次的 `seedance-2-5`、CapCut 的
+	// `cp-seedance-2.5flash`（¥0.15/秒、480p）、ElevenLabs 的 `el-seedance-2.5`。
+	// 本白名单只放行**对外公开名**，上游真名
+	// `doubao-seedance-2-5-flash-260628` 只存在于 adaptor 的 modelSpecs。
+	if name == "seedance-2-5-flash" {
+		return true
+	}
 	// 漫屋 ArcReel Gemini 官网视频 / Nano Banana Pro 远端图片：价格与 ArcReel 站点口径一致
 	//（¥1.0/次、¥0.3/张），上广场。
 	if name == "gemini-web-video" || name == "Nano Banana Pro" {

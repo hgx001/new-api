@@ -173,3 +173,20 @@ func TestIsAllowedPricingModelManwuWan3TeHui(t *testing.T) {
 	assert.True(t, isAllowedPricingModel("wan-3.0-yz"),
 		"有赞 wan-3.0-yz 仍须独立上广场")
 }
+
+// 豆包 Seedance 2.5 Flash（2026-11-22 上架）：`isAllowedPricingModel` 是逐个放行的
+// 硬编码白名单，漏加 = 模型在库里有能力行、能调用，但**广场上看不到**
+// （用户视角等于没上架）。同时锁死三个近名互不串档。
+func TestIsAllowedPricingModelDoubaoSeedance25Flash(t *testing.T) {
+	require.True(t, isAllowedPricingModel("seedance-2-5-flash"),
+		"seedance-2-5-flash must show in pricing square")
+
+	// 上游真名只存在于 adaptor 的 modelSpecs，不对外暴露、不上广场
+	require.False(t, isAllowedPricingModel("doubao-seedance-2-5-flash-260628"),
+		"upstream doubao id must not be exposed on the square")
+
+	// 近名不得互相串档（各自有独立规则，这里只验证本条不误伤）
+	require.True(t, isAllowedPricingModel("seedance-2-5"))
+	require.True(t, isAllowedPricingModel("seedance-2-0"))
+	require.True(t, isAllowedPricingModel("cp-seedance-2.5flash"))
+}
