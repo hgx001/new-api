@@ -41,6 +41,17 @@
 - SQL涉及 channels/abilities/models/ModelPrice 时用事务、备份及回滚方案；跨渠道搬模型保留 group/priority/weight，不只搬 model 字符串。
 - 退役 `seedance-2.5`、停用 `wan3.0-video-官网` 等不能因代码/旧卡片仍存在而擅自复活。是否在售/有渠道以当次授权和当前配置为准。
 
+## 模型供应商归类（2026-11-22）
+
+模型广场的“供应商”标签按**模型出身**归，不是按我们从哪条渠道进货。
+规则表在 `model/pricing_default.go` 的 `defaultVendorRules`（**有序切片**，先命中先算）。
+
+- 旧版是 `map[string]string`，Go 的 map 迭代顺序随机 → 同一个模型名在不同进程可能被归到不同供应商，属不可复现分类。已改成有序规则表，短片段（"o1"/"o3"/"yi"）一律走**前缀**匹配，避免误伤。
+- 口径：字节跳动（即梦/豆包/Seedance/Seedream）、阿里巴巴（万相 Wan 系 + 通义 Qwen/Tongyi）、MiniMax（H3/M 系/abab）、Google（Gemini/Nano Banana/Veo）、OpenAI、Anthropic、Moonshot、智谱、DeepSeek 等。
+- **Nano Banana Pro 属于 Google**（Gemini 3 Pro Image），历史上被挂在字节跳动下，已纠正。
+- 归类只覆盖**规则命中的模型**；没命中的保持未归类，不猜。
+- 落库：`models.vendor_id` 为空的行在**启动迁移后**自动补齐（`model.SyncModelVendors`）；已归类的行**一律不动**，管理员手工指定的供应商不会被规则覆盖。要纠正历史误分类走 `POST /api/models/vendor/sync?force=true`（管理员），它会重写所有命中规则的模型。
+
 ## 同源模型的“手动换货”开关
 
 `wan3.0-video-官网`（ch12 DashScope）与 `wan3.0-video-tj`（ch32 客美）是同一商品的两条供货链路。

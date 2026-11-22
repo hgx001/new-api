@@ -398,6 +398,17 @@ func migrateDBFast() error {
 		}
 	}
 	common.SysLog("database migrated")
+
+	// 给「从未归类」的模型补供应商（2026-11-22）。
+	//
+	// 放在迁移之后：models / vendors 两张表这时才存在。失败不阻断启动 ——
+	// 归类只影响模型广场的展示，缺一次同步最多少个供应商标签，下次重启
+	// 会再跑一遍。
+	if updated, err := SyncModelVendors(); err != nil {
+		common.SysError("自动归类模型供应商失败: " + err.Error())
+	} else if updated > 0 {
+		common.SysLog(fmt.Sprintf("自动归类模型供应商：补齐 %d 个", updated))
+	}
 	return nil
 }
 

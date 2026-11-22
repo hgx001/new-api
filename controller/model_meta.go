@@ -13,6 +13,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// SyncModelVendorsAdmin 按规则表补齐模型供应商。
+//
+// force=true：连已归类的模型一起重写（纠正历史误分类）；默认只补 vendor_id
+// 为空的行，已归类的一律不动。
+func SyncModelVendorsAdmin(c *gin.Context) {
+	force := c.Query("force") == "true"
+	var (
+		updated int
+		err     error
+	)
+	if force {
+		updated, err = model.ReclassifyModelVendors()
+	} else {
+		updated, err = model.SyncModelVendors()
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RefreshPricing()
+	common.ApiSuccess(c, gin.H{
+		"updated": updated,
+		"force":   force,
+	})
+}
+
 // GetAllModelsMeta 获取模型列表（分页）
 func GetAllModelsMeta(c *gin.Context) {
 
