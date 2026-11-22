@@ -179,6 +179,16 @@ export function getWan3SampleResolution(modelName: string): string | null {
  * `seedance-2-0` is fine, but never on `seedance-2` — it would flip both the
  * per-call models to the wrong unit.
  */
+/**
+ * ElevenLabs 按秒计费的三档（与后端 `ModelElevenlabs*` 常量一一对应，
+ * 由 `elevenlabs-family-crosscheck.test.ts` 直接读 Go 源码比对）。
+ */
+const ELEVENLABS_PER_SECOND_MODELS = new Set([
+  'el-seedance-2.5flash',
+  'el-seedance-2.0mini',
+  'el-gemini-1.2flash',
+])
+
 export function isPerSecondModel(model: PricingModel): boolean {
   const name = model.model_name ?? ''
   // CapCut（剪映国际版）五档：cp-seedance-2.0mini / -2.0fast / -2.0 /
@@ -188,6 +198,20 @@ export function isPerSecondModel(model: PricingModel): boolean {
   // ⚠️ 用**精确集合**而非前缀：`cp-seedance-2.5flash` 包含子串
   // `cp-seedance-2.5`，前缀匹配会把两档混为一谈（时长上界 15 vs 30 秒）。
   if (isCapcutFamilyMember(name)) {
+    return true
+  }
+  // ElevenLabs（elevenlabs.io 图像和视频创作台，2026-11-22 上架）三档：
+  // el-seedance-2.5flash / el-seedance-2.0mini / el-gemini-1.2flash。
+  //
+  // **三档全部按秒**（480p/360p 基准 ¥0.25/秒 × 时长 × 720p 倍率 2.0），
+  // 后端口径见 `relay/channel/task/manwu/adaptor.go` 的 kindElevenlabsVideo：
+  // EstimateBilling 返回 {seconds, size}，而 `el-*` 不在 IsTaskPerCallModel
+  // 名单里 → 倍率照乘（真机 5s/360p 实测 quota=85615 = ¥1.25 = ¥0.25×5）。
+  //
+  // 不登记的话广场会把 ¥0.25/秒 的牌价挂在「/次」下 —— 客户按次理解就是错价
+  // （2026-11-22 用户直接问到这一点）。用**精确集合**而非 `el-` 前缀：
+  // 将来若上按次档，前缀匹配会把它一起翻成 /秒。
+  if (ELEVENLABS_PER_SECOND_MODELS.has(name)) {
     return true
   }
   // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥5/次），不命中。
