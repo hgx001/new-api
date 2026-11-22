@@ -111,7 +111,7 @@ describe('ElevenLabs 按秒口径 × 后端源码', () => {
       names.length >= 3,
       `后端 adaptor.go 应至少有 3 个 ModelElevenlabs* 公开名，实际解析到：${JSON.stringify(names)}`
     )
-    assert.ok(names.includes('el-seedance-2.5flash'))
+    assert.ok(names.includes('el-seedance-2.5'))
     assert.ok(names.includes('el-seedance-2.0mini'))
     assert.ok(names.includes('el-gemini-1.2flash'))
   })
@@ -131,13 +131,14 @@ describe('ElevenLabs 按秒口径 × 后端源码', () => {
     // 前端集合是私有常量，用行为反查：对所有 el-* 形态的候选名逐个判定，
     // 判定为「按秒」的必须能在后端找到同名字面值。
     const candidates = [
-      'el-seedance-2.5flash',
+      'el-seedance-2.5',
       'el-seedance-2.0mini',
       'el-gemini-1.2flash',
       // 未上架的档位不该被前缀/误写命中
       'el-seedance-2.0',
       'el-seedance-2.0fast',
-      'el-seedance-2.5',
+      // 旧名（带 flash 后缀）已下线，不该再被判成按秒
+      'el-seedance-2.5flash',
     ]
     for (const name of candidates) {
       if (!isPerSecondModel(pricingModel(name))) continue

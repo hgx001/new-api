@@ -184,7 +184,7 @@ export function getWan3SampleResolution(modelName: string): string | null {
  * 由 `elevenlabs-family-crosscheck.test.ts` 直接读 Go 源码比对）。
  */
 const ELEVENLABS_PER_SECOND_MODELS = new Set([
-  'el-seedance-2.5flash',
+  'el-seedance-2.5',
   'el-seedance-2.0mini',
   'el-gemini-1.2flash',
 ])
@@ -201,7 +201,7 @@ export function isPerSecondModel(model: PricingModel): boolean {
     return true
   }
   // ElevenLabs（elevenlabs.io 图像和视频创作台，2026-11-22 上架）三档：
-  // el-seedance-2.5flash / el-seedance-2.0mini / el-gemini-1.2flash。
+  // el-seedance-2.5 / el-seedance-2.0mini / el-gemini-1.2flash。
   //
   // **三档全部按秒**（480p/360p 基准 ¥0.25/秒 × 时长 × 720p 倍率 2.0），
   // 后端口径见 `relay/channel/task/manwu/adaptor.go` 的 kindElevenlabsVideo：

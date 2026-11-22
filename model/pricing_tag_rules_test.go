@@ -35,7 +35,7 @@ func TestClassifyModelTag_媒体标签契约表(t *testing.T) {
 		{"seedance-2-0-fast", "video"},
 		{"cp-seedance-2.0", "video"},
 		{"cp-seedance-2.5flash", "video"},
-		{"el-seedance-2.5flash", "video"},
+		{"el-seedance-2.5", "video"},
 		{"seedance2.5-特惠", "video"},
 		{"seedance2.5-活动", "video"},
 		{"jimeng-video-reverse", "video"},

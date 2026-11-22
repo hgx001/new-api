@@ -12,14 +12,14 @@ import (
 
 // ElevenLabs（elevenlabs.io 图像和视频创作台）契约测试（2026-11-21 上架）。
 //
-// 只卖一档：el-seedance-2.5flash（Seedance 2.5 Flash）。
+// 只卖一档：el-seedance-2.5（Seedance 2.5 Flash）。
 // 计价：480p **0.25 元/秒**、720p **×2 = 0.50 元/秒**（用户 2026-11-21 定稿）。
 //
 // ⚠️ 这个价**低于官方成本**（fiat 表 480p ≈ ¥1.13/秒、720p ≈ ¥2.43/秒）。
 // 测试只钉「按这个数算」，不代表它覆盖成本 —— 改价属商务决策，找用户确认。
 
 func TestElevenlabsModelSpecRegistered(t *testing.T) {
-	spec, ok := SpecFor(ModelElevenlabs25Flash)
+	spec, ok := SpecFor(ModelElevenlabs25)
 	require.True(t, ok)
 	assert.Equal(t, PlatformIDElevenlabs, spec.PlatformID)
 	assert.Equal(t, OutputModeVideo, spec.OutputMode)
@@ -68,7 +68,7 @@ func TestElevenlabsDurationBounds(t *testing.T) {
 	_, err := validateElevenlabsDuration(20, elevenlabsMinDuration, elevenlabsModelMaxDuration(ModelElevenlabs20Mini))
 	assert.Error(t, err)
 	assert.Equal(t, 15, elevenlabsModelMaxDuration(ModelElevenlabs20Mini))
-	assert.Equal(t, 30, elevenlabsModelMaxDuration(ModelElevenlabs25Flash))
+	assert.Equal(t, 30, elevenlabsModelMaxDuration(ModelElevenlabs25))
 }
 
 func TestElevenlabsMiniRegisteredWithSamePrice(t *testing.T) {
@@ -82,7 +82,7 @@ func TestElevenlabsMiniRegisteredWithSamePrice(t *testing.T) {
 }
 
 func TestElevenlabsEstimateBillingGivesSeconds(t *testing.T) {
-	req := clientRequest{Model: ModelElevenlabs25Flash}
+	req := clientRequest{Model: ModelElevenlabs25}
 	// 直接验证「seconds 会进倍率表」这一层口径：
 	// 若漏给 seconds，15 秒的片子会按 1 秒收费。
 	ratios := map[string]float64{"seconds": 15}
@@ -97,13 +97,13 @@ func TestElevenlabsEstimateBillingGivesSeconds(t *testing.T) {
 
 func TestElevenlabsNotAliasedWithCapcut(t *testing.T) {
 	// 两档名字只差前缀，必须是两个独立商品
-	elSpec, elOK := SpecFor(ModelElevenlabs25Flash)
+	elSpec, elOK := SpecFor(ModelElevenlabs25)
 	cpSpec, cpOK := SpecFor(ModelCapcut25Flash)
 	require.True(t, elOK)
 	require.True(t, cpOK)
 	assert.NotEqual(t, elSpec.PlatformID, cpSpec.PlatformID)
 	assert.NotEqual(t, elSpec.Kind, cpSpec.Kind)
-	assert.NotEqual(t, ModelElevenlabs25Flash, ModelCapcut25Flash)
+	assert.NotEqual(t, ModelElevenlabs25, ModelCapcut25Flash)
 }
 
 func TestElevenlabsGeminiFlashContract(t *testing.T) {
@@ -148,7 +148,7 @@ func TestBuildRequestBodyMapsElevenlabsPayload(t *testing.T) {
 		wantNested bool
 		withVidAud bool
 	}{
-		{model: "el-seedance-2.5flash", duration: 6, resolution: "480p", ratio: "9:16", wantModel: "el-seedance-2.5flash", wantInputs: 3, wantNested: true, withVidAud: true},
+		{model: "el-seedance-2.5", duration: 6, resolution: "480p", ratio: "9:16", wantModel: "el-seedance-2.5", wantInputs: 3, wantNested: true, withVidAud: true},
 		{model: "el-seedance-2.0mini", duration: 8, resolution: "720p", ratio: "16:9", wantModel: "el-seedance-2.0mini", wantInputs: 1, wantNested: true, withVidAud: false},
 		{model: "el-gemini-1.2flash", duration: 5, resolution: "360p", ratio: "16:9", wantModel: "el-gemini-1.2flash", wantInputs: 1, wantNested: true, withVidAud: false},
 	}

@@ -325,7 +325,7 @@ var defaultModelPrice = map[string]float64{
 	//
 	// ⚠️ 生产价以 DB 的 options.ModelPrice 为准，这一行只是「库里没有该键」时的兜底。
 	// ⚠️ 与 CapCut 的 cp-seedance-2.5flash 是两个独立商品（不同官网、不同价），别合并。
-	"el-seedance-2.5flash":     0.25 / USD2RMB,
+	"el-seedance-2.5":     0.25 / USD2RMB,
 	"el-seedance-2.0mini":      0.25 / USD2RMB,
 	"el-gemini-1.2flash":       0.25 / USD2RMB,
 	"wan3.0-video":             0.0369863,      // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）。720P ¥0.54/秒、1080P ¥1.08/秒走分辨率倍率（2 / 4）

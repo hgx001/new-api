@@ -696,7 +696,7 @@ func TestModelListAndChannelName(t *testing.T) {
 		// 与 CapCut 的 cp-seedance-2.5flash **不是别名**（不同官网、不同价）。
 		"el-gemini-1.2flash",
 		"el-seedance-2.0mini",
-		"el-seedance-2.5flash",
+		"el-seedance-2.5",
 		"gemini-web-video",
 		"jimeng-video-reverse",
 		// 2026-11-22 上架两档：公开名用 sd- 中性前缀（模型 id 对用户可见，

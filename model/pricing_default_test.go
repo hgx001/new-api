@@ -29,7 +29,7 @@ func TestClassifyModelVendor_在售模型契约表(t *testing.T) {
 		{"cp-seedance-2.5", "字节跳动"},
 		{"cp-seedance-2.5flash", "字节跳动"},
 		{"el-seedance-2.0mini", "字节跳动"},
-		{"el-seedance-2.5flash", "字节跳动"},
+		{"el-seedance-2.5", "字节跳动"},
 		{"seedance2.5-特惠", "字节跳动"},
 		{"seedance2.5-活动", "字节跳动"},
 		{"jimeng-video-reverse", "字节跳动"},

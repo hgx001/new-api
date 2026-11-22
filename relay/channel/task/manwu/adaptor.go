@@ -84,7 +84,7 @@ const (
 	PlatformIDCapcut = "capcut"
 	// PlatformIDElevenlabs 是 ElevenLabs（elevenlabs.io 图像和视频创作台）平台。
 	//
-	// 2026-11-21 上架，**只卖一档**：Seedance 2.5 Flash（``el-seedance-2.5flash``）。
+	// 2026-11-21 上架，**只卖一档**：Seedance 2.5 Flash（``el-seedance-2.5``）。
 	// 与 CapCut 是两套完全不同的官网/账号池/风控身份，公开名用 ``el-`` 前缀区分。
 	PlatformIDElevenlabs = "elevenlabs"
 
@@ -222,13 +222,13 @@ const (
 	// 与 ModelCapcut25 是**两个独立商品**：上游真名不同（seedance_2.5 vs
 	// seedance_2.5_flash）、定价不同，**不做互为别名**。
 	ModelCapcut25Flash = "cp-seedance-2.5flash"
-	// ModelElevenlabs25Flash 是 ElevenLabs 唯一在售档位（2026-11-21 用户口径：
+	// ModelElevenlabs25 是 ElevenLabs 唯一在售档位（2026-11-21 用户口径：
 	// 「只上架这个就行 别的不上架」）。
 	//
 	// ⚠️ 公开名带 ``el-`` 前缀，与 CapCut 的 ``cp-seedance-2.5flash`` **不是别名**：
 	//   不同官网、不同账号池、不同计价（CapCut 480p ¥0.15/秒，这里 ¥0.25/秒）。
 	//   上游真名与公开名一致，故 modelSpec 不设 UpstreamModel（不做翻译）。
-	ModelElevenlabs25Flash = "el-seedance-2.5flash"
+	ModelElevenlabs25 = "el-seedance-2.5"
 	// ModelElevenlabs20Mini 是 ElevenLabs 第二档（2026-11-21 用户追加：
 	// 「把 mini 也上架吧 定价格 flash 一样」）。
 	//
@@ -489,7 +489,7 @@ var modelSpecs = map[string]modelSpec{
 	// 计价：五档**统一按秒**（EstimateBilling 返回 seconds 倍率），720p 再乘 size 倍率。
 	// ElevenLabs（2026-11-21 上架，只一档）：公开名 = 上游真名，故不设 UpstreamModel。
 	// 计价：按秒（EstimateBilling 给 seconds 倍率），720p 再乘 size 倍率 2.0。
-	ModelElevenlabs25Flash: {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
+	ModelElevenlabs25: {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
 	ModelElevenlabs20Mini:  {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
 	ModelElevenlabsGemini:  {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
 	ModelCapcut25:          {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
@@ -3491,7 +3491,7 @@ func inferMediaType(rawURL string) string {
 
 // ── ElevenLabs（elevenlabs.io 图像和视频创作台，2026-11-21 上架）───────────────
 //
-// 只卖一档：Seedance 2.5 Flash（`el-seedance-2.5flash`）。
+// 只卖一档：Seedance 2.5 Flash（`el-seedance-2.5`）。
 // 商品口径与 ArcReel 侧 `ELEVENLABS_*` 常量、Worker 侧
 // `src/platforms/elevenlabs/params.ts` 三处同口径。
 const (
@@ -3515,7 +3515,7 @@ const (
 //
 // 官网面板还有 1080p / 4K，但**未定价** → 显式拒绝，不静默降级。
 func normalizeElevenlabsResolution(raw string) (string, error) {
-	return normalizeElevenlabsModelResolution(raw, ModelElevenlabs25Flash)
+	return normalizeElevenlabsModelResolution(raw, ModelElevenlabs25)
 }
 
 // normalizeElevenlabsModelResolution 按**档位**归一分辨率。
