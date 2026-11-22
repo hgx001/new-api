@@ -163,6 +163,16 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(isPerSecondModel(autoDLModel('seedance-2.5')), false)
   })
 
+  // 豆包 Seedance 2.5 Flash（2026-11-22 上架，¥0.25/秒）：既不是 `seedance-2-0`
+  // 前缀（那条只覆盖 2.0 两档），也不是按次的 `seedance-2-5` → 必须单列，
+  // 否则广场会把每秒价挂在「/次」下（与 seedance-2-0-fast 同类的静默错价）。
+  test('marks doubao seedance-2-5-flash per second', () => {
+    assert.equal(isPerSecondModel(autoDLModel('seedance-2-5-flash')), true)
+    // 两个近名不能被串档：按次的 2.5 本体、CapCut 的 cp- 版本
+    assert.equal(isPerSecondModel(autoDLModel('seedance-2-5')), false)
+    assert.equal(isPerSecondModel(autoDLModel('cp-seedance-2.5flash')), true)
+  })
+
   // Erchun wan3.0-480p 的 EstimateBilling 返回 {"seconds": D}（见
   // relay/channel/task/erchun/adaptor.go），即按秒计费。但它的模型名既不以
   // wan3.0-video 也不以 wan3.0-smart 开头 historically 从未被本函数命中，

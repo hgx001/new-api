@@ -216,6 +216,11 @@ export function isPerSecondModel(model: PricingModel): boolean {
   }
   // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥5/次），不命中。
   // 2026-11-22 起 `seedance-2-0`（2.0 标准版，¥0.25/秒）也走这条前缀判定。
+  // `seedance-2-5-flash`（2.5 Flash，¥0.25/秒）单独登记：它**不**匹配
+  // `seedance-2-0` 前缀，也不是按次的 `seedance-2-5`，漏登记就会挂成「/次」。
+  if (name === 'seedance-2-5-flash') {
+    return true
+  }
   if (name.startsWith('seedance-2-0')) {
     return true
   }
