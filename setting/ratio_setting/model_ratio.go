@@ -461,12 +461,13 @@ var defaultModelPrice = map[string]float64{
 	// 乘 7/5 得到（EstimateBilling 只返回 size 倍率、不带 seconds）。
 	// 2026-11-18 老板调价：原 720P ¥4.5 / 1080P ¥5.5。
 	"wan-3.0-pro":       5.0 / USD2RMB,
-	"seedance-2.0":      1.0 / USD2RMB, // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
-	"seedance-2.5":      0.8 / USD2RMB, // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
-	"seedance-2-5":      3.5 / USD2RMB, // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥3.5/次（任意秒数同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调；2026-11-01 由 ¥3.0 上调至 ¥5.0；2026-11-04 由 ¥5.0 下调至 ¥3.5
-	"seedance-2-0-fast": 0.1 / USD2RMB, // 漫屋 ArcReel 豆包官网 Seedance 2.0 Fast（公开短名，上游真名 doubao-seedance-2-0-fast-260128），**按秒** ¥0.1/秒（4-30 秒逐秒可选，由 EstimateBilling 返回 seconds 倍率相乘）；2026-10-12 由 db-seedance-2-0 改名并由 ¥1.0/次 改为按秒
-	"gemini-web-video":  1.0 / USD2RMB, // 漫屋 ArcReel Gemini 官网 Veo，按次计费 ¥1.0/次（站点侧不乘时长）
-	"Nano Banana Pro":   0.3 / USD2RMB, // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
+	"seedance-2.0":      1.0 / USD2RMB,  // 漫屋 ArcReel Dola Seedance 2.0，按次计费 ¥1.0/次（5/10/15 秒同价，EstimateBilling 返回 nil）；2026-10-05 由 ¥1.5 下调
+	"seedance-2.5":      0.8 / USD2RMB,  // 漫屋 ArcReel Dola Seedance 2.5，固定 30 秒/720p，按次 ¥0.8/次；2026-10-05 由 ¥1.0 下调
+	"seedance-2-5":      3.5 / USD2RMB,  // 漫屋 ArcReel 豆包官网 Seedance 2.5（公开短名，上游真名 doubao-seedance-2-5-260628），按次 ¥3.5/次（任意秒数同价，EstimateBilling 返回 nil）；2026-10-12 由 db-seedance-2-5 改名并由 ¥2.0 上调；2026-11-01 由 ¥3.0 上调至 ¥5.0；2026-11-04 由 ¥5.0 下调至 ¥3.5
+	"seedance-2-0":      0.25 / USD2RMB, // 漫屋 ArcReel 豆包官网 Seedance 2.0 **标准版**（上游真名 doubao-seedance-2-0-260128），按秒 ¥0.25/秒（4–30 秒逐秒，EstimateBilling 给 seconds 倍率）；2026-11-22 上架
+	"seedance-2-0-fast": 0.1 / USD2RMB,  // 漫屋 ArcReel 豆包官网 Seedance 2.0 Fast（公开短名，上游真名 doubao-seedance-2-0-fast-260128），**按秒** ¥0.1/秒（4-30 秒逐秒可选，由 EstimateBilling 返回 seconds 倍率相乘）；2026-10-12 由 db-seedance-2-0 改名并由 ¥1.0/次 改为按秒
+	"gemini-web-video":  1.0 / USD2RMB,  // 漫屋 ArcReel Gemini 官网 Veo，按次计费 ¥1.0/次（站点侧不乘时长）
+	"Nano Banana Pro":   0.3 / USD2RMB,  // 漫屋 ArcReel 远端图片，按张 ¥0.3/张；张数走 OtherRatios{"n":N} 倍率
 	// 豆包系图片两个模型（2026-11-07 上架，用户口径「定价两毛一张」）：
 	//   - Seedream 5.0 Flash：豆包官网「图像生成」入口的默认模型
 	//   - Seedream 4.5：dola 官网 /chat/create-image 的默认模型

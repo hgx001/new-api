@@ -197,6 +197,14 @@ const (
 	ModelDola25       = "seedance-2.5"
 	ModelDoubao25     = "seedance-2-5"
 	ModelDoubao20Fast = "seedance-2-0-fast"
+	// ModelDoubao20 是豆包官网 Seedance **2.0 标准版**（2026-11-22 上架，¥0.25/秒）。
+	//
+	// ⚠️ 三个"2.0"不是一回事，别互相别名：
+	//   ModelDola      "seedance-2.0"      —— dola 官网（按次 ¥1.0）
+	//   ModelDoubao20  "seedance-2-0"      —— 豆包官网标准版（按秒 ¥0.25，本档）
+	//   ModelCapcut20  "cp-seedance-2.0"   —— CapCut 官网（按秒 ¥0.15）
+	//   上游真名也不同：doubao-seedance-2-0-260128。
+	ModelDoubao20 = "seedance-2-0"
 	// ModelCapcut20 / ModelCapcut20Fast 是 CapCut（剪映国际版）两个对外公开模型。
 	//
 	// ⚠️ 公开名带 `cp-` 前缀是为了与豆包 `seedance-2-0-fast` **区分**：
@@ -306,6 +314,9 @@ const (
 const (
 	doubaoUpstreamModel25     = "doubao-seedance-2-5-260628"
 	doubaoUpstreamModel20Fast = "doubao-seedance-2-0-fast-260128"
+	// doubaoUpstreamModel20 是 2.0 **标准版**真名，与 Fast 只差 `-fast` 后缀：
+	// 归一必须精确匹配（前缀判定会把标准版错认成 Fast，客户按 0.25/秒 付费却跑低价档）。
+	doubaoUpstreamModel20 = "doubao-seedance-2-0-260128"
 	// doubaoSeedreamUpstreamModel 是豆包官网图片档位 id（Worker 侧
 	// src/platforms/doubao/params.ts 的 DOUBAO_ALLOWED_IMAGE_MODELS 同口径）。
 	doubaoSeedreamUpstreamModel = "doubao-seedream-5-0-flash"
@@ -453,6 +464,7 @@ var modelSpecs = map[string]modelSpec{
 	ModelDola25:       {PlatformID: PlatformID, OutputMode: OutputModeVideo, Kind: kindDola25Video},
 	ModelDoubao25:     {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel25},
 	ModelDoubao20Fast: {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel20Fast},
+	ModelDoubao20:     {PlatformID: PlatformIDDoubao, OutputMode: OutputModeVideo, Kind: kindDoubaoVideo, UpstreamModel: doubaoUpstreamModel20},
 	ModelVideo:        {PlatformID: PlatformIDGemini, OutputMode: OutputModeVideo, Kind: kindVeoVideo},
 	ModelImage:        {PlatformID: PlatformIDImage, OutputMode: OutputModeImage, Kind: kindImage},
 	ModelReverse:      {PlatformID: PlatformIDJimeng, OutputMode: OutputModeText, Kind: kindReverse},
@@ -1397,7 +1409,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	if (req.Kind == kindImage || req.Kind == kindSeedreamImage) && req.Count > 1 {
 		return map[string]float64{"n": float64(req.Count)}
 	}
-	if req.Kind == kindDoubaoVideo && req.Model == ModelDoubao20Fast && req.Duration > 0 {
+	// 豆包两档按秒（2026-11-22 起）：2.0 Fast ¥0.10/秒、2.0 标准版 ¥0.25/秒。
+	// 漏给 seconds 就会按「1 秒」收费（30 秒的片子只收 1 秒的钱）。
+	if req.Kind == kindDoubaoVideo && (req.Model == ModelDoubao20Fast || req.Model == ModelDoubao20) && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
 	}
 	// CapCut 五档模型**统一按秒**：ModelPrice 配 480p 基准单价（元/秒），
@@ -2775,7 +2789,9 @@ func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
 //   - 2.5 = 任意正整数秒原样透传（不设上限，2026-11-09 用户口径：
 //     new-api 传多少秒就下发多少秒，禁止吸附/回落改写）。
 func checkDoubaoDuration(field string, value int, model string) (int, error) {
-	if model == ModelDoubao20Fast {
+	if model == ModelDoubao20Fast || model == ModelDoubao20 {
+		// 2.0 标准版与 Fast 同一档滑条（4–30 秒任意整数），官网 tiers 5/10/15/30
+		// 只是快捷点；非档位值由 Worker 的 durationHack 提交前改写请求体真跑。
 		return validateDoubao20FastDuration(field, value, model)
 	}
 	if value < 1 {

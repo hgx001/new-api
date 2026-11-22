@@ -191,3 +191,48 @@ func TestBuildRequestBodyMapsElevenlabsPayload(t *testing.T) {
 		}
 	}
 }
+
+// 豆包 Seedance 2.0 **标准版**（2026-11-22 上架，按秒 ¥0.25）。
+//
+// 与 dola 的 `seedance-2.0`（点号）、CapCut 的 `cp-seedance-2.0` 是三个不同商品，
+// 与豆包自己的 `seedance-2-0-fast` 只差价格与上游真名后缀 —— 这四条断言逐一钉住，
+// 防「顺手加别名」把三档串成一个。
+func TestDoubaoSeedance20Standard(t *testing.T) {
+	spec, ok := SpecFor(ModelDoubao20)
+	require.True(t, ok, "seedance-2-0 必须注册 modelSpec")
+	assert.Equal(t, PlatformIDDoubao, spec.PlatformID)
+	assert.Equal(t, kindDoubaoVideo, spec.Kind)
+	assert.Equal(t, "doubao-seedance-2-0-260128", spec.UpstreamModel)
+
+	// 不互为别名：dola 与 capcut 的两档各自指向自己的上游
+	dola, ok := SpecFor(ModelDola)
+	require.True(t, ok)
+	assert.Equal(t, PlatformID, dola.PlatformID)
+	capcut, ok := SpecFor(ModelCapcut20)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDCapcut, capcut.PlatformID)
+
+	// 时长：4–30 秒任意整数（与 Fast 同档滑条），越界显式拒绝不吸附
+	for _, seconds := range []int{4, 5, 17, 30} {
+		got, err := checkDoubaoDuration("duration", seconds, ModelDoubao20)
+		require.NoError(t, err, "seconds=%d", seconds)
+		assert.Equal(t, seconds, got)
+	}
+	for _, seconds := range []int{3, 31} {
+		_, err := checkDoubaoDuration("duration", seconds, ModelDoubao20)
+		assert.Error(t, err, "seconds=%d 越界必须拒绝", seconds)
+	}
+}
+
+// 按秒计费：EstimateBilling 必须为 2.0 标准版给出 seconds 倍率。
+//
+// 漏给的后果是「按 1 秒收费」——30 秒的片子只收 1 秒的钱；给错档（按次）则会
+// 反过来被乘一遍。这里直接断言倍率数值。
+func TestDoubaoSeedance20BillingRatios(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2-0","prompt":"hi","duration":5}`)
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+
+	ratios := a.EstimateBilling(c, info)
+	require.NotNil(t, ratios)
+	assert.Equal(t, float64(5), ratios["seconds"], "2.0 标准版必须按秒计费")
+}

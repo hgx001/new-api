@@ -596,6 +596,13 @@ func isAllowedPricingModel(name string) bool {
 	if name == "seedance-2-5" || name == "seedance-2-0-fast" {
 		return true
 	}
+	// 豆包 Seedance 2.0 **标准版**（2026-11-22 上架，按秒 ¥0.25）。
+	//
+	// ⚠️ 与 dola 的 `seedance-2.0`（点号，按次 ¥1.0）、CapCut 的 `cp-seedance-2.0`
+	// 是三个不同商品：不同官网、不同账号池、不同计价，**不互为别名**。
+	if name == "seedance-2-0" {
+		return true
+	}
 	// 漫屋 ArcReel Gemini 官网视频 / Nano Banana Pro 远端图片：价格与 ArcReel 站点口径一致
 	//（¥1.0/次、¥0.3/张），上广场。
 	if name == "gemini-web-video" || name == "Nano Banana Pro" {
