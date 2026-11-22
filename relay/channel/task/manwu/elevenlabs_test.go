@@ -213,14 +213,15 @@ func TestDoubaoSeedance20Standard(t *testing.T) {
 	assert.Equal(t, PlatformIDCapcut, capcut.PlatformID)
 
 	// 时长：4–30 秒任意整数（与 Fast 同档滑条），越界显式拒绝不吸附
-	for _, seconds := range []int{4, 5, 17, 30} {
+	// 2.0 标准版 4–15（用户 2026-11-22 口径），越界显式拒绝
+	for _, seconds := range []int{4, 5, 15} {
 		got, err := checkDoubaoDuration("duration", seconds, ModelDoubao20)
 		require.NoError(t, err, "seconds=%d", seconds)
 		assert.Equal(t, seconds, got)
 	}
-	for _, seconds := range []int{3, 31} {
+	for _, seconds := range []int{3, 16, 30} {
 		_, err := checkDoubaoDuration("duration", seconds, ModelDoubao20)
-		assert.Error(t, err, "seconds=%d 越界必须拒绝", seconds)
+		assert.Error(t, err, "seconds=%d 越界必须拒绝（只支持 4–15）", seconds)
 	}
 }
 
@@ -235,4 +236,51 @@ func TestDoubaoSeedance20BillingRatios(t *testing.T) {
 	ratios := a.EstimateBilling(c, info)
 	require.NotNil(t, ratios)
 	assert.Equal(t, float64(5), ratios["seconds"], "2.0 标准版必须按秒计费")
+}
+
+// 2026-11-22 用户口径修正：Seedance 2.0 **标准版**只支持 4–15 秒、分辨率**固定 720p**。
+//
+// 这两条都是「静默错交付」的高危点：
+//
+//	· 时长当 30 秒下发 → 官网拒（白跑）或被截断（客户按 30 秒付费拿到 15 秒）；
+//	· 分辨率被静默改成 720p → 客户按 480p 下单却按 720p 出片（反向也一样）。
+func TestDoubaoSeedance20StandardDurationAndResolution(t *testing.T) {
+	// 时长 4–15 通过，3/16 拒绝
+	for _, seconds := range []int{4, 5, 15} {
+		got, err := checkDoubaoDuration("duration", seconds, ModelDoubao20)
+		require.NoError(t, err, "seconds=%d", seconds)
+		assert.Equal(t, seconds, got)
+	}
+	for _, seconds := range []int{3, 16, 30} {
+		_, err := checkDoubaoDuration("duration", seconds, ModelDoubao20)
+		assert.Error(t, err, "seconds=%d 越界必须拒绝（只支持 4–15）", seconds)
+	}
+	// Fast 不受影响（仍 4–30）
+	got, err := checkDoubaoDuration("duration", 30, ModelDoubao20Fast)
+	require.NoError(t, err)
+	assert.Equal(t, 30, got)
+
+	// 分辨率：未指定 → 720p；显式 720p 通过；其它档显式 400
+	for _, body := range []string{
+		`{"model":"seedance-2-0","prompt":"hi","duration":5}`,
+		`{"model":"seedance-2-0","prompt":"hi","duration":5,"resolution":"720p"}`,
+	} {
+		c, info, a := postVideoCtx(t, body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), body)
+		reader, err := a.BuildRequestBody(c, info)
+		require.NoError(t, err, body)
+		data, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(data, &payload))
+		vp, _ := payload["videoParams"].(map[string]any)
+		require.NotNil(t, vp, body)
+		assert.Equal(t, "720p", vp["resolution"], "标准版固定 720p：%s", body)
+	}
+
+	for _, bad := range []string{"480p", "1080p"} {
+		c, info, a := postVideoCtx(t, `{"model":"seedance-2-0","prompt":"hi","duration":5,"resolution":"`+bad+`"}`)
+		err := a.ValidateRequestAndSetAction(c, info)
+		assert.NotNil(t, err, "显式 %s 必须拒绝，不能静默改成 720p", bad)
+	}
 }

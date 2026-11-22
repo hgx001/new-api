@@ -591,6 +591,11 @@ var allowedRatios = map[string]bool{
 const (
 	doubao20FastMinDuration = 4
 	doubao20FastMaxDuration = 30
+	// doubao20MinDuration / MaxDuration：Seedance 2.0 **标准版** 只到 15 秒
+	// （用户 2026-11-22 口径「这个 2.0 模型只支持 4-15 秒」）。
+	// ⚠️ 与 Fast 的 4–30 是两档，不要合并常量。
+	doubao20MinDuration = 4
+	doubao20MaxDuration = 15
 )
 
 // validateDoubao20FastDuration 校验豆包 2.0 Fast 的 4–30 秒区间：
@@ -1012,6 +1017,22 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		// 分辨率归一成链路档位字面量（480p/720p）；空串 = 未指定，不下发键。
 		norm.Resolution = normalizeDoubaoResolution(req.Resolution)
+		if norm.Model == ModelDoubao20 {
+			// Seedance 2.0 标准版**固定 720p**（用户 2026-11-22 口径）：该档没有
+			// 分辨率档位可切，官网出片就是 720p。
+			//   · 未指定 → 补 720p（这是该商品的**唯一规格**，不是改编用户选择）；
+			//   · 显式传了别的（480p/1080p/…）→ 400，绝不静默改成 720p 交付。
+			rawResolution := strings.ToUpper(strings.TrimSpace(req.Resolution))
+			switch rawResolution {
+			case "", "720", "720P":
+				norm.Resolution = "720p"
+			default:
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("resolution must be 720p for %s (fixed spec), got %q", norm.Model, req.Resolution),
+					"invalid_resolution", http.StatusBadRequest,
+				)
+			}
+		}
 		duration, err := resolveDoubaoDuration(req, norm.Model)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
@@ -1037,7 +1058,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
-		duration, err := resolveTikTokDuration(req)
+		duration, err := resolveTikTokDuration(req, norm.Model)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
@@ -2232,37 +2253,78 @@ const (
 	tiktokRatio = "9:16"
 )
 
-// tiktokDurationWhitelist 是官网原生时长档位（与 Worker 侧 TIKTOK_DURATION_WHITELIST 同源）。
-var tiktokDurationWhitelist = []int{5, 10, 12}
+// TikTok 时长白名单（**逐模型不同**，2026-11-22 老板口径）。
+//
+//   - 1.5 Pro / Symphony 档：官网原生 5 / 10 / 12 秒；
+//   - 2.0 系列（Fast / 标准）：4–15 秒逐秒。
+//
+// 与 Worker 侧同源（src/platforms/tiktok/params.ts 的
+// TIKTOK_DURATION_WHITELIST_SYMPHONY / _20）。合成一张表会两头都错：
+// 2.0 档被挡在 12 秒上限外，或 1.5 Pro 档被放进官网没有的秒数。
+var (
+	tiktokDurationWhitelistSymphony = []int{5, 10, 12}
+	tiktokDurationWhitelist20       = []int{4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
+)
+
+// tiktokDefaultDuration 是缺省时长（官网默认档，两个模型族一致）。
+const tiktokDefaultDuration = 5
+
+// tiktokDurationWhitelistFor 按模型取时长白名单。
+func tiktokDurationWhitelistFor(model string) []int {
+	switch strings.TrimSpace(model) {
+	case ModelTiktok20Fast, ModelTiktok20:
+		return tiktokDurationWhitelist20
+	default:
+		return tiktokDurationWhitelistSymphony
+	}
+}
 
 // resolveTikTokDuration 归一时长：seconds → duration → 缺省 5 秒；
 // 白名单外**显式拒绝**（不回落、不吸附）。
-func resolveTikTokDuration(req clientRequest) (int, error) {
+func resolveTikTokDuration(req clientRequest, model string) (int, error) {
+	whitelist := tiktokDurationWhitelistFor(model)
 	seconds, found, err := parseFlexibleInt(req.Seconds)
 	if err != nil {
 		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
 	}
 	if found {
-		return validateTikTokDuration("seconds", seconds)
+		return validateTikTokDuration("seconds", seconds, whitelist)
 	}
 	duration, found, err := parseFlexibleInt(req.Duration)
 	if err != nil {
 		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
 	}
 	if found {
-		return validateTikTokDuration("duration", duration)
+		return validateTikTokDuration("duration", duration, whitelist)
 	}
-	return tiktokDurationWhitelist[0], nil
+	// 缺省恒为 5 秒（官网默认档），**不能**取白名单首项 ——
+	// 2.0 档白名单首项是 4 秒（范围下界），那不是「默认」。
+	return tiktokDefaultDuration, nil
 }
 
-// validateTikTokDuration 校验时长是否在官网三档内。
-func validateTikTokDuration(field string, value int) (int, error) {
-	for _, d := range tiktokDurationWhitelist {
+// validateTikTokDuration 校验时长是否在该模型的白名单内。
+func validateTikTokDuration(field string, value int, whitelist []int) (int, error) {
+	for _, d := range whitelist {
 		if value == d {
 			return value, nil
 		}
 	}
-	return 0, fmt.Errorf("%s must be one of 5/10/12 seconds, got %d", field, value)
+	return 0, fmt.Errorf("%s must be one of %s seconds, got %d", field, formatDurationWhitelist(whitelist), value)
+}
+
+// formatDurationWhitelist 把白名单格式化成 "4-15" / "5/10/12"。
+func formatDurationWhitelist(whitelist []int) string {
+	if len(whitelist) == 0 {
+		return ""
+	}
+	if len(whitelist) > 2 && whitelist[len(whitelist)-1]-whitelist[0] == len(whitelist)-1 {
+		return fmt.Sprintf("%d-%d", whitelist[0], whitelist[len(whitelist)-1])
+	}
+	parts := make([]string, 0, len(whitelist))
+	for _, d := range whitelist {
+		parts = append(parts, strconv.Itoa(d))
+	}
+	return strings.Join(parts, "/")
 }
 
 // tiktokReferenceURLs 从 input_reference 原始 JSON 里取 URL 列表
@@ -2789,15 +2851,24 @@ func resolveDoubaoDuration(req clientRequest, model string) (int, error) {
 //   - 2.5 = 任意正整数秒原样透传（不设上限，2026-11-09 用户口径：
 //     new-api 传多少秒就下发多少秒，禁止吸附/回落改写）。
 func checkDoubaoDuration(field string, value int, model string) (int, error) {
-	if model == ModelDoubao20Fast || model == ModelDoubao20 {
-		// 2.0 标准版与 Fast 同一档滑条（4–30 秒任意整数），官网 tiers 5/10/15/30
-		// 只是快捷点；非档位值由 Worker 的 durationHack 提交前改写请求体真跑。
+	if model == ModelDoubao20 {
+		// Seedance 2.0 **标准版**只到 15 秒（用户 2026-11-22 口径）。
+		// ⚠️ 与 Fast 的 4–30 是两档，合并常量会把 30 秒下发给标准版。
+		if value < doubao20MinDuration || value > doubao20MaxDuration {
+			return 0, fmt.Errorf("%s must be between 4 and 15 for %s, got %d", field, model, value)
+		}
+		return value, nil
+	}
+	if model == ModelDoubao20Fast {
+		// 2.0 Fast 4–30 秒任意整数（官网 tiers 5/10/15/30 只是快捷点；
+		// 非档位值由 Worker 的 durationHack 提交前改写请求体真跑）。
 		return validateDoubao20FastDuration(field, value, model)
 	}
 	if value < 1 {
 		return 0, fmt.Errorf("%s must be a positive integer number of seconds for %s, got %d", field, model, value)
 	}
 	return value, nil
+
 }
 
 // resolveFixedDuration 解析固定时长模型：未指定时使用固定值，显式传入其它值直接拒绝。
