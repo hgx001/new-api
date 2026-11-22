@@ -1,6 +1,9 @@
 package manwu
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -129,4 +132,62 @@ func TestElevenlabsGeminiFlashContract(t *testing.T) {
 	// 同价：360p 基准 1 倍、720p 2 倍
 	assert.Equal(t, 1.0, elevenlabsResolutionRatio("360p"))
 	assert.Equal(t, 2.0, elevenlabsResolutionRatio("720p"))
+}
+
+// 回归（2026-11-22）：BuildRequestBody 曾**没有** ElevenLabs 分支，走到 default 直接
+// 返回 "unsupported manwu request kind: elevenlabs_video" —— 校验/计费测试全绿，
+// 但真实建单必失败。这里锁死三档的载荷映射。
+func TestBuildRequestBodyMapsElevenlabsPayload(t *testing.T) {
+	cases := []struct {
+		model      string
+		duration   int
+		resolution string
+		ratio      string
+		wantModel  string
+		wantInputs int
+		wantNested bool
+		withVidAud bool
+	}{
+		{model: "el-seedance-2.5flash", duration: 6, resolution: "480p", ratio: "9:16", wantModel: "el-seedance-2.5flash", wantInputs: 3, wantNested: true, withVidAud: true},
+		{model: "el-seedance-2.0mini", duration: 8, resolution: "720p", ratio: "16:9", wantModel: "el-seedance-2.0mini", wantInputs: 1, wantNested: true, withVidAud: false},
+		{model: "el-gemini-1.2flash", duration: 5, resolution: "360p", ratio: "16:9", wantModel: "el-gemini-1.2flash", wantInputs: 1, wantNested: true, withVidAud: false},
+	}
+	for _, tc := range cases {
+		body := fmt.Sprintf(`{"model":%q,"prompt":"hi","duration":%d,"resolution":%q,"ratio":%q,"images":["https://a.example/1.png"]`, tc.model, tc.duration, tc.resolution, tc.ratio)
+		if tc.withVidAud {
+			body += `,"media":[{"type":"reference_video","url":"https://a.example/1.mp4"},{"type":"reference_audio","url":"https://a.example/1.mp3"}]`
+		}
+		body += `}`
+		c, info, a := postVideoCtx(t, body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), tc.model)
+
+		reader, err := a.BuildRequestBody(c, info)
+		require.NoError(t, err, tc.model)
+		data, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal(data, &payload))
+		assert.Equal(t, PlatformIDElevenlabs, payload["platformId"], tc.model)
+		assert.Equal(t, OutputModeVideo, payload["outputMode"], tc.model)
+
+		vp, ok := payload["videoParams"].(map[string]any)
+		require.True(t, ok, tc.model)
+		assert.Equal(t, tc.wantModel, vp["model"], tc.model)
+		assert.Equal(t, tc.ratio, vp["ratio"], tc.model)
+		assert.Equal(t, tc.resolution, vp["resolution"], tc.model)
+		assert.Equal(t, float64(tc.duration), vp["duration"], tc.model)
+
+		inputs, ok := payload["inputs"].([]any)
+		require.True(t, ok, tc.model)
+		assert.Len(t, inputs, tc.wantInputs, tc.model)
+		first := inputs[0].(map[string]any)
+		assert.Equal(t, InputTypeImage, first["type"], tc.model)
+		// Gemini 只收图：视频/音频即使传了也不得进载荷（上游 422）。
+		if tc.model == "el-gemini-1.2flash" {
+			for _, in := range inputs {
+				assert.NotEqual(t, InputTypeVideo, in.(map[string]any)["type"], tc.model)
+				assert.NotEqual(t, InputTypeAudio, in.(map[string]any)["type"], tc.model)
+			}
+		}
+	}
 }

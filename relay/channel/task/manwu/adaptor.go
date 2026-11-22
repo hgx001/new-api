@@ -1035,6 +1035,34 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(resErr, "invalid_resolution", http.StatusBadRequest)
 		}
 		norm.Resolution = resolution
+		// 参考素材：图在公共段已解析；视频/音频必须在这里显式收（否则客户带视频下的单
+		// 会被**静默丢掉**，而计费按带视频算）。Gemini 档上游不收音视频 → 直接 400。
+		mediaEntries, mediaErr := parseCapcutMediaEntries(req.Media)
+		if mediaErr != nil {
+			return service.TaskErrorWrapperLocal(mediaErr, "invalid_input_reference", http.StatusBadRequest)
+		}
+		for _, entry := range mediaEntries {
+			switch entry.Type {
+			case capcutMediaTypeVideo:
+				norm.Videos = append(norm.Videos, entry.URL)
+			case capcutMediaTypeAudio:
+				norm.Audios = append(norm.Audios, entry.URL)
+			}
+		}
+		// metadata.media / metadata.input.media 也是素材落点。
+		for _, entry := range parseCapcutMetadataMediaEntries(req.Metadata) {
+			switch entry.Type {
+			case capcutMediaTypeVideo:
+				norm.Videos = append(norm.Videos, entry.URL)
+			case capcutMediaTypeAudio:
+				norm.Audios = append(norm.Audios, entry.URL)
+			}
+		}
+		if !supportsElevenlabsAvRefs(norm.Model) && (len(norm.Videos) > 0 || len(norm.Audios) > 0) {
+			return service.TaskErrorWrapperLocal(fmt.Errorf(
+				"%s 不支持参考视频/参考音频（该档上游只收参考图），请去掉后重试", norm.Model),
+				"invalid_input_reference", http.StatusBadRequest)
+		}
 	case kindCapcutVideo:
 		// CapCut（剪映国际版）Seedance 2.5 / 2.5 Flash / 2.0 / 2.0 Fast / 2.0 Mini：
 		//   - 时长 4–30 秒任意整数秒（2.5 与 2.5 Flash，官网 2.5 系列 4–30s）；
@@ -1521,6 +1549,26 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		body.Inputs = append(body.Inputs, toInputs(InputTypeImage, req.Images)...)
 		body.Inputs = append(body.Inputs, toInputs(InputTypeVideo, req.Videos)...)
 		body.Inputs = append(body.Inputs, toInputs(InputTypeAudio, req.Audios)...)
+	case kindElevenlabsVideo:
+		// ElevenLabs：model 传公开名（ArcReel/Worker 白名单按它归一成上游 model_id，
+		// 三档各自不同：bytedance-seedance-v2.5-flash / -v2-mini / gemini-omni-1.2-flash）。
+		// ratio/duration/resolution 透传；resolution 已在校验层按档位归一。
+		//
+		// 参考素材按档位装：Gemini 档上游对 reference_videos / reference_audios
+		// 一律 422 extra_forbidden（真机 /price 验过），硬塞进去只会让整单失败。
+		body.VideoParams = &videoParams{
+			Model:      firstNonEmpty(spec.UpstreamModel, req.Model),
+			Ratio:      req.Ratio,
+			Duration:   &req.Duration,
+			Resolution: req.Resolution,
+		}
+		// 顺序固定 图 → 视频 → 音频（与 CapCut 同口径：Worker 按 inputs 顺序逐条
+		// 上传，并按顺序计算 @imageN/@videoN/@audioN 的槽位基准）。
+		body.Inputs = toInputs(InputTypeImage, req.Images)
+		if supportsElevenlabsAvRefs(req.Model) {
+			body.Inputs = append(body.Inputs, toInputs(InputTypeVideo, req.Videos)...)
+			body.Inputs = append(body.Inputs, toInputs(InputTypeAudio, req.Audios)...)
+		}
 	default:
 		return nil, fmt.Errorf("unsupported manwu request kind: %s", spec.Kind)
 	}
@@ -3382,6 +3430,14 @@ func elevenlabsResolutionRatio(raw string) float64 {
 }
 
 // elevenlabsModelMaxDuration 返回该档位的时长上界（mini 15s、2.5 Flash 30s）。
+// supportsElevenlabsAvRefs 该档是否接受参考视频/参考音频。
+//
+// Gemini Omni Flash 1.2 只收参考图（真机 /price：reference_videos /
+// reference_audios / generate_audio 全部 422 extra_forbidden）；Seedance 两档都收。
+func supportsElevenlabsAvRefs(model string) bool {
+	return strings.TrimSpace(model) != ModelElevenlabsGemini
+}
+
 func elevenlabsModelMaxDuration(model string) int {
 	switch strings.TrimSpace(model) {
 	case ModelElevenlabs20Mini:
