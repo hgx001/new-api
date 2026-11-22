@@ -337,6 +337,11 @@ func migrateDB() error {
 	} else if updated > 0 {
 		common.SysLog(fmt.Sprintf("自动归类模型供应商：补齐 %d 个", updated))
 	}
+	if updated, err := SyncModelTags(); err != nil {
+		common.SysError("同步模型标签失败: " + err.Error())
+	} else if updated > 0 {
+		common.SysLog(fmt.Sprintf("同步模型标签：修正 %d 个", updated))
+	}
 	return nil
 }
 

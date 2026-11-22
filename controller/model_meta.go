@@ -39,6 +39,22 @@ func SyncModelVendorsAdmin(c *gin.Context) {
 	})
 }
 
+// SyncModelTagsAdmin 按规则表补齐 / 纠正模型标签。
+//
+// 媒体模型（video / image）的标签必须是规则给出的那个；文本模型会摘掉
+// image/video 这类媒体标签，其它标签（推理、工具、1M…）保留。
+func SyncModelTagsAdmin(c *gin.Context) {
+	updated, err := model.SyncModelTags()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RefreshPricing()
+	common.ApiSuccess(c, gin.H{
+		"updated": updated,
+	})
+}
+
 // GetAllModelsMeta 获取模型列表（分页）
 func GetAllModelsMeta(c *gin.Context) {
 

@@ -158,6 +158,14 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 					existing.VendorID = getOrCreateVendor(vendorName, vendorMap)
 				}
 			}
+			// 标签同理：没标签的按规则补上（媒体模型必须带 video/image，
+			// 否则模型广场的标签筛选搜不到它）。已有的标签不动 ——
+			// 写错/写漏的纠正交给 SyncModelTags 落库时处理。
+			if strings.TrimSpace(existing.Tags) == "" {
+				if tag, isText := classifyModelTag(modelName); tag != "" && !isText {
+					existing.Tags = tag
+				}
+			}
 			continue
 		}
 
@@ -166,11 +174,17 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 		if vendorName, ok := classifyModelVendor(modelName); ok {
 			vendorID = getOrCreateVendor(vendorName, vendorMap)
 		}
+		// 匹配标签
+		tags := ""
+		if tag, isText := classifyModelTag(modelName); tag != "" && !isText {
+			tags = tag
+		}
 
 		// 创建模型元数据
 		metaMap[modelName] = &Model{
 			ModelName: modelName,
 			VendorID:  vendorID,
+			Tags:      tags,
 			Status:    1,
 			NameRule:  NameRuleExact,
 		}
