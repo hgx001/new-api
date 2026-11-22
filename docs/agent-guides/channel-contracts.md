@@ -54,6 +54,7 @@
 - 上游URL应整体摘除，不留半遮半露域名，也不把URL区段当受保护区域跳过脱敏；短词如 ali 要词边界，避免误伤 invalid/validate。
 - 不在 TaskErrorWrapper、写入层或重试分类前改原文；否则余额错误换渠道失效且管理员无证可查。
 - 只对明确别名集合生效，其它模型原样；验收用合成任务/日志比对普通用户与管理员出口，不跑付费生成。
+- 档位名也是身份：上游报错会点名真实的**执行档**（`prime`、`flash`）。`prime` 仅对别名模型摘（对客户公开售卖 prime 档）；`flash` 判据是**客户买的模型名里有没有 flash**（客户买 `cp-seedance-2.5flash`/`el-gemini-1.2flash`/`Seedream 5.0 Flash` 时保留，买 `seedance2.5-特惠`/`seedance-2-5`/`el-seedance-2.5` 时摘），因为非别名模型同样会被改派到 flash 档。分销商品牌词（`hooksai` 等）与渠道词同口径全局换成「上游」。
 
 ## 三元巡狩：实时与拼车工作流不同
 
