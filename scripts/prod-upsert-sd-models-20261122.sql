@@ -82,7 +82,8 @@ SELECT a."group", a.model, c.id, true, c.priority, c.weight, c.tag
 -- ---------- 3. 模型广场卡片 ----------
 -- ⚠️ 描述里**不写任何渠道/平台来源，也不写模型品牌词**（用户明确要求）：
 --    「Seedance」是别家的品牌词，写出来等于暴露渠道；只写「2.0 高速档 / 标准档」。
---    但**必须写清实际参数与计价口径**：固定 720p / 9:16 / 4–15 秒 / ≤4 图 / 按秒计费。
+--    但**必须写清实际参数与计价口径**（2026-11-22 老板口径，两档**完全一致**）：
+--      时长 4–15 秒逐秒可选 / 分辨率固定 720p / 画面比例固定 9:16 / ≤4 张参考图 / 按秒计费。
 --    不写清会让客户按错误预期下单（历史卡片就因为写错分辨率口径返工过）。
 INSERT INTO models (
     model_name, description, icon, tags, vendor_id, endpoints,
@@ -95,9 +96,9 @@ SELECT v.model_name, v.description, '', 'video', 6, '[]',
        0
   FROM (VALUES
     ('sd-seedance-2.0fast',
-     '图生视频 · 2.0 高速档。时长 4–15 秒可选，固定 720p、9:16 竖屏，≤4 张参考图，按秒计费 ¥0.10/秒。'),
+     '图生视频 · 2.0 高速档。时长 4–15 秒（逐秒可选），分辨率固定 720p，画面比例固定 9:16 竖屏，≤4 张参考图，按秒计费 ¥0.10/秒。'),
     ('sd-seedance-2.0',
-     '图生视频 · 2.0 标准档。时长 4–15 秒可选，固定 720p、9:16 竖屏，≤4 张参考图，按秒计费 ¥0.22/秒。')
+     '图生视频 · 2.0 标准档。时长 4–15 秒（逐秒可选），分辨率固定 720p，画面比例固定 9:16 竖屏，≤4 张参考图，按秒计费 ¥0.22/秒。')
   ) AS v(model_name, description)
  WHERE NOT EXISTS (
          SELECT 1 FROM models mo
@@ -110,15 +111,15 @@ SELECT v.model_name, v.description, '', 'video', 6, '[]',
 --    所以这里显式 UPDATE 一次，保证重复执行后描述是最新口径。
 UPDATE models
    SET description = CASE model_name
-         WHEN 'sd-seedance-2.0fast' THEN '图生视频 · 2.0 高速档。时长 4–15 秒可选，固定 720p、9:16 竖屏，≤4 张参考图，按秒计费 ¥0.10/秒。'
-         WHEN 'sd-seedance-2.0'     THEN '图生视频 · 2.0 标准档。时长 4–15 秒可选，固定 720p、9:16 竖屏，≤4 张参考图，按秒计费 ¥0.22/秒。'
+         WHEN 'sd-seedance-2.0fast' THEN '图生视频 · 2.0 高速档。时长 4–15 秒（逐秒可选），分辨率固定 720p，画面比例固定 9:16 竖屏，≤4 张参考图，按秒计费 ¥0.10/秒。'
+         WHEN 'sd-seedance-2.0'     THEN '图生视频 · 2.0 标准档。时长 4–15 秒（逐秒可选），分辨率固定 720p，画面比例固定 9:16 竖屏，≤4 张参考图，按秒计费 ¥0.22/秒。'
        END,
        updated_time = EXTRACT(EPOCH FROM NOW())::bigint
  WHERE model_name IN ('sd-seedance-2.0fast', 'sd-seedance-2.0')
    AND deleted_at IS NULL
    AND description IS DISTINCT FROM CASE model_name
-         WHEN 'sd-seedance-2.0fast' THEN '图生视频 · 2.0 高速档。时长 4–15 秒可选，固定 720p、9:16 竖屏，≤4 张参考图，按秒计费 ¥0.10/秒。'
-         WHEN 'sd-seedance-2.0'     THEN '图生视频 · 2.0 标准档。时长 4–15 秒可选，固定 720p、9:16 竖屏，≤4 张参考图，按秒计费 ¥0.22/秒。'
+         WHEN 'sd-seedance-2.0fast' THEN '图生视频 · 2.0 高速档。时长 4–15 秒（逐秒可选），分辨率固定 720p，画面比例固定 9:16 竖屏，≤4 张参考图，按秒计费 ¥0.10/秒。'
+         WHEN 'sd-seedance-2.0'     THEN '图生视频 · 2.0 标准档。时长 4–15 秒（逐秒可选），分辨率固定 720p，画面比例固定 9:16 竖屏，≤4 张参考图，按秒计费 ¥0.22/秒。'
        END;
 
 -- ---------- 4. 价格（合并，绝不整字段覆盖）----------
