@@ -125,6 +125,15 @@ var upstreamVendorLiterals = []string{
 	// ⚠️ 只放 "kemeitv" 这个完整词。裸 "keme" 会被当成子串误伤其它正常英文词
 	// （字面量匹配没有词边界），所以不放短词。
 	"kemeitv",
+	// HooksAI（2026-11-22 加）：有赞渠道的下游分销商品牌词。
+	//
+	// 生产实测（new logs.id=15168/15169，model=seedance2.5-特惠，渠道 17）：
+	//   "HooksAI 的 Seedance 2.5 Flash 不支持视频参考，请移除参考视频后提交"
+	// 它把「你的单被转给了谁」直接写在文案里 —— 客户拿到就能去搜这个分销商，
+	// 于是本站在上游链路里就透明了。属渠道证据，按既有口径换成「上游」。
+	//
+	// ⚠️ 与其它供应商词一样放**全局**表：客户调任何模型都可能被转到这里。
+	"hooksai",
 }
 
 // upstreamModelLiterals 是**上游模型名**：只对别名模型替换。
@@ -225,6 +234,45 @@ var (
 	redundantSpacesPattern        = regexp.MustCompile(`[ \t]{2,}`)
 )
 
+// upstreamFlashNumberedPattern / upstreamFlashBarePattern 处理上游**档位名** flash。
+//
+// 2026-11-22 生产实测（new logs.id=15168/15169，渠道 17，model=seedance2.5-特惠，
+// 客户带了参考视频）：
+//
+//	"HooksAI 的 Seedance 2.5 Flash 不支持视频参考，请移除参考视频后提交"
+//
+// 客户买的是 seedance2.5-特惠（对外名里没有 flash），文案却点名 Flash ——
+// 等于告诉客户「你调 A、实际跑的是 Flash」。与 prime 同理，这属于**档位名泄漏**，
+// 要在出口层摘掉。
+//
+// 为什么不像 prime 那样只对别名模型生效：flash 档位在**非别名**模型上也会漏
+// （客户买 seedance-2-5 被改派、买 el-seedance-2.5 时上游报 Flash）。
+// 所以判据改成「客户买的模型名里本身有没有 flash」：
+//   - 客户买的就是 flash 档（cp-seedance-2.5flash / el-gemini-1.2flash /
+//     Seedream 5.0 Flash）→ 原样保留，那是他自己买的东西的名字；
+//   - 客户买的不是 flash 档 → 摘掉，避免暴露真实执行的档位。
+//
+// 两条正则分工：带数字的写法（"Seedance 2.5 Flash" / "seedance-2.5flash" /
+// "2.5flash"）统一收敛成 "2.5"；剩下的裸词（"Seedance Flash"）直接删。
+//
+// ⚠️ 裸词规则刻意**不加前置词边界**（\bflash 匹配不到 "2.5flash"，因为 5 和 f
+// 都是单词字符），只有后置 \b，所以 "flashy" / "flashback" 不会被削。
+var (
+	upstreamFlashNumberedPattern = regexp.MustCompile(`(?i)2\.?5[\s._\-]*flash\b`)
+	upstreamFlashBarePattern     = regexp.MustCompile(`(?i)[\s._\-]*\bflash\b`)
+)
+
+// redactUpstreamFlashWord 把上游档位名 flash 从对客文案里摘掉。
+// 客户买的模型名里本身带 flash 时原样返回（见 upstreamFlashNumberedPattern 注释）。
+func redactUpstreamFlashWord(text string, modelName string) string {
+	if text == "" || strings.Contains(strings.ToLower(modelName), "flash") {
+		return text
+	}
+	text = upstreamFlashNumberedPattern.ReplaceAllString(text, "2.5")
+	text = upstreamFlashBarePattern.ReplaceAllString(text, "")
+	return redundantSpacesPattern.ReplaceAllString(text, " ")
+}
+
 // redactUpstreamTierWord 把上游档位名 prime 从对客文案里摘掉。
 // 只在别名模型分支调用，调用顺序见 upstreamTierWordPatterns 的注释。
 func redactUpstreamTierWord(text string) string {
@@ -311,7 +359,8 @@ func RedactUpstreamIdentity(content string, modelName string) string {
 	text := RedactUpstreamVendor(content)
 	text = redactWithTokens(text, upstreamModelTokens, upstreamModelPatterns)
 	// 完整模型名已整体替换，再摘掉上游报错里单独出现的档位名 prime。
-	return redactUpstreamTierWord(text)
+	text = redactUpstreamTierWord(text)
+	return redactUpstreamFlashWord(text, modelName)
 }
 
 // RedactUpstreamAddress 把文案里的地址整个摘掉，**不分模型**。
@@ -349,6 +398,9 @@ func RedactUpstreamText(content string, modelName string) string {
 	}
 	text := RedactUpstreamAddress(content)
 	text = RedactUpstreamVendor(text)
+	// 档位名 flash 对**所有模型**处理（客户买的不是 flash 档才摘），
+	// 见 redactUpstreamFlashWord 的注释：非别名模型同样会漏。
+	text = redactUpstreamFlashWord(text, modelName)
 	// 非别名模型到这里就结束：供应商词已换成「上游」，地址已摘，
 	// 剩下的模型名是他自己买的，留着才看得懂。
 	if !IsUpstreamAliasModel(modelName) {
