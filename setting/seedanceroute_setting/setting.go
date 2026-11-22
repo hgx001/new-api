@@ -507,6 +507,18 @@ type Policy struct {
 	// ⚠️ 与 Enabled（促销族规则总开关）无关：不同商品、不同源模型。
 	Wan3RefVideoHkEnabled *bool `json:"wan3_ref_video_hk_enabled,omitempty"`
 
+	// Wan3HkWan3TjEnabled 是「hk-wan3 → 客美 tj」改派开关（2026-11-22 起）。
+	//
+	// 打开：请求 hk-wan3 且**不带参考视频**时，内部改名为 wan3.0-video-tj
+	// （渠道 32 客美），计费仍按 hk-wan3 算；
+	// 关闭（默认）：请求留在 hk-wan3，行为与改造前逐字节一致。
+	//
+	// 带参考视频的请求不改派：客美会把参考视频秒数并入计费，hk-wan3 不收。
+	//
+	// 用 bool 而不是三态指针：全新开关，旧 option JSON 里没有这个字段，
+	// 零值 false = 不改派，升级当天线上流量逐字节不变。
+	Wan3HkWan3TjEnabled bool `json:"wan3_hk_wan3_tj_enabled,omitempty"`
+
 	// UpdatedAt 最近一次修改的 Unix 时间戳，0 表示从未改过。
 	UpdatedAt int64 `json:"updated_at"`
 }

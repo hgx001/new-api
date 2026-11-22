@@ -68,6 +68,12 @@ func SetVideoRouter(router *gin.Engine) {
 		// 与上面三个中间件的模型名没有交集：源模型是 wan3.0-video-官网，
 		// 促销族只认 seedance2.5-*，别名中间件只认 wan3.0-720p-特惠。
 		middleware.Wan3GuanwangTjRoute(),
+		// hk-wan3 → 客美 tj 的手动换货开关（2026-11-22，默认关闭）。
+		//
+		// 与上一条同属「最终出口选择」：源模型 hk-wan3 与官网/促销族的
+		// 源模型没有交集，带参考视频的请求由下一条规则（tj → hk-wan3）主导，
+		// 本开关只接「不带参考视频」的请求。
+		middleware.HkWan3TjRoute(),
 		middleware.Distribute(),
 	)
 	{

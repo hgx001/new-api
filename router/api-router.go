@@ -188,6 +188,11 @@ func SetApiRouter(router *gin.Engine) {
 			// 4–15 秒的请求改派 hk-wan3（参考视频不计费）；关闭则留在原链路。
 			videoRouteAdmin.POST("/policy/wan3-ref-video-hk", controller.SetWan3RefVideoHkAdmin)
 
+			// hk-wan3 → 客美 tj 的手动换货开关（2026-11-22，默认关闭）：
+			// 打开 = 不带参考视频的 hk-wan3 请求改派 wan3.0-video-tj（渠道 32 客美），
+			// 计费仍按客户请求的 hk-wan3；关闭 = 留在 hk-wan3。
+			videoRouteAdmin.POST("/policy/wan3-hk-wan3-tj", controller.SetWan3HkWan3TjAdmin)
+
 			// 规则五（故障转移）：源链路额度用完 / 渠道被关 → 改派到备胎。
 			//
 			// 与上面四个接口分开：规则五的触发源是**渠道状态**而不是请求特征，

@@ -588,6 +588,8 @@ func doubaoRouteAdminState() gin.H {
 	appendWan3GuanwangTjState(state)
 	// 带参考视频的万相请求 → hk-wan3（2026-11-20，默认开启）。
 	appendWan3RefVideoHkState(state)
+	// hk-wan3 → 客美 tj 的手动换货开关（2026-11-22，默认关闭）。
+	appendWan3HkWan3TjState(state)
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }

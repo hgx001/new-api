@@ -116,6 +116,7 @@ import { ShortLinkCard } from '@/features/video-route/components/short-link-card
 import { ShortYouzanCard } from '@/features/video-route/components/short-youzan-card'
 import { TotalFallbackCard } from '@/features/video-route/components/total-fallback-card'
 import { Wan3GuanwangTjCard } from '@/features/video-route/components/wan3-guanwang-tj-card'
+import { Wan3HkWan3TjCard } from '@/features/video-route/components/wan3-hk-wan3-tj-card'
 import { Wan3RefVideoHkCard } from '@/features/video-route/components/wan3-ref-video-hk-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -3598,6 +3599,16 @@ export function ChannelMutateDrawer({
                               只在本渠道承载源模型（wan3.0-video-官网，ch12）
                               或目标模型（wan3.0-video-tj，ch32）时渲染。 */}
                           <Wan3GuanwangTjCard
+                            channelModels={currentModels ?? ''}
+                          />
+
+                          {/* hk-wan3 → 客美 tj 的手动换货开关（2026-11-22，默认关）。
+                              与上一张同为「这个商品由谁来跑」，只是源模型换成
+                              hk-wan3（渠道 17 有赞）。带参考视频的请求不参与改派
+                              —— 客美会把参考视频秒数并入计费。
+                              只在本渠道承载源模型（hk-wan3）或目标模型
+                              （wan3.0-video-tj）时渲染。 */}
+                          <Wan3HkWan3TjCard
                             channelModels={currentModels ?? ''}
                           />
 

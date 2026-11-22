@@ -135,6 +135,21 @@ export type VideoRoutePolicy = {
   /** 换货开关的目标模型（实际执行的渠道上的那个名字）。 */
   wan3_guanwang_tj_target_model: string
   /**
+   * 「hk-wan3 → 客美 tj」手动换货开关（2026-11-22）。
+   *
+   * 打开：`wan3_hk_wan3_tj_source_model`（hk-wan3）的请求（不带参考视频）
+   * 内部改名为 `wan3_hk_wan3_tj_target_model`（wan3.0-video-tj，渠道 32
+   * 客美 Kemeitv）执行，计费仍按客户请求的 hk-wan3；
+   * 关闭（默认）：留在 hk-wan3。
+   *
+   * 带参考视频的请求不改派：客美会把参考视频秒数并入计费。
+   */
+  wan3_hk_wan3_tj_enabled: boolean
+  /** 换货开关的源模型（客户请求的那个名字）。 */
+  wan3_hk_wan3_tj_source_model: string
+  /** 换货开关的目标模型（实际执行的渠道上的那个名字）。 */
+  wan3_hk_wan3_tj_target_model: string
+  /**
    * 「带参考视频的万相请求 → hk-wan3」开关（2026-11-20）。
    *
    * **缺省开启**（后端 nil = 开）：带 reference_video 的官网/tj/prime-tj
@@ -524,6 +539,22 @@ export async function setWan3GuanwangTjEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/wan3-guanwang-tj', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换「hk-wan3 → 客美 tj」开关（2026-11-22，默认关闭）。
+ *
+ * 打开：`wan3_hk_wan3_tj_source_model`（hk-wan3）上**不带参考视频**的请求改派
+ * `wan3_hk_wan3_tj_target_model`（wan3.0-video-tj，渠道 32 客美）执行，
+ * 计费仍按客户请求的 hk-wan3；关闭：留在 hk-wan3。
+ */
+export async function setWan3HkWan3TjEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/wan3-hk-wan3-tj', {
     enabled,
   })
   return res.data.data

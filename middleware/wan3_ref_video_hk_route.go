@@ -247,6 +247,19 @@ func hasReferenceVideoRequest(req relaycommon.TaskSubmitReq) bool {
 		if raw, ok := req.Metadata["video"]; ok && raw != nil {
 			return true
 		}
+		// metadata.media 是部分客户端（心笔/漫屋文档示例）用的写法，
+		// 目标链路（kemeitv）会把它当参考视频收 —— 同一口径下也算带参考视频。
+		if raw, ok := req.Metadata["media"]; ok {
+			if items, ok := raw.([]interface{}); ok {
+				for _, item := range items {
+					if entry, ok := item.(map[string]interface{}); ok {
+						if value, ok := entry["type"].(string); ok && strings.TrimSpace(value) == "reference_video" {
+							return true
+						}
+					}
+				}
+			}
+		}
 	}
 	return false
 }

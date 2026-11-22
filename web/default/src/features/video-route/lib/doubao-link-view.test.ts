@@ -72,6 +72,10 @@ function policy(overrides: Partial<VideoRoutePolicy> = {}): VideoRoutePolicy {
     wan3_guanwang_tj_enabled: false,
     wan3_guanwang_tj_source_model: 'wan3.0-video-官网',
     wan3_guanwang_tj_target_model: 'wan3.0-video-tj',
+    // hk-wan3 → 客美 tj 手动换货（2026-11-22）：默认关闭。
+    wan3_hk_wan3_tj_enabled: false,
+    wan3_hk_wan3_tj_source_model: 'hk-wan3',
+    wan3_hk_wan3_tj_target_model: 'wan3.0-video-tj',
     // 带参考视频 → hk-wan3（2026-11-20）：默认开启，旧 option 没配过。
     wan3_ref_video_hk_enabled: true,
     wan3_ref_video_hk_configured: false,
