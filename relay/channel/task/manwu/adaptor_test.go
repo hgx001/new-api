@@ -692,6 +692,11 @@ func TestModelListAndChannelName(t *testing.T) {
 		// ⚠️ 排序：`cp-seedance-2.5` 是 `cp-seedance-2.5flash` 的**前缀**，
 		// 按字节序短名在前。加新档时要同步这里的顺序。
 		"cp-seedance-2.5flash",
+		// ElevenLabs（2026-11-21 上架，只一档）：公开名带 el- 前缀，
+		// 与 CapCut 的 cp-seedance-2.5flash **不是别名**（不同官网、不同价）。
+		"el-gemini-1.2flash",
+		"el-seedance-2.0mini",
+		"el-seedance-2.5flash",
 		"gemini-web-video",
 		"jimeng-video-reverse",
 		"seedance-2-0-fast",

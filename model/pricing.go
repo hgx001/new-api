@@ -559,6 +559,16 @@ func isAllowedPricingModel(name string) bool {
 	if name == "seedance-2.0" || name == "seedance-2.5" {
 		return true
 	}
+	// 漫屋 ArcReel ElevenLabs（elevenlabs.io 图像和视频创作台，2026-11-21 上架）：
+	// 只一档 el-seedance-2.5flash（Seedance 2.5 Flash）。
+	// 按秒计价：480p ¥0.25/秒、720p ¥0.50/秒（ModelPrice 配 480p 基准价，
+	// EstimateBilling 给 seconds 倍率 + 720p size 倍率 2.0）。
+	//
+	// ⚠️ 与 CapCut 的 cp-seedance-2.5flash 只差前缀，是**两个独立商品**
+	// （不同官网、不同账号池、不同价），不要合并进 IsCapcutFamily。
+	if name == "el-seedance-2.5flash" || name == "el-seedance-2.0mini" || name == "el-gemini-1.2flash" {
+		return true
+	}
 	// 漫屋 ArcReel CapCut（剪映国际版）五档：cp-seedance-2.0mini /
 	// -2.0fast / -2.0 / -2.5flash / -2.5。
 	//

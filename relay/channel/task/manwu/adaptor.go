@@ -82,6 +82,11 @@ const (
 	// 参数口径（4–15s / 只卖 480p / 参考图 ≤9 / 不生成音频）与其它平台都不同
 	// → 独立 Kind，不复用 kindDolaVideo / kindPicsartVideo。
 	PlatformIDCapcut = "capcut"
+	// PlatformIDElevenlabs 是 ElevenLabs（elevenlabs.io 图像和视频创作台）平台。
+	//
+	// 2026-11-21 上架，**只卖一档**：Seedance 2.5 Flash（``el-seedance-2.5flash``）。
+	// 与 CapCut 是两套完全不同的官网/账号池/风控身份，公开名用 ``el-`` 前缀区分。
+	PlatformIDElevenlabs = "elevenlabs"
 
 	// PlatformIDTiktok 是 TikTok Creative Studio（Symphony，ads.tiktok.com）平台。
 	//
@@ -209,9 +214,29 @@ const (
 	// 与 ModelCapcut25 是**两个独立商品**：上游真名不同（seedance_2.5 vs
 	// seedance_2.5_flash）、定价不同，**不做互为别名**。
 	ModelCapcut25Flash = "cp-seedance-2.5flash"
-	ModelCapcut20      = "cp-seedance-2.0"
-	ModelCapcut20Fast  = "cp-seedance-2.0fast"
-	ModelCapcut20Mini  = "cp-seedance-2.0mini"
+	// ModelElevenlabs25Flash 是 ElevenLabs 唯一在售档位（2026-11-21 用户口径：
+	// 「只上架这个就行 别的不上架」）。
+	//
+	// ⚠️ 公开名带 ``el-`` 前缀，与 CapCut 的 ``cp-seedance-2.5flash`` **不是别名**：
+	//   不同官网、不同账号池、不同计价（CapCut 480p ¥0.15/秒，这里 ¥0.25/秒）。
+	//   上游真名与公开名一致，故 modelSpec 不设 UpstreamModel（不做翻译）。
+	ModelElevenlabs25Flash = "el-seedance-2.5flash"
+	// ModelElevenlabs20Mini 是 ElevenLabs 第二档（2026-11-21 用户追加：
+	// 「把 mini 也上架吧 定价格 flash 一样」）。
+	//
+	// ⚠️ 与 2.5 Flash **同价但不同物**：上游 model_id 不同
+	//   （bytedance-seedance-v2-mini）、时长上界不同（mini 4–15s，flash 4–30s）。
+	ModelElevenlabs20Mini = "el-seedance-2.0mini"
+	// ModelElevenlabsGemini = "el-gemini-1.2flash"（Gemini Omni Flash 1.2，2026-11-21 上架）。
+	//
+	// ⚠️ 与 Seedance 两档**不是同一族**：上游 model_id = gemini-omni-1.2-flash，
+	//   分辨率只有 360p / 720p（**没有 480p**），时长 3–15s，
+	//   且**不支持** generate_audio / reference_audios / reference_videos
+	//   （真机 /price 全部 422 extra_forbidden）。
+	ModelElevenlabsGemini = "el-gemini-1.2flash"
+	ModelCapcut20         = "cp-seedance-2.0"
+	ModelCapcut20Fast     = "cp-seedance-2.0fast"
+	ModelCapcut20Mini     = "cp-seedance-2.0mini"
 	// ModelTikTokSymphony 是 TikTok Symphony（图生视频）的对外公开名。
 	//
 	// ⚠️ 公开名**不用 cp- 前缀**（那是 CapCut/剪映国际版的身份）：TikTok 是
@@ -329,6 +354,10 @@ const (
 	//
 	// ⚠️ 不复用 kindDolaVideo：dola 是 5–15 秒且按次，CapCut 区间与计价都不同。
 	kindCapcutVideo = "capcut_video"
+	// kindElevenlabsVideo 是 ElevenLabs Seedance 2.5 Flash（4–30 秒 / 480p+720p /
+	// 按秒计价，720p ×2）。单独一个 kind：它的时长上界、分辨率集合、
+	// 参考上限都与 CapCut 不同，复用会让两边的校验互相串。
+	kindElevenlabsVideo = "elevenlabs_video"
 
 	// kindTikTokVideo 是 TikTok Symphony（图生视频）视频：
 	// 时长**只三档** 5 / 10 / 12 秒（官网原生下拉，单档 5s 是默认值）、
@@ -433,12 +462,17 @@ var modelSpecs = map[string]modelSpec{
 	// 公开名 → 官网档位真名的翻译在这一层做，ArcReel/Worker 两侧白名单仍是真名。
 	//
 	// 计价：五档**统一按秒**（EstimateBilling 返回 seconds 倍率），720p 再乘 size 倍率。
-	ModelCapcut25:       {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
-	ModelCapcut25Flash:  {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25Flash},
-	ModelCapcut20:       {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
-	ModelCapcut20Fast:   {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
-	ModelCapcut20Mini:   {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
-	ModelTikTokSymphony: {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstreamModel},
+	// ElevenLabs（2026-11-21 上架，只一档）：公开名 = 上游真名，故不设 UpstreamModel。
+	// 计价：按秒（EstimateBilling 给 seconds 倍率），720p 再乘 size 倍率 2.0。
+	ModelElevenlabs25Flash: {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
+	ModelElevenlabs20Mini:  {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
+	ModelElevenlabsGemini:  {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
+	ModelCapcut25:          {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
+	ModelCapcut25Flash:     {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25Flash},
+	ModelCapcut20:          {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20},
+	ModelCapcut20Fast:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
+	ModelCapcut20Mini:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
+	ModelTikTokSymphony:    {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstreamModel},
 }
 
 // capcutOfficialToPublic 是「官网档位真名 → 对外公开名」的**反向**映射
@@ -982,6 +1016,25 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		}
 		norm.Duration = duration
 		norm.Ratio = tiktokRatio
+	case kindElevenlabsVideo:
+		// ElevenLabs（2026-11-21 上架，只卖 Seedance 2.5 Flash）：
+		//   - 时长 4–30 秒整数（官网滑杆；3 秒真机 /price 报 value_error）；
+		//   - 分辨率 480p / 720p；
+		//   - 参考：图 ≤30、视频 ≤10、音频 ≤10（2.5 系列口径，超限显式 400）；
+		//   - 比例六档（不含 auto）。
+		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		duration, err := resolveElevenlabsDuration(req)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
+		norm.Duration = duration
+		resolution, resErr := normalizeElevenlabsModelResolution(req.Resolution, norm.Model)
+		if resErr != nil {
+			return service.TaskErrorWrapperLocal(resErr, "invalid_resolution", http.StatusBadRequest)
+		}
+		norm.Resolution = resolution
 	case kindCapcutVideo:
 		// CapCut（剪映国际版）Seedance 2.5 / 2.5 Flash / 2.0 / 2.0 Fast / 2.0 Mini：
 		//   - 时长 4–30 秒任意整数秒（2.5 与 2.5 Flash，官网 2.5 系列 4–30s）；
@@ -1320,6 +1373,21 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 			ratios["seconds"] = float64(seconds)
 		}
 		if ratio := capcutResolutionRatio(req.Model, req.Resolution); ratio != 1 {
+			ratios["size"] = ratio
+		}
+		if len(ratios) == 0 {
+			return nil
+		}
+		return ratios
+	}
+	// ElevenLabs（只一档）：按秒计费。seconds 必须给 —— 漏了会按 1 秒收费，
+	// 15 秒的片子只收 1 秒的钱；720p 再乘 size 倍率 2.0（480p ¥0.25/秒 → 720p ¥0.50/秒）。
+	if req.Kind == kindElevenlabsVideo {
+		ratios := map[string]float64{}
+		if req.Duration > 0 {
+			ratios["seconds"] = float64(req.Duration)
+		}
+		if ratio := elevenlabsResolutionRatio(req.Resolution); ratio != 1 {
 			ratios["size"] = ratio
 		}
 		if len(ratios) == 0 {
@@ -1753,6 +1821,16 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 		resolution := strings.TrimSpace(req.Resolution)
 		if resolution != "" && !strings.EqualFold(resolution, "720p") {
 			return fmt.Errorf("%s is fixed at 720p", modelName)
+		}
+	case kindElevenlabsVideo:
+		// ElevenLabs 只卖 480p / 720p。官网还能选 1080p / 4K（**未定价**），
+		// 传了显式拒绝，不静默降成 720p —— 用户会为一个没生效的档位付费。
+		resolution := strings.TrimSpace(req.Resolution)
+		if resolution != "" {
+			if _, err := normalizeElevenlabsModelResolution(resolution, modelName); err != nil {
+				return fmt.Errorf("%s supports only %s resolution, got %q",
+					modelName, strings.Join(elevenlabsModelResolutions(modelName), "/"), resolution)
+			}
 		}
 	case kindCapcutVideo:
 		// CapCut 只卖 480p / 720p（两档都已定价，五档模型一致）。
@@ -3236,4 +3314,118 @@ func inferMediaType(rawURL string) string {
 	default:
 		return "video"
 	}
+}
+
+// ── ElevenLabs（elevenlabs.io 图像和视频创作台，2026-11-21 上架）───────────────
+//
+// 只卖一档：Seedance 2.5 Flash（`el-seedance-2.5flash`）。
+// 商品口径与 ArcReel 侧 `ELEVENLABS_*` 常量、Worker 侧
+// `src/platforms/elevenlabs/params.ts` 三处同口径。
+const (
+	// elevenlabsMinDuration / elevenlabsMaxDuration：官网滑杆 4–30 秒整数。
+	// 3 秒真机 /price 返回 422 value_error（不是“能跑但慢”，是根本不接受）。
+	elevenlabsMinDuration = 4
+	elevenlabsMaxDuration = 30
+	// elevenlabsMiniMaxDuration：2.0 mini 的面板滑杆上界（4–15s）。
+	elevenlabsMiniMaxDuration = 15
+	// elevenlabsGeminiMinDuration / MaxDuration：Gemini 实测 3–15s（20s/30s 422）。
+	elevenlabsGeminiMinDuration = 3
+	elevenlabsGeminiMaxDuration = 15
+	// elevenlabsDefaultDuration：官网出厂 5s（缺省与 ArcReel 默认值一致）。
+	elevenlabsDefaultDuration = 5
+	// elevenlabs720PResolutionRatio：480p 是基准价，720p 是 2 倍
+	// （用户 2026-11-21 定价：0.25 元/秒 → 0.50 元/秒）。
+	elevenlabs720PResolutionRatio = 2.0
+)
+
+// normalizeElevenlabsResolution 归一分辨率（只收 480p/720p）。
+//
+// 官网面板还有 1080p / 4K，但**未定价** → 显式拒绝，不静默降级。
+func normalizeElevenlabsResolution(raw string) (string, error) {
+	return normalizeElevenlabsModelResolution(raw, ModelElevenlabs25Flash)
+}
+
+// normalizeElevenlabsModelResolution 按**档位**归一分辨率。
+//
+// Gemini 只有 360p / 720p（官网没有 480p）；Seedance 两档是 480p / 720p。
+// 缺省取该档的首个合法值，非法值显式报错（不静默降级）。
+func normalizeElevenlabsModelResolution(raw, model string) (string, error) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	allowed := elevenlabsModelResolutions(model)
+	if value == "" {
+		return allowed[0], nil
+	}
+	for _, candidate := range allowed {
+		if value == candidate {
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"elevenlabs %s supports only %s resolution, got %q",
+		model, strings.Join(allowed, "/"), raw)
+}
+
+// elevenlabsModelResolutions 返回该档位允许的分辨率（顺序即缺省优先）。
+func elevenlabsModelResolutions(model string) []string {
+	if strings.TrimSpace(model) == ModelElevenlabsGemini {
+		return []string{"360p", "720p"}
+	}
+	return []string{"480p", "720p"}
+}
+
+// elevenlabsResolutionRatio 返回分辨率倍率（480p = 1，720p = 2）。
+func elevenlabsResolutionRatio(raw string) float64 {
+	if strings.EqualFold(strings.TrimSpace(raw), "720p") {
+		return elevenlabs720PResolutionRatio
+	}
+	return 1
+}
+
+// elevenlabsModelMaxDuration 返回该档位的时长上界（mini 15s、2.5 Flash 30s）。
+func elevenlabsModelMaxDuration(model string) int {
+	switch strings.TrimSpace(model) {
+	case ModelElevenlabs20Mini:
+		return elevenlabsMiniMaxDuration
+	case ModelElevenlabsGemini:
+		return elevenlabsGeminiMaxDuration
+	default:
+		return elevenlabsMaxDuration
+	}
+}
+
+// elevenlabsModelMinDuration 返回该档位的最小时长（Gemini 3s，其余 4s）。
+func elevenlabsModelMinDuration(model string) int {
+	if strings.TrimSpace(model) == ModelElevenlabsGemini {
+		return elevenlabsGeminiMinDuration
+	}
+	return elevenlabsMinDuration
+}
+
+// resolveElevenlabsDuration 解析时长：4 秒起、上界按模型，区间外显式 400（不吸附）。
+//
+// 与豆包/万相的「区间外回落默认值」不同：这里 400，因为按秒计费下
+// 「静默改成 5 秒」会让用户按他以为的时长付费却收到短片。
+func resolveElevenlabsDuration(req clientRequest) (int, error) {
+	upper := elevenlabsModelMaxDuration(req.Model)
+	lower := elevenlabsModelMinDuration(req.Model)
+	if seconds, found, err := parseFlexibleInt(req.Seconds); err != nil {
+		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
+	} else if found {
+		return validateElevenlabsDuration(seconds, lower, upper)
+	}
+	if duration, found, err := parseFlexibleInt(req.Duration); err != nil {
+		return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
+	} else if found {
+		return validateElevenlabsDuration(duration, lower, upper)
+	}
+	return elevenlabsDefaultDuration, nil
+}
+
+// validateElevenlabsDuration 校验 4–30 秒区间（区间外 400，不吸附）。
+func validateElevenlabsDuration(seconds, lower, upper int) (int, error) {
+	if seconds < lower || seconds > upper {
+		return 0, fmt.Errorf(
+			"elevenlabs duration must be %d-%d seconds, got %d", lower, upper, seconds)
+	}
+	return seconds, nil
 }

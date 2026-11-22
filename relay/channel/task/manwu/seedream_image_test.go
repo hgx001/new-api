@@ -197,6 +197,7 @@ func TestSeedreamImageRejectsIllegalRequests(t *testing.T) {
 //   - 豆包：actionbar 只有 model / style，另有「比例 自动」按钮；
 //     全页文本扫「张 / 数量 / count」零命中（CDP 9230 实测）；
 //   - dola：真机全页扫描「张/数量/count」零命中。
+//
 // 官网一次固定出 **4 张**，出图张数只能由上游截断，不能由参数控制。
 //
 // ⚠️ 为什么不沿用 kindImage 的 1..10：

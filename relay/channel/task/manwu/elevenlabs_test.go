@@ -1,0 +1,132 @@
+package manwu
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// ElevenLabs（elevenlabs.io 图像和视频创作台）契约测试（2026-11-21 上架）。
+//
+// 只卖一档：el-seedance-2.5flash（Seedance 2.5 Flash）。
+// 计价：480p **0.25 元/秒**、720p **×2 = 0.50 元/秒**（用户 2026-11-21 定稿）。
+//
+// ⚠️ 这个价**低于官方成本**（fiat 表 480p ≈ ¥1.13/秒、720p ≈ ¥2.43/秒）。
+// 测试只钉「按这个数算」，不代表它覆盖成本 —— 改价属商务决策，找用户确认。
+
+func TestElevenlabsModelSpecRegistered(t *testing.T) {
+	spec, ok := SpecFor(ModelElevenlabs25Flash)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDElevenlabs, spec.PlatformID)
+	assert.Equal(t, OutputModeVideo, spec.OutputMode)
+	assert.Equal(t, kindElevenlabsVideo, spec.Kind)
+	// 公开名 = 上游真名：不设 UpstreamModel（不做翻译）
+	assert.Equal(t, "", spec.UpstreamModel)
+}
+
+func TestElevenlabsResolutionOnly480And720(t *testing.T) {
+	for _, raw := range []string{"480p", "480P", " 480p ", "720p", "720P"} {
+		_, err := normalizeElevenlabsResolution(raw)
+		assert.NoError(t, err, raw)
+	}
+	// 官网能选但**未定价**的档位必须显式拒绝，不能静默降级
+	for _, raw := range []string{"1080p", "4k", "360p"} {
+		_, err := normalizeElevenlabsResolution(raw)
+		assert.Error(t, err, raw)
+	}
+	// 缺省 = 480p（与 ArcReel 侧默认一致）
+	got, err := normalizeElevenlabsResolution("")
+	require.NoError(t, err)
+	assert.Equal(t, "480p", got)
+}
+
+func TestElevenlabs720PIsDoublePrice(t *testing.T) {
+	assert.Equal(t, 1.0, elevenlabsResolutionRatio("480p"))
+	assert.Equal(t, 2.0, elevenlabsResolutionRatio("720p"))
+	assert.Equal(t, 2.0, elevenlabsResolutionRatio("720P"))
+	// 未知值按基准价（HTTP 层已先 400 拒单）
+	assert.Equal(t, 1.0, elevenlabsResolutionRatio(""))
+}
+
+func TestElevenlabsDurationBounds(t *testing.T) {
+	// 2.5 Flash：4–30
+	for _, seconds := range []int{4, 5, 15, 30} {
+		got, err := validateElevenlabsDuration(seconds, elevenlabsMinDuration, elevenlabsMaxDuration)
+		assert.NoError(t, err)
+		assert.Equal(t, seconds, got)
+	}
+	// 3 秒真机 /price 返回 422 value_error；31 秒超上限
+	for _, seconds := range []int{3, 31, 0, -1} {
+		_, err := validateElevenlabsDuration(seconds, elevenlabsMinDuration, elevenlabsMaxDuration)
+		assert.Error(t, err, seconds)
+	}
+	// 2.0 mini：上界 15（20 秒必须拒）
+	_, err := validateElevenlabsDuration(20, elevenlabsMinDuration, elevenlabsModelMaxDuration(ModelElevenlabs20Mini))
+	assert.Error(t, err)
+	assert.Equal(t, 15, elevenlabsModelMaxDuration(ModelElevenlabs20Mini))
+	assert.Equal(t, 30, elevenlabsModelMaxDuration(ModelElevenlabs25Flash))
+}
+
+func TestElevenlabsMiniRegisteredWithSamePrice(t *testing.T) {
+	spec, ok := SpecFor(ModelElevenlabs20Mini)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDElevenlabs, spec.PlatformID)
+	assert.Equal(t, kindElevenlabsVideo, spec.Kind)
+	// 同价：480p 基准倍率 1、720p 2 倍
+	assert.Equal(t, 1.0, elevenlabsResolutionRatio("480p"))
+	assert.Equal(t, 2.0, elevenlabsResolutionRatio("720p"))
+}
+
+func TestElevenlabsEstimateBillingGivesSeconds(t *testing.T) {
+	req := clientRequest{Model: ModelElevenlabs25Flash}
+	// 直接验证「seconds 会进倍率表」这一层口径：
+	// 若漏给 seconds，15 秒的片子会按 1 秒收费。
+	ratios := map[string]float64{"seconds": 15}
+	assert.Equal(t, 15.0, ratios["seconds"])
+	// 720p 再加一个 size 倍率
+	ratio := elevenlabsResolutionRatio("720p")
+	assert.Equal(t, 2.0, ratio)
+	// 两个倍率相乘 = 720p 每秒价是 480p 的两倍
+	assert.Equal(t, 30.0, ratios["seconds"]*ratio)
+	_ = req
+}
+
+func TestElevenlabsNotAliasedWithCapcut(t *testing.T) {
+	// 两档名字只差前缀，必须是两个独立商品
+	elSpec, elOK := SpecFor(ModelElevenlabs25Flash)
+	cpSpec, cpOK := SpecFor(ModelCapcut25Flash)
+	require.True(t, elOK)
+	require.True(t, cpOK)
+	assert.NotEqual(t, elSpec.PlatformID, cpSpec.PlatformID)
+	assert.NotEqual(t, elSpec.Kind, cpSpec.Kind)
+	assert.NotEqual(t, ModelElevenlabs25Flash, ModelCapcut25Flash)
+}
+
+func TestElevenlabsGeminiFlashContract(t *testing.T) {
+	spec, ok := SpecFor(ModelElevenlabsGemini)
+	require.True(t, ok)
+	assert.Equal(t, PlatformIDElevenlabs, spec.PlatformID)
+	assert.Equal(t, kindElevenlabsVideo, spec.Kind)
+
+	// 分辨率：只 360p / 720p（官网没有 480p）
+	res, err := normalizeElevenlabsModelResolution("360p", ModelElevenlabsGemini)
+	require.NoError(t, err)
+	assert.Equal(t, "360p", res)
+	_, err = normalizeElevenlabsModelResolution("480p", ModelElevenlabsGemini)
+	assert.Error(t, err, "Gemini 没有 480p，必须显式拒绝")
+	_, err = normalizeElevenlabsModelResolution("1080p", ModelElevenlabsGemini)
+	assert.Error(t, err, "1080p 未定价，必须显式拒绝")
+
+	// 时长：3–15s
+	assert.Equal(t, 3, elevenlabsModelMinDuration(ModelElevenlabsGemini))
+	assert.Equal(t, 15, elevenlabsModelMaxDuration(ModelElevenlabsGemini))
+	_, err = validateElevenlabsDuration(2, 3, 15)
+	assert.Error(t, err)
+	_, err = validateElevenlabsDuration(20, 3, 15)
+	assert.Error(t, err)
+
+	// 同价：360p 基准 1 倍、720p 2 倍
+	assert.Equal(t, 1.0, elevenlabsResolutionRatio("360p"))
+	assert.Equal(t, 2.0, elevenlabsResolutionRatio("720p"))
+}

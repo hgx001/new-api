@@ -185,7 +185,8 @@ func TestPicsartUnlimitedBuildsOfficialPayload(t *testing.T) {
 // 老板 2026-10-25 定稿：ModelPrice 配最低档 480P 的 ¥1.50，让模型广场徽标显示
 // 「¥1.50 / 请求」；720P 仍收 ¥2.00，靠这条倍率乘上去。
 // （反过来的「720P 基准 ¥2.00 + 480P 折 0.75」会让徽标显示 ¥2，
-//   而客户最低能买到 ¥1.50，看着像涨价。）
+//
+//	而客户最低能买到 ¥1.50，看着像涨价。）
 //
 // 单模型名承载两档价，靠的就是这条倍率 —— relay_task.go 用
 // applyTaskOtherRatios 把预扣额乘一次，而按次任务在
