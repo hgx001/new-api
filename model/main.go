@@ -323,6 +323,20 @@ func migrateDB() error {
 	if err := migrateAutoDLModelNames(); err != nil {
 		return err
 	}
+
+	// 给「从未归类」的模型补供应商（2026-11-22）。
+	//
+	// 放在迁移之后：models / vendors 两张表这时才存在。失败不阻断启动 ——
+	// 归类只影响模型广场的展示，缺一次同步最多少个供应商标签，下次重启
+	// 会再跑一遍。
+	//
+	// ⚠️ 挂在 migrateDB 而不是 migrateDBFast：后者是**死代码**（无人调用），
+	// 挂在那儿等于没挂 —— 生产启动日志里连「database migrated」都不会出现。
+	if updated, err := SyncModelVendors(); err != nil {
+		common.SysError("自动归类模型供应商失败: " + err.Error())
+	} else if updated > 0 {
+		common.SysLog(fmt.Sprintf("自动归类模型供应商：补齐 %d 个", updated))
+	}
 	return nil
 }
 
@@ -398,17 +412,6 @@ func migrateDBFast() error {
 		}
 	}
 	common.SysLog("database migrated")
-
-	// 给「从未归类」的模型补供应商（2026-11-22）。
-	//
-	// 放在迁移之后：models / vendors 两张表这时才存在。失败不阻断启动 ——
-	// 归类只影响模型广场的展示，缺一次同步最多少个供应商标签，下次重启
-	// 会再跑一遍。
-	if updated, err := SyncModelVendors(); err != nil {
-		common.SysError("自动归类模型供应商失败: " + err.Error())
-	} else if updated > 0 {
-		common.SysLog(fmt.Sprintf("自动归类模型供应商：补齐 %d 个", updated))
-	}
 	return nil
 }
 
