@@ -968,12 +968,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		// 官网 Video 档收 9 张（"maximum of 9 images"，2026-11-22 真机取证）；
 		// 超出会被官网静默丢弃，用户会以为全部素材都参与了生成 → 显式拒绝。
 		referenceImageLimit = tiktokMaxReferenceImages
+		// 参考视频/音频也走 input_reference（客户端习惯把素材都塞这个字段）。
+		// 必须在**图片解析之前**按后缀拆出去，否则 mp4 会被当成 reference_image
+		// 传给下游（Worker 拿它去进图片槽 → 官网静默丢弃 / 上传失败）。
+		splitTiktokAvReferences(&req)
 	}
 	images, referenceSource, err := resolveReferenceImagesWithLimit(req, referenceImageLimit)
 	if err != nil {
 		return rejectReferenceRequest(c, req.Model, err)
 	}
 	norm.Images = images
+	// TikTok 的参考视频/音频在上面已从 input_reference 拆到 req.Videos/Audios；
+	// 主路径不像编辑链路那样统一赋 norm.Videos，这里补上（否则 buildRequestBody
+	// 拿到空列表 → 视频静默不上传，用户白付一次）。
+	if spec.Kind == kindTikTokVideo {
+		norm.Videos = rawURLList(req.Videos)
+		norm.Audios = rawURLList(req.Audios)
+	}
 	norm.ReferenceSource = referenceSource
 	norm.ReferenceCount = len(images)
 	// 参考图来源必须进日志：new-api 不留存原始请求体，丢图事故排查时
@@ -1591,15 +1602,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// 全部报 `unsupported 上游 request kind: tiktok_video`（1.5 Pro 也一样），
 		// 模型上架了也调不通。
 		//
-		// 素材只装参考图：校验层已显式拒绝参考视频/音频（该链路官网只收图位），
-		// 这里就不该出现 Videos/Audios。
 		body.VideoParams = &videoParams{
 			Model:      firstNonEmpty(spec.UpstreamModel, req.Model),
 			Ratio:      req.Ratio,
 			Duration:   &req.Duration,
 			Resolution: req.Resolution,
 		}
-		body.Inputs = toInputs(InputTypeImage, req.Images)
+		// 顺序固定 图 → 视频 → 音频：Worker 按 inputs 顺序逐条上传，
+		// 并按顺序算 @imageN/@videoN/@audioN 的槽位基准，顺序错了 @ 引用会指错素材
+		// （与 CapCut 同口径）。
+		body.Inputs = append(body.Inputs, toInputs(InputTypeImage, req.Images)...)
+		body.Inputs = append(body.Inputs, toInputs(InputTypeVideo, req.Videos)...)
+		body.Inputs = append(body.Inputs, toInputs(InputTypeAudio, req.Audios)...)
 	case kindCapcutVideo:
 		// CapCut（剪映国际版）：model 传官网档位真名（公开名 cp-* 在本表内翻译，
 		// ArcReel/Worker 两侧白名单按真名归一）；ratio/duration/resolution 透传。
@@ -1645,6 +1659,28 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, errors.Wrap(err, "marshal request body failed")
 	}
 	return bytes.NewReader(data), nil
+}
+
+// rawURLList 把 videos/audios 这类 json.RawMessage 解成 URL 列表（容错：解不开就当空）。
+func rawURLList(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var urls []string
+	if err := common.Unmarshal(raw, &urls); err == nil {
+		return urls
+	}
+	var objs []map[string]any
+	if err := common.Unmarshal(raw, &objs); err == nil {
+		out := make([]string, 0, len(objs))
+		for _, o := range objs {
+			if u, ok := o["url"].(string); ok && u != "" {
+				out = append(out, u)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func toInputs(inputType string, urls []string) []jobInput {
@@ -1970,20 +2006,44 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 		if resolution != "" && !strings.EqualFold(resolution, "720p") {
 			return fmt.Errorf("%s has no resolution option (output is 9:16), got %q", modelName, resolution)
 		}
-		// 官网面板只有图位：参考视频 / 参考音频会被官网静默忽略。
-		// 客户端可能把 mp4 直接放进 input_reference（URL 后缀就是形态线索），
-		// 而图片解析不查后缀 → 这里显式按后缀判一次非图片素材。
-		if len(req.Videos) > 0 || len(req.Audios) > 0 {
-			return fmt.Errorf("%s does not support reference videos or audios", modelName)
+		// 素材上限（2026-11-22 官网 Video 档上传弹层原文）：
+		//   "Upload up to 12 reference files, with a maximum of 9 images, 3 videos,
+		//    and 3 audio clips. Each video or audio clip must be 2s – 15s, and the
+		//    total duration cannot exceed 15s for either type."
+		// 超出显式拒绝（官网会静默丢弃超出部分 → 用户以为全参与了）。
+		// ⚠️ req.Videos / req.Audios 在**原始请求**里是 json.RawMessage，
+		// `len()` 数的是**字节数**不是元素个数 → 必须解成 URL 列表再数
+		// （真机：1 个视频被算成 19，误报「超过 3 个」）。
+		declaredVideoURLs := rawURLList(req.Videos)
+		declaredAudioURLs := rawURLList(req.Audios)
+		if len(declaredVideoURLs) > tiktokMaxReferenceVideos {
+			return fmt.Errorf("%s supports at most %d reference videos, got %d", modelName, tiktokMaxReferenceVideos, len(declaredVideoURLs))
 		}
+		if len(declaredAudioURLs) > tiktokMaxReferenceAudios {
+			return fmt.Errorf("%s supports at most %d reference audios, got %d", modelName, tiktokMaxReferenceAudios, len(declaredAudioURLs))
+		}
+		// 客户端可能把 mp4 直接放进 input_reference（URL 后缀就是形态线索）：
+		// 按后缀把「混在 input_reference 里的音视频」挑出来并判上限，
+		// 而不是笼统拒绝（旧实现把视频一路拒死，参考视频功能等于没有）。
+		extraVideos, extraAudios := 0, 0
 		for _, raw := range tiktokReferenceURLs(req.InputReference) {
-			if ext := strings.ToLower(strings.TrimSpace(path.Ext(raw))); ext != "" {
-				switch ext {
-				case ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif":
-				default:
-					return fmt.Errorf("%s only accepts image references, got %q", modelName, ext)
-				}
+			ext := strings.ToLower(strings.TrimSpace(path.Ext(raw)))
+			switch ext {
+			case "", ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif", ".heic", ".heif":
+				// 图片（或无后缀，交给下游按 URL 处理）
+			case ".mp4", ".mov", ".webm", ".m4v":
+				extraVideos++
+			case ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".aiff":
+				extraAudios++
+			default:
+				return fmt.Errorf("%s does not support reference type %q", modelName, ext)
 			}
+		}
+		if len(declaredVideoURLs)+extraVideos > tiktokMaxReferenceVideos {
+			return fmt.Errorf("%s supports at most %d reference videos (including those in input_reference)", modelName, tiktokMaxReferenceVideos)
+		}
+		if len(declaredAudioURLs)+extraAudios > tiktokMaxReferenceAudios {
+			return fmt.Errorf("%s supports at most %d reference audios (including those in input_reference)", modelName, tiktokMaxReferenceAudios)
 		}
 	case kindVeoVideo:
 		if hasValue(req.Seconds) {
@@ -2272,6 +2332,9 @@ const (
 	//    total duration cannot exceed 15s for either type."
 	// → **9 张图**（旧值 4 读的是 Agent 档的 "Upload up to 4 images"，两档文案不同）。
 	tiktokMaxReferenceImages = 9
+	// tiktokMaxReferenceVideos / Audios：官网 Video 档原文 "3 videos, and 3 audio clips"。
+	tiktokMaxReferenceVideos = 3
+	tiktokMaxReferenceAudios = 3
 	// tiktokRatio 是唯一可交付的比例（官网只出 9:16）。
 	tiktokRatio = "9:16"
 )
@@ -2348,6 +2411,62 @@ func formatDurationWhitelist(whitelist []int) string {
 		parts = append(parts, strconv.Itoa(d))
 	}
 	return strings.Join(parts, "/")
+}
+
+// splitTiktokAvReferences 把 input_reference 里的**视频/音频 URL** 拆到 req.Videos /
+// req.Audios，并从 input_reference 里移除（图片解析就不再把它们当图处理）。
+//
+// 为什么必须在图片解析前做：resolveReferenceImagesWithLimit 只看「是不是 URL」，
+// 不查后缀 → mp4 会被当成参考图一路传给 Worker，Worker 拿它进图片槽，
+// 官网静默丢弃，用户白付一次（2026-11-22 放开参考视频时发现）。
+func splitTiktokAvReferences(req *clientRequest) {
+	urls := tiktokReferenceURLs(req.InputReference)
+	if len(urls) == 0 {
+		return
+	}
+	kept := make([]string, 0, len(urls))
+	var videos, audios []string
+	// 已有的 videos/audios 字段也并进来（两个入口都能用）
+	var existingVideos, existingAudios []string
+	if len(req.Videos) > 0 {
+		_ = common.Unmarshal(req.Videos, &existingVideos)
+	}
+	if len(req.Audios) > 0 {
+		_ = common.Unmarshal(req.Audios, &existingAudios)
+	}
+	videos = append(videos, existingVideos...)
+	audios = append(audios, existingAudios...)
+	for _, u := range urls {
+		ext := strings.ToLower(strings.TrimSpace(path.Ext(strings.SplitN(u, "?", 2)[0])))
+		switch ext {
+		case ".mp4", ".mov", ".webm", ".m4v":
+			videos = append(videos, u)
+		case ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".aiff":
+			audios = append(audios, u)
+		default:
+			kept = append(kept, u)
+		}
+	}
+	if len(kept) == len(urls) {
+		return // 没有音视频要拆
+	}
+	if len(videos) > 0 {
+		if encoded, err := common.Marshal(videos); err == nil {
+			req.Videos = encoded
+		}
+	}
+	if len(audios) > 0 {
+		if encoded, err := common.Marshal(audios); err == nil {
+			req.Audios = encoded
+		}
+	}
+	if len(kept) == 0 {
+		req.InputReference = nil
+		return
+	}
+	if encoded, err := common.Marshal(kept); err == nil {
+		req.InputReference = encoded
+	}
 }
 
 // tiktokReferenceURLs 从 input_reference 原始 JSON 里取 URL 列表

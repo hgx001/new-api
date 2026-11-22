@@ -148,10 +148,10 @@ func TestTikTokReferenceImagesLimitIs9(t *testing.T) {
 	require.NotNil(t, a2.ValidateRequestAndSetAction(c2, info2), "10 张参考图必须显式拒绝")
 }
 
-// 参考视频 / 音频：官网面板只有图位，显式拒绝。
-func TestTikTokRejectsReferenceVideoAndAudio(t *testing.T) {
+// 参考视频超限才拒（2026-11-22 起支持 ≤3 个；旧实现是一律拒）。
+func TestTikTokRejectsReferenceVideoOverLimit(t *testing.T) {
 	c, info, a := postVideoCtx(t,
-		fmt.Sprintf(`{"model":"%s","prompt":"hi","input_reference":["https://a/1.mp4"]}`, ModelTikTokSymphony))
+		fmt.Sprintf(`{"model":"%s","prompt":"hi","input_reference":["https://a/1.mp4","https://a/2.mp4","https://a/3.mp4","https://a/4.mp4"]}`, ModelTikTokSymphony))
 	require.NotNil(t, a.ValidateRequestAndSetAction(c, info))
 }
 
@@ -159,4 +159,33 @@ func TestTikTokRejectsReferenceVideoAndAudio(t *testing.T) {
 func TestModelListContainsTikTokModel(t *testing.T) {
 	names := ModelList()
 	assert.Contains(t, names, ModelTikTokSymphony)
+	assert.Contains(t, names, ModelTiktok20Fast)
+}
+
+// 参考视频（2026-11-22）：官网 Video 档接受 ≤3 视频 + ≤3 音频，旧实现一路拒死。
+func TestTikTokAcceptsReferenceVideos(t *testing.T) {
+	// videos 字段
+	c, info, a := postVideoCtx(t,
+		fmt.Sprintf(`{"model":"%s","prompt":"hi","videos":["https://a/v.mp4"]}`, ModelTiktok20Fast))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info), "参考视频应通过")
+
+	// 超过 3 个显式拒绝
+	var many []string
+	for i := 0; i < 4; i++ {
+		many = append(many, fmt.Sprintf(`"https://a/%d.mp4"`, i))
+	}
+	c2, info2, a2 := postVideoCtx(t,
+		fmt.Sprintf(`{"model":"%s","prompt":"hi","videos":[%s]}`, ModelTiktok20Fast, strings.Join(many, ",")))
+	require.NotNil(t, a2.ValidateRequestAndSetAction(c2, info2), "4 个参考视频应显式拒绝")
+}
+
+// 客户端把 mp4 塞进 input_reference：必须被**拆到 videos**（而不是当参考图或直接拒）。
+func TestTikTokSplitsVideoFromInputReference(t *testing.T) {
+	c, info, a := postVideoCtx(t,
+		fmt.Sprintf(`{"model":"%s","prompt":"hi","input_reference":["https://a/i.jpg","https://a/v.mp4"]}`, ModelTiktok20Fast))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"https://a/i.jpg"}, req.Images, "mp4 不得留在参考图里")
+	assert.Equal(t, []string{"https://a/v.mp4"}, req.Videos, "mp4 必须被拆到参考视频")
 }
