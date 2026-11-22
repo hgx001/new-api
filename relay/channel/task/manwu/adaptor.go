@@ -965,8 +965,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		referenceImageLimit = capcutMaxReferenceImages
 	}
 	if spec.Kind == kindTikTokVideo {
-		// 官网面板只收 4 张（"Upload up to 4 images"）；超出会被官网静默丢弃，
-		// 用户会以为全部素材都参与了生成 → 显式拒绝。
+		// 官网 Video 档收 9 张（"maximum of 9 images"，2026-11-22 真机取证）；
+		// 超出会被官网静默丢弃，用户会以为全部素材都参与了生成 → 显式拒绝。
 		referenceImageLimit = tiktokMaxReferenceImages
 	}
 	images, referenceSource, err := resolveReferenceImagesWithLimit(req, referenceImageLimit)
@@ -1578,6 +1578,23 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		// 保持官网 adaptive 默认档，不硬塞 16:9）。
 		body.VideoParams = &videoParams{
 			Model:      firstNonEmpty(spec.UpstreamModel, picsartUpstreamModel),
+			Ratio:      req.Ratio,
+			Duration:   &req.Duration,
+			Resolution: req.Resolution,
+		}
+		body.Inputs = toInputs(InputTypeImage, req.Images)
+	case kindTikTokVideo:
+		// TikTok Creative Studio（图生视频）：model 传上游官网档位真名
+		// （公开名 tk-*/sd-* 在本表内翻译成 tiktok-symphony / tiktok-seedance-2.0[-fast]）。
+		//
+		// ⚠️ 2026-11-22 真机：这个分支**此前根本不存在** → new-api 调 TikTok 三档
+		// 全部报 `unsupported 上游 request kind: tiktok_video`（1.5 Pro 也一样），
+		// 模型上架了也调不通。
+		//
+		// 素材只装参考图：校验层已显式拒绝参考视频/音频（该链路官网只收图位），
+		// 这里就不该出现 Videos/Audios。
+		body.VideoParams = &videoParams{
+			Model:      firstNonEmpty(spec.UpstreamModel, req.Model),
 			Ratio:      req.Ratio,
 			Duration:   &req.Duration,
 			Resolution: req.Resolution,
@@ -2247,8 +2264,14 @@ func resolveCapcutDuration(req clientRequest, model string) (int, error) {
 //
 // ⚠️ 非法档位一律**显式拒绝**：回落 5 秒等于把用户买的长片做成短片（账实不符）。
 const (
-	// tiktokMaxReferenceImages 是官网面板能收的参考图上限。
-	tiktokMaxReferenceImages = 4
+	// tiktokMaxReferenceImages 是官网 Video 档能收的参考图上限。
+	//
+	// ⚠️ 2026-11-22 真机取证（官网 Video 档上传弹层原文）：
+	//   "Upload up to 12 reference files, with a maximum of 9 images, 3 videos,
+	//    and 3 audio clips. Each video or audio clip must be 2s – 15s, and the
+	//    total duration cannot exceed 15s for either type."
+	// → **9 张图**（旧值 4 读的是 Agent 档的 "Upload up to 4 images"，两档文案不同）。
+	tiktokMaxReferenceImages = 9
 	// tiktokRatio 是唯一可交付的比例（官网只出 9:16）。
 	tiktokRatio = "9:16"
 )

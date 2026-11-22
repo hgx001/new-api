@@ -129,7 +129,7 @@ func TestTikTokResolutionIsNotSelectable(t *testing.T) {
 }
 
 // 参考图 ≤4 张：4 张通过，5 张显式拒绝（官网会静默丢弃 → 用户以为素材都参与了）。
-func TestTikTokReferenceImagesLimitIs4(t *testing.T) {
+func TestTikTokReferenceImagesLimitIs9(t *testing.T) {
 	build := func(n int) string {
 		items := make([]string, 0, n)
 		for i := 0; i < n; i++ {
@@ -139,11 +139,13 @@ func TestTikTokReferenceImagesLimitIs4(t *testing.T) {
 			`{"model":"%s","prompt":"hi","input_reference":[%s]}`,
 			ModelTikTokSymphony, strings.Join(items, ","))
 	}
-	c, info, a := postVideoCtx(t, build(4))
-	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	// 9 张必须通过（官网 Video 档上限，2026-11-22 真机取证）
+	c, info, a := postVideoCtx(t, build(9))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info), "9 张参考图应通过")
 
-	c2, info2, a2 := postVideoCtx(t, build(5))
-	require.NotNil(t, a2.ValidateRequestAndSetAction(c2, info2), "5 张参考图必须显式拒绝")
+	// 10 张必须显式拒绝（官网会静默丢弃超出部分 → 用户以为全参与了）
+	c2, info2, a2 := postVideoCtx(t, build(10))
+	require.NotNil(t, a2.ValidateRequestAndSetAction(c2, info2), "10 张参考图必须显式拒绝")
 }
 
 // 参考视频 / 音频：官网面板只有图位，显式拒绝。
