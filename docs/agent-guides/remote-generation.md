@@ -77,8 +77,13 @@
 
 | 公开名 | 上游名 | 价格 | 参数 |
 |---|---|---|---|
-| `sd-seedance-2.0fast` | `tiktok-seedance-2.0-fast` | ¥0.10/秒 | 720p、9:16、5/10/12s、≤4 图 |
+| `sd-seedance-2.0fast` | `tiktok-seedance-2.0-fast` | ¥0.10/秒 | 720p、9:16、4–15s、≤4 图 |
 | `sd-seedance-2.0` | `tiktok-seedance-2.0` | ¥0.22/秒 | 同上 |
+
+⚠️ 时长**逐模型分档**（2026-11-22 老板口径）：2.0 系列 4–15 秒逐秒；
+1.5 Pro（`tk-symphony-1.5pro`）仍是官网原生 5/10/12 秒。
+new-api 侧校验在 `relay/channel/task/manwu/adaptor.go::tiktokDurationWhitelistFor`，
+Worker 侧在 `src/platforms/tiktok/params.ts`（两处同源，改一处必须改另一处）。
 
 - **公开名用 `sd-` 中性前缀**：模型 id 对用户可见，前缀不透露渠道（`cp-`=CapCut、`el-`=ElevenLabs）。
 - **分辨率与比例服务端定死**（720p / 9:16），不对用户暴露选择；用户传别的值不采纳。

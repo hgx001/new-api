@@ -58,6 +58,41 @@ func TestTikTokDurationWhitelist(t *testing.T) {
 	}
 }
 
+// 时长白名单**逐模型不同**（2026-11-22 老板口径）：
+//   - 1.5 Pro / Symphony 档：官网原生 5 / 10 / 12 秒；
+//   - 2.0 系列（Fast / 标准）：4–15 秒逐秒。
+// 合成一张表会两头都错：2.0 档被挡在 12 秒上限外，或 1.5 Pro 档被放进官网没有的秒数。
+func TestTikTokDurationWhitelistPerModel(t *testing.T) {
+	for _, model := range []string{ModelTiktok20Fast, ModelTiktok20} {
+		for _, ok := range []int{4, 5, 9, 13, 15} {
+			c, info, a := postVideoCtx(t,
+				fmt.Sprintf(`{"model":"%s","prompt":"hi","seconds":%d}`, model, ok))
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info), "%s seconds=%d 应通过", model, ok)
+		}
+		for _, bad := range []int{1, 3, 16, 30} {
+			c, info, a := postVideoCtx(t,
+				fmt.Sprintf(`{"model":"%s","prompt":"hi","seconds":%d}`, model, bad))
+			require.NotNil(t, a.ValidateRequestAndSetAction(c, info), "%s seconds=%d 应显式拒绝", model, bad)
+		}
+	}
+	// 1.5 Pro 档仍然只有三档：2.0 的 4/13/15 在它这里必须拒绝
+	for _, bad := range []int{4, 13, 15} {
+		c, info, a := postVideoCtx(t,
+			fmt.Sprintf(`{"model":"%s","prompt":"hi","seconds":%d}`, ModelTikTokSymphony, bad))
+		require.NotNil(t, a.ValidateRequestAndSetAction(c, info), "symphony seconds=%d 应显式拒绝", bad)
+	}
+}
+
+// 2.0 档的缺省时长仍是 5 秒。
+func TestTikTok20DefaultDurationIs5(t *testing.T) {
+	c, info, a := postVideoCtx(t,
+		fmt.Sprintf(`{"model":"%s","prompt":"hi"}`, ModelTiktok20Fast))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, 5, req.Duration)
+}
+
 // 缺省时长 = 5 秒（官网默认值）。
 func TestTikTokDefaultDurationIs5(t *testing.T) {
 	c, info, a := postVideoCtx(t,
