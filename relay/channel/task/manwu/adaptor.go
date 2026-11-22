@@ -244,6 +244,19 @@ const (
 	// 官网模型下拉显示 "Video 1.5 Pro"，权益接口里叫 "Seedance 1.5"
 	// （Worker 真机 2026-11-15 实测）。
 	ModelTikTokSymphony = "tk-symphony-1.5pro"
+	// ModelTiktok20Fast / ModelTiktok20 是 2026-11-22 上架的两档（定价见
+	// constant/tiktok_family.go：fast ¥0.10/秒、标准 ¥0.22/秒）。
+	//
+	// ⚠️ 公开名用 **sd- 中性前缀**，不用 tk-/cp-/el-：模型 id 对用户可见，
+	// 前缀不能透露渠道。与 1.5 Pro 的 `tk-symphony-1.5pro` 是三个独立商品
+	// （官网下拉里是三个不同档位），**不做互为别名**。
+	ModelTiktok20Fast = "sd-seedance-2.0fast"
+	ModelTiktok20     = "sd-seedance-2.0"
+	// tiktokUpstream20Fast / tiktokUpstream20 是发往 ArcReel 的上游模型名。
+	// 必须与 1.5 Pro 的 `tiktok-symphony` **区分开** —— Worker 靠它决定在官网
+	// 下拉里选哪一档；混用会导致「卖 2.0、跑 1.5 Pro」的错档交付。
+	tiktokUpstream20Fast = "tiktok-seedance-2.0-fast"
+	tiktokUpstream20     = "tiktok-seedance-2.0"
 	// tiktokUpstreamModel 是发往 ArcReel 的上游模型名；ArcReel 侧 TikTok 按
 	// **平台**记账（billing_model_id 固定 "tiktok-symphony"），所以它与公开名不同。
 	tiktokUpstreamModel = "tiktok-symphony"
@@ -473,6 +486,8 @@ var modelSpecs = map[string]modelSpec{
 	ModelCapcut20Fast:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Fast},
 	ModelCapcut20Mini:      {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel20Mini},
 	ModelTikTokSymphony:    {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstreamModel},
+	ModelTiktok20Fast:      {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstream20Fast},
+	ModelTiktok20:          {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstream20},
 }
 
 // capcutOfficialToPublic 是「官网档位真名 → 对外公开名」的**反向**映射

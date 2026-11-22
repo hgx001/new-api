@@ -72,3 +72,17 @@
 - 反解素材由 ArcReel 下载，提交可能耗时1–2分钟；不能为“快”压低网关超时导致“客户端已失败、上游却已建单”。
 - 验交付用历史 ready 产物和正确用户鉴权；不因一次官网 something-went-wrong 就认定网关错误，也不能把过去验过的链路当永久不会出故障。
 - 模型广场与调用能力分离，反解价格未核定前不因占位价对外展示。上限/参数变动同步边界测试与三仓实现，不只改常量。
+
+## 两档 sd- 视频模型（2026-11-22 上架）
+
+| 公开名 | 上游名 | 价格 | 参数 |
+|---|---|---|---|
+| `sd-seedance-2.0fast` | `tiktok-seedance-2.0-fast` | ¥0.10/秒 | 720p、9:16、5/10/12s、≤4 图 |
+| `sd-seedance-2.0` | `tiktok-seedance-2.0` | ¥0.22/秒 | 同上 |
+
+- **公开名用 `sd-` 中性前缀**：模型 id 对用户可见，前缀不透露渠道（`cp-`=CapCut、`el-`=ElevenLabs）。
+- **分辨率与比例服务端定死**（720p / 9:16），不对用户暴露选择；用户传别的值不采纳。
+- **不设 size 倍率**（与 CapCut 的「480p 基准 × 720p 倍率」不同）：`ModelPrice` 直接就是最终单价，改价只改这一处。
+- 能力组唯一来源 `constant/tiktok_family.go`；广场白名单查 `constant.IsTiktokFamily`，不要手写模型名。
+- 上架脚本：`scripts/prod-upsert-sd-models-20261122.sql`（双机各跑一次，先发版再改库）。
+- Worker 侧靠 `TIKTOK_MODEL_MATCHERS` 选官网下拉档位。⚠️ 官网同时有 `Seedance 2.0` 与 `Seedance 2.0 Fast`，标准档必须用负向断言排除 `fast`/`mini`，否则价差 2.2 倍静默错档。

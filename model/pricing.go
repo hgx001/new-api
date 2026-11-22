@@ -581,6 +581,16 @@ func isAllowedPricingModel(name string) bool {
 	if constant.IsCapcutFamily(name) {
 		return true
 	}
+	// 漫屋 ArcReel 两档视频（sd-seedance-2.0fast / sd-seedance-2.0，2026-11-22 上架）：
+	// fast ¥0.10/秒、标准 ¥0.22/秒，固定 720p + 9:16。
+	//
+	// ⚠️ 判定同样走**能力组**（constant.IsTiktokFamily），不在这里手写模型名 ——
+	// 能力组是「谁是这一族」的唯一来源，将来加档位这里自动生效。
+	// ⚠️ 能力组是精确集合：`sd-seedance-2.0fast` 包含子串 `sd-seedance-2.0`，
+	// 前缀匹配会把 fast 档当成标准档（价差 2 倍以上）。
+	if constant.IsTiktokFamily(name) {
+		return true
+	}
 	// 漫屋 ArcReel 豆包官网视频（公开短名，转发前由 manwu adaptor 翻译成官网真名；
 	// 2026-10-12 去掉 db- 前缀：db-seedance-2-0 → seedance-2-0-fast、db-seedance-2-5 → seedance-2-5）
 	if name == "seedance-2-5" || name == "seedance-2-0-fast" {

@@ -699,6 +699,10 @@ func TestModelListAndChannelName(t *testing.T) {
 		"el-seedance-2.5flash",
 		"gemini-web-video",
 		"jimeng-video-reverse",
+		// 2026-11-22 上架两档：公开名用 sd- 中性前缀（模型 id 对用户可见，
+		// 前缀不透露渠道）。与 cp-/el-/豆包短名均不是别名（不同官网、不同价）。
+		"sd-seedance-2.0",
+		"sd-seedance-2.0fast",
 		"seedance-2-0-fast",
 		"seedance-2-5",
 		"seedance-2.0",
