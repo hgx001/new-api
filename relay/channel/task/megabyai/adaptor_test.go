@@ -161,18 +161,21 @@ func TestBuildRequestBodyUsesUnifiedUpstreamContract(t *testing.T) {
 	require.NotContains(t, body, "images")
 }
 
+// 上游回执里的各种成片地址形状都要能「认出来」，但**一律不向外透传**。
+//
+// 认出来是为了把「成片已出」判对；不透传是为了不把上游存储域名报给客户。
 func TestParseTaskResultCapturesVideoURL(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 
 	completed, err := adaptor.ParseTaskResult([]byte(`{"id":"video_1","status":"completed","progress":100,"video_url":"https://cdn.example/v.mp4"}`))
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusSuccess, completed.Status)
-	require.Equal(t, "https://cdn.example/v.mp4", completed.Url)
+	require.Empty(t, completed.Url, "顶层 video_url 不得进入 result_url")
 
 	nested, err := adaptor.ParseTaskResult([]byte(`{"id":"video_1","status":"completed","progress":100,"data":{"url":"https://cdn.example/n.mp4"}}`))
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusSuccess, nested.Status)
-	require.Equal(t, "https://cdn.example/n.mp4", nested.Url)
+	require.Empty(t, nested.Url, "嵌套 data.url 同样不得进入 result_url")
 
 	queued, err := adaptor.ParseTaskResult([]byte(`{"id":"video_1","task_id":"video_1","status":"queued"}`))
 	require.NoError(t, err)
@@ -184,12 +187,25 @@ func TestParseTaskResultCapturesVideoURL(t *testing.T) {
 }
 
 // 上游文档：部分渠道返回 succeeded 等状态，必须当成功处理。
+//
+// ⚠️ 2026-11-23 审查修正：成片地址一律**不透传给客户**（本站代理口径）。
+// 上游回执里的 video_url / url / result_url 指向它自己的存储域名，原样写进
+// result_url 等于把真实货源报给客户。留空 Url 后，轮询层落成
+// /v1/videos/{本站ID}/content，由 video_proxy 的 type=64 分支回源取片。
 func TestParseTaskResultAcceptsSucceededStatus(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	result, err := adaptor.ParseTaskResult([]byte(`{"id":"video_1","status":"succeeded","data":{"url":"https://cdn.example/s.mp4"}}`))
+	body := []byte(`{"id":"video_1","status":"succeeded","data":{"url":"https://cdn.example/s.mp4"}}`)
+	result, err := adaptor.ParseTaskResult(body)
 	require.NoError(t, err)
 	require.Equal(t, model.TaskStatusSuccess, result.Status)
-	require.Equal(t, "https://cdn.example/s.mp4", result.Url)
+	require.Empty(t, result.Url,
+		"上游地址不得进入 result_url（会暴露货源），必须交给轮询层落成站内代理路径")
+
+	// 反向证明：上游确实给了地址，是我们主动丢掉的（不是解析不到）。
+	var parsed megaVideoResult
+	require.NoError(t, common.Unmarshal(body, &parsed))
+	require.True(t, megaHasResult(parsed),
+		"上游回执里确实带成片地址 —— 上面的 Empty 断言才是「主动不透传」而不是「解析失败」")
 }
 
 // 上游错误字段可能是对象也可能是字符串，两种都要能取出失败原因，

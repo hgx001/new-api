@@ -39,6 +39,7 @@
 | `wan-3.0-megabyai-retired` | 480p / 720p / 1080p | 不校验 | 10 / 5 / 5 | 归档，无路由 |
 
 - 协议：`POST /v1/videos` 提交、`GET /v1/videos/{id}` 轮询、`GET /v1/videos/{id}/content` + Bearer 渠道密钥取片。参数统一用 duration/ratio/resolution/referenceImages|Videos|Audios，不与 seconds/size/image/input_reference 混用。
+- **成片地址对客户一律走站内代理**（2026-11-23 审查修正）：上游轮询回执里的 video_url / url / result_url 指向它自己的存储域名，adaptor 主动留空 Url，由 `service/task_polling.go` 落成 `/v1/videos/{本站ID}/content`，客户取片回源走 `controller/video_proxy.go` 的 type=64 分支。交付行为不变，代价是多一跳本站带宽；原直链在库里/管理员视图仍可见。
 - 按次模型只能带 size 倍率，**不能带 seconds**；基准价写 480p，720p 倍率在适配器（`t3ResolutionSizeRatio`），两处成对改。
 - 能力门控 fail-loud：不存在的档位/越界时长一律 400，不静默降档或截断。
 - 卡密/渠道名称/上游域名对客户不可见；`megabyai` 在 `upstreamVendorLiterals` 里。

@@ -319,7 +319,8 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 // megaVideoResult 兼容上游多种成片地址字段。
 //
 // 上游是 new-api 实例，轮询响应里成片地址可能出现在顶层 video_url / url / result_url，
-// 也可能嵌在 data / output 里；不逐个兼容就会把「成片已出」判成「没有产物」。
+// 也可能嵌在 data / output 里。**这些字段只用于识别「上游确实已出片」**，
+// 地址本身一律不透传给客户（见 ParseTaskResult），避免暴露上游存储域名。
 type megaVideoResult struct {
 	Status     string          `json:"status"`
 	TaskStatus string          `json:"task_status"`
@@ -364,8 +365,19 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	if mapped := mapMegaStatus(status); mapped != "" {
 		result.Status = mapped
 	}
-	if result.Status == model.TaskStatusSuccess && result.Url == "" {
-		result.Url = megaResultURL(parsed)
+	if result.Status == model.TaskStatusSuccess {
+		// ⚠️ 故意**不**把上游成片地址向客户透传（2026-11-23 审查修正）。
+		//
+		// 上游轮询响应可能带 video_url / url / result_url，里面是它自己的存储域名
+		// （mega 系域名或其 R2/S3 直链）—— 原样写进 result_url 等于把真实货源报给客户。
+		//
+		// 本站口径（与 manwu / kemeitv / seeta / sanyuan / 有赞 Wan3 一致）：
+		// 这里留空 Url，轮询层会自动落成站内代理路径
+		// （service/task_polling.go：ResultURL = taskcommon.BuildProxyURL），
+		// 客户取片走 /v1/videos/{本站ID}/content，由 controller/video_proxy.go
+		// 的 type=64 分支带渠道密钥回源上游 /content —— 交付行为不变，只多一跳本站带宽。
+		// 管理员排障仍看得到原始直链（TaskModel2DtoForAdmin 读库里的 ResultURL）。
+		result.Url = ""
 	}
 	if result.Status == model.TaskStatusFailure {
 		if reason := megaFailureReason(parsed); reason != "" {
@@ -400,8 +412,8 @@ func mapMegaStatus(status string) string {
 	}
 }
 
-// megaResultURL 按优先级取出成片地址。
-func megaResultURL(parsed megaVideoResult) string {
+// megaHasResult 判断上游回执里到底有没有成片地址（只用于判定，不向外透传）。
+func megaHasResult(parsed megaVideoResult) bool {
 	candidates := []string{
 		parsed.VideoURL,
 		parsed.URL,
@@ -413,11 +425,11 @@ func megaResultURL(parsed megaVideoResult) string {
 		parsed.Data.Output.VideoURL,
 	}
 	for _, candidate := range candidates {
-		if candidate = strings.TrimSpace(candidate); candidate != "" {
-			return candidate
+		if strings.TrimSpace(candidate) != "" {
+			return true
 		}
 	}
-	return ""
+	return false
 }
 
 // megaFailureReason 提取失败原因，兼容对象 / 字符串两种错误形态。

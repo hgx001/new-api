@@ -86,7 +86,7 @@ const (
 	// 提交 POST /v1/video/generations，轮询 GET /v1/video/generations/{id}。
 	// 只接 wan3.0-video-tj 与 wan3.0-video-prime-tj 两个万相变体。
 	ChannelTypeKemeitv = 71
-	ChannelTypeDummy  = 72 // this one is only for count, do not add any channel after this
+	ChannelTypeDummy   = 72 // this one is only for count, do not add any channel after this
 
 )
 
@@ -162,7 +162,7 @@ var ChannelBaseURLs = []string{
 	"https://www.xinbiapi.com",                  //68 (心笔 Model Router)
 	"",                                          //69 (视频生成车站)
 	"https://u1133789-a936-c07acd4f.westd.seetacloud.com:8443", //70 (SeetaCloud)
-	"https://ai.kemeitv.cn",                       //71 (客美 Kemeitv)
+	"https://ai.kemeitv.cn", //71 (客美 Kemeitv)
 }
 
 // GetChannelBaseURL returns the built-in base URL for a channel type.
@@ -242,6 +242,10 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeYuanmeng:       "视频生成车站",
 	ChannelTypeSeeta:          "SeetaCloud",
 	ChannelTypeKemeitv:        "客美 Kemeitv",
+	// 2026-11-23 重新接入（T3-seedance-2.5）。退役期间这张表里没有 64，
+	// GetChannelTypeName(64) 会返回 "Unknown" —— 渠道测试日志与模型归属名都会显示成
+	// unknown。重新上架就把它放回来。
+	ChannelTypeMegaAI: "MegaAI",
 }
 
 func GetChannelTypeName(channelType int) string {
