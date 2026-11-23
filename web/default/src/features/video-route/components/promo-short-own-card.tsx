@@ -39,7 +39,7 @@ type PromoShortOwnCardProps = {
  * 促销族「自营短档」开关（2026-11-23）。
  *
  * 打开：`seedance2.5-特惠` 收到「≤15 秒 + 9:16」（不带参考音视频/首尾帧、
- * 参考图 ≤4 张）的请求时改派 **sd-seedance-2.0fast**（漫屋 ch20，自营
+ * 参考图 ≤9 张）的请求时改派 **sd-seedance-2.0fast**（漫屋 ch20，自营
  * 720p/9:16）；关闭（默认）：这类请求走豆包 Fast（seedance-2-0-fast）。
  *
  * 为什么只在本渠道承载目标模型时渲染：这张卡回答的是「9:16 的短单
@@ -103,16 +103,20 @@ export function PromoShortOwnCard({ channelModels }: PromoShortOwnCardProps) {
 
   const on = Boolean(policy.promo_short_own_enabled)
   const ratio = policy.promo_short_own_ratio ?? '9:16'
+  // 参考图上限由后端给（上游物理上限 9 张，与模型广场描述同源）。
+  // 前端不写死：写死一个旧数字会让客户按上限准备素材却被静静路由走。
+  const maxImages = policy.promo_short_own_max_images ?? 9
   const toneClasses = on
     ? 'border-violet-500/40 bg-violet-500/[0.05]'
     : 'border-slate-500/40 bg-slate-500/[0.05]'
   const toneText = on ? 'text-violet-600' : 'text-slate-600'
   const detail = on
     ? t(
-        'Requests up to {{seconds}}s in {{ratio}} (no reference video/audio or first/last frame, at most 4 images) route to {{target}}; other short requests still go to Doubao Fast',
+        'Requests up to {{seconds}}s in {{ratio}} (no reference video/audio or first/last frame, at most {{images}} images) route to {{target}}; other short requests still go to Doubao Fast',
         {
           seconds: policy.short_trigger_seconds,
           ratio,
+          images: maxImages,
           target: targetModel,
         }
       )

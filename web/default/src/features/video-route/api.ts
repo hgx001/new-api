@@ -110,6 +110,12 @@ export type VideoRoutePolicy = {
   promo_short_own_model?: string
   /** 自营短档的触发比例（9:16）；非该比例不走自营档。 */
   promo_short_own_ratio?: string
+  /**
+   * 自营短档的参考图上限（张，默认 9）。
+   *
+   * 与模型广场描述同源（官网 Video 档上限 9 张）；前端不写死数字。
+   */
+  promo_short_own_max_images?: number
   /** 自营短档的一句话状态文案（后端给，与开关行为同源）。 */
   promo_short_own_note?: string
   /**
@@ -465,7 +471,7 @@ export async function setShortCapcutEnabled(
 /**
  * 切换促销族「自营短档」开关（2026-11-23）。
  *
- * 打开：≤15 秒且 9:16（不带参考音视频/首尾帧、参考图 ≤4 张）的请求
+ * 打开：≤15 秒且 9:16（不带参考音视频/首尾帧、参考图 ≤9 张）的请求
  * 改派 sd-seedance-2.0fast（漫屋 ch20，固定 720p/9:16）；
  * 关闭（默认）：这类请求走豆包 Fast（seedance-2-0-fast）。
  *

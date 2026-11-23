@@ -12,6 +12,8 @@ package middleware
 //  6. 自营档的边界（非 9:16 / 参考图 >4 张 / 带参考音视频 / 越界时长）→ 回落豆包 Fast。
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -155,14 +157,34 @@ func TestPromoShortOwnNon916FallsToDoubaoFast(t *testing.T) {
 		"16:9 改派到固定 9:16 的自营档 = 静默改画幅")
 }
 
-// TestPromoShortOwnTooManyImagesFallsToDoubaoFast 参考图 >4 张时自营档接不住。
+// TestPromoShortOwnAccepts9Images 9 张参考图是自营档的上限（官网 Video 档口径），必须路由成功。
+func TestPromoShortOwnAccepts9Images(t *testing.T) {
+	applyPromoPolicy(t, true, nil)
+
+	images := make([]string, 0, 9)
+	for i := 0; i < 9; i++ {
+		images = append(images, fmt.Sprintf(`"https://a/%d.png"`, i))
+	}
+	body := fmt.Sprintf(`{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"10","ratio":"9:16","images":[%s]}`, strings.Join(images, ","))
+	rec := runRouteFull(t, body)
+
+	assert.Equal(t, seedanceroute_setting.DefaultPromoShortOwnModel, decodeBody(t, rec.body)["model"],
+		"9 张参考图在自营档上限内（2026-11-22 官网 Video 档真机取证），必须走自营档")
+}
+
+// TestPromoShortOwnTooManyImagesFallsToDoubaoFast 参考图 >9 张时自营档接不住。
 func TestPromoShortOwnTooManyImagesFallsToDoubaoFast(t *testing.T) {
 	applyPromoPolicy(t, true, nil)
 
-	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"10","ratio":"9:16","images":["https://a/1.png","https://a/2.png","https://a/3.png","https://a/4.png","https://a/5.png"]}`)
+	images := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		images = append(images, fmt.Sprintf(`"https://a/%d.png"`, i))
+	}
+	body := fmt.Sprintf(`{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"10","ratio":"9:16","images":[%s]}`, strings.Join(images, ","))
+	rec := runRouteFull(t, body)
 
 	assert.Equal(t, "seedance-2-0-fast", decodeBody(t, rec.body)["model"],
-		"5 张参考图超过自营档上限 4 张，必须回落豆包 Fast")
+		"10 张参考图超过自营档上限 9 张，必须回落豆包 Fast")
 }
 
 // TestPromoLongSecondsGoesDoubao25 >15 秒 → seedance-2-5（规则一 + 下界 15）。

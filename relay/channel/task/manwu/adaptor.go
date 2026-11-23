@@ -396,7 +396,7 @@ const (
 	// kindTikTokVideo 是 TikTok Symphony（图生视频）视频：
 	// 时长**只三档** 5 / 10 / 12 秒（官网原生下拉，单档 5s 是默认值）、
 	// 比例**只有 9:16**（官网无比例控件，成片比例跟随参考图）、
-	// 分辨率不可选（实测成片 720x1280 / 360x640）、参考图 ≤4 张、每次 1 张。
+	// 分辨率不可选（实测成片 720x1280 / 360x640）、参考图 ≤9 张、每次 1 张。
 	//
 	// ⚠️ 不复用 kindCapcutVideo：CapCut 是 4–30s / 六档比例 / 只卖 480p+720p，
 	// 两者参数空间完全不同；静默回落会把 12s 做成 5s（用户付费档位被降级）。
@@ -1079,7 +1079,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		//   - 时长**只三档** 5 / 10 / 12 秒（官网原生下拉；单档 5s 是默认值）；
 		//   - 比例**只有 9:16**（官网无比例控件，成片比例跟随参考图）；
 		//   - 分辨率不可选（实测成片 720x1280 / 360x640）→ 传别的档位显式拒绝；
-		//   - 参考图 ≤4 张（官网面板文案 "Upload up to 4 images"）；
+		//   - 参考图 ≤9 张（官网 Video 档弹层 "a maximum of 9 images"）；
 		//   - 不收参考视频 / 参考音频（官网面板只有图位）。
 		// 非法时长/比例/分辨率一律**显式拒绝**，不静默回落 5 秒 / 16:9。
 		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
@@ -2335,7 +2335,7 @@ func resolveCapcutDuration(req clientRequest, model string) (int, error) {
 //   - 时长：官网原生下拉**只三档** 5 / 10 / 12 秒，单档 5s 是默认值；
 //   - 比例：官网**无比例控件**，成片固定 9:16（实测成片 720x1280 / 360x640）；
 //   - 分辨率：不可选（实测固定输出）；
-//   - 参考图：≤4 张（面板文案 "Upload up to 4 images"）；
+//   - 参考图：≤9 张（Video 档弹层 "a maximum of 9 images"，见下方常量注释）；
 //   - 计费单位：官网按 credits（5s 成片 = 5 credits，实测余额 400 → 390）。
 //
 // ⚠️ 非法档位一律**显式拒绝**：回落 5 秒等于把用户买的长片做成短片（账实不符）。

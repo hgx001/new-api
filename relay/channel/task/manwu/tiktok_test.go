@@ -8,7 +8,7 @@
 //     白名单外显式 400，**不回落**（回落 = 把买的长片做成短片）；
 //   - 比例**只有 9:16**（官网无比例控件，成片固定 9:16）；
 //   - 分辨率不可选（实测成片 720x1280 / 360x640）；
-//   - 参考图 ≤4 张（官网面板 "Upload up to 4 images"），超出显式 400；
+//   - 参考图 ≤9 张（官网 Video 档 "a maximum of 9 images"），超出显式 400；
 //   - 不收参考视频 / 参考音频。
 package manwu
 
@@ -128,7 +128,7 @@ func TestTikTokResolutionIsNotSelectable(t *testing.T) {
 	require.NotNil(t, a2.ValidateRequestAndSetAction(c2, info2), "1080p 必须显式拒绝")
 }
 
-// 参考图 ≤4 张：4 张通过，5 张显式拒绝（官网会静默丢弃 → 用户以为素材都参与了）。
+// 参考图 ≤9 张：9 张通过，10 张显式拒绝（官网会静默丢弃 → 用户以为素材都参与了）。
 func TestTikTokReferenceImagesLimitIs9(t *testing.T) {
 	build := func(n int) string {
 		items := make([]string, 0, n)

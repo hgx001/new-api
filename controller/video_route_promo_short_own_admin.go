@@ -16,6 +16,7 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -86,16 +87,17 @@ func promoShortOwnAdminState() gin.H {
 
 	note := ""
 	if enabled {
-		note = "打开：≤15 秒且 " + ratio + "（不带参考音视频/首尾帧、参考图 ≤4 张）的请求改派 " + target
+		note = fmt.Sprintf("打开：≤15 秒且 %s（不带参考音视频/首尾帧、参考图 ≤%d 张）的请求改派 %s", ratio, seedanceroute_setting.PromoShortOwnMaxImages, target)
 	} else {
 		note = "关闭：≤15 秒且 " + ratio + " 的请求走豆包 Fast（seedance-2-0-fast）"
 	}
 
 	return gin.H{
-		"promo_short_own_enabled": enabled,
-		"promo_short_own_model":   target,
-		"promo_short_own_ratio":   ratio,
-		"promo_short_own_note":    note,
+		"promo_short_own_enabled":    enabled,
+		"promo_short_own_model":      target,
+		"promo_short_own_ratio":      ratio,
+		"promo_short_own_max_images": seedanceroute_setting.PromoShortOwnMaxImages,
+		"promo_short_own_note":       note,
 	}
 }
 

@@ -33,7 +33,7 @@ const (
 	DefaultPromoResidentModel = "wan3.0-video-tj"
 
 	// DefaultPromoShortOwnModel 自营短档（漫屋 ch20：固定 720p / 9:16 /
-	// 4–15 秒 / ≤4 张参考图）。
+	// 4–15 秒 / **9 张**参考图）。
 	DefaultPromoShortOwnModel = "sd-seedance-2.0fast"
 
 	// PromoShortOwnRatio 自营档只在 9:16 时启用（老板口径「必须是 9:16 才路由」）。
@@ -45,9 +45,17 @@ const (
 	PromoShortOwnMinSeconds = 4
 	PromoShortOwnMaxSeconds = 15
 
-	// PromoShortOwnMaxImages 自营档的参考图上限（Manwu 契约 4 张）。
-	// 超过不路由：改派过去必被目标 adaptor 400，客户白等一轮。
-	PromoShortOwnMaxImages = 4
+	// PromoShortOwnMaxImages 自营档的参考图上限（Manwu 契约 **9 张**）。
+	//
+	// ⚠️ 2026-11-22 官网真机取证（Video 档上传弹层原文）：
+	//   "Upload up to 12 reference files, with a maximum of 9 images, 3 videos,
+	//    and 3 audio clips"
+	// 旧值 4 读的是 **Agent 档**文案（"Upload up to 4 images"），两档不同。
+	//
+	// 目标 adaptor 的 tiktokMaxReferenceImages 也是 9 —— 路由层必须与它同值：
+	// 这里写小了，9 张的请求会被挡回豆包 Fast（客户按 9 张准备素材，
+	// 却永远拿不到自营档）；写大了会让请求在白等一轮后才被 adaptor 400。
+	PromoShortOwnMaxImages = 9
 )
 
 // PromoResidentModelFor 返回该源模型的常驻改派目标（空 = 不改派，走源链路）。
