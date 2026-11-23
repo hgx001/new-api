@@ -27,12 +27,24 @@
 - Validate 阶段必须 `StoreTaskRequest`，否则构造拿不到参数，计费也可能静默只收1秒。
 - `insufficient_balance_error/http_code=402` 保持上游失败身份，不包装成本端参数错误。
 
-## MegaAI / wan-3.0 与别名
+## MegaAI（type=64）/ wan-3.0 与 T3-seedance-2.5
 
-⚠️ **2026-10-26：wan-3.0 与别名 seedance2.5-特惠 已停售**（渠道 24「MegaAI-Wan3」整条删除）；`wan-3.0-特惠` 也已从渠道 20 摘除。三者 adaptor 常量与本页契约仍保留，但没有 ability 就没有路由 —— 本节仅作历史契约记录。
+时间线：2026-10-26 wan-3.0 与别名 seedance2.5-特惠 停售；2026-11-10 按「广场零卡片渠道全删」**退役 type=64**（删注册分支/端点声明/取件代理/前端下拉，并加建渠道闸门）；**2026-11-23 重新接入**同一上游 `newapi.megabyai.cc`，上架 `T3-seedance-2.5`，四处一并恢复，闸门名单清空（闸门本身保留）。适配器包 `relay/channel/task/megabyai` 不得整体删：youkou（type=59）靠它拿「按次计费」。
 
-- 复用 `ChannelTypeMegaAI` 的 Sora facade，协议为 `/v1/videos` 提交、`/{id}` 轮询和 `/{id}/content` 下载。
-- `wan-3.0` 与 `wan3.0-video` / `wan3.0-video-官网` 是不同公开名，不互相覆盖。别名 `seedance2.5-特惠` 实际上游仍是 wan-3.0，必须经 model_mapping 或兜底表翻译，不把中文别名原样发上游。
+现行能力（`megabyaiCapabilities`，按模型区分，不再用全局常量）：
+
+| 模型 | 分辨率 | 时长 | 素材上限 | 计价 |
+|---|---|---|---|---|
+| `T3-seedance-2.5`（在售） | 480p / 720p（**无 1080p**，传 1080p 本地 400） | 4–30 秒（越界 400；不给则不下发） | 图 ≤30 / 视频 ≤10 / 音频 ≤10 | 按次 + 分辨率档：对外 480p ¥4 / 720p ¥5（倍率 5.0/4.0） |
+| `wan-3.0-megabyai-retired` | 480p / 720p / 1080p | 不校验 | 10 / 5 / 5 | 归档，无路由 |
+
+- 协议：`POST /v1/videos` 提交、`GET /v1/videos/{id}` 轮询、`GET /v1/videos/{id}/content` + Bearer 渠道密钥取片。参数统一用 duration/ratio/resolution/referenceImages|Videos|Audios，不与 seconds/size/image/input_reference 混用。
+- 按次模型只能带 size 倍率，**不能带 seconds**；基准价写 480p，720p 倍率在适配器（`t3ResolutionSizeRatio`），两处成对改。
+- 能力门控 fail-loud：不存在的档位/越界时长一律 400，不静默降档或截断。
+- 卡密/渠道名称/上游域名对客户不可见；`megabyai` 在 `upstreamVendorLiterals` 里。
+- 历史契约见 [历史接入记录](../channel/megabyai-wan3-integration.md)；其中价格/上线状态是带日期记录，当前业务以代码、已授权配置和本指南为准。
+
+- 旧（已归档）：`wan-3.0` 与 `wan3.0-video` / `wan3.0-video-官网` 是不同公开名，不互相覆盖。别名 `seedance2.5-特惠` 实际上游仍是 wan-3.0，必须经 model_mapping 或兜底表翻译。
 - 参数契约集合、分辨率分层计价集合、锁档集合使用**精确模型名**，不前缀匹配相近 Seedance 名。
 - wan-3.0 **按次+分辨率档**，不是按秒；EstimateBilling只有size，没有seconds。归一失败400，未指定时用明确480p并显式下发，避免账实档位不同。
 - 别名固定按次、无倍率，锁720p/30s；请求其它档位明确400，不静默降清晰度/拉时长。锁档只作用别名，不能带偏 wan-3.0。

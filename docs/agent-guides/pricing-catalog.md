@@ -41,6 +41,16 @@
 - SQL涉及 channels/abilities/models/ModelPrice 时用事务、备份及回滚方案；跨渠道搬模型保留 group/priority/weight，不只搬 model 字符串。
 - 退役 `seedance-2.5`、停用 `wan3.0-video-官网` 等不能因代码/旧卡片仍存在而擅自复活。是否在售/有渠道以当次授权和当前配置为准。
 
+## 模型广场置顶（`models.sort_weight`，2026-11-23）
+
+广场默认排序 = **`sort_weight` 降序 → 展示名称升序**；权重只在默认排序生效，用户切到按价格排序时不被插入。
+
+- 权重存 `models.sort_weight`，`/api/pricing` 下发 `sort_weight` 字段。前端**不再持有置顶名单**（改造前是 `web/default/src/features/pricing/lib/filters.ts` 的 `PINNED_MODELS`，每上新品都要改代码发版）。
+- 新建模型卡时 `Model.Insert()` 自动取 `MAX(sort_weight)+1` → **新上架的模型天然排在最前**，无需手工设置。
+- 权重 0 / 缺失 / 负数一律当未置顶（负数可用于“压到后面”）；老卡片保持 0 时与纯名称排序一致。
+- 裸 SQL 上架卡片时**必须显式写 `sort_weight`**（SQL 不走 Insert 钩子）——写当前最大值 +1 才能置顶。
+- 现行权重（2026-11-23）：`T3-seedance-2.5` = 3、`wan3.0-video-tj` = 2、`wan3.0-video-prime-tj` = 1（后两个是改造前前端硬编码推荐位的落库复现），其余 0。
+
 ## 模型供应商归类（2026-11-22）
 
 模型广场的“供应商”标签按**模型出身**归，不是按我们从哪条渠道进货。
