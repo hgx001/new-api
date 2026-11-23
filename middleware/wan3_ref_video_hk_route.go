@@ -56,6 +56,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/task/dashscope"
 	"github.com/QuantumNous/new-api/relay/channel/task/kemeitv"
+	"github.com/QuantumNous/new-api/relay/channel/task/wan3"
 	"github.com/QuantumNous/new-api/relay/channel/task/youzanwan3"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
@@ -74,10 +75,10 @@ type hkRefVideoSourceProfile struct {
 
 // hkRefVideoSourceProfiles 按源模型选解析口径。
 //
-// 为什么必须分开：官网（DashScope）认顶层 seconds 并会钳制越界时长，
+// 为什么必须分开：官网（wan3）认顶层 seconds 并会钳制越界时长，
 // 客美（tj）不认 seconds 且越界直接报错；两者的档位倍率也不同
-// （官网 1 / 1.955 / 3.148，tj 1 / 1.811 / 4 —— 720P 还是特价档）。
-// 用一份表把「这个模型按谁的规矩算」写清楚，比在函数里 if-else 安全。
+// （官网 1 / 2.25 / 4，tj 1 / 1.811 / 4）。用一份表把「这个模型按谁的规矩算」
+// 写清楚，比在函数里 if-else 安全。
 var hkRefVideoSourceProfiles = map[string]hkRefVideoSourceProfile{
 	seedanceroute_setting.Wan3GuanwangModel: {
 		duration: func(req relaycommon.TaskSubmitReq) (int, error) {
@@ -85,11 +86,12 @@ var hkRefVideoSourceProfiles = map[string]hkRefVideoSourceProfile{
 			return dashscope.RequestDuration(req), nil
 		},
 		resolution: func(req relaycommon.TaskSubmitReq) (string, error) {
-			// 空串 = 客户没声明，计费按 480P 走（与 dashscope adaptor 一致）。
-			return dashscope.ResolutionFromRequest(req), nil
+			// 用官网适配器（wan3）的解析口径：认 size:"720P"，不会因为客户端
+			// 用档位写法就回落 480P 的 1.0 倍（2026-11-23 同类事故）。
+			return wan3.ParseResolution(req), nil
 		},
 		sizeRatio: func(_ string, resolution string) float64 {
-			return dashscope.BillingSizeRatioForResolution(resolution)
+			return wan3.OfficialBillingSizeRatio(resolution)
 		},
 	},
 	seedanceroute_setting.Wan3TjModel: {

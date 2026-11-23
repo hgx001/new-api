@@ -8,7 +8,7 @@ package middleware
 //  3. 不带参考视频的请求原样放行（这条路由不是「所有万相都换 hk-wan3」）；
 //  4. 时长 4–15 秒才改派：hk-wan3 下界 4 秒、带参考视频生成上限 15 秒；
 //  5. 显式写 duration（hk-wan3 只认 duration，不读顶层 seconds）；
-//  6. 档位倍率按**源模型**口径覆盖（官网 1080P 3.148 倍 / tj 1080P 4 倍，
+//  6. 档位倍率按**源模型**口径覆盖（官网 720P 2.25 倍 / tj 1080P 4 倍，
 //     hk-wan3 自己是 2.667 倍）；
 //  7. 准入不满足就留在原链路：adaptive 画幅 / 首尾帧 / 素材超限 / 目标无渠道 /
 //     非万相模型 / /remix / 已被前置规则改派；
@@ -163,20 +163,20 @@ func TestWan3RefVideoHkConvertsSecondsToDuration(t *testing.T) {
 	assert.Equal(t, float64(10), decodeBody(t, rec.body)["duration"])
 }
 
-// 1080P：按官网的 3.148 倍覆盖，不能按 hk-wan3 自己的 2.667 倍。
+// 720P：按官网的 2.25 倍覆盖，不能按 hk-wan3 自己的倍率或 480P 的 1.0 倍。
 func TestWan3RefVideoHkUsesGuanwangSizeRatio(t *testing.T) {
 	setWan3RefVideoHk(t, nil)
 	stubChannelAvailable(t, true)
 
 	rec := runRefVideoHk(t, "/v1/video/generations", "application/json",
-		`{"model":"wan3.0-video-官网","prompt":"a cat","duration":5,"resolution":"1080P",`+
+		`{"model":"wan3.0-video-官网","prompt":"a cat","duration":5,"resolution":"720P",`+
 			`"media":[{"type":"reference_video","url":"https://example.com/a.mp4"}]}`)
 
 	require.True(t, rec.hasBillingSize)
-	assert.InDelta(t, 0.85/0.27, rec.billingSizeRatio, 1e-6)
+	assert.InDelta(t, 2.25, rec.billingSizeRatio, 1e-6)
 }
 
-// tj 1080P 口径是 4 倍（与官网的 3.148 不同），也要覆盖。
+// tj 1080P 口径是 4 倍，也要覆盖。
 func TestWan3RefVideoHkUsesTjSizeRatio(t *testing.T) {
 	setWan3RefVideoHk(t, nil)
 	stubChannelAvailable(t, true)

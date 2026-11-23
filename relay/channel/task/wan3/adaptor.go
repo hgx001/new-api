@@ -239,6 +239,30 @@ func resolveResolution(req relaycommon.TaskSubmitReq) string {
 	return defaultResolution
 }
 
+// ParseResolution 是 resolveResolution 的导出版本，供条件路由复用**官网口径**的
+// 分辨率解析（顶层 resolution > metadata.resolution > size（"720P" / "1280x720"）
+// > 默认 480P）。
+//
+// ⚠️ 2026-11-23 事故：官网→客美改派原先用 dashscope 包的 ResolutionFromRequest，
+// 它只认 "1280x720" 这种像素串，认不出客户端常传的 `size:"720P"`，解析结果为空串，
+// 档位倍率回落到 480P 的 1.0 —— 720P 请求按 480P 价计费，每单少收 0.25 元/秒。
+func ParseResolution(req relaycommon.TaskSubmitReq) string {
+	return resolveResolution(req)
+}
+
+// OfficialBillingSizeRatio 返回**官网模型名**（wan3.0-video-官网）的分辨率倍率：
+// 480P 1.0 / 720P 2.25 / 1080P 4.0，未知档位回落 480P。
+//
+// 供条件路由写进 constant.ContextKeyRouteBillingSizeRatio：改派后仍按客户请求的
+// 官网模型计费，倍率必须取官网这张表，不能用客美的 1/1.81/4 或 dashscope 的
+// 1/1.955/3.148。
+func OfficialBillingSizeRatio(resolution string) float64 {
+	if ratio, ok := officialResolutionSizeRatio[strings.ToUpper(strings.TrimSpace(resolution))]; ok {
+		return ratio
+	}
+	return officialResolutionSizeRatio[defaultResolution]
+}
+
 // resolveGenerationResolution 解析**向上游请求**的分辨率。
 //
 // 与 resolveResolution 的区别：对外模型 wan3.0-720p-特惠 是「两跳」链路，

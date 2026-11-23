@@ -29,9 +29,11 @@ package middleware
 //
 // ── 三处**必须**改写而不是只改模型名的地方 ──
 //
-//  1. 档位倍率：官网 480P/720P/1080P 的倍率是 1 / 1.955 / 3.148，客美是
-//     1 / 1.81 / 4。不覆盖就会把官网 1080P 按 4 倍收（¥0.80/秒，官网口径
-//     ¥0.63/秒，多收 27%）。→ 写 ContextKeyRouteBillingSizeRatio。
+//  1. 档位倍率：官网 480P/720P/1080P 的倍率是 1 / 2.25 / 4（¥0.20 / ¥0.45 /
+//     ¥0.80 每秒），客美是 1 / 1.81 / 4。不覆盖或解析不出档位就会把 720P 按
+//     480P 的 1.0 倍收（每单少收 ¥0.25/秒），1080P 则会被客美按 4 倍算。
+//     → 写 ContextKeyRouteBillingSizeRatio（增量见 wan3.ParseResolution，认
+//     `size:"720P"` 这类写法）。
 //  2. 时长：官网 adaptor 会**钳制**越界时长（1 → 2 秒、60 → 30 秒）并且
 //     认顶层 `seconds`；客美是直接 400，且 resolveDuration **不读**顶层
 //     seconds。→ 显式写入 duration（本渠道口径算出来的秒数）。
@@ -48,6 +50,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/task/dashscope"
 	"github.com/QuantumNous/new-api/relay/channel/task/kemeitv"
+	"github.com/QuantumNous/new-api/relay/channel/task/wan3"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/seedanceroute_setting"
 	"github.com/gin-gonic/gin"
@@ -157,8 +160,10 @@ func Wan3GuanwangTjRoute() gin.HandlerFunc {
 			return
 		}
 		// 档位倍率按源模型口径覆盖目标 adaptor 给的那一份（见包头注释第 1 条）。
+		// 必须取官网那张表（1/2.25/4），不能用 dashscope 的 1/1.955/3.148：
+		// 官网渠道 720P 实收 ¥0.45/秒、1080P ¥0.80/秒。
 		common.SetContextKey(c, constant.ContextKeyRouteBillingSizeRatio,
-			dashscope.BillingSizeRatioForResolution(requested.resolution))
+			wan3.OfficialBillingSizeRatio(requested.resolution))
 
 		logger.LogInfo(c, fmt.Sprintf(
 			"条件路由：%s 改派到 %s（渠道 32 客美；%s 计费，%d 秒）",
@@ -191,7 +196,9 @@ func wan3GuanwangRewriteBody(body map[string]interface{}) (map[string]interface{
 	var requested wan3GuanwangRequested
 	if raw, err := common.Marshal(body); err == nil && common.Unmarshal(raw, &req) == nil {
 		requested.duration = dashscope.RequestDuration(req)
-		requested.resolution = dashscope.ResolutionFromRequest(req)
+		// 用官网适配器（wan3）的解析口径：它认 `size:"720P"` 这种档位写法，
+		// dashscope 包的 ResolutionFromRequest 只认 "1280x720" 像素串。
+		requested.resolution = wan3.ParseResolution(req)
 	} else {
 		// 解析失败就退回缺省时长（与官网 adaptor 的缺省一致），不因此放弃路由 ——
 		// 客户请求体本身没坏（readJSONRequestBody 已经成功），坏的只是规格解析。

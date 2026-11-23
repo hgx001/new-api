@@ -5,7 +5,8 @@ package middleware
 // 本文件锁七件事：
 //  1. 开关关着时**一个字都不改**（升级当天线上流量逐字节不变）；
 //  2. 开关打开且目标有渠道时：模型名换成 tj、计费原点仍是官网；
-//  3. 档位倍率按**官网口径**覆盖（1080P≈3.148，不是客美的 4）—— 否则多收 27%；
+//  3. 档位倍率按**官网口径**覆盖（1/2.25/4：720P ¥0.45/秒），解析不出档位时
+//     会掉回 480P 的 1.0 倍 —— 2026-11-23 事故，size:"720P" 写法必须能识别；
 //  4. 时长按官网口径钳制并显式写进 duration（官网钳制、客美 400；官网认
 //     顶层 seconds、客美不认）—— 否则「买 10 秒收 5 秒」或直接报错；
 //  5. 目标没渠道 / 画幅 adaptive / 别的模型 / /remix → 一律放行原请求；
@@ -88,7 +89,7 @@ func TestWan3GuanwangTjRewritesToTarget(t *testing.T) {
 		"计费原点必须是客户请求的官网模型")
 }
 
-// 1080P 的档位倍率必须用官网口径（0.85/0.27≈3.148），不是客美的 4.0。
+// 1080P 的档位倍率必须用官网口径（¥0.80/¥0.20 = 4.0），不是 dashscope 的 3.148。
 func TestWan3GuanwangTjUsesSourceSizeRatio(t *testing.T) {
 	setWan3GuanwangTj(t, true, nil)
 	stubChannelAvailable(t, true)
@@ -97,9 +98,9 @@ func TestWan3GuanwangTjUsesSourceSizeRatio(t *testing.T) {
 		`{"model":"wan3.0-video-官网","prompt":"a cat","resolution":"1080P","duration":2}`)
 
 	require.True(t, rec.hasBillingSize, "必须写源模型口径的档位倍率")
-	assert.InDelta(t, 0.85/0.27, rec.billingSizeRatio, 1e-6,
-		"1080P 必须按官网的 3.148 倍收，不能按客美的 4 倍")
-	assert.False(t, math.Abs(4.0-rec.billingSizeRatio) < 1e-6, "客美的 4 倍是错的")
+	assert.InDelta(t, 4.0, rec.billingSizeRatio, 1e-6,
+		"1080P 必须按官网的 ¥0.80/¥0.20 = 4 倍收")
+	assert.False(t, math.Abs(0.85/0.27-rec.billingSizeRatio) < 1e-6, "dashscope 的 3.148 是错的")
 }
 
 // metadata.resolution 也要能识别（客户端两种写法都有）。
@@ -111,7 +112,27 @@ func TestWan3GuanwangTjReadsMetadataResolution(t *testing.T) {
 		`{"model":"wan3.0-video-官网","prompt":"a cat","metadata":{"resolution":"720P"},"duration":2}`)
 
 	require.True(t, rec.hasBillingSize)
-	assert.InDelta(t, 5.2/2.66, rec.billingSizeRatio, 1e-6, "720P 必须按官网的 1.955 倍")
+	assert.InDelta(t, 2.25, rec.billingSizeRatio, 1e-6, "720P 必须按官网的 ¥0.45/¥0.20 = 2.25 倍")
+}
+
+// 客户端常把档位直接写在 size（"720P" / "1280x720"），不是 resolution。
+// 2026-11-23 事故回归：这类请求此前解析不出档位，720P 被按 480P 的 1.0 倍计费。
+func TestWan3GuanwangTjReadsSizeTier(t *testing.T) {
+	cases := []string{"720P", "1280x720"}
+	for _, size := range cases {
+		t.Run(size, func(t *testing.T) {
+			setWan3GuanwangTj(t, true, nil)
+			stubChannelAvailable(t, true)
+
+			rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json",
+				`{"model":"wan3.0-video-官网","prompt":"a cat","size":"`+size+`","seconds":"6","duration":6}`)
+
+			require.True(t, rec.hasBillingSize)
+			assert.InDelta(t, 2.25, rec.billingSizeRatio, 1e-6,
+				"size=%s 必须识别成 720P，按 2.25 倍计费", size)
+			assert.Equal(t, float64(6), decodeBody(t, rec.body)["duration"], "时长不能被改")
+		})
+	}
 }
 
 // 官网钳制越界时长（1 → 2 秒），改派必须把钳制结果显式写进 duration：
