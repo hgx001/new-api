@@ -24,8 +24,9 @@ func TestElevenlabsModelSpecRegistered(t *testing.T) {
 	assert.Equal(t, PlatformIDElevenlabs, spec.PlatformID)
 	assert.Equal(t, OutputModeVideo, spec.OutputMode)
 	assert.Equal(t, kindElevenlabsVideo, spec.Kind)
-	// 公开名 = 上游真名：不设 UpstreamModel（不做翻译）
-	assert.Equal(t, "", spec.UpstreamModel)
+	// 2026-11-23：公开名去 flash 只是商品名，实际执行的是 2.5 Flash → 必须翻译。
+	// （透传 el-seedance-2.5 会让 ArcReel 400，或在 Worker 归一成 2.5 本体 = 5 倍消耗档）
+	assert.Equal(t, "el-seedance-2.5flash", spec.UpstreamModel)
 }
 
 func TestElevenlabsResolutionOnly480And720(t *testing.T) {
@@ -148,7 +149,7 @@ func TestBuildRequestBodyMapsElevenlabsPayload(t *testing.T) {
 		wantNested bool
 		withVidAud bool
 	}{
-		{model: "el-seedance-2.5", duration: 6, resolution: "480p", ratio: "9:16", wantModel: "el-seedance-2.5", wantInputs: 3, wantNested: true, withVidAud: true},
+		{model: "el-seedance-2.5", duration: 6, resolution: "480p", ratio: "9:16", wantModel: "el-seedance-2.5flash", wantInputs: 3, wantNested: true, withVidAud: true},
 		{model: "el-seedance-2.0mini", duration: 8, resolution: "720p", ratio: "16:9", wantModel: "el-seedance-2.0mini", wantInputs: 1, wantNested: true, withVidAud: false},
 		{model: "el-gemini-1.2flash", duration: 5, resolution: "360p", ratio: "16:9", wantModel: "el-gemini-1.2flash", wantInputs: 1, wantNested: true, withVidAud: false},
 	}

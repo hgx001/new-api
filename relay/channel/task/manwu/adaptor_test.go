@@ -1963,3 +1963,31 @@ func TestElevenlabsReferenceVideoConstraints(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, req.Videos, 1)
 }
+
+// el-seedance-2.5（公开名）必须翻译成上游 `el-seedance-2.5flash`（2.5 Flash）。
+//
+// 三个事实叠在一起才看得出这个翻译不能省：
+//  1. 公开名 2026-11-22 去掉了 flash 后缀，卖的是 Flash 档；
+//  2. ArcReel 的别名表只收 `el-seedance-2.5flash`，透传 `el-seedance-2.5` 会 **400**；
+//  3. 就算 ArcReel 放行，Worker 的归一表里 `el-seedance-2.5` = **2.5 本体**
+//     （bytedance-seedance-v2.5，官网 5 倍消耗）→ 串档，成本比 Flash 高约 53%。
+func TestElevenlabs25PublicNameMapsToFlashUpstream(t *testing.T) {
+	spec, ok := SpecFor(ModelElevenlabs25)
+	require.True(t, ok)
+	assert.Equal(t, "el-seedance-2.5flash", spec.UpstreamModel,
+		"公开名必须是商品名，真正执行的档位由 UpstreamModel 指定")
+
+	c, info, a := postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"x","duration":5,"resolution":"720p"}`, ModelElevenlabs25))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	body, err := a.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(body)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"model":"el-seedance-2.5flash"`)
+	assert.NotContains(t, string(raw), `"model":"el-seedance-2.5"`)
+
+	// mini 不翻译：公开名与上游名一致
+	mini, _ := SpecFor(ModelElevenlabs20Mini)
+	assert.Equal(t, "", mini.UpstreamModel)
+}

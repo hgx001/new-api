@@ -228,8 +228,8 @@ const (
 	// 与 ModelCapcut25 是**两个独立商品**：上游真名不同（seedance_2.5 vs
 	// seedance_2.5_flash）、定价不同，**不做互为别名**。
 	ModelCapcut25Flash = "cp-seedance-2.5flash"
-	// ModelElevenlabs25 是 ElevenLabs 唯一在售档位（2026-11-21 用户口径：
-	// 「只上架这个就行 别的不上架」）。
+	// ModelElevenlabs25 是 ElevenLabs 的主售档位（2026-11-21 用户口径：
+	// 「只上架这个就行 别的不上架」；2026-11-22 公开名去 flash 后缀）。
 	//
 	// ⚠️ 公开名带 ``el-`` 前缀，与 CapCut 的 ``cp-seedance-2.5flash`` **不是别名**：
 	//   不同官网、不同账号池、不同计价（CapCut 480p ¥0.15/秒，这里 ¥0.25/秒）。
@@ -323,6 +323,16 @@ const (
 	// doubaoUpstreamModel20 是 2.0 **标准版**真名，与 Fast 只差 `-fast` 后缀：
 	// 归一必须精确匹配（前缀判定会把标准版错认成 Fast，客户按 0.25/秒 付费却跑低价档）。
 	doubaoUpstreamModel20 = "doubao-seedance-2-0-260128"
+	// elevenlabsUpstreamModel25 是 ElevenLabs 主售档位的**上游名**。
+	//
+	// 公开名 `el-seedance-2.5` 与实际执行的档位**不是一个东西**：
+	//   · 上游真名 `bytedance-seedance-v2.5-flash`（2.5 Flash，官网「2倍消耗」）；
+	//   · 而 `el-seedance-2.5` 在 ArcReel/Worker 的归一表里对应 **2.5 本体**
+	//     （`bytedance-seedance-v2.5`，「5倍消耗」）—— 不完全透传就等于让客户
+	//     按 Flash 的价买到 5 倍消耗档，或者 ArcReel 直接 400（其别名表只收
+	//     `el-seedance-2.5flash`）。
+	// ⇒ 公开名「去 flash」只是商品名，翻译必须在这一层完成。
+	elevenlabsUpstreamModel25 = "el-seedance-2.5flash"
 	// doubaoUpstreamModel25Flash 是豆包官网 **Seedance 2.5 Flash** 真名
 	// （官网档位 key `seedance_v2.5_flash`「旗舰高性价比视频 • 2倍消耗」）。
 	// ⚠️ 与 2.5 只差 `-flash`：任何 Contains/前缀匹配都会串档。
@@ -500,7 +510,7 @@ var modelSpecs = map[string]modelSpec{
 	// 计价：五档**统一按秒**（EstimateBilling 返回 seconds 倍率），720p 再乘 size 倍率。
 	// ElevenLabs（2026-11-21 上架，只一档）：公开名 = 上游真名，故不设 UpstreamModel。
 	// 计价：按秒（EstimateBilling 给 seconds 倍率），720p 再乘 size 倍率 2.0。
-	ModelElevenlabs25:     {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
+	ModelElevenlabs25:     {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo, UpstreamModel: elevenlabsUpstreamModel25},
 	ModelElevenlabs20Mini: {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
 	ModelElevenlabsGemini: {PlatformID: PlatformIDElevenlabs, OutputMode: OutputModeVideo, Kind: kindElevenlabsVideo},
 	ModelCapcut25:         {PlatformID: PlatformIDCapcut, OutputMode: OutputModeVideo, Kind: kindCapcutVideo, UpstreamModel: capcutUpstreamModel25},
