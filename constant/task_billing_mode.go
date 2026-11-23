@@ -20,12 +20,16 @@ import "strings"
 //
 // 所以这里把判据收敛成**一个函数**，三处都调它。
 //
-// 覆盖两类按次模型：
+// 覆盖三类按次模型：
 //
 //  1. **能力组按次成员**（constant.IsSeedance25PerCall）
 //     seedance2.5-活动 等「一口价」档位 —— 售价固定、不乘任何倍率。
 //
-//  2. **TASK_PRICE_PATCH 环境变量命中**（constant.TaskPricePatches）
+//  2. **站内非能力组的一口价商品**（constant.TaskPerCallModels）
+//     豆包官网 seedance-2-5-flash 等：不属于任何「同货源两售价」的能力族，
+//     但售价确实是按条一口价，不能乘时长/分辨率倍率。
+//
+//  3. **TASK_PRICE_PATCH 环境变量命中**（constant.TaskPricePatches）
 //     站内的 sora 等历史按次模型。它是 env 不是 option，改完要重启容器
 //     （见 common/init.go）。本函数读的是**当前进程内**的变量值。
 //
@@ -37,6 +41,21 @@ import "strings"
 // 源模型），**不是**实际执行的模型。改派后两者不同：用执行模型判定会让
 // 「按次档被改派到按秒链路」时结论漂移 —— 母本（按秒）被改派到按次链路会漏补秒数
 // （少收钱），活动版（按次）被改派到按秒链路会乘上秒数（超收 30 倍）。
+
+// TaskPerCallModels 是**不属于任何能力组、但按一口价售卖**的模型名单。
+//
+// 与能力组（Seedance25PerCallModels）的分工：能力组是「同一货源两种售价形态」的
+// 领域定义，会被档位校验、脱敏、广场白名单等多处共用；这里只是**计价口径** ——
+// 模型的能力表与别的渠道档位无关，不需要进任何族。
+//
+// ⚠️ 进这个名单的**前提**是 adaptor 的 EstimateBilling 不再返回任何倍率：
+// 两边不一致会静默错价（名单说按次、adaptor 给了 seconds → 本函数只负责
+// 挡倍率合并与差额结算，改不回来那笔 ¥4.0 × 30 秒的预扣）。
+var TaskPerCallModels = map[string]bool{
+	// 豆包官网 Seedance 2.5 Flash：2026-11-23 用户口径「¥4/条、支持 4–30 秒」，
+	// 售价与时长解耦（4 秒与 30 秒同价）。
+	"seedance-2-5-flash": true,
+}
 
 // IsTaskPerCallModel 判断模型是否按「次」计费。
 //
@@ -55,6 +74,10 @@ func IsTaskPerCallModel(model string) bool {
 	}
 	// 能力组按次成员：seedance2.5 促销族的按次档。
 	if IsSeedance25PerCall(target) {
+		return true
+	}
+	// 非能力组的一口价商品（豆包 2.5 Flash 等）。
+	if TaskPerCallModels[target] {
 		return true
 	}
 	// TASK_PRICE_PATCH 环境变量命中：站内的历史按次模型（sora 等）。

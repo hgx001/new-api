@@ -706,7 +706,7 @@ func TestModelListAndChannelName(t *testing.T) {
 		"seedance-2-0",
 		"seedance-2-0-fast",
 		"seedance-2-5",
-		// 2026-11-22 上架：豆包官网 Seedance 2.5 Flash（¥0.25/秒，4–15s 固定 720p）。
+		// 2026-11-22 上架（2026-11-23 改为按条 ¥4.0、4–30s、固定 720p）。
 		// ⚠️ 字节序：`seedance-2-5` 是 `seedance-2-5-flash` 的前缀，短名在前；
 		//   另一个近名是 CapCut 的 `cp-seedance-2.5flash`（不同官网、不同价，不互为别名）。
 		"seedance-2-5-flash",
@@ -1865,10 +1865,12 @@ func TestReferenceRejectionDoesNotLeakDataURLPayload(t *testing.T) {
 // ── Seedance 2.5 Flash（2026-11-22 上架）──
 //
 // 用户口径：「再加一个 2.5 flash 的模型，机制和 2.0 一样（一个账号可以跑两条），
-// 同样要上架 newapi」。这里锁死三件最容易回归的事：
-//  1. 与 2.5 本体（任意正整数秒）不是同一套时长口径 → 4–15 秒；
+// 同样要上架 newapi」；2026-11-23 追加口径：「价格改为 4 元/条、支持 4-30 秒」。
+// 这里锁死三件最容易回归的事：
+//  1. 与 2.5 本体（任意正整数秒）不是同一套时长口径 → **4–30 秒**；
 //  2. 固定 720p，显式传别的分辨率 400（不静默改规格交付）；
-//  3. 计费必须给 seconds 倍率（漏了就是「按 1 秒收费」）。
+//  3. 计费是**按条一口价**：EstimateBilling 必须返回 nil（给了 seconds 就是
+//     ¥4.0 × N，30 秒的片子收 ¥120）。
 func TestDoubao25FlashParams(t *testing.T) {
 	spec, ok := SpecFor(ModelDoubao25Flash)
 	require.True(t, ok, "seedance-2-5-flash 必须在路由表里")
@@ -1878,8 +1880,8 @@ func TestDoubao25FlashParams(t *testing.T) {
 	assert.Equal(t, doubaoUpstreamModel25Flash, spec.UpstreamModel)
 	assert.Equal(t, "doubao-seedance-2-5-flash-260628", spec.UpstreamModel)
 
-	// 4–15 秒：区间内任意整数透传
-	for _, d := range []int{4, 5, 7, 12, 15} {
+	// 4–30 秒：区间内任意整数透传
+	for _, d := range []int{4, 5, 7, 15, 16, 29, 30} {
 		c, info, a := postVideoCtx(t, fmt.Sprintf(
 			`{"model":%q,"prompt":"x","duration":%d,"resolution":"720p"}`, ModelDoubao25Flash, d))
 		require.Nil(t, a.ValidateRequestAndSetAction(c, info), "duration=%d 应当合法", d)
@@ -1890,7 +1892,7 @@ func TestDoubao25FlashParams(t *testing.T) {
 	}
 
 	// 区间外：显式 400，绝不静默成了 5 秒 / 30 秒
-	for _, d := range []int{3, 16, 30, 99} {
+	for _, d := range []int{1, 3, 31, 99} {
 		c, info, a := postVideoCtx(t, fmt.Sprintf(
 			`{"model":%q,"prompt":"x","duration":%d}`, ModelDoubao25Flash, d))
 		taskErr := a.ValidateRequestAndSetAction(c, info)
@@ -1913,13 +1915,14 @@ func TestDoubao25FlashParams(t *testing.T) {
 		assert.Equal(t, "invalid_resolution", taskErr.Code, res)
 	}
 
-	// 计费：5 秒 → seconds 倍率 5（漏了就会按 1 秒收钱）
-	c, info, a = postVideoCtx(t, fmt.Sprintf(
-		`{"model":%q,"prompt":"x","duration":5,"resolution":"720p"}`, ModelDoubao25Flash))
-	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
-	billing := a.EstimateBilling(c, info)
-	require.NotNil(t, billing)
-	assert.Equal(t, float64(5), billing["seconds"])
+	// 计费：按条一口价 → EstimateBilling 必须返回 nil（30 秒也不乘倍率）
+	for _, d := range []int{4, 15, 30} {
+		c, info, a = postVideoCtx(t, fmt.Sprintf(
+			`{"model":%q,"prompt":"x","duration":%d,"resolution":"720p"}`, ModelDoubao25Flash, d))
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+		assert.Nil(t, a.EstimateBilling(c, info),
+			"duration=%d：按条 ¥4.0 必须不乘秒数倍率（给了 seconds 就是 ¥4.0 × %d）", d, d)
+	}
 }
 
 // ElevenLabs 的参考视频口径（2026-11-23 真机标定）。

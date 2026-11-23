@@ -205,11 +205,15 @@ const (
 	//   ModelCapcut20  "cp-seedance-2.0"   —— CapCut 官网（按秒 ¥0.15）
 	//   上游真名也不同：doubao-seedance-2-0-260128。
 	ModelDoubao20 = "seedance-2-0"
-	// ModelDoubao25Flash 是豆包官网 **Seedance 2.5 Flash**（2026-11-22 上架，¥0.25/秒）。
+	// ModelDoubao25Flash 是豆包官网 **Seedance 2.5 Flash**（2026-11-22 上架，2026-11-23 改为**按条 ¥4.0/条**）。
 	//
 	// ⚠️ 与 `seedance-2-5` 只差 `-flash`，与 CapCut 的 `cp-seedance-2.5flash` 也不同物：
-	//   上游真名 doubao-seedance-2-5-flash-260628，时长口径 **4–15 秒**（不是 2.5 本体的
+	//   上游真名 doubao-seedance-2-5-flash-260628，时长口径 **4–30 秒**（不是 2.5 本体的
 	//   任意秒数），固定 720p。全程精确匹配，禁止 Contains 判档。
+	//
+	// ⚠️ 计价是**按条一口价**（用户 2026-11-23 口径：「价格改为 4 元/条」）：
+	//   EstimateBilling 对本档**必须返回 nil**，任何 seconds / size 倍率都会把
+	//   ¥4.0 再乘一遍。按次认定见 constant.TaskPerCallModels。
 	ModelDoubao25Flash = "seedance-2-5-flash"
 	// ModelCapcut20 / ModelCapcut20Fast 是 CapCut（剪映国际版）两个对外公开模型。
 	//
@@ -605,7 +609,8 @@ var allowedRatios = map[string]bool{
 // 豆包官网参数白名单（与 Worker 侧 cron_video_brach
 // src/platforms/doubao/params.ts 同口径，2026-11-09 用户口径更新）：
 //   - 时长：2.5 **任意正整数秒原样透传、不设上限**（new-api 传多少秒就下发
-//     多少秒，禁止吸附/回落改写）；2.0 Fast 为 4–30 秒任意整数秒；
+//     多少秒，禁止吸附/回落改写）；2.0 Fast 与 2.5 Flash 为 4–30 秒任意整数秒；
+//     2.0 标准版为 4–15 秒；
 //   - 比例七档，含官网出厂默认档 `auto`（「自动 · 10s」）；
 //   - 比例「未指定不编造」：豆包未指定时保持官网当前状态（App 侧
 //     resolveDoubaoRatioLabel 空 → null 纪律），不强补 16:9。
@@ -617,11 +622,11 @@ const (
 	// ⚠️ 与 Fast 的 4–30 是两档，不要合并常量。
 	doubao20MinDuration = 4
 	doubao20MaxDuration = 15
-	// doubao25FlashMinDuration / MaxDuration：Seedance 2.5 Flash 与 2.0 标准版
-	// **同口径 4–15 秒**（官网同属 2 倍消耗档）。
-	// ⚠️ 与 2.5 本体的「任意正整数秒」是两档，不要合并。
+	// doubao25FlashMinDuration / MaxDuration：Seedance 2.5 Flash **4–30 秒**
+	// （2026-11-23 用户口径「支持 4-30 秒」，与 2.0 Fast 同区间）。
+	// ⚠️ 与 2.5 本体的「任意正整数秒」是两档，也不要与 2.0 标准版的 4–15 合并。
 	doubao25FlashMinDuration = 4
-	doubao25FlashMaxDuration = 15
+	doubao25FlashMaxDuration = 30
 )
 
 // validateDoubao20FastDuration 校验豆包 2.0 Fast 的 4–30 秒区间：
@@ -1486,9 +1491,12 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	if (req.Kind == kindImage || req.Kind == kindSeedreamImage) && req.Count > 1 {
 		return map[string]float64{"n": float64(req.Count)}
 	}
-	// 豆包三档按秒（2026-11-22）：2.0 Fast ¥0.10/秒、2.0 标准版 / 2.5 Flash ¥0.25/秒。
+	// 豆包三档按秒（2026-11-22）：2.0 Fast ¥0.10/秒、2.0 标准版 ¥0.25/秒。
 	// 漏给 seconds 就会按「1 秒」收费（30 秒的片子只收 1 秒的钱）。
-	if req.Kind == kindDoubaoVideo && (req.Model == ModelDoubao20Fast || req.Model == ModelDoubao20 || req.Model == ModelDoubao25Flash) && req.Duration > 0 {
+	//
+	// ⚠️ 2.5 Flash **不在这里**：2026-11-23 起改为按条一口价 ¥4.0，
+	// 给 seconds 会变成 ¥4.0 × N（30 秒的片子收 ¥120）。
+	if req.Kind == kindDoubaoVideo && (req.Model == ModelDoubao20Fast || req.Model == ModelDoubao20) && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
 	}
 	// CapCut 五档模型**统一按秒**：ModelPrice 配 480p 基准单价（元/秒），
@@ -3047,10 +3055,10 @@ func checkDoubaoDuration(field string, value int, model string) (int, error) {
 		return value, nil
 	}
 	if model == ModelDoubao25Flash {
-		// Seedance 2.5 Flash：4–15 秒（与 2.0 标准版同口径）。
-		// 必须在「2.5 任意秒」分支之前拦，否则 30/99 秒会被当成合法值下发。
+		// Seedance 2.5 Flash：4–30 秒（2026-11-23 用户口径放宽；原来与 2.0 标准版
+		// 同为 4–15 秒）。仍必须在「2.5 任意秒」分支之前拦，否则 99 秒会被当成合法值下发。
 		if value < doubao25FlashMinDuration || value > doubao25FlashMaxDuration {
-			return 0, fmt.Errorf("%s must be between 4 and 15 for %s, got %d", field, model, value)
+			return 0, fmt.Errorf("%s must be between 4 and 30 for %s, got %d", field, model, value)
 		}
 		return value, nil
 	}

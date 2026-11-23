@@ -615,7 +615,7 @@ func isAllowedPricingModel(name string) bool {
 	if name == "seedance-2-0" {
 		return true
 	}
-	// 豆包 Seedance **2.5 Flash**（2026-11-22 上架，按秒 ¥0.25、4–15 秒、固定 720p）。
+	// 豆包 Seedance **2.5 Flash**（2026-11-22 上架；2026-11-23 改成**按条 ¥4.0**、4–30 秒、固定 720p）。
 	//
 	// ⚠️ 三个近名互不命中：按次的 `seedance-2-5`、CapCut 的
 	// `cp-seedance-2.5flash`（¥0.15/秒、480p）、ElevenLabs 的 `el-seedance-2.5`。

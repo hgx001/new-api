@@ -66,6 +66,26 @@ func TestIsTaskPerCallModel_EmptyIsNotPerCall(t *testing.T) {
 	assert.False(t, IsTaskPerCallModel("   "))
 }
 
+// 族外的一口价商品：豆包官网 Seedance 2.5 Flash（2026-11-23 用户口径
+// 「价格改为 4 元/条、支持 4-30 秒」）。
+//
+// 它不在 seedance2.5 促销族里（不同官网、不同账号池），但售价确实是一口价：
+// 4 秒与 30 秒同价 ¥4.0，所以必须进 TaskPerCallModels —— 否则
+// relay_task.go 的 mergeEstimatedRatios / applyBillingRatios 会把 future 的
+// seconds 倍率乘上去，¥4.0 直接变成 ¥4.0 × 30。
+func TestIsTaskPerCallModel_Doubao25Flash(t *testing.T) {
+	require.True(t, IsTaskPerCallModel("seedance-2-5-flash"),
+		"2.5 Flash 2026-11-23 起按条 ¥4.0，必须被识别为按次计费")
+	require.True(t, IsTaskPerCallModel(" seedance-2-5-flash "),
+		"首尾空格仍应命中")
+
+	// 两个近名仍按秒：25 Flash 的名单不得把 2.0 系列带成按次。
+	for _, other := range []string{"seedance-2-0", "seedance-2-0-fast"} {
+		require.False(t, IsTaskPerCallModel(other),
+			"%s 仍是按秒档，不得被 2.5 Flash 的名单带偏", other)
+	}
+}
+
 // 族外的普通按秒模型不能被误判。
 func TestIsTaskPerCallModel_IgnoresRegularModels(t *testing.T) {
 	for _, model := range []string{
