@@ -99,6 +99,26 @@ export type VideoRoutePolicy = {
   short_active_target: string
   /** 配置上开着的短时长分支列表（按优先级排序）。 */
   short_active_targets: string[]
+
+  /**
+   * 促销族「自营短档」开关（2026-11-23）：≤15 秒且 9:16 的请求改派
+   * sd-seedance-2.0fast（漫屋 ch20，固定 720p/9:16）。
+   * false（默认）= 这类请求走豆包 Fast（seedance-2-0-fast）。
+   */
+  promo_short_own_enabled?: boolean
+  /** 自营短档的目标模型（sd-seedance-2.0fast）。 */
+  promo_short_own_model?: string
+  /** 自营短档的触发比例（9:16）；非该比例不走自营档。 */
+  promo_short_own_ratio?: string
+  /** 自营短档的一句话状态文案（后端给，与开关行为同源）。 */
+  promo_short_own_note?: string
+  /**
+   * 规则一对主源模型的时长下界（秒，0 = 不设下界）。
+   *
+   * 2026-11-23 起促销族母本改为「> 15 秒才改派豆包」，
+   * 豆包链路的文案必须用这个值，否则会写成「不带参考音视频全量改派」。
+   */
+  seconds_trigger_seconds?: number
   /**
    * 规则七（电商/产品推荐内容 → 有赞优先，接不住才 CapCut）的总开关。
    *
@@ -437,6 +457,24 @@ export async function setShortCapcutEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/short-capcut-link', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换促销族「自营短档」开关（2026-11-23）。
+ *
+ * 打开：≤15 秒且 9:16（不带参考音视频/首尾帧、参考图 ≤4 张）的请求
+ * 改派 sd-seedance-2.0fast（漫屋 ch20，固定 720p/9:16）；
+ * 关闭（默认）：这类请求走豆包 Fast（seedance-2-0-fast）。
+ *
+ * 与规则六四条分支不互斥：自营档先判，接不住时豆包 Fast 自然接手。
+ */
+export async function setPromoShortOwnEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/promo-short-own', {
     enabled,
   })
   return res.data.data

@@ -2,13 +2,13 @@
   "Deadline must be in the future": "Deadline must be in the future",
   "Enter a non-negative integer, or leave it empty for no limit": "Enter a non-negative integer, or leave it empty for no limit",
   "Failed to update routing policy": "Failed to update routing policy",
-  "Only route {{ratio}} requests to the reroute target": "Only route {{ratio}} requests to the reroute target",
   "Please pick a valid deadline": "Please pick a valid deadline",
   "Requests up to {{seconds}}s route to {{target}}; switch off to keep them on the source chain": "Requests up to {{seconds}}s route to {{target}}; switch off to keep them on the source chain",
+  "Requests without reference video/audio route to {{target}}; auto-fallback to {{backup}} when the source chain goes down": "Requests without reference video/audio route to {{target}}; auto-fallback to {{backup}} when the source chain goes down",
   "Routing paused until the selected time": "Routing paused until the selected time",
   "Set a quota for the doubao link: it closes itself after accepting this many tasks. Reopening the switch gives you a fresh batch. Leave empty for no limit.": "Set a quota for the doubao link: it closes itself after accepting this many tasks. Reopening the switch gives you a fresh batch. Leave empty for no limit.",
   "Short requests (up to {{seconds}}s) stay on the source chain; turn on to reroute them to {{target}}": "Short requests (up to {{seconds}}s) stay on the source chain; turn on to reroute them to {{target}}",
   "Takes effect immediately. No need to save.": "Takes effect immediately. No need to save.",
   "Task limit reached: this link stopped accepting tasks. Raise the limit or reopen the switch to accept more.": "Task limit reached: this link stopped accepting tasks. Raise the limit or reopen the switch to accept more.",
-  "When checked, only requests specifying {{ratio}} are rerouted; unchecked reroutes every request over the duration threshold.": "When checked, only requests specifying {{ratio}} are rerouted; unchecked reroutes every request over the duration threshold."
+  "This entry takes priority over the Doubao reroute: matched requests stay on the Youzan link and will not reach the Doubao link.": "This entry takes priority over the Doubao reroute: matched requests stay on the Youzan link and will not reach the Doubao link."
 }

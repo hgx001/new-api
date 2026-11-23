@@ -137,6 +137,25 @@ function failover(
   }
 }
 
+describe('buildDoubaoLinkView 的时长下界文案（2026-11-23）', () => {
+  test('配了时长下界：文案写「超过 N 秒」，不能写「不带参考音视频全量改派」', () => {
+    const view = buildDoubaoLinkView(
+      policy({ doubao_link_off: false, seconds_trigger_seconds: 15 }),
+      failover()
+    )
+    assert.match(view.detailKey, /over \{\{seconds\}\}s/)
+    assert.equal(view.detailParams.seconds, 15)
+  })
+
+  test('没配下界（0）：保持旧文案，不凭空写一个阈值', () => {
+    const view = buildDoubaoLinkView(
+      policy({ doubao_link_off: false, seconds_trigger_seconds: 0 }),
+      failover()
+    )
+    assert.doesNotMatch(view.detailKey, /over \{\{seconds\}\}s/)
+  })
+})
+
 describe('buildDoubaoLinkView', () => {
   test('开启：规则一改派到豆包，详情带触发条件/目标/兜底', () => {
     const view = buildDoubaoLinkView(policy(), failover())

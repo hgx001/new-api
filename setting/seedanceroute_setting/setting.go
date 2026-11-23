@@ -491,6 +491,26 @@ type Policy struct {
 	// 这个字段，解析后零值 false = 不改派，升级当天线上流量逐字节不变。
 	Wan3GuanwangTJEnabled bool `json:"wan3_guanwang_tj_enabled,omitempty"`
 
+	// PromoShortOwnEnabled 是「≤短时长阈值 且 9:16 → 自营 sd-seedance-2.0fast」
+	// 的开关（2026-11-23 老板口径）。
+	//
+	// 打开：源模型收到 ≤ short_trigger_seconds（生产 15 秒）且**比例 9:16**、
+	// 不带参考音视频/首尾帧、参考图 ≤4 张的请求 → 改派
+	// sd-seedance-2.0fast（漫屋 ch20，固定 720p/9:16）；
+	// 关闭（默认）：这类请求走同一段的豆包 Fast 分支（seedance-2-0-fast）。
+	//
+	// 为什么单独一个开关：自营档成本 ¥0.10/秒（对客仍卖 ¥0.20/秒），
+	// 但只接 9:16 / 720p / ≤4 张参考图；运营需要能**一手切回来**对比两条
+	// 链路的出片效果与失败率，而不是改代码重发。
+	//
+	// 用 bool 而不是三态指针：全新行为，旧 option JSON 没有这个字段，
+	// 解析为零值 false = 不启用，升级当天流量逐字节不变。
+	PromoShortOwnEnabled bool `json:"promo_short_own_enabled,omitempty"`
+
+	// PromoResidentModel（公共默认值）刻意**不提供**：常驻改派只对特定
+	// 源模型生效，一律写在 source_overrides[模型].promo_resident_model。
+	// 给一个全局默认会让「任何源模型都没配」变成「全部改派到同一个模型」。
+
 	// Wan3RefVideoHkEnabled 是「带参考视频的万相请求 → hk-wan3」开关（2026-11-20 起）。
 	//
 	// 打开：官网 / tj / prime-tj 这条万相族上带 `reference_video` 的请求
@@ -630,6 +650,26 @@ type SourceOverride struct {
 	// 与 FramesRuleEnabled 同一背景：规则九是给「源链路仅收参考图」补位的，
 	// mw-sd2.5-flash 支持 5 视频 + 5 音频，促销族不再需要改派 CapCut。
 	RefAVRuleEnabled *bool `json:"ref_av_rule_enabled,omitempty"`
+
+	// PromoResidentModel 是该源模型的**常驻改派目标**（2026-11-23 起）。
+	//
+	// 语义：前面所有规则都没命中（带参考视频/音频、带首尾帧、未传时长…）时，
+	// 把请求改派到这个模型执行；计费仍按源模型。空 = 不改派，走源链路。
+	//
+	// 为什么用「模型名」而不是 bool：只有母本（特惠）常驻客美 tj，
+	// 活动版（按次 ¥4.5/次）必须留在自己的链路。用字段表达，活动版不配就
+	// 天然不受影响，不需要在中间件里写死模型名。
+	PromoResidentModel string `json:"promo_resident_model,omitempty"`
+
+	// SecondsTriggerSeconds 是规则一（时长改派）对该源模型的**时长下界**：
+	// 只有「秒数 > 该值」才改派（2026-11-23 起）。
+	//
+	// 0 = 不设下界（沿用 2026-11-20 口径：不带参考音视频就改派），
+	// 所以活动版不配这个字段时行为逐字节不变。
+	SecondsTriggerSeconds int `json:"seconds_trigger_seconds,omitempty"`
+
+	// PromoShortOwnEnabled 是三态开关：nil = 跟随全局，显式 false = 只停这个源模型。
+	PromoShortOwnEnabled *bool `json:"promo_short_own_enabled,omitempty"`
 }
 
 // overrideFor 返回「这个源模型的专属覆盖」以及是否存在。
@@ -1114,6 +1154,9 @@ func IsAnyRouteEnabled() bool {
 	if DoubaoFastShortReadyFor(current, DefaultDoubaoFastSourceModel) {
 		return true
 	}
+	// 促销族自营短档（2026-11-23）：与其它短时长分支同口径 ——
+	// 只看公共字段会误判成「没有规则生效」，把中间件整个跳过，
+	// 运营会看到「开关打开了但一点反应都没有」。
 	if secondsRuleActive(current, nowUnix()) ||
 		ratioRuleReady(current) ||
 		framesRuleReady(current) ||
@@ -1137,7 +1180,12 @@ func IsAnyRouteEnabled() bool {
 			// 有赞兜底与心笔开关相互独立：只打开有赞按钮时，
 			// shortRuleReadyFor 会因 short_link_enabled=false 返回 false，
 			// 必须单独判一次，否则中间件早退、按钮看起来没反应。
-			shortYouzanReadyFor(current, source) {
+			shortYouzanReadyFor(current, source) ||
+			// 促销族自营短档（2026-11-23）：只开这一个按钮时同样要参与判定。
+			promoShortOwnReadyFor(current, source) ||
+			// 常驻改派（2026-11-23）不是开关而是按源模型的字段：只要配了
+			// promo_resident_model 就必须进场，否则「配了却不生效」且无报错。
+			promoResidentConfiguredFor(current, source) {
 			return true
 		}
 	}
@@ -1488,6 +1536,20 @@ func secondsRuleConfiguredFor(p Policy, sourceModel string) bool {
 		p.TriggerSeconds > 0
 }
 
+// SecondsTriggerSecondsFor 返回规则一对该源模型的**时长下界**（秒）。
+//
+// 0 = 不设下界（2026-11-20 口径：不带参考音视频就改派）；
+// 非 0 = 只有「秒数 > 该值」才改派（2026-11-23 老板口径：特惠 >15 秒）。
+//
+// 为什么按源模型而不走公共 TriggerSeconds：活动版（按次 ¥4.5/次）依赖
+// 「不看时长、全部改派」的旧口径，给它加下界会把 30 秒的按次单留在源链路。
+func (p Policy) SecondsTriggerSecondsFor(sourceModel string) int {
+	if override, ok := p.overrideFor(sourceModel); ok && override.SecondsTriggerSeconds > 0 {
+		return override.SecondsTriggerSeconds
+	}
+	return 0
+}
+
 // hasSourceModel 判断策略是否配了**至少一个**源模型。
 //
 // 单值字段（SourceModel）与多值字段（SourceModels）任一非空即算配了 ——
@@ -1756,6 +1818,10 @@ func clonePolicy(p Policy) Policy {
 			if value.RefAVRuleEnabled != nil {
 				enabled := *value.RefAVRuleEnabled
 				value.RefAVRuleEnabled = &enabled
+			}
+			if value.PromoShortOwnEnabled != nil {
+				enabled := *value.PromoShortOwnEnabled
+				value.PromoShortOwnEnabled = &enabled
 			}
 			out.SourceOverrides[key] = value
 		}

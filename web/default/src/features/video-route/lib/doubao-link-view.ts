@@ -130,6 +130,8 @@ export function buildDoubaoLinkView(
   const sources = sourceList(policy)
   // 备胎链路配置齐全（failover_configured = 源+目标都在）才谈得上"关闭后改派备胎"。
   const fallbackReady = Boolean(failover?.failover_configured)
+  // 规则一的时长下界：0 = 不设下界（2026-11-20 旧口径，不带参考音视频就改派）。
+  const threshold = policy.seconds_trigger_seconds ?? 0
   const limit = limitState(policy)
   const offReason = policy.doubao_link_off_reason ?? ''
   // 有自动恢复时间 = 人工关闭。限额关闭没有恢复时间，必须等人再打开。
@@ -189,14 +191,18 @@ export function buildDoubaoLinkView(
     on: true,
     tone: 'on',
     statusKey: 'Doubao link is on',
-    // 2026-11-20 口径变更：触发条件从「超过 N 秒」改成「不带参考音视频」。
-    // 文案必须跟着改 —— 运营看的是这句话来决定要不要拨这个开关，
-    // 写着「超过 20 秒」而实际全量改派，是最容易亏钱的那种误判。
+    // 2026-11-23 口径：促销族母本加了**时长下界**（生产 15 秒）——
+    // 只有超过该值的请求才改派豆包，短请求走短时长分支。
+    // 文案必须读后端下发的阈值：写「全量改派」会让运营以为短单也过去了，
+    // 写死数字又会在阈值调整时与真实行为脱节。
     detailKey:
-      'Requests without reference video/audio route to {{target}}; auto-fallback to {{backup}} when the source chain goes down',
+      threshold > 0
+        ? 'Requests over {{seconds}}s without reference video/audio route to {{target}}; auto-fallback to {{backup}} when the source chain goes down'
+        : 'Requests without reference video/audio route to {{target}}; auto-fallback to {{backup}} when the source chain goes down',
     detailParams: {
       target: policy.target_model,
       backup,
+      seconds: threshold,
     },
     quotaDown: false,
     fallbackReady,

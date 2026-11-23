@@ -496,6 +496,18 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			return
 		}
 
+		// ── 自营短档（2026-11-23）：≤15 秒 + 9:16 → sd-seedance-2.0fast ──
+		//
+		// 必须排在规则六（豆包 Fast）**之前**：两者接的都是 ≤15 秒的短请求，
+		// 先判豆包 Fast 就永远轮不到自营档，开关等于没装。
+		//
+		// 开关 promo_short_own_enabled 是运营手切的（默认关），
+		// 关掉后这类请求自然落规则六的豆包 Fast。
+		if tryPromoShortOwnRoute(c, body, sourceModel, billingOriginModel) {
+			c.Next()
+			return
+		}
+
 		// ── 规则六（短时长分流）：排在规则一与规则二之前 ──
 		//
 		// 2026-11-13 老板定：请求时长 ≤ 阈值（默认 10 秒）→ 改派到**心笔内链**
@@ -615,8 +627,19 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 				//
 				// 准入在 prepareShortFastRoute 里：首尾帧与参考音视频不接
 				//（豆包官网只收参考图/首帧），留给规则九或源链路 fail-loud。
+				// 上界（2026-11-23）：跟随**配置的短时长阈值**取大。
+				//
+				// 原本是写死的 ShortFastMaxSeconds（14 秒，为 SJ-wan3-prime
+				// 的 15–30 秒下界留出 15 秒那一档）。促销族常驻换成客美 tj
+				// （2–30 秒）后，这道边界不再由上游能力决定，而是由老板口径
+				// 「≤15 秒走 Fast」决定 —— 所以取「常量与阈值两者较大的那个」：
+				// 阈值没改（默认 10）时行为与以前逐字节一致，配成 15 就真的到 15。
+				fastCap := seedanceroute_setting.ShortFastMaxSeconds
+				if trigger := policy.ShortTriggerSecondsOrDefault(); trigger > fastCap {
+					fastCap = trigger
+				}
 				if fastReady &&
-					(seconds <= seedanceroute_setting.ShortFastMaxSeconds || shortRouteResolution(body) != "720P") {
+					(seconds <= fastCap || shortRouteResolution(body) != "720P") {
 					target := seedanceroute_setting.DefaultShortFastTargetModel
 					if newBody, routed := prepareShortFastRoute(c, body, target, seconds); routed {
 						if applyRewrittenBody(c, newBody, billingOriginModel) {
@@ -707,7 +730,14 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 		if seedanceroute_setting.IsSecondsRuleEnabledFor(sourceModel) {
 			if seconds, hasSeconds := extractRequestSeconds(body); hasSeconds &&
 				!hasUnsupportedMedia(body) && !hasFrameMedia(body) {
-				if newBody, routed := prepareSecondsRoute(c, body, policy, secondsTarget, seconds); routed {
+				// 时长下界（2026-11-23 新增）：配了 seconds_trigger_seconds 的源模型
+				// 只在「秒数 > 下界」时改派（特惠：>15 秒 → seedance-2-5）。
+				// 没配（活动版）时保持 2026-11-20 口径：不看时长，全部改派。
+				if trigger := policy.SecondsTriggerSecondsFor(sourceModel); trigger > 0 && seconds <= trigger {
+					logger.LogInfo(c, fmt.Sprintf(
+						"条件路由：%s %d 秒未超时长下界 %d 秒，规则一不改派（交给短时长/常驻规则）",
+						sourceModel, seconds, trigger))
+				} else if newBody, routed := prepareSecondsRoute(c, body, policy, secondsTarget, seconds); routed {
 					if applyRewrittenBody(c, newBody, billingOriginModel) {
 						// 计费按源模型（按秒）算，而目标 adaptor 是按次的、不给 seconds。
 						// 把判定命中的秒数记下来，交给 relay_task.go 补进 OtherRatios。
@@ -769,6 +799,20 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 					return
 				}
 			}
+		}
+
+		// ── 常驻改派（2026-11-23）：所有规则都没命中才走这里 ──
+		//
+		// 老板口径：促销族母本的常驻执行链路改为 wan3.0-video-tj（客美）。
+		// 带参考视频/音频、带首尾帧、未传时长这几类请求在规则一/六/九那里
+		// 都会被判「不路由」（目标链路会丢素材或无法判定时长），落到这里
+		// 才真正执行 —— 所以它必须排在**最后**，不能抢在前面把长单也钉在常驻。
+		//
+		// 目标模型从 source_overrides[源模型].promo_resident_model 读，
+		// 没配的源模型（活动版）原链路不变。
+		if tryPromoResidentRoute(c, body, sourceModel, billingOriginModel) {
+			c.Next()
+			return
 		}
 
 		c.Next()

@@ -526,6 +526,10 @@ func doubaoRouteAdminState() gin.H {
 	// 规则一 2026-11-20 起不再按秒数卡阈值，但 trigger_seconds 仍是
 	// 「规则一配全了没有」的哨兵（见 secondsRuleConfiguredFor），照旧下发。
 	state["trigger_seconds"] = policy.TriggerSeconds
+	// 按源模型的时长下界（2026-11-23）：配了 seconds_trigger_seconds 的源模型
+	// （特惠 = 15 秒）只有「超过该值」才改派豆包。豆包卡的文案必须读它，
+	// 否则会写着「不带参考音视频全量改派」而实际只有 >15 秒的量过去。
+	state["seconds_trigger_seconds"] = seedanceroute_setting.PrimarySourceTriggerSeconds()
 	// 规则一的历史比例闸门不再下发（2026-11-20 该条件已下线）：
 	// 判定函数已删除，前端也没有读它的地方，继续下发只会让下一个人
 	// 以为「9:16 还在起作用」。配置里的值仍保留，只做兼容读取。
@@ -590,6 +594,8 @@ func doubaoRouteAdminState() gin.H {
 	appendWan3RefVideoHkState(state)
 	// hk-wan3 → 客美 tj 的手动换货开关（2026-11-22，默认关闭）。
 	appendWan3HkWan3TjState(state)
+	// 促销族自营短档（≤15 秒 + 9:16 → sd-seedance-2.0fast，2026-11-23）。
+	appendPromoShortOwnState(state)
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }

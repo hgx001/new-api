@@ -147,6 +147,12 @@ func SetApiRouter(router *gin.Engine) {
 			// ⚠️ 四条分支同时只能有一条生效 —— 打开本条时自动关掉心笔、有赞与 CapCut。
 			videoRouteAdmin.POST("/policy/short-fast-link", controller.SetShortFastLinkAdmin)
 
+			// 促销族「自营短档」开关（2026-11-23）：
+			// 打开后 ≤15 秒且 9:16 的请求改派 sd-seedance-2.0fast（漫屋 ch20，
+			// 固定 720p/9:16）；关闭则这类请求回到豆包 Fast。
+			// 与规则六四条分支不互斥：自营档先判，接不住时豆包 Fast 自然接手。
+			videoRouteAdmin.POST("/policy/promo-short-own", controller.SetPromoShortOwnAdmin)
+
 			// 规则十「seedance-2-5 短时长 → 豆包 Fast」开关（2026-11-18）：
 			// 打开后 seedance-2-5 的 ≤15 秒请求改派 seedance-2-0-fast。
 			// 与规则六的四条分支不互斥（源模型不同），计费仍按 seedance-2-5 一口价。
