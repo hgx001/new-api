@@ -46,6 +46,53 @@ func resolveWan30Resolution(req relaycommon.TaskSubmitReq) (string, error) {
 	return resolution, err
 }
 
+// resolveMegabyaiResolution 在能力表的档位白名单内解析分辨率。
+//
+// 与 resolveWan30Resolution 的区别：那个是 wan-3.0 的三档（480p/720p/1080p），
+// T3-seedance-2.5 只有两档 —— 传 1080p 必须 400，不能默默当成 720p 发上去
+// （上游会按自己的默认/最高档收钱，而我们对客户按 480p 收了费）。
+func resolveMegabyaiResolution(req relaycommon.TaskSubmitReq, caps megabyaiCapability) (string, error) {
+	resolution, provided, err := resolveWan30ResolutionWithSource(req)
+	if err != nil {
+		return "", err
+	}
+	if !provided {
+		return wan30DefaultResolution, nil
+	}
+	if !containsString(caps.Resolutions, resolution) {
+		return "", fmt.Errorf("this model only supports %s, got %s", strings.Join(caps.Resolutions, ", "), resolution)
+	}
+	return resolution, nil
+}
+
+func containsString(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveMegabyaiDuration 解析并校验时长区间。
+//
+// 区间只在客户端**显式给了时长**时检查：没给就不下发（用上游默认值），
+// 因为这类模型是**按次计费**，时长不参与算钱，矫成默认值没有收益。
+// 给了越界值则必须 400：静默截到 4 或 30 秒，客户拿到的成片长度
+// 与他要求的不一致，却看不出来为什么会变。
+func resolveMegabyaiDuration(req relaycommon.TaskSubmitReq, caps megabyaiCapability) (*int, error) {
+	duration := wan30Duration(req)
+	if duration == nil || (caps.MinSeconds == 0 && caps.MaxSeconds == 0) {
+		return duration, nil
+	}
+	if *duration < caps.MinSeconds || *duration > caps.MaxSeconds {
+		return nil, fmt.Errorf(
+			"this model supports %d-%d second videos, got %d",
+			caps.MinSeconds, caps.MaxSeconds, *duration)
+	}
+	return duration, nil
+}
+
 // resolveWan30ResolutionWithSource 除了档位，还返回「客户端是否给过分辨率」。
 //
 // 区分「没给」与「给了但不是这一档」是锁定档位模型的前提：
@@ -205,12 +252,17 @@ func ratioFromWan30Size(size string) (string, bool) {
 
 // buildWan30Media 收集参考素材，按上游统一参数契约分成图片 / 视频 / 音频三组。
 //
-// 上游 wan-3.0 的素材上限（上游价目说明）：参考图 ≤10、参考视频 ≤5、参考音频 ≤5。
+// 素材上限来自能力表（wan-3.0：10/5/5；T3-seedance-2.5：30/10/10）。
 // 数量超限在本地 400 拦下：上游拒单要等它自己发现，而我们已经知道上限。
 //
 // first_frame / last_frame 也归入 referenceImages：上游统一参数里没有单独的首尾帧字段，
 // 它的语义是「首张图即首帧」，与本站 wan3 渠道的口径一致。
 func buildWan30Media(req relaycommon.TaskSubmitReq) ([]string, []string, []string, error) {
+	return buildMegabyaiMedia(req, capabilityFor(wan30Model))
+}
+
+// buildMegabyaiMedia 是带能力表的版本（按模型区分素材上限）。
+func buildMegabyaiMedia(req relaycommon.TaskSubmitReq, caps megabyaiCapability) ([]string, []string, []string, error) {
 	images := make([]string, 0, 4)
 	videos := make([]string, 0, 2)
 	audios := make([]string, 0, 2)
@@ -270,14 +322,14 @@ func buildWan30Media(req relaycommon.TaskSubmitReq) ([]string, []string, []strin
 	// 报错文案不能点名上游模型：别名模型（seedance2.5-特惠）走的是同一段校验，
 	// 写死 "wan-3.0" 等于把真实上游告诉下游；脱敏层也会把它变成误导性的「上游 accepts...」。
 	// 「this model」对两个对外名都成立，也和锁定档位的文案口径一致。
-	if len(images) > wan30MaxReferenceImages {
-		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference images", wan30MaxReferenceImages)
+	if len(images) > caps.MaxImages {
+		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference images", caps.MaxImages)
 	}
-	if len(videos) > wan30MaxReferenceVideos {
-		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference videos", wan30MaxReferenceVideos)
+	if len(videos) > caps.MaxVideos {
+		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference videos", caps.MaxVideos)
 	}
-	if len(audios) > wan30MaxReferenceAudios {
-		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference audios", wan30MaxReferenceAudios)
+	if len(audios) > caps.MaxAudios {
+		return nil, nil, nil, fmt.Errorf("this model accepts at most %d reference audios", caps.MaxAudios)
 	}
 	return images, videos, audios, nil
 }

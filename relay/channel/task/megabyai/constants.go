@@ -13,10 +13,22 @@ const ChannelName = "MegaAI"
 //
 // ⚠️ 上游已不再提供无后缀的 sd-2.5（/v1/models 里只剩 sd-2.5-720p 这类带档位后缀的型号），
 // 生产渠道只挂 wan-3.0 与 seedance2.5-特惠；代码里保留 sd-2.5 是不破坏既有路径。
+// T3Seedance25Model 是 2026-11-23 重新接入 MegaAI 时上架的第二个对外模型。
+//
+// 上游目录（/api/pricing）描述：「30图10视频10音频，480p/720p，4-30秒，不卡脸，支持全比例」，
+// 按次计费、分辨率分档（上游 480p ¥3 / 720p ¥4；本站对外 480p ¥4 / 720p ¥5）。
+//
+// 与 wan-3.0 同走上游「统一参数」契约（duration / ratio / resolution /
+// referenceImages / referenceVideos / referenceAudios），差别只在能力边界：
+// **没有 1080p 档**、素材上限高得多（30/10/10）、时长区间 4–30 秒。
+// 能力差异全部写在下面的 megabyaiCapabilities 里，不在适配器里开 if 旁路。
+const T3Seedance25Model = "T3-seedance-2.5"
+
 var ModelList = []string{
 	"sd-2.5",
 	wan30Model,
 	Seedance25TeHuiModel,
+	T3Seedance25Model,
 }
 
 // wan30Model 是走「统一参数 + 分辨率档按次计费」契约的模型名。
@@ -53,11 +65,13 @@ const Seedance25TeHuiModel = "seedance2.5-特惠"
 var megabyaiUnifiedContractModels = map[string]bool{
 	wan30Model:           true,
 	Seedance25TeHuiModel: true,
+	T3Seedance25Model:    true,
 }
 
 // megabyaiResolutionTierModels 是**按分辨率档计价**的模型（其余统一契约模型是固定按次价）。
 var megabyaiResolutionTierModels = map[string]bool{
-	wan30Model: true,
+	wan30Model:        true,
+	T3Seedance25Model: true,
 }
 
 // megabyaiUpstreamModels 是「对外模型名 → 上游模型名」的兜底表。
@@ -67,6 +81,7 @@ var megabyaiResolutionTierModels = map[string]bool{
 var megabyaiUpstreamModels = map[string]string{
 	wan30Model:           wan30Model,
 	Seedance25TeHuiModel: wan30Model,
+	T3Seedance25Model:    T3Seedance25Model,
 }
 
 // wan30LockedTier 是「固定分辨率 + 固定时长」的档位。
@@ -117,3 +132,88 @@ const (
 	wan30MaxReferenceVideos = 5
 	wan30MaxReferenceAudios = 5
 )
+
+// megabyaiCapability 描述一个对外模型的能力边界。
+//
+// 上游同一张价目表下不同模型的档位/素材数差别很大（wan-3.0 有 1080p、
+// T3 没有；T3 能收 30 张图、wan-3.0 只收 10 张）。用一张表把它们分开描述，
+// 比在适配器里到处写 `if model == ...` 更好查、更好测。
+//
+// 零值字段的含义：
+//   - Resolutions 为空 → 用 wan30Resolutions（三档）；
+//   - SizeRatios 为空 → 按次固定价（不带 size 倍率）；
+//   - MinSeconds/MaxSeconds 都为 0 → 不检查时长区间（上游自己决定）。
+//   - MaxImages/MaxVideos/MaxAudios 为 0 → 用 wan-3.0 的 10/5/5。
+type megabyaiCapability struct {
+	Resolutions []string
+	SizeRatios  map[string]float64
+
+	MaxImages int
+	MaxVideos int
+	MaxAudios int
+
+	MinSeconds int
+	MaxSeconds int
+}
+
+// T3 的对外价：480p ¥4.0 / 720p ¥5.0（按次）→ 1 : 5.0/4.0。
+// 基准价（480p）落在 defaultModelPrice["T3-seedance-2.5"]，这里只放档位间相对倍率。
+var t3ResolutionSizeRatio = map[string]float64{
+	"480p": 1.0,
+	"720p": 5.0 / 4.0,
+}
+
+// t3Resolutions 是上游 T3-seedance-2.5 的分辨率档（**没有 1080p**）。
+// 客户传 1080p 必须本地 400：静默改成 720p 等于收了 720p 的钱却
+// 没告诉客户清晰度降了，静默按 1080p 计费则是多收钱。
+var t3Resolutions = []string{"480p", "720p"}
+
+// megabyaiCapabilities 是「对外模型名 → 能力边界」。
+var megabyaiCapabilities = map[string]megabyaiCapability{
+	wan30Model: {
+		Resolutions: wan30Resolutions,
+		SizeRatios:  wan30ResolutionSizeRatio,
+		MaxImages:   wan30MaxReferenceImages,
+		MaxVideos:   wan30MaxReferenceVideos,
+		MaxAudios:   wan30MaxReferenceAudios,
+	},
+	T3Seedance25Model: {
+		Resolutions: t3Resolutions,
+		SizeRatios:  t3ResolutionSizeRatio,
+		MaxImages:   30,
+		MaxVideos:   10,
+		MaxAudios:   10,
+		MinSeconds:  4,
+		MaxSeconds:  30,
+	},
+}
+
+// capabilityFor 取模型的能力表；未知模型（含 sd-2.5 这类透传模型、
+// 以及锁定档位模型）回落到 wan-3.0 的默认能力表。
+//
+// 锁定档位模型（seedance2.5-特惠）在解析分辨率/时长时走的是另一条分支，
+// 不会用到这里的 Resolutions/SizeRatios，但素材上限仍是 10/5/5，与默认一致。
+func capabilityFor(model string) megabyaiCapability {
+	if c, ok := megabyaiCapabilities[model]; ok {
+		if len(c.Resolutions) == 0 {
+			c.Resolutions = wan30Resolutions
+		}
+		if c.MaxImages == 0 {
+			c.MaxImages = wan30MaxReferenceImages
+		}
+		if c.MaxVideos == 0 {
+			c.MaxVideos = wan30MaxReferenceVideos
+		}
+		if c.MaxAudios == 0 {
+			c.MaxAudios = wan30MaxReferenceAudios
+		}
+		return c
+	}
+	return megabyaiCapability{
+		Resolutions: wan30Resolutions,
+		SizeRatios:  wan30ResolutionSizeRatio,
+		MaxImages:   wan30MaxReferenceImages,
+		MaxVideos:   wan30MaxReferenceVideos,
+		MaxAudios:   wan30MaxReferenceAudios,
+	}
+}

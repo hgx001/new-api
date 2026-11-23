@@ -57,6 +57,13 @@ export type PricingModel = {
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**
+   * 模型广场排序权重：数值越大越靠前；0 = 未置顶。
+   *
+   * 由后端 `models.sort_weight` 下发（新建模型卡时自动取 MAX+1，
+   * 所以新上架的模型天然排在广场最前面），前端不维护任何名单。
+   */
+  sort_weight?: number
+  /**
    * Optional model metadata fields reserved for backend-provided catalog data.
    * Keep them data-driven; do not synthesize display values on the client.
    */

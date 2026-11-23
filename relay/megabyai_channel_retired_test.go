@@ -1,42 +1,22 @@
 package relay
 
 // ════════════════════════════════════════════════════════════════════════════
-// MegaAI 渠道（type=64）退役契约
+// MegaAI 渠道（type=64）**重新接入**契约
 // ════════════════════════════════════════════════════════════════════════════
 //
-// 事实：MegaAI 渠道已于 2026-11-10 停售。
+// 时间线：
+//   · 2026-11-10 按「广场零卡片的渠道全部删除」退役 type=64（当时挂 wan-3.0）；
+//   · 2026-11-23 重新接入同一上游（newapi.megabyai.cc），上架 T3-seedance-2.5。
 //
-//   · 生产库里 type=64 的渠道早已不存在（2026-10-26 起「wan-3.0 / seedance2.5-特惠
-//     随该渠道停售而空置」，2026-11-10 复核：channels 表里没有任何 type=64 的行）。
-//   · 广场上也没有任何一张卡片挂在它下面。
-//   · options 里连一个含 "megabyai" 的键都没有 —— 价格键也早被摘干净。
+// 退役期间本文件断言的是「GetTaskAdaptor(64) 必须为 nil / 端点声明不得含 64」。
+// 重新接入后这些断言必须**逐条反过来**，否则测试会红着发版 —— 本文件因此重写，
+// 并把「为什么当初要保留 megabyai 包」的那条约束继续守住：
+// youkou（type=59）复用 megabyai 的按次计费，任何时候都不能被这次改动打掉。
 //
-// 老板指令（2026-11-10）：「目前没有在模型广场展示的模型渠道全部删除」。
-// MegaAI 属于这类「零上广场」的干扰渠道，代码侧的注册分支一并清掉。
-//
-// ── 为什么「清注册分支」而不是「删整个 megabyai 包」──────────────────────
-//
-// relay/channel/task/megabyai 这个包**不能整个删**：youkou 渠道（type=59）
-// 的 seedance2.5特惠版 复用了 taskmegabyai.TaskAdaptor 拿「按次计费」
-// （EstimateBilling=nil，禁止带入 sora 的 seconds/size 倍率）。
-// 删包 = 删掉 youkou 在售模型的计费能力，直接打掉一个在售商品。
-//
-// 所以本次只做三件事：
-//  1. relay_adaptor.go 里删掉 ChannelTypeMegaAI 的注册分支（type=64 不再能路由）；
-//  2. common/endpoint_type.go 里删掉 ChannelTypeMegaAI 的端点声明；
-//  3. controller/video_proxy.go 里删掉 ChannelTypeMegaAI 的取件分支；
-//     controller/channel_upstream_update.go 里删掉 ChannelTypeMegaAI 的模型枚举。
-//
-// constant.ChannelTypeMegaAI = 64 这个**常量本身保留**：
-// 它是渠道类型编号空间的永久占位，删掉会让后续新增渠道复用编号 64，
-// 而历史 tasks / logs 里还留着 platform=64 的老记录 —— 编号一旦被复用，
-// 老任务会被当成新渠道的任务去查状态，后果比留一个空常量严重得多。
-//
-// ── 退役后 type=64 的行为契约 ───────────────────────────────────────────
-//
-//  ① GetTaskAdaptor("64") 必须返回 nil（没有适配器 → 路由层直接报错）；
-//  ② endpoint 声明不再包含 type=64；
-//  ③ megabyai 包本体保留且仍可被 youkou 复用（计费能力不丢）。
+// 保留的历史结论（仍然有效）：
+//   · constant.ChannelTypeMegaAI = 64 是永久编号占位，不得删除或复用；
+//   · megabyai 包本体不得整个删除 —— youkou 的 seedance2.5特惠版 靠它拿
+//     EstimateBilling=nil（禁止带入 sora 的 seconds/size 倍率）。
 //
 // 本文件把这些变成可执行断言。
 
@@ -52,18 +32,18 @@ import (
 )
 
 // ────────────────────────────────────────────────────────────────────────────
-// 守卫 1：路由层不再为 type=64 注册任务适配器
+// 守卫 1：路由层必须为 type=64 注册任务适配器
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestMegaAI_路由层不再注册任务适配器 是本次退役的**总开关**。
+// TestMegaAI_路由层注册任务适配器 是重新接入的**总开关**。
 //
-// 断言 GetTaskAdaptor 返回 nil，而不是断言「某个具体字段为空」——
-// 因为一旦有人不小心把分支加回来，这里会立刻红。
-func TestMegaAI_路由层不再注册任务适配器(t *testing.T) {
+// 断言 GetTaskAdaptor 返回非 nil：一旦有人再把注册分支删掉，这里立刻红。
+// 没有适配器的渠道能建出来，但任务提交后永远停在非终态 —— 钱扣了、任务不动。
+func TestMegaAI_路由层注册任务适配器(t *testing.T) {
 	adaptor := GetTaskAdaptor(constant.TaskPlatform("64"))
-	assert.Nil(t, adaptor,
-		"MegaAI 渠道已停售，type=64 不得再注册任务适配器 —— "+
-			"否则后台能建出一个指向已下架上游的渠道，任务建单后永远轮询不到结果")
+	require.NotNil(t, adaptor,
+		"MegaAI（type=64）已重新接入 T3-seedance-2.5，必须注册任务适配器 —— "+
+			"否则渠道能建但任务永远轮询不到结果")
 }
 
 // 编号本身仍是 64（常量保留，避免编号被后续渠道复用）。
@@ -73,7 +53,7 @@ func TestMegaAI_渠道类型编号保留为64(t *testing.T) {
 			"而历史 tasks/logs 里还有 platform=64 的老记录")
 }
 
-// 对照组：在售渠道必须仍能拿到适配器（证明上面的 nil 不是 GetTaskAdaptor 整体坏了）。
+// 对照：在售渠道的适配器不能被这次接入误伤。
 func TestMegaAI_在售渠道的适配器仍可用(t *testing.T) {
 	for _, channelType := range []int{
 		constant.ChannelTypeYoukou,
@@ -83,38 +63,35 @@ func TestMegaAI_在售渠道的适配器仍可用(t *testing.T) {
 	} {
 		adaptor := GetTaskAdaptor(constant.TaskPlatform(itoa(channelType)))
 		assert.NotNil(t, adaptor,
-			"在售渠道类型 %d 必须仍能拿到任务适配器 —— 退役 MegaAI 不能误伤它们", channelType)
+			"在售渠道类型 %d 必须仍能拿到任务适配器 —— 重新接入 MegaAI 不能误伤它们", channelType)
 	}
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// 守卫 2：端点声明不再包含 type=64
+// 守卫 2：端点声明必须包含 type=64（否则广场不标 /v1/videos）
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestMegaAI_端点声明不再包含type64 守的是「广场/定价元数据」这一层。
+// TestMegaAI_端点声明包含OpenAIVideo 守的是「广场/定价元数据」这一层。
 //
-// type=64 不再出现在 GetEndpointTypesByChannelType 的 OpenAI Video 分支里 ——
-// 这意味着即使有人手工造出一条 type=64 的能力行，广场也不会把它标成
-// /v1/videos 端点，不会误导客户端去调一个没有适配器承接的入口。
-func TestMegaAI_端点声明不再包含type64(t *testing.T) {
-	endpointTypes := common.GetEndpointTypesByChannelType(constant.ChannelTypeMegaAI, "wan-3.0")
+// 端点声明决定 supported_endpoint_types 与前端展示入口；漏了它，
+// 客户按 /v1/videos 调是对的，但广场不会把它标成视频模型。
+func TestMegaAI_端点声明包含OpenAIVideo(t *testing.T) {
+	endpointTypes := common.GetEndpointTypesByChannelType(constant.ChannelTypeMegaAI, "T3-seedance-2.5")
 
-	for _, et := range endpointTypes {
-		assert.NotEqual(t, constant.EndpointTypeOpenAIVideo, et,
-			"type=64 已退役，不得再被声明为 OpenAI Video 端点 —— "+
-				"客户端会照着 supported_endpoint_types 去调 /v1/videos，而那里没有适配器")
-	}
+	assert.Contains(t, endpointTypes, constant.EndpointTypeOpenAIVideo,
+		"type=64 已重新接入，必须声明为 OpenAI Video 端点 —— "+
+			"它走的是 POST /v1/videos 提交 + GET /v1/videos/{id} 轮询")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // 守卫 3：megabyai 包本体保留，youkou 的复用不受影响
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestMegaAI_youkou仍复用megabyai计费 是本次退役最容易被踩坏的一脚。
+// TestMegaAI_youkou仍复用megabyai计费 是最容易被踩坏的一脚。
 //
 // youkou 的 seedance2.5特惠版 走 megabyai 适配器拿「按次计费」：
 // EstimateBilling=nil，禁止带入 sora 的 seconds/size 倍率。
-// 删包或多改一处 selectSub 逻辑，多秒任务会被扣到上百元。
+// 改 megabyai 包时多动一处 selectSub 逻辑，多秒任务会被扣到上百元。
 func TestMegaAI_youkou仍复用megabyai计费(t *testing.T) {
 	youkouAdaptor := &youkou.TaskAdaptor{}
 	assert.Equal(t, youkou.ChannelName, youkouAdaptor.GetChannelName())
@@ -146,6 +123,3 @@ func itoa(v int) string {
 	}
 	return string(buf[i:])
 }
-
-// require 引入占位（保持与仓库其它测试文件一致的 import 形态）。
-var _ = require.New

@@ -235,10 +235,12 @@ func VideoProxy(c *gin.Context) {
 			return
 		}
 	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora, constant.ChannelTypeYoukou,
-		constant.ChannelTypeYouzanWan3:
+		constant.ChannelTypeYouzanWan3, constant.ChannelTypeMegaAI:
 		// 有赞 Wan3（63）：2026-11-15 上游切换后 completed 响应不带成片地址，
 		// 成片改由 /v1/videos/{upstream_task_id}/content 提供、必须带渠道密钥
 		// （adaptor ParseTaskResult 因此留空 Url，轮询落成站内代理地址）。
+		// MegaAI（64，2026-11-23 重接入）与它同形：上游文档要求
+		// GET /v1/videos/{id}/content + Bearer 渠道密钥才能取片。
 		// 与 OpenAI/Sora 同形，直接复用该分支。
 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)

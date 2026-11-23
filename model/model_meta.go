@@ -22,18 +22,25 @@ type BoundChannel struct {
 }
 
 type Model struct {
-	Id           int            `json:"id"`
-	ModelName    string         `json:"model_name" gorm:"size:128;not null;uniqueIndex:uk_model_name_delete_at,priority:1"`
-	Description  string         `json:"description,omitempty" gorm:"type:text"`
-	Icon         string         `json:"icon,omitempty" gorm:"type:varchar(128)"`
-	Tags         string         `json:"tags,omitempty" gorm:"type:varchar(255)"`
-	VendorID     int            `json:"vendor_id,omitempty" gorm:"index"`
-	Endpoints    string         `json:"endpoints,omitempty" gorm:"type:text"`
-	Status       int            `json:"status" gorm:"default:1"`
-	SyncOfficial int            `json:"sync_official" gorm:"default:1"`
-	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
-	UpdatedTime  int64          `json:"updated_time" gorm:"bigint"`
-	DeletedAt    gorm.DeletedAt `json:"-" gorm:"index;uniqueIndex:uk_model_name_delete_at,priority:2"`
+	Id           int    `json:"id"`
+	ModelName    string `json:"model_name" gorm:"size:128;not null;uniqueIndex:uk_model_name_delete_at,priority:1"`
+	Description  string `json:"description,omitempty" gorm:"type:text"`
+	Icon         string `json:"icon,omitempty" gorm:"type:varchar(128)"`
+	Tags         string `json:"tags,omitempty" gorm:"type:varchar(255)"`
+	VendorID     int    `json:"vendor_id,omitempty" gorm:"index"`
+	Endpoints    string `json:"endpoints,omitempty" gorm:"type:text"`
+	Status       int    `json:"status" gorm:"default:1"`
+	SyncOfficial int    `json:"sync_official" gorm:"default:1"`
+	// SortWeight 是**模型广场排序权重**：数值越大越靠前；0 = 未设置，排在所有
+	// 有权重的模型之后（它们之间按展示名称排）。
+	//
+	// 机制：新建模型卡时自动取 `MAX(sort_weight)+1`（见 Insert），所以
+	// **新上架的模型天然就排在最前面**，不用再去改前端名单。
+	// 老卡片保持 0，视觉上与改造前的「按名称排」完全一致。
+	SortWeight  int            `json:"sort_weight" gorm:"default:0;index"`
+	CreatedTime int64          `json:"created_time" gorm:"bigint"`
+	UpdatedTime int64          `json:"updated_time" gorm:"bigint"`
+	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index;uniqueIndex:uk_model_name_delete_at,priority:2"`
 
 	BoundChannels []BoundChannel `json:"bound_channels,omitempty" gorm:"-"`
 	EnableGroups  []string       `json:"enable_groups,omitempty" gorm:"-"`
@@ -49,6 +56,13 @@ func (mi *Model) Insert() error {
 	mi.CreatedTime = now
 	mi.UpdatedTime = now
 
+	// 未显式指定权重的模型卡自动置顶：取当前最大权重 +1（详见 nextSortWeight）。
+	// 这样「新上架的模型排在广场最前面」是机制而非手工操作。
+	// 显式给了权重（含负数）就尊重调用方 —— 运营可能想把它压到后面。
+	if mi.SortWeight == 0 {
+		mi.SortWeight = nextSortWeight()
+	}
+
 	// 保存原始值（因为 Create 后可能被 GORM 的 default 标签覆盖为 1）
 	originalStatus := mi.Status
 	originalSyncOfficial := mi.SyncOfficial
@@ -63,6 +77,19 @@ func (mi *Model) Insert() error {
 		"status":        originalStatus,
 		"sync_official": originalSyncOfficial,
 	}).Error
+}
+
+// nextSortWeight 返回下一个可用排序权重（当前最大 +1）。
+//
+// 查询失败时退化成 0（= 不置顶）而不是报错：排序只是展示层信息，
+// 不能因为它写不进就让「上架模型」这个动作失败。
+func nextSortWeight() int {
+	var maxWeight int
+	row := DB.Model(&Model{}).Select("COALESCE(MAX(sort_weight), 0)").Row()
+	if err := row.Scan(&maxWeight); err != nil {
+		return 0
+	}
+	return maxWeight + 1
 }
 
 func IsModelNameDuplicated(id int, name string) (bool, error) {

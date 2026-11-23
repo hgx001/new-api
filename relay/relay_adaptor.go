@@ -39,11 +39,12 @@ import (
 	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/task/hailuo"
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
+	"github.com/QuantumNous/new-api/relay/channel/task/kemeitv"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	"github.com/QuantumNous/new-api/relay/channel/task/manwu"
+	taskmegabyai "github.com/QuantumNous/new-api/relay/channel/task/megabyai"
 	"github.com/QuantumNous/new-api/relay/channel/task/sanyuan"
 	"github.com/QuantumNous/new-api/relay/channel/task/seeta"
-	"github.com/QuantumNous/new-api/relay/channel/task/kemeitv"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
@@ -207,6 +208,11 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &seeta.TaskAdaptor{}
 		case constant.ChannelTypeKemeitv:
 			return &kemeitv.TaskAdaptor{}
+		// 2026-11-23 重新接入：MegaAI（newapi.megabyai.cc）2026-11-10 曾因
+		// 「广场零卡片」退役，现重新上架 T3-seedance-2.5，注册分支同步恢复。
+		// 协议：POST {base}/v1/videos 提交、GET /v1/videos/{id} 轮询。
+		case constant.ChannelTypeMegaAI:
+			return &taskmegabyai.TaskAdaptor{}
 		}
 	}
 	return nil

@@ -91,25 +91,31 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		req = restored
 		relaycommon.StoreTaskRequest(c, info, info.Action, req)
 	}
-	// 分辨率必须在本地归一：wan-3.0 按分辨率档计价，猜错档位就是少收钱；
-	// 锁定档位的模型（seedance2.5-特惠）只认自己那一档，给别的档位直接 400。
+	// 分辨率必须在本地归一：按分辨率档计价的模型猜错档位就是少收钱；
+	// 锁定档位的模型（seedance2.5-特惠）只认自己那一档，给别的档位直接 400；
+	// T3-seedance-2.5 只有 480p/720p 两档，1080p 也必须 400。
+	caps := capabilityFor(info.OriginModelName)
 	tier, locked := megabyaiLockedTierModels[info.OriginModelName]
 	var resolution string
 	if locked {
 		resolution, err = resolveLockedResolution(req, tier)
 	} else {
-		resolution, err = resolveWan30Resolution(req)
+		resolution, err = resolveMegabyaiResolution(req, caps)
 	}
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
 	}
-	// 时长同理：锁定时长只认自己那一档。
+	// 时长同理：锁定时长只认自己那一档；有区间的模型（T3：4–30 秒）越界直接 400。
 	if locked {
 		if _, err := wan30LockedDuration(req, tier); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
+	} else {
+		if _, err := resolveMegabyaiDuration(req, caps); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
+		}
 	}
-	if _, videos, _, err := buildWan30Media(req); err != nil {
+	if _, videos, _, err := buildMegabyaiMedia(req, caps); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	} else if guardErr := checkWan30ReferenceVideoSeconds(videos); guardErr != nil {
 		return service.TaskErrorWrapperLocal(guardErr, "invalid_input_reference", http.StatusBadRequest)
@@ -124,6 +130,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 //
 //   - sd-2.5：固定按次价 → nil（禁止带入 seconds/size，否则会按秒多扣费）。
 //   - wan-3.0：上游按次计价（时长不参与），只有分辨率档参与 → 只给 size 倍率。
+//   - T3-seedance-2.5：同上，只是档位只有 480p / 720p（倍率 1 : 1.25）。
 //   - seedance2.5-特惠：固定 ¥3.0/条 → nil（不按分辨率分档，也不乘时长）。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	if !isResolutionTiered(info) {
@@ -135,9 +142,14 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 			resolution, _ = value.(string)
 		}
 	}
-	ratio := wan30ResolutionSizeRatio[resolution]
+	caps := capabilityFor(info.OriginModelName)
+	ratio := caps.SizeRatios[resolution]
 	if ratio == 0 {
-		ratio = wan30ResolutionSizeRatio[wan30DefaultResolution]
+		ratio = caps.SizeRatios[wan30DefaultResolution]
+	}
+	if ratio == 0 {
+		// 能力表里没配倍率（按次固定价）→ 不带 size 倍率，避免凭空放大/缩小。
+		return nil
 	}
 	return map[string]float64{"size": ratio}
 }
@@ -177,11 +189,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 	tier, locked := megabyaiLockedTierModels[info.OriginModelName]
+	caps := capabilityFor(info.OriginModelName)
 	var resolution string
 	if locked {
 		resolution, err = resolveLockedResolution(req, tier)
 	} else {
-		resolution, err = resolveWan30Resolution(req)
+		resolution, err = resolveMegabyaiResolution(req, caps)
 	}
 	if err != nil {
 		return nil, err
@@ -193,9 +206,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			return nil, err
 		}
 	} else {
-		duration = wan30Duration(req)
+		duration, err = resolveMegabyaiDuration(req, caps)
+		if err != nil {
+			return nil, err
+		}
 	}
-	images, videos, audios, err := buildWan30Media(req)
+	images, videos, audios, err := buildMegabyaiMedia(req, caps)
 	if err != nil {
 		return nil, err
 	}

@@ -16,11 +16,14 @@ import (
 )
 
 type Pricing struct {
-	ModelName              string                  `json:"model_name"`
-	Description            string                  `json:"description,omitempty"`
-	Icon                   string                  `json:"icon,omitempty"`
-	Tags                   string                  `json:"tags,omitempty"`
-	VendorID               int                     `json:"vendor_id,omitempty"`
+	ModelName   string `json:"model_name"`
+	Description string `json:"description,omitempty"`
+	Icon        string `json:"icon,omitempty"`
+	Tags        string `json:"tags,omitempty"`
+	VendorID    int    `json:"vendor_id,omitempty"`
+	// SortWeight 是模型广场排序权重（数值越大越靠前，0 = 不置顶）。
+	// 由 models 表携带，前端按它排序；不再在前端维护置顶名单。
+	SortWeight             int                     `json:"sort_weight"`
 	QuotaType              int                     `json:"quota_type"`
 	ModelRatio             float64                 `json:"model_ratio"`
 	ModelPrice             float64                 `json:"model_price"`
@@ -306,6 +309,7 @@ func updatePricing() {
 			pricing.Icon = meta.Icon
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
+			pricing.SortWeight = meta.SortWeight
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {
@@ -431,6 +435,14 @@ func isAllowedPricingModel(name string) bool {
 		return true
 	}
 	if name == "sd-2.5" {
+		return true
+	}
+	// MegaAI 渠道（newapi.megabyai.cc）2026-11-23 重新接入后上架的 T3-seedance-2.5：
+	// 按次计费 + 分辨率分档（对外 480p ¥4 / 720p ¥5），4-30 秒、全比例、
+	// 参考图 ≤30 / 视频 ≤10 / 音频 ≤10。
+	// 精确匹配：站内还有 seedance-2-5 / seedance-2.5 / T2-seedance-2.0 等相近名，
+	// 前缀匹配会误命中别家商品。
+	if name == "T3-seedance-2.5" {
 		return true
 	}
 	// 有赞渠道的新独立模型（2026-11-18 上架，公开名 **wan-3.0-yz**）：

@@ -42,41 +42,75 @@ import (
 //  4. 在 web/default/src/features/channels/constants.ts 删掉下拉项。
 
 // ────────────────────────────────────────────────────────────────────────────
-// 守卫 1：新建渠道时拒绝已退役类型
+// 守卫 1：新建/更新渠道时拒绝已退役类型
 // ────────────────────────────────────────────────────────────────────────────
+//
+// ⚠️ 2026-11-23 现状：退役名单**当前为空** —— MegaAI（type=64）已随
+// T3-seedance-2.5 重新接入，不再是退役类型。
+// 闸门本身必须继续存在：测试用一个临时塞进名单的假类型验证它，
+// 这样下次真退役某个编号时，这条守卫不需要重写。
+
+// 注入一个假退役类型跑完 fn，结束后恢复原名单。
+const testOnlyRetiredType = 9001
+
+func withRetiredType(t *testing.T, fn func()) {
+	t.Helper()
+	retiredChannelTypes[testOnlyRetiredType] = "TestOnly"
+	t.Cleanup(func() { delete(retiredChannelTypes, testOnlyRetiredType) })
+	fn()
+}
 
 // TestValidateChannel_拒绝已退役渠道类型 是这条闸门的主断言。
 func TestValidateChannel_拒绝已退役渠道类型(t *testing.T) {
+	withRetiredType(t, func() {
+		ch := &model.Channel{
+			Type:    testOnlyRetiredType,
+			Key:     "sk-test-key",
+			Name:    "retired-residual",
+			BaseURL: strPtr("https://example.com"),
+			Models:  "wan-3.0",
+			Status:  1,
+		}
+
+		err := validateChannel(ch, true)
+		require.Error(t, err,
+			"已退役类型的渠道必须建不出来 —— "+
+				"否则会建出一条没有任务适配器承接的渠道，客户任务会永久卡在非终态")
+		require.Contains(t, err.Error(), "9001",
+			"错误文案必须带上渠道类型编号，运营才知道是哪一条被拒")
+	})
+}
+
+// 更新已有渠道（isAdd=false）同样要拦 —— 否则可以把一条旧渠道
+// 「改名后保存」重新激活。
+func TestValidateChannel_更新时同样拒绝已退役渠道类型(t *testing.T) {
+	withRetiredType(t, func() {
+		ch := &model.Channel{
+			Type:   testOnlyRetiredType,
+			Key:    "sk-test-key",
+			Name:   "retired-residual",
+			Models: "wan-3.0",
+		}
+
+		err := validateChannel(ch, false)
+		require.Error(t, err,
+			"更新路径也必须拦已退役类型 —— 否则旧渠道可以改名保存重新激活")
+	})
+}
+
+// MegaAI（type=64）已重新接入，不能再被闸门拦下。
+func TestValidateChannel_MegaAI已重新接入不被拦(t *testing.T) {
 	ch := &model.Channel{
 		Type:    constant.ChannelTypeMegaAI,
 		Key:     "sk-test-key",
-		Name:    "MegaAI-残留",
+		Name:    "MegaAI",
 		BaseURL: strPtr("https://newapi.megabyai.cc"),
-		Models:  "wan-3.0",
+		Models:  "T3-seedance-2.5",
 		Status:  1,
 	}
 
-	err := validateChannel(ch, true)
-	require.Error(t, err,
-		"type=64（MegaAI）已于 2026-11-10 退役，新建渠道必须被拒绝 —— "+
-			"否则会建出一条没有任务适配器承接的渠道，客户任务会永久卡在非终态")
-	require.Contains(t, err.Error(), "64",
-		"错误文案必须带上渠道类型编号，运营才知道是哪一条被拒")
-}
-
-// 更新已有渠道（isAdd=false）同样要拦 —— 否则可以把一条 type=64 的旧渠道
-// 「改名后保存」重新激活。
-func TestValidateChannel_更新时同样拒绝已退役渠道类型(t *testing.T) {
-	ch := &model.Channel{
-		Type:   constant.ChannelTypeMegaAI,
-		Key:    "sk-test-key",
-		Name:   "MegaAI-残留",
-		Models: "wan-3.0",
-	}
-
-	err := validateChannel(ch, false)
-	require.Error(t, err,
-		"更新路径也必须拦已退役类型 —— 否则旧渠道可以改名保存重新激活")
+	require.NoError(t, validateChannel(ch, true),
+		"MegaAI 已于 2026-11-23 重新接入 T3-seedance-2.5，不得再被退役闸门拦下")
 }
 
 // 对照组：在售渠道必须照常能建（证明闸门不是「禁建渠道」总开关）。

@@ -478,7 +478,9 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 //  3. controller/video_proxy.go 的取件分支；
 //  4. web/default/src/features/channels/constants.ts 的下拉项。
 var retiredChannelTypes = map[int]string{
-	constant.ChannelTypeMegaAI: "MegaAI",
+	// 当前为空：MegaAI（type=64）已2026-11-23 随 T3-seedance-2.5 上架重新接入，
+	// 不是退役类型。保留这张表是因为「删了注册分支却还能建渠道」这个坑仍然存在
+	// （详见上方注释），下次退役任何类型直接往这里加。
 }
 
 // isRetiredChannelType 判断渠道类型是否已退役。

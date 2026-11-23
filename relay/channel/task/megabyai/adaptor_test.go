@@ -18,7 +18,9 @@ import (
 )
 
 func TestModelListContainsSD25AndWan30(t *testing.T) {
-	require.Equal(t, []string{"sd-2.5", "wan-3.0-megabyai-retired", "seedance2.5-特惠"}, (&TaskAdaptor{}).GetModelList())
+	require.Equal(t,
+		[]string{"sd-2.5", "wan-3.0-megabyai-retired", "seedance2.5-特惠", "T3-seedance-2.5"},
+		(&TaskAdaptor{}).GetModelList())
 	require.Equal(t, "MegaAI", (&TaskAdaptor{}).GetChannelName())
 }
 

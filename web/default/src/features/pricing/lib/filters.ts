@@ -112,21 +112,23 @@ function getModelPrice(model: PricingModel): number {
 // ----------------------------------------------------------------------------
 
 /**
- * 模型广场置顶名单，按数组顺序排在列表最前。
+ * 模型广场置顶：**后端 `models.sort_weight` 说了算**。
  *
- * 用途是把客单价更低、更值得推荐的模型放到首屏。这里写的是对外
- * model_name（客户实际调用的名字），不是展示名。当前两者都是客美 WAN3
- * 视频档，按价格从低到高排列（tj ¥0.138/秒 → prime-tj ¥0.24/秒）。
+ * 机制（改自 2026-11-23）：新建模型卡时后端自动取 `MAX(sort_weight)+1`，
+ * 所以新上架的模型天然排在最前面；要调整顺序只改库里的权重，不用改前端。
+ * 权重 0 = 未置顶，按展示名称排（与改造前的纯名称排序完全一致）。
+ *
+ * ⚠️ 不再在前端维护置顶名单：那套写死的数组（曾是 `PINNED_MODELS`）
+ * 每上架一个新品都要改代码、发版，且与后端数据不同步。
  *
  * 只作用于默认的「按名称」排序。用户主动切到按价格排序时尊重其选择，
  * 不强行插入置顶项 —— 否则「价格从低到高」里冒出一个更贵的模型会显得排序坏了。
  */
-const PINNED_MODELS = ['wan3.0-video-tj', 'wan3.0-video-prime-tj']
-
-/** 置顶项的排序权重：越小越前；未置顶的统一排在所有置顶项之后。 */
-function pinnedRank(model: PricingModel): number {
-  const index = PINNED_MODELS.indexOf(model.model_name)
-  return index === -1 ? PINNED_MODELS.length : index
+function sortWeight(model: PricingModel): number {
+  const weight = model.sort_weight
+  return typeof weight === 'number' && Number.isFinite(weight) && weight > 0
+    ? weight
+    : 0
 }
 
 /**
@@ -141,8 +143,8 @@ export function sortModels(
   switch (sortBy) {
     case SORT_OPTIONS.NAME:
       sorted.sort((a, b) => {
-        const rankDiff = pinnedRank(a) - pinnedRank(b)
-        if (rankDiff !== 0) return rankDiff
+        const weightDiff = sortWeight(b) - sortWeight(a)
+        if (weightDiff !== 0) return weightDiff
         return getModelDisplayName(a).localeCompare(getModelDisplayName(b))
       })
       break

@@ -325,7 +325,7 @@ var defaultModelPrice = map[string]float64{
 	//
 	// ⚠️ 生产价以 DB 的 options.ModelPrice 为准，这一行只是「库里没有该键」时的兜底。
 	// ⚠️ 与 CapCut 的 cp-seedance-2.5flash 是两个独立商品（不同官网、不同价），别合并。
-	"el-seedance-2.5":     0.25 / USD2RMB,
+	"el-seedance-2.5":          0.25 / USD2RMB,
 	"el-seedance-2.0mini":      0.25 / USD2RMB,
 	"el-gemini-1.2flash":       0.25 / USD2RMB,
 	"wan3.0-video":             0.0369863,      // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）。720P ¥0.54/秒、1080P ¥1.08/秒走分辨率倍率（2 / 4）
@@ -406,6 +406,13 @@ var defaultModelPrice = map[string]float64{
 	"wan3.0-720p-按次": 4.5 / USD2RMB, // 对外 ¥4.5/次（固定按次，不乘时长/分辨率倍率）
 	"wan2.7-r2v":     0.1 / USD2RMB, // 有赞 r2v 对外统一 ¥0.10/秒（720P/1080P 同价，上游约 2 点数/秒）
 	"sd-2.5":         0.821918,      // 按次对外 ¥6/次（上游 ¥2/次 3 倍定价）；内部按 USD 等值存储（6/7.3）
+	// MegaAI（newapi.megabyai.cc，type=64）2026-11-23 重新接入后上架的第一个模型：
+	// T3-seedance-2.5，按次 + 分辨率分档。对外价 **480p ¥4.0 / 720p ¥5.0**
+	// （老板 2026-11-23 定：在上游 ¥3 / ¥4 基础上每档 +¥1），4-30 秒、全比例。
+	// 这里只能写 **480p 基准价**：720p 由 megabyai adaptor 的
+	// t3ResolutionSizeRatio（5.0/4.0）乘上去，两处必须一起改。
+	// 广场徽标直接显示这个数 —— 写 720p 的价会让徽标显 ¥5 而客户最低能买 ¥4，看着像涨价。
+	"T3-seedance-2.5": 4.0 / USD2RMB,
 	// ⚠️ "wan-3.0" 这个 ModelPrice 键**曾经**存在过，现在归位给
 	// "wan-3.0-yz"（有赞渠道的新独立模型，2026-11-18 上架，按秒计费
 	// ¥0.20/秒起）。

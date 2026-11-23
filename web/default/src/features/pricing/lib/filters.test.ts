@@ -26,7 +26,8 @@ import { sortModels } from './filters'
 function pricingModel(
   modelName: string,
   price: number,
-  quotaType = 1
+  quotaType = 1,
+  sortWeight?: number
 ): PricingModel {
   return {
     id: 1,
@@ -36,6 +37,7 @@ function pricingModel(
     completion_ratio: 0,
     model_price: quotaType === 1 ? price : undefined,
     enable_groups: ['default'],
+    sort_weight: sortWeight,
   }
 }
 
@@ -43,20 +45,34 @@ function names(models: PricingModel[]): string[] {
   return models.map((m) => m.model_name)
 }
 
-describe('sortModels 置顶', () => {
-  // 客美两个 WAN3 档位是运营指定的首屏推荐位。字母序上 'prime' < 'tj'，
-  // 不置顶会被 prime-tj 压住，而 tj 更便宜、更该先被看到。
-  test('置顶模型按名单顺序排在最前（字母序本应相反）', () => {
+describe('sortModels 置顶（后端 sort_weight）', () => {
+  // 置顶已改成后端数据驱动：新建模型卡时自动取 MAX+1，新上架的天然排在最前。
+  // 前端不再持有名单 —— 这几条用例守的是「权重优先、其余仍按名称」这条规则。
+  test('权重越大越靠前（字母序本该相反）', () => {
     const models = [
-      pricingModel('wan3.0-video-prime-tj', 0.96),
-      pricingModel('wan3.0-video-tj', 0.552),
-      pricingModel('hailuo-h3', 0.3),
+      pricingModel('hailuo-h3', 0.3, 1, 0),
+      pricingModel('wan3.0-video-tj', 0.552, 1, 2),
+      pricingModel('wan3.0-video-prime-tj', 0.96, 1, 1),
     ]
 
     assert.deepEqual(names(sortModels(models, SORT_OPTIONS.NAME)), [
       'wan3.0-video-tj',
       'wan3.0-video-prime-tj',
       'hailuo-h3',
+    ])
+  })
+
+  test('新上架模型（权重最高）排在其他置顶模型之前', () => {
+    const models = [
+      pricingModel('wan3.0-video-tj', 0.552, 1, 2),
+      pricingModel('T3-seedance-2.5', 4, 1, 3),
+      pricingModel('wan3.0-video-prime-tj', 0.96, 1, 1),
+    ]
+
+    assert.deepEqual(names(sortModels(models, SORT_OPTIONS.NAME)), [
+      'T3-seedance-2.5',
+      'wan3.0-video-tj',
+      'wan3.0-video-prime-tj',
     ])
   })
 
@@ -74,10 +90,26 @@ describe('sortModels 置顶', () => {
     ])
   })
 
-  test('价格排序不受置顶影响', () => {
+  test('权重为 0 / 缺失 / 负数都当未置顶（不能因为脏数据把它顶到前面）', () => {
+    const models = [
+      pricingModel('b-model', 1),
+      pricingModel('neg-model', 1, 1, -3),
+      pricingModel('a-model', 1),
+      pricingModel('zero-model', 1, 1, 0),
+    ]
+
+    assert.deepEqual(names(sortModels(models, SORT_OPTIONS.NAME)), [
+      'a-model',
+      'b-model',
+      'neg-model',
+      'zero-model',
+    ])
+  })
+
+  test('价格排序不受权重影响', () => {
     // 用户主动按价格排序时不该被置顶项打断，否则排序看起来是错的。
     const models = [
-      pricingModel('wan3.0-video-tj', 0.552),
+      pricingModel('wan3.0-video-tj', 0.552, 1, 2),
       pricingModel('cheap-model', 0.01),
       pricingModel('pricey-model', 9.9),
     ]
@@ -94,7 +126,7 @@ describe('sortModels 置顶', () => {
     ])
   })
 
-  test('置顶模型不在当前列表时不产生空位或报错', () => {
+  test('当前列表里没有置顶模型时不产生空位或报错', () => {
     const models = [pricingModel('b-model', 1), pricingModel('a-model', 1)]
 
     assert.deepEqual(names(sortModels(models, SORT_OPTIONS.NAME)), [
@@ -105,8 +137,8 @@ describe('sortModels 置顶', () => {
 
   test('不修改入参数组', () => {
     const models = [
-      pricingModel('wan3.0-video-prime-tj', 0.96),
-      pricingModel('wan3.0-video-tj', 0.552),
+      pricingModel('wan3.0-video-prime-tj', 0.96, 1, 1),
+      pricingModel('wan3.0-video-tj', 0.552, 1, 2),
     ]
     const original = names(models)
 
