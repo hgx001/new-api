@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -131,19 +132,50 @@ func TestRedactUpstreamText_摘掉上游地址并脱敏身份(t *testing.T) {
 	assert.Contains(t, got, "拉取失败", "失败原因本身要保留，只清上游信息")
 }
 
-// 非别名模型：地址照样摘、供应商词照样换成「上游」，但**模型名保留** ——
-// 客户自己买的模型名出现在报错里是正常的，替换了反而看不懂。
-// 口径见 RedactUpstreamText（2026-10-30 老板定：有渠道的直接说「上游」）。
-func TestRedactUpstreamText_非别名模型也摘渠道痕迹但保留模型名(t *testing.T) {
+// 非别名模型：地址、供应商词、**上游模型名**全部摘掉。
+// 口径变更（2026-11-23 老板定）：模型名（wan3 这类）本身就是货源证据，
+// 不论客户买的是不是别名，都不许出现在对客文案里。
+func TestRedactUpstreamText_非别名模型也摘模型名(t *testing.T) {
 	raw := `成片地址 https://cdn.example.com/wan3.0-720p/final.mp4 拉取失败：model aliyun:wan-3.0 rejected`
 	got := RedactUpstreamText(raw, "wan-3.0")
 	assert.NotContains(t, got, "https://", "地址对所有模型都摘")
 	assert.NotContains(t, got, "aliyun", "供应商词对所有模型都换")
+	assert.NotContains(t, strings.ToLower(got), "wan3", "模型名对所有模型都摘")
+	assert.NotContains(t, got, "wan-3.0", "模型名对所有模型都摘")
 	assert.Contains(t, got, "上游")
-	assert.Contains(t, got, "wan-3.0", "非别名模型：模型名保留，报错才看得懂")
 	assert.Contains(t, got, "拉取失败", "失败原因本身要保留")
 
 	assert.Equal(t, "", RedactUpstreamText("", "seedance2.5-特惠"))
+}
+
+// 客美渠道：英文 kemeitv / 裸词 kemei / 中文「客美」都要遮。
+// 生产文案里这三种写法都可能出现，词表只收完整英文名会留下中文这一半。
+func TestRedactUpstreamText_客美中英写法都遮(t *testing.T) {
+	raw := `客美 kemei kemeitv 拒绝：当前余额较低`
+	got := RedactUpstreamText(raw, "wan3.0-video-tj")
+	assert.NotContains(t, got, "客美")
+	assert.NotContains(t, strings.ToLower(got), "kemei", "kemei/kemeitv 都不能留")
+	assert.Contains(t, got, "上游")
+	assert.Contains(t, got, "当前余额较低", "失败原因本身要保留")
+}
+
+// 裸域名（不带 http://）也是渠道证据：上游文案里常见 "ai.kemeitv.cn/v1/..."，
+// 只摘带协议头的地址会把它原样透给客户。
+func TestRedactUpstreamAddress_裸域名也摘(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"裸域名带路径", "下载失败 ai.kemeitv.cn/v1/media/x.png 重试", "下载失败 [地址已隐藏] 重试"},
+		{"裸域名句末", "详见 cdn.example.com。", "详见 [地址已隐藏]。"},
+		{"裸域名端口", "连不上 api.youzan.com:8443 了", "连不上 [地址已隐藏] 了"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			assert.Equal(t, c.want, RedactUpstreamAddress(c.raw))
+		})
+	}
 }
 
 // SeetaCloud / ArcReel-H3 上游在 400 里会点名内部工作流 ID
@@ -215,10 +247,10 @@ func TestFormatUserLogs_错误日志对普通用户隐藏渠道名与上游字�
 	assert.NotContains(t, logs[0].Other, "channel_name")
 	assert.NotContains(t, logs[0].Other, "admin_info")
 
-	// 其它模型：供应商词同样换成「上游」（有渠道的直接说上游），
-	// 但上游模型名保留 —— 那是客户自己买的模型族，替换了看不懂。
+	// 其它模型：供应商词与上游模型名同样换成「上游」（2026-11-23 口径）。
 	assert.NotContains(t, logs[1].Content, "aliyun")
-	assert.Contains(t, logs[1].Content, "wan-3.0")
+	assert.NotContains(t, logs[1].Content, "wan-3.0")
+	assert.Contains(t, logs[1].Content, "上游")
 	assert.NotContains(t, logs[1].Other, "channel_name")
 
 	// 非错误日志的正文**也要脱敏**（2026-10-30 老板定：有渠道的一律说「上游」）。

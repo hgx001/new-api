@@ -67,9 +67,9 @@ func TestRespondTaskError_DropsPrimeForHuodongAlias(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "低于 10 秒以下")
 }
 
-// 非别名模型直接调 wan3.0-video-prime：prime 是他自己买的模型名，
-// 全局过滤会让他看不懂报错。这条守住脱敏的边界。
-func TestRespondTaskError_KeepsPrimeForNonAliasModel(t *testing.T) {
+// 2026-11-23 口径变更：模型名/档位名对所有模型都摘，客户直接调
+// wan3.0-video-prime 也一样 —— 避免「你调 A、实际跑 B」式的档位泄漏。
+func TestRespondTaskError_DropsPrimeForNonAliasModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
@@ -82,7 +82,8 @@ func TestRespondTaskError_KeepsPrimeForNonAliasModel(t *testing.T) {
 		StatusCode: 400,
 	})
 
-	assert.Contains(t, w.Body.String(), "PRIME_DURATION_TOO_SHORT",
-		"客户自己买的就是 prime，上游错误码原样保留才看得懂")
-	assert.Contains(t, w.Body.String(), "prime任务")
+	assert.NotContains(t, strings.ToLower(w.Body.String()), "prime",
+		"非别名模型的响应体同样不能出现档位名")
+	assert.Contains(t, w.Body.String(), "DURATION_TOO_SHORT", "错误码主干保留")
+	assert.Contains(t, w.Body.String(), "低于 10 秒以下", "失败原因保留")
 }

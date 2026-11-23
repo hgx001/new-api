@@ -122,9 +122,10 @@ var upstreamVendorLiterals = []string{
 	// 客美 Kemeitv（2026-11-19 加）：上游站点域名与品牌词。
 	// 上游报错与回执里出现这些字样等于直接报出货源。
 	//
-	// ⚠️ 只放 "kemeitv" 这个完整词。裸 "keme" 会被当成子串误伤其它正常英文词
-	// （字面量匹配没有词边界），所以不放短词。
-	"kemeitv",
+	// ⚠️ 2026-11-23 补齐三种写法：上游文案既有英文 kemeitv，也有裸词 kemei，
+	// 还有中文「客美」（渠道名就叫「客美 Kemeitv」）。只收完整英文名会留下
+	// 中文与裸词这一半，等于没遮。裸 "keme" 仍不放（会误伤其它英文词）。
+	"kemeitv", "kemei", "客美",
 	// HooksAI（2026-11-22 加）：有赞渠道的下游分销商品牌词。
 	//
 	// 生产实测（new logs.id=15168/15169，model=seedance2.5-特惠，渠道 17）：
@@ -136,15 +137,20 @@ var upstreamVendorLiterals = []string{
 	"hooksai",
 }
 
-// upstreamModelLiterals 是**上游模型名**：只对别名模型替换。
+// upstreamModelLiterals 是**上游模型名**：对**所有模型**替换成「上游」。
 //
-// 为什么不全局替换：非别名模型（客户直接调 wan3.0-720p-特惠）的报错里
-// 提到自己买的模型名是正常的，替换成「上游」反而看不懂。只有别名模型
-// 才需要连模型名一起抹 —— 那是他本不该知道的另一条链路的名字。
+// 口径变更（2026-11-23 老板定）：模型名（wan3 / wan-3.0 / mw-sd2.5 …）本身就是
+// 货源证据，不论客户买的是不是别名模型，对客文案里都不许出现。之前只对别名
+// 模型生效，结果客美链路（非别名）的报错照样点名 wan3.0-video-tj。
 //
 // 顺序敏感：长词必须排在前面，保证 "wan3.0-video-prime-1080p" 这类组合词
 // 被整体替换，而不是先命中短词、留下 "上游-prime-1080p" 这种碎片。
 var upstreamModelLiterals = []string{
+	// 客美档位全名（2026-11-23 加）：先整体命中，避免被 "wan3.0-video" 削成
+	// "上游-tj" / "上游-prime-tj" 这种还能看出档位的碎片。
+	"wan3.0-video-prime-tj",
+	"wan3.0-video-tj",
+	"hk-wan3",
 	// 妙物（mw）系列（2026-11-20 加）：促销族母本的常驻上游换成
 	// mw-sd2.5-flash 后，它只作为**内部执行模型**存在 —— 对客仍是
 	// seedance2.5-特惠。上游报错/回执里一旦出现这个名字，等于把
@@ -287,6 +293,13 @@ func redactUpstreamTierWord(text string) string {
 // 下游文案里要**整个摘掉**（见 RedactUpstreamAddress）。
 var upstreamURLPattern = regexp.MustCompile(`(?i)https?://[^\s"'<>\\]+`)
 
+// upstreamBareDomainPattern 识别不带协议头的裸域名（2026-11-23 加）。
+//
+// 上游报错里大量出现 "ai.kemeitv.cn/v1/..."、"api.youzan.com:8443" 这种写法，
+// 只摘 http(s):// 地址等于把裸域名原样交给客户。只认常见站点后缀，避免误伤
+// 文件名（final.mp4）、版本号（v1.2.3）之类的正常文本。
+var upstreamBareDomainPattern = regexp.MustCompile(`(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|cn|net|org|io|ai|co|cc|tv|me|top|xyz|vip|app|dev|cloud|site|online|shop|link|pro|info|biz|store)(?::\d{2,5})?(?:/[^\s"'<>\\]+)?`)
+
 // upstreamURLTrailingPunctuation 是地址末尾**不属于地址本身**的标点。
 //
 // 地址常常被写在括号里或句末：
@@ -367,6 +380,7 @@ func RedactUpstreamIdentity(content string, modelName string) string {
 //
 // 为什么地址要单独提出来：地址是最硬的渠道证据 —— 客户拿到就能直接访问上游，
 // 甚至绕过我们。地址没有任何「客户需要留着」的理由，所以对所有模型一律摘。
+// 带协议头的完整 URL 与不带协议头的裸域名都摘（2026-11-23 补齐裸域名）。
 //
 // 尾部标点保留：地址后面的 ")" / "。" 不属于地址，摘地址时一并吞掉会让文案破相
 // （"([地址已隐藏]" 括号不配对）。
@@ -374,8 +388,13 @@ func RedactUpstreamAddress(content string) string {
 	if content == "" {
 		return content
 	}
-	return upstreamURLPattern.ReplaceAllStringFunc(content, func(raw string) string {
-		// 把地址末尾的标点摘出来，替换后原样接回去
+	text := replaceAddressWithPlaceholder(content, upstreamURLPattern)
+	return replaceAddressWithPlaceholder(text, upstreamBareDomainPattern)
+}
+
+// replaceAddressWithPlaceholder 摘掉命中 pattern 的地址并保留尾部标点。
+func replaceAddressWithPlaceholder(content string, pattern *regexp.Regexp) string {
+	return pattern.ReplaceAllStringFunc(content, func(raw string) string {
 		trimmed := upstreamURLPunctuationPattern.FindString(raw)
 		if trimmed == "" {
 			return upstreamURLPlaceholder
@@ -386,9 +405,9 @@ func RedactUpstreamAddress(content string) string {
 
 // RedactUpstreamText 是下游文案脱敏的统一入口：
 //
-//	① 摘地址       —— 所有模型（地址是最硬的渠道证据）
+//	① 摘地址       —— 所有模型（地址是最硬的渠道证据，含裸域名）
 //	② 换供应商词   —— 所有模型（老板口径：有渠道的直接说「上游」）
-//	③ 换上游模型名 —— 仅别名模型（非别名模型提到自己买的名字是正常的）
+//	③ 换上游模型名 —— 所有模型（2026-11-23 起：模型名本身也是货源证据）
 //
 // 顺序不能颠倒：先摘地址，脱敏字样会把 URL 里的 wan3.0 换成「上游」，
 // 地址反正要删，不必再费劲保护 URL 区段。
@@ -401,11 +420,6 @@ func RedactUpstreamText(content string, modelName string) string {
 	// 档位名 flash 对**所有模型**处理（客户买的不是 flash 档才摘），
 	// 见 redactUpstreamFlashWord 的注释：非别名模型同样会漏。
 	text = redactUpstreamFlashWord(text, modelName)
-	// 非别名模型到这里就结束：供应商词已换成「上游」，地址已摘，
-	// 剩下的模型名是他自己买的，留着才看得懂。
-	if !IsUpstreamAliasModel(modelName) {
-		return text
-	}
 	text = redactWithTokens(text, upstreamModelTokens, upstreamModelPatterns)
 	// 完整模型名已整体替换，再摘掉上游报错里单独出现的档位名 prime。
 	return redactUpstreamTierWord(text)

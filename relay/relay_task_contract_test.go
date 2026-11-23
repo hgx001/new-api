@@ -213,8 +213,8 @@ func TestTaskModel2Dto非别名模型只摘渠道痕迹(t *testing.T) {
 	// 上游报错里点名货源跟客户买的是哪个模型无关。
 	assert.NotContains(t, out.FailReason, "aliyun", "供应商词要换成「上游」")
 	assert.Contains(t, out.FailReason, "上游", "对客户统一说「上游」")
-	// 但客户自己买的模型名要留着（wan-3.0），遮了只会看不懂
-	assert.Contains(t, out.FailReason, "wan-3.0", "客户自己买的模型名保留")
+	// 2026-11-23 起模型名对所有模型都摘掉（模型名本身就是货源证据）
+	assert.NotContains(t, out.FailReason, "wan-3.0", "模型名也不能给客户")
 
 	// 渠道痕迹一律清掉
 	assert.Equal(t, 0, out.ChannelId, "渠道 ID 不给客户")

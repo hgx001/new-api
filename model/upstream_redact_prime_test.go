@@ -136,15 +136,16 @@ func TestRedactUpstreamText_活动版同样过滤prime(t *testing.T) {
 	}
 }
 
-// 非别名模型：prime 是客户自己买的模型名，必须原样留着。
-// 这条守的是「别把过滤做成全局」—— 全局替换会让直接调
-// wan3.0-video-prime 的客户看到被改得莫名其妙的报错。
-func TestRedactUpstreamText_非别名模型的prime原样保留(t *testing.T) {
+// 2026-11-23 口径变更：模型名与档位名对所有模型都摘。
+// 客户自己买的模型名里带的 prime 也一并摘掉，避免「你调 A、实际跑 B」式的档位泄漏。
+// 只保留机器可读的错误码主干（去前缀后仍可读），普通英文词（primary/primer）不受影响。
+func TestRedactUpstreamText_非别名模型的prime也摘(t *testing.T) {
 	for _, name := range []string{"wan3.0-video-prime", "wan-3.0", "minimax_h3_omni", "gpt-6-luna", ""} {
 		got := RedactUpstreamText(primeDurationTooShortRaw, name)
-		assert.Contains(t, got, "PRIME_DURATION_TOO_SHORT",
-			"模型 %q 不是别名，不该动上游错误码", name)
-		assert.Contains(t, got, "prime任务", "模型 %q 不是别名，不该动上游文案", name)
+		assert.NotContains(t, strings.ToLower(got), "prime",
+			"模型 %q 的对外文案里不该再有 prime", name)
+		assert.Contains(t, got, "DURATION_TOO_SHORT", "错误码主干要留着")
+		assert.Contains(t, got, "低于 10 秒以下", "失败原因要留着")
 	}
 }
 

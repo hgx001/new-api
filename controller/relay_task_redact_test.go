@@ -53,9 +53,9 @@ func TestRespondTaskErrorDropsAliasModelUpstreamAddress(t *testing.T) {
 	assert.Contains(t, taskErr.Message, "invalid token", "错误原因本身要保留")
 }
 
-// 非别名模型：供应商词照样换成「上游」（有渠道的直接说上游），
-// 但上游模型名保留 —— 那是客户自己买的模型族，替换了报错就看不明白了。
-func TestRespondTaskErrorKeepsNonAliasMessage(t *testing.T) {
+// 非别名模型：供应商词与模型名都换成「上游」（2026-11-23 口径变更：
+// 模型名本身也是货源证据，不再因为「客户自己买的」而保留）。
+func TestRespondTaskErrorRedactsNonAliasMessage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	w := httptest.NewRecorder()
@@ -71,7 +71,7 @@ func TestRespondTaskErrorKeepsNonAliasMessage(t *testing.T) {
 
 	assert.NotContains(t, taskErr.Message, "aliyun", "供应商名不能给客户")
 	assert.Contains(t, taskErr.Message, "上游")
-	assert.Contains(t, taskErr.Message, "wan-3.0", "非别名模型：模型名保留")
+	assert.NotContains(t, taskErr.Message, "wan-3.0", "模型名也不能给客户")
 	assert.Contains(t, taskErr.Message, "does not support", "错误原因本身要保留")
 }
 
