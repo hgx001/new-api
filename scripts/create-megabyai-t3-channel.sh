@@ -27,7 +27,7 @@ AT=$(Q "SELECT access_token FROM users WHERE role >= 100 AND access_token <> '' 
 AUID=$(Q "SELECT id FROM users WHERE role >= 100 AND access_token <> '' ORDER BY id LIMIT 1;" | tr -d '\r\n ')
 [ -n "$AT" ] || { echo "找不到管理员 access_token"; exit 1; }
 
-EXIST=$(Q "SELECT id FROM channels WHERE base_url='$BASE_URL' AND type=64 AND deleted_at IS NULL;" | tr -d '\r\n ')
+EXIST=$(Q "SELECT id FROM channels WHERE base_url='$BASE_URL' AND type=64;" | tr -d '\r\n ')
 
 if [ -n "$EXIST" ]; then
   # 更新：载荷是渠道对象本身（不带 {mode,channel} 包装），且**不能带 status**
@@ -66,6 +66,6 @@ echo
 echo "=== 复核 ==="
 Q "SELECT 'id='||id, 'type='||type, 'status='||status, 'models='||coalesce(models,'(空)'),
         'base_url='||coalesce(base_url,'(空)'), 'group='||coalesce(\"group\",'(空)')
-   FROM channels WHERE base_url='$BASE_URL' AND type=64 AND deleted_at IS NULL;"
+   FROM channels WHERE base_url='$BASE_URL' AND type=64;"
 Q "SELECT 'ability: group='||\"group\"||' model='||model||' enabled='||enabled||' prio='||priority
-   FROM abilities WHERE channel_id=(SELECT id FROM channels WHERE base_url='$BASE_URL' AND type=64 AND deleted_at IS NULL LIMIT 1);"
+   FROM abilities WHERE channel_id=(SELECT id FROM channels WHERE base_url='$BASE_URL' AND type=64 LIMIT 1);"
