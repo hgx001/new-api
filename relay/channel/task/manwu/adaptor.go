@@ -1092,11 +1092,30 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		norm.Duration = duration
 		norm.Ratio = tiktokRatio
 	case kindElevenlabsVideo:
-		// ElevenLabs（2026-11-21 上架，只卖 Seedance 2.5 Flash）：
+		// ElevenLabs（2026-11-21 上架，2026-11-23 补齐参考视频口径）：
 		//   - 时长 4–30 秒整数（官网滑杆；3 秒真机 /price 报 value_error）；
 		//   - 分辨率 480p / 720p；
-		//   - 参考：图 ≤30、视频 ≤10、音频 ≤10（2.5 系列口径，超限显式 400）；
+		//   - 参考图 ≤30、视频 ≤10、音频 ≤10（2.5 系列口径，超限显式 400）；
 		//   - 比例六档（不含 auto）。
+		//
+		// ## 参考视频的硬限制（**上游存在、本地无法探到，所以写在这里**）
+		//
+		// 真机 2026-11-23（Worker 侧注入黑场时碰到）：上游按**像素数**校验参考视频，
+		// 超出 407,696 ~ 8,847,360 直接 400：
+		//   `Pixel count must be between 407696 and 8847360. Please adjust your input and try again.`
+		// 换算：
+		//   · 下限 ≈ 638×638 / 720p 短边 407k → 640×640；
+		//   · 上限 ≈ 4K（3840×2160=8,294,400）仍合法，8,847,360 上限对应 ~4096×2160。
+		// ⇒ 客户传**小图视频**（如 480×480=230,400、360p）会被上游拒；
+		//   小于 640×640 的参考视频请先用 640×640 以上的版本。
+		//
+		// ⚠️ 网关**不校验像素**：需要下载并解密视频才能算，放在请求路径上代价太大。
+		//   这里只保证**数量**与**档位能力**在网关就拦住（能查的当场 400），
+		//   像素/时长这类必须看内容原子属性的限制由上游返 400 透传。
+		//
+		// ⚠️ Gemini 档（el-gemini-1.2flash）不收参考视频/音频（`422 extra_forbidden`），
+		//   已由 supportsElevenlabsAvRefs 在下面拦。Worker 侧也不会给它注入黑场
+		//   （注入了也是白传资产）。
 		if err := rejectFields(req, spec.Kind, norm.Model); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
@@ -3705,6 +3724,17 @@ func elevenlabsResolutionRatio(raw string) float64 {
 func supportsElevenlabsAvRefs(model string) bool {
 	return strings.TrimSpace(model) != ModelElevenlabsGemini
 }
+
+// ElevenLabs 参考视频的**像素数**硬门槛（真机 2026-11-23 实测上游报错原文）：
+//
+//	Pixel count must be between 407696 and 8847360. Please adjust your input and try again.
+//
+// 网关不校验这两个值（要靠下载+解密视频才能算，放请求路径上不划算），
+// 保留为常量是为了让注释、测试与上游口径三者对得上；将来若加「探测型校验」也直接引用。
+const (
+	elevenlabsRefVideoMinPixels = 407696  // ≈640×640（638×638=407,044 仍不够）
+	elevenlabsRefVideoMaxPixels = 8847360 // ≈4096×2160
+)
 
 func elevenlabsModelMaxDuration(model string) int {
 	switch strings.TrimSpace(model) {

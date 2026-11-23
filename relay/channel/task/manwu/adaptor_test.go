@@ -1921,3 +1921,45 @@ func TestDoubao25FlashParams(t *testing.T) {
 	require.NotNil(t, billing)
 	assert.Equal(t, float64(5), billing["seconds"])
 }
+
+// ElevenLabs 的参考视频口径（2026-11-23 真机标定）。
+//
+// 用户要求把这套限制**写在 new-api 这边**：渠道注释在 kindElevenlabsVideo 分支，
+// 这里用测试把「能查的」钉死，并防止有人把像素门槛注释改飘。
+//
+// 上游像素门槛（报错原文）：
+//
+//	Pixel count must be between 407696 and 8847360. Please adjust your input and try again.
+//
+// ⇒ 480×480=230,400、360p 这类小视频一律被拒；Worker 注入的黑场必须是 1280×720
+// （921,600）而不能是 480×480 —— 这条踩过。
+func TestElevenlabsReferenceVideoConstraints(t *testing.T) {
+	// 1) 像素门槛常量与上游口径一致（gw 不校验，只作为文档/测试锚点）
+	assert.Equal(t, 407696, elevenlabsRefVideoMinPixels)
+	assert.Equal(t, 8847360, elevenlabsRefVideoMaxPixels)
+	assert.Less(t, 480*480, elevenlabsRefVideoMinPixels, "480x480 必须落在门槛之外（真机被拒过）")
+	assert.GreaterOrEqual(t, 1280*720, elevenlabsRefVideoMinPixels, "Worker 黑场 1280x720 必须合法")
+
+	// 2) 档位能力：Seedance 系收参考视频/音频，Gemini 档不收
+	for _, m := range []string{ModelElevenlabs25, ModelElevenlabs20Mini} {
+		assert.True(t, supportsElevenlabsAvRefs(m), "%s 应当支持参考视频", m)
+	}
+	assert.False(t, supportsElevenlabsAvRefs(ModelElevenlabsGemini), "Gemini 档只收参考图")
+
+	// 3) Gemini 档带参考视频 → 网关直接 400（不静默丢掉客户的素材）
+	c, info, a := postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"x","duration":5,"media":[{"type":"reference_video","url":"https://example.com/v.mp4"}]}`,
+		ModelElevenlabsGemini))
+	taskErr := a.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_input_reference", taskErr.Code)
+
+	// 4) Seedance 档带参考视频 → 放行，且真的进了 inputs（不能只校验不落地）
+	c, info, a = postVideoCtx(t, fmt.Sprintf(
+		`{"model":%q,"prompt":"x","duration":5,"media":[{"type":"reference_video","url":"https://example.com/v.mp4"}]}`,
+		ModelElevenlabs25))
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	req, err := getNormalizedRequest(c)
+	require.NoError(t, err)
+	assert.Len(t, req.Videos, 1)
+}
