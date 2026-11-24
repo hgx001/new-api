@@ -44,7 +44,7 @@ func allowLoopbackFetchForTest(t *testing.T) {
 	})
 }
 
-// 参考图短边 <720 必须本地 400，禁止透传上游（上游只会回误导性的
+// 参考图短边 <480 必须本地 400，禁止透传上游（上游只会回误导性的
 // MEDIA_IMAGE_INVALID「图片无法读取或格式不支持」）。新版协议下我们只读图片头部。
 func TestValidateReferenceImagesRejectsSmallImage(t *testing.T) {
 	allowLoopbackFetchForTest(t)
@@ -60,7 +60,41 @@ func TestValidateReferenceImagesRejectsSmallImage(t *testing.T) {
 		{Type: "reference_image", URL: server.URL + "/small.png"},
 	})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "短边至少需要 720")
+	require.Contains(t, err.Error(), "短边至少需要 480")
+}
+
+// 2026-11-24 由 720 下调到 480：客户 854x480 的参考图被误拦（ArcReel 端同口径）。
+func TestValidateReferenceImagesAccepts480pImage(t *testing.T) {
+	allowLoopbackFetchForTest(t)
+	image480p := testReferenceImagePNG(t, 854, 480)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "image/png")
+		_, _ = writer.Write(image480p)
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	require.NoError(t, adaptor.validateReferenceImages(context.Background(), []relaycommon.TaskMedia{
+		{Type: "reference_image", URL: server.URL + "/480p.png"},
+	}))
+}
+
+// 边界不能被过度放宽：短边 479 仍要拦住。
+func TestValidateReferenceImagesRejectsJustBelow480(t *testing.T) {
+	allowLoopbackFetchForTest(t)
+	image := testReferenceImagePNG(t, 479, 854)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "image/png")
+		_, _ = writer.Write(image)
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	err := adaptor.validateReferenceImages(context.Background(), []relaycommon.TaskMedia{
+		{Type: "reference_image", URL: server.URL + "/479.png"},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "短边至少需要 480")
 }
 
 func TestValidateReferenceImagesAcceptsLargeImage(t *testing.T) {
