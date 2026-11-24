@@ -155,6 +155,16 @@ func Wan3GuanwangTjRoute() gin.HandlerFunc {
 		// 时长按**本渠道口径**钉死（钳制 + 认顶层 seconds），见包头注释第 2 条。
 		rewritten, requested := wan3GuanwangRewriteBody(body)
 
+		// 客美下限 5 秒（2026-11-24 口径）：官网允许 2 秒，改派过去会被目标链路
+		// 本地 400。这类请求留在官网 —— 客户照常出片，只是不换货。
+		if requested.duration < kemeitv.MinDurationSeconds {
+			logger.LogInfo(c, fmt.Sprintf(
+				"条件路由跳过官网→客美改派：时长 %d 秒低于客美下限 %d 秒，保持官网链路",
+				requested.duration, kemeitv.MinDurationSeconds))
+			c.Next()
+			return
+		}
+
 		if !applyRewrittenBody(c, rewritten, sourceModel) {
 			c.Next()
 			return

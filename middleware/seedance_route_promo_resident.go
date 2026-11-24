@@ -123,6 +123,15 @@ func tryPromoResidentRoute(
 		seconds = promoResidentDefaultSeconds
 	}
 
+	// 客美下限 5 秒（2026-11-24 起）：低于下限改派过去会被本地 400，
+	// 留在源链路让客户照常出片（源链路对短时长的处理由它自己负责）。
+	if seconds < kemeitv.MinDurationSeconds {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过常驻改派：时长 %d 秒低于客美下限 %d 秒，保持源链路",
+			seconds, kemeitv.MinDurationSeconds))
+		return false
+	}
+
 	rewritten := make(map[string]interface{}, len(body)+3)
 	for key, value := range body {
 		if key == "model" {

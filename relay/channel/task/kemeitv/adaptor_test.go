@@ -52,9 +52,11 @@ func TestResolveDuration(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "缺省 5 秒", req: relaycommon.TaskSubmitReq{}, want: defaultDuration},
-		{name: "显式 2 秒", req: relaycommon.TaskSubmitReq{Duration: 2}, want: 2},
+		{name: "下限 5 秒接受", req: relaycommon.TaskSubmitReq{Duration: 5}, want: 5},
 		{name: "显式 30 秒", req: relaycommon.TaskSubmitReq{Duration: 30}, want: 30},
-		{name: "1 秒越界拒绝", req: relaycommon.TaskSubmitReq{Duration: 1}, wantErr: true},
+		// 2026-11-24 口径：上游 2 秒也按 5 秒出片/计费，本地下限必须跟到 5 秒，
+		// 否则收 2 秒的钱、付 5 秒的货。
+		{name: "4 秒越界拒绝", req: relaycommon.TaskSubmitReq{Duration: 4}, wantErr: true},
 		{name: "31 秒越界拒绝", req: relaycommon.TaskSubmitReq{Duration: 31}, wantErr: true},
 		{
 			name: "metadata.duration",
@@ -70,6 +72,20 @@ func TestResolveDuration(t *testing.T) {
 			name:    "metadata.duration 越界拒绝",
 			req:     relaycommon.TaskSubmitReq{Metadata: map[string]any{"duration": 99}},
 			wantErr: true,
+		},
+		// 2026-11-24：客户端（漫屋走 OpenAI 视频协议）把时长放在顶层 seconds，
+		// 此前只认 duration/metadata，seconds 被静默丢弃 → 缺省 5 秒提交、
+		// 生成 5 秒、按 5 秒计费。顶层 seconds 必须和 duration 同权解析。
+		{name: "顶层 seconds 字符串", req: relaycommon.TaskSubmitReq{Seconds: "5"}, want: 5},
+		{name: "顶层 seconds 数字串（整数）", req: relaycommon.TaskSubmitReq{Seconds: "10"}, want: 10},
+		{name: "顶层 seconds 低于下限拒绝", req: relaycommon.TaskSubmitReq{Seconds: "2"}, wantErr: true},
+		{name: "顶层 seconds 越界拒绝", req: relaycommon.TaskSubmitReq{Seconds: "31"}, wantErr: true},
+		{name: "顶层 seconds 非数字拒绝", req: relaycommon.TaskSubmitReq{Seconds: "abc"}, wantErr: true},
+		{name: "顶层 seconds=0 视为未传", req: relaycommon.TaskSubmitReq{Seconds: "0"}, want: defaultDuration},
+		{
+			name: "duration 优先于 seconds",
+			req:  relaycommon.TaskSubmitReq{Duration: 6, Seconds: "5"},
+			want: 6,
 		},
 	}
 	for _, tc := range cases {
@@ -384,6 +400,19 @@ func TestEstimateBilling(t *testing.T) {
 	assert.Equal(t, 4.0, ratios["size"])
 }
 
+// 2026-11-24 回归：客户端走 OpenAI 协议只传顶层 seconds 时，
+// 计费必须按 seconds 算，而不是缺省 5 秒（此前会多扣时长）。
+func TestEstimateBilling_TopLevelSeconds(t *testing.T) {
+	a := newAdaptor()
+	c := newTestContext(t, relaycommon.TaskSubmitReq{
+		Prompt:     "x",
+		Seconds:    "6",
+		Resolution: resolution480P,
+	})
+	ratios := a.EstimateBilling(c, nil)
+	assert.Equal(t, float64(6), ratios["seconds"], "顶层 seconds=6 必须按 6 秒计费")
+}
+
 // tj 的 720P 是人工特价 ¥0.25/秒：基准 ¥0.138 × 倍率(0.25/0.138) = ¥0.25。
 // 该覆盖只作用于 tj 的 720P —— 480P/1080P 与 prime-tj 全档必须保持标准 1/2/4。
 func TestEstimateBilling_模型覆盖倍率(t *testing.T) {
@@ -454,11 +483,11 @@ func TestEstimateBilling_绝对档位价随基准价反推(t *testing.T) {
 
 			// (模型, 分辨率, 期望绝对价 CNY/秒)
 			assertions := []struct {
-				model    string
-				info     *relaycommon.RelayInfo
-				res      string
-				baseCNY  float64
-				wantCNY  float64
+				model   string
+				info    *relaycommon.RelayInfo
+				res     string
+				baseCNY float64
+				wantCNY float64
 			}{
 				{ModelNameTJ, tjInfo, resolution480P, tc.tjBaseCNY, tc.tjBaseCNY},
 				{ModelNamePrimeTJ, primeInfo, resolution480P, tc.primeBaseCNY, tc.primeBaseCNY},

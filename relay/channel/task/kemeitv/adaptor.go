@@ -577,13 +577,32 @@ func truncate(body []byte) string {
 
 // resolveDuration 解析生成时长（秒）。
 //
-// 取值顺序：顶层 duration → metadata.duration/seconds → 缺省 5 秒。
+// 取值顺序：顶层 duration → 顶层 seconds → metadata.duration/seconds → 缺省 5 秒。
+//
+// ⚠️ 顶层 seconds 必须认（2026-11-24 排障）：漫屋等 OpenAI 视频协议客户端把时长放在
+// `{"seconds": 2}`（Sora 协议字段），本适配器的上游合同用 duration。此前这里只读
+// duration 与 metadata，seconds 被静默丢弃 → 按缺省 5 秒提交上游：实际生成 5 秒、
+// 预扣与结算也都按 5 秒，客户传 2 秒却被多扣。属于「参数被吞」型故障，
+// 与 relay_info.go 里 ratio 顶层字段那段是同一类问题。
 func resolveDuration(req relaycommon.TaskSubmitReq) (int, error) {
 	if req.Duration > 0 {
 		if req.Duration < minDuration || req.Duration > maxDuration {
 			return 0, fmt.Errorf("duration must be between %d and %d seconds", minDuration, maxDuration)
 		}
 		return req.Duration, nil
+	}
+	if raw := strings.TrimSpace(req.Seconds); raw != "" {
+		seconds, err := strconv.Atoi(raw)
+		if err != nil {
+			return 0, fmt.Errorf("seconds must be an integer number of seconds")
+		}
+		// 显式 0 视为未传：继续看 metadata 与缺省，避免客户误传 0 时把账单清零。
+		if seconds != 0 {
+			if seconds < minDuration || seconds > maxDuration {
+				return 0, fmt.Errorf("duration must be between %d and %d seconds", minDuration, maxDuration)
+			}
+			return seconds, nil
+		}
 	}
 	if req.Metadata != nil {
 		for _, key := range []string{"duration", "seconds"} {

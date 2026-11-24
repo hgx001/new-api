@@ -19,8 +19,9 @@ package middleware
 // ── 三处必须改写的地方 ──
 //
 //  1. 时长：hk-wan3 认顶层 `duration` 与字符串 `seconds`、缺省 5 秒、区间 4–30；
-//     客美只认 `duration`、缺省 5 秒、区间 2–30。→ 按 hk-wan3 口径算出秒数
-//     显式写入 duration，越界（<4 / >30）则不拦截而是不改派（让 hk-wan3 原样 400）。
+//     客美只认 `duration`、缺省 5 秒、区间 **5–30**（2026-11-24 起下限收到 5 秒，
+//     因为上游对 <5 秒仍按 5 秒出片计费）。→ 按 hk-wan3 口径算出秒数显式写入
+//     duration；低于客美下限（4 秒）或越界则不拦截而是不改派（让 hk-wan3 原样处理）。
 //  2. 档位倍率：hk-wan3 是 480P/720P/1080P = 1 / 0.25÷0.18 / 0.48÷0.18，
 //     客美是 1 / 2 / 4。不覆盖就按客美倍率收费（720P 多收 44%、1080P 多收 50%）。
 //     → 写 ContextKeyRouteBillingSizeRatio。
@@ -42,13 +43,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// hk 口径的时长区间（上游文档 4–30 秒）。
-const (
-	hkMinDuration = 4
-	hkMaxDuration = 30
-	// hkDefaultDuration 是 hk-wan3 文档缺省值（5 秒）。
-	hkDefaultDuration = 5
-)
+// hk-wan3 自己的缺省时长（上游文档 5 秒；可路由区间取
+// [kemeitv.MinDurationSeconds, kemeitv.MaxDurationSeconds]，即客美的 5–30 秒）。
+const hkDefaultDuration = 5
 
 // HkWan3TjRoute 把 hk-wan3 的请求改派到 wan3.0-video-tj。
 //
@@ -123,11 +120,12 @@ func HkWan3TjRoute() gin.HandlerFunc {
 			duration = hkDefaultDuration
 		}
 
-		// hk-wan3 自己会 400 的时长，不该因为改派到客美（下界 2 秒）而被放行。
-		if duration < hkMinDuration || duration > hkMaxDuration {
+		// 客美下限 5 秒（2026-11-24 起）：hk-wan3 的 4 秒请求改派过去会被本地 400，
+		// 低于下限就留在 hk-wan3；超出 hk-wan3 自己的 30 秒上限同样不接。
+		if duration < kemeitv.MinDurationSeconds || duration > kemeitv.MaxDurationSeconds {
 			logger.LogInfo(c, fmt.Sprintf(
-				"条件路由跳过 hk-wan3→客美改派：时长 %d 秒超出 hk-wan3 的 %d–%d 区间（应由源链路 fail-loud）",
-				duration, hkMinDuration, hkMaxDuration))
+				"条件路由跳过 hk-wan3→客美改派：时长 %d 秒不在客美 %d–%d 秒区间（应留在 hk-wan3）",
+				duration, kemeitv.MinDurationSeconds, kemeitv.MaxDurationSeconds))
 			c.Next()
 			return
 		}

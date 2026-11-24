@@ -106,6 +106,23 @@ func TestPromoResidentSkipsUnsupportedRatio(t *testing.T) {
 	assert.Equal(t, body, rec.body, "客美没有 21:9，改派过去等于替客户钉死画幅")
 }
 
+// TestPromoResidentSkipsBelowTargetMinDuration 客美 2026-11-24 起下限 5 秒：
+// 2–4 秒的请求改派过去会被本地 400，必须留在源链路。
+func TestPromoResidentSkipsBelowTargetMinDuration(t *testing.T) {
+	for _, seconds := range []string{"2", "4"} {
+		t.Run(seconds, func(t *testing.T) {
+			applyPromoPolicy(t, false, nil)
+
+			body := `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"` + seconds +
+				`","videos":["https://cdn.example.com/ref.mp4"]}`
+			rec := runRouteFull(t, body)
+
+			assert.Equal(t, body, rec.body, seconds+" 秒低于客美下限，必须留在源链路")
+			assert.Empty(t, rec.originModel)
+		})
+	}
+}
+
 // TestPromoResidentNoChannelKeepsSource 目标没渠道时不改写（改写后重试不会退回源模型）。
 func TestPromoResidentNoChannelKeepsSource(t *testing.T) {
 	applyPromoPolicy(t, false, nil)

@@ -71,19 +71,28 @@ func isPrimeModel(modelName string) bool {
 
 // 规格常量 —— 取自上游《WAN视频生成》文档（2026-11-19 核对）。
 //
-// ⚠️ 上游文档对「wan3.0-video」写的时长是 `duration` 默认 5 秒，
-//
-//	未明确写上限；这里取阿里百炼万相视频的通行档位 [2, 30]，
-//	超出本地 400 拒单（上游也会拒，但本地拒单不建单不扣费）。
+// ⚠️ 上游对「wan3.0-video」的时长口径是 `duration` 默认 5 秒；实测传 2 秒时上游
+// 仍出 5 秒片、并按 5 秒计费（2026-11-24 客美 prime-tj 账单核对）。我们自己的
+// 计费按请求秒数走，若放行 2 秒就是「收 2 秒的钱、付 5 秒的货」，所以下限收到
+// 5 秒本地拒单（用户 2026-11-24 拍板）。上限沿用阿里百炼万相通行的 30 秒。
 const (
-	// minDuration 最小时长（秒）。
-	minDuration = 2
+	// minDuration 最小时长（秒）—— 与上游实际生成下限对齐，低于它的请求本地 400。
+	minDuration = 5
 
 	// maxDuration 最大时长（秒）。
 	maxDuration = 30
 
 	// defaultDuration 默认时长（秒）—— 与上游文档的缺省值一致。
 	defaultDuration = 5
+)
+
+// 导出给条件路由层：改派前按目标链路的下限预判，避免把源链路能跑的请求
+// 改派成硬 400（官网 2–4 秒、hk-wan3 4 秒都属于这种情况）。
+const (
+	// MinDurationSeconds 最小时长（秒）。
+	MinDurationSeconds = minDuration
+	// MaxDurationSeconds 最大时长（秒）。
+	MaxDurationSeconds = maxDuration
 )
 
 // 参考素材上限 —— 取自上游《WAN视频生成》文档的 OpenAI 兼容参数字典：

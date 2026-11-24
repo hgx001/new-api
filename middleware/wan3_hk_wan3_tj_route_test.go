@@ -148,13 +148,16 @@ func TestHkWan3TjRouteSkipsAutoRatio(t *testing.T) {
 
 func TestHkWan3TjRouteSkipsOutOfRangeDuration(t *testing.T) {
 	for _, body := range []string{
+		// 3 秒：hk-wan3 自己会 400；4 秒：hk-wan3 能跑，但客美 2026-11-24 起下限 5 秒，
+		// 改派过去会被本地 400 —— 两种情况都必须留在 hk-wan3。
 		`{"model":"hk-wan3","duration":3}`,
+		`{"model":"hk-wan3","duration":4}`,
 		`{"model":"hk-wan3","duration":31}`,
 	} {
 		t.Run(body, func(t *testing.T) {
 			enableHkWan3Tj(t, true)
 			rec := runHkRoute(t, body, true)
-			assert.Equal(t, body, rec.body, "hk-wan3 自己会 400 的时长，不该因改派到客美而被放行")
+			assert.Equal(t, body, rec.body, "不在客美 5–30 秒区间的时长应留在 hk-wan3")
 			assert.Empty(t, rec.originModel)
 		})
 	}

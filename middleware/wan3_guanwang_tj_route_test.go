@@ -62,7 +62,7 @@ func runWan3GuanwangTj(t *testing.T, path, contentType, body string) *routeRecor
 	return rec
 }
 
-const wan3GuanwangBody = `{"model":"wan3.0-video-官网","prompt":"a cat","resolution":"480P","ratio":"16:9","duration":2}`
+const wan3GuanwangBody = `{"model":"wan3.0-video-官网","prompt":"a cat","resolution":"480P","ratio":"16:9","duration":5}`
 
 func TestWan3GuanwangTjOffKeepsRequest(t *testing.T) {
 	setWan3GuanwangTj(t, false, nil)
@@ -95,7 +95,7 @@ func TestWan3GuanwangTjUsesSourceSizeRatio(t *testing.T) {
 	stubChannelAvailable(t, true)
 
 	rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json",
-		`{"model":"wan3.0-video-官网","prompt":"a cat","resolution":"1080P","duration":2}`)
+		`{"model":"wan3.0-video-官网","prompt":"a cat","resolution":"1080P","duration":5}`)
 
 	require.True(t, rec.hasBillingSize, "必须写源模型口径的档位倍率")
 	assert.InDelta(t, 4.0, rec.billingSizeRatio, 1e-6,
@@ -109,7 +109,7 @@ func TestWan3GuanwangTjReadsMetadataResolution(t *testing.T) {
 	stubChannelAvailable(t, true)
 
 	rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json",
-		`{"model":"wan3.0-video-官网","prompt":"a cat","metadata":{"resolution":"720P"},"duration":2}`)
+		`{"model":"wan3.0-video-官网","prompt":"a cat","metadata":{"resolution":"720P"},"duration":5}`)
 
 	require.True(t, rec.hasBillingSize)
 	assert.InDelta(t, 2.25, rec.billingSizeRatio, 1e-6, "720P 必须按官网的 ¥0.45/¥0.20 = 2.25 倍")
@@ -135,16 +135,27 @@ func TestWan3GuanwangTjReadsSizeTier(t *testing.T) {
 	}
 }
 
-// 官网钳制越界时长（1 → 2 秒），改派必须把钳制结果显式写进 duration：
-// 客美对 <2 秒是直接 400，不会替我们钳制。
-func TestWan3GuanwangTjClampsDuration(t *testing.T) {
+// 客美下限 5 秒（2026-11-24 起）：官网的 1–4 秒请求改派过去会被本地 400，
+// 必须留在官网链路（客户照常出片）；5 秒起才换货，且 duration 原样保留。
+func TestWan3GuanwangTjSkipsBelowTargetMinDuration(t *testing.T) {
+	for _, d := range []string{"1", "2", "4"} {
+		t.Run(d, func(t *testing.T) {
+			setWan3GuanwangTj(t, true, nil)
+			stubChannelAvailable(t, true)
+
+			body := `{"model":"wan3.0-video-官网","prompt":"a cat","duration":` + d + `}`
+			rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json", body)
+
+			assert.Equal(t, body, rec.body, d+" 秒低于客美下限，必须留在官网链路")
+			assert.Empty(t, rec.originModel)
+		})
+	}
+
 	setWan3GuanwangTj(t, true, nil)
 	stubChannelAvailable(t, true)
-
 	rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json",
-		`{"model":"wan3.0-video-官网","prompt":"a cat","duration":1}`)
-
-	assert.Equal(t, float64(2), decodeBody(t, rec.body)["duration"], "1 秒要按官网口径钳到 2 秒")
+		`{"model":"wan3.0-video-官网","prompt":"a cat","duration":5}`)
+	assert.Equal(t, float64(5), decodeBody(t, rec.body)["duration"], "5 秒可以改派且时长不变")
 }
 
 // 官网认顶层 seconds（字符串），客美的 resolveDuration 不读它 —— 必须转成 duration。
@@ -242,7 +253,7 @@ func TestWan3GuanwangTjKeepsReferenceImages(t *testing.T) {
 	setWan3GuanwangTj(t, true, nil)
 	stubChannelAvailable(t, true)
 
-	body := `{"model":"wan3.0-video-官网","prompt":"a cat","duration":2,` +
+	body := `{"model":"wan3.0-video-官网","prompt":"a cat","duration":5,` +
 		`"images":["https://example.com/a.png"]}`
 	rec := runWan3GuanwangTj(t, "/v1/video/generations", "application/json", body)
 
