@@ -172,6 +172,41 @@ func TestPromoShortOwnAccepts9Images(t *testing.T) {
 		"9 张参考图在自营档上限内（2026-11-22 官网 Video 档真机取证），必须走自营档")
 }
 
+// TestPromoShortOwnLiftsMetadataInputMediaToTopLevel 源图只在 metadata.input.media
+// （ArcReel 的有赞 Wan3 形状）时，改派自营短档必须把图抬到 manwu 白名单字段。
+//
+// 2026-11-24 A 机事故（任务 09:45，seedance2.5-特惠 / 15 秒 / 9:16 / 1 张图）：
+// 路由命中自营短档后只换了 model / resolution / ratio / seconds，图还留在
+// metadata.input.media；manwu adaptor 只认顶层别名（referenceImageFields），
+// 日志 `source=<none> count=0` → Worker 判「TikTok 图生视频至少需要 1 张参考图」
+// 直接失败。客户看到的是「提供了图片，却显示没有图」。
+func TestPromoShortOwnLiftsMetadataInputMediaToTopLevel(t *testing.T) {
+	applyPromoPolicy(t, true, nil)
+
+	body := `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"15",` +
+		`"metadata":{"ratio":"9:16","aspect_ratio":"9:16","input":{"media":[` +
+		`{"type":"reference_image","url":"https://cdn.example.com/a.png"}]}}}`
+	rec := runRouteFull(t, body)
+
+	decoded := decodeBody(t, rec.body)
+	assert.Equal(t, seedanceroute_setting.DefaultPromoShortOwnModel, decoded["model"])
+
+	lifted, ok := decoded["input_reference"].([]interface{})
+	require.True(t, ok, "参考图必须抬到 manwu 白名单字段 input_reference，否则 adaptor 解析 0 张")
+	require.Len(t, lifted, 1, "抬图不能丢也不能重复投递")
+	assert.Equal(t, "https://cdn.example.com/a.png", lifted[0])
+
+	// 源位置不能留副本：CapCut 等读 metadata.media / metadata.input.media 的目标
+	// 会与顶层 input_reference 重复投同一张图。
+	metadata, ok := decoded["metadata"].(map[string]interface{})
+	if ok {
+		assert.NotContains(t, metadata, "media", "metadata.media 必须摘掉")
+		if input, hasInput := metadata["input"].(map[string]interface{}); hasInput {
+			assert.NotContains(t, input, "media", "metadata.input.media 必须摘掉")
+		}
+	}
+}
+
 // TestPromoShortOwnTooManyImagesFallsToDoubaoFast 参考图 >9 张时自营档接不住。
 func TestPromoShortOwnTooManyImagesFallsToDoubaoFast(t *testing.T) {
 	applyPromoPolicy(t, true, nil)

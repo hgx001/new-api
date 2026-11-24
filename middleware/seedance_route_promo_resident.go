@@ -208,14 +208,34 @@ func tryPromoShortOwnRoute(
 		return false
 	}
 
+	// 参考图必须抬到**目标 adaptor 的白名单字段**（manwu 只读顶层
+	// input_reference / images 等别名，不读 metadata.media / metadata.input.media）。
+	//
+	// 2026-11-24 A 机事故：原实现只换 model / resolution / ratio / seconds，
+	// 图还留在 ArcReel 发来的 metadata.input.media（有赞 Wan3 形状）里 ——
+	// manwu 日志 `source=<none> count=0`，Worker 判「TikTok 图生视频至少需要
+	// 1 张参考图」，任务直接失败，客户看到「提供了图片，却显示没有图」。
+	//
+	// 剥掉全部素材源位置与整块 metadata，与 rewriteBodyForCapcut 同口径：
+	// 图统一收到顶层 input_reference，源位置留副本会让读 metadata.media 的
+	// 目标同图投两次；比例/分辨率已显式落到顶层，metadata 没有保留价值。
 	rewritten := make(map[string]interface{}, len(body)+3)
 	for key, value := range body {
-		if key == "model" {
+		switch key {
+		case "model", "metadata":
+			continue
+		case "media", "images", "image", "input_reference", "reference_images",
+			"reference_image", "image_url", "image_urls", "imageUrl", "imageUrls",
+			"referenceImage", "referenceImages", "input_images", "inputImages",
+			"inputReference":
 			continue
 		}
 		rewritten[key] = value
 	}
 	rewritten["model"] = target
+	if len(images) > 0 {
+		rewritten["input_reference"] = images
+	}
 	rewritten["resolution"] = promoResidentDeliveryResolution
 	rewritten["ratio"] = seedanceroute_setting.PromoShortOwnRatio
 	rewritten["seconds"] = strconv.Itoa(seconds)
