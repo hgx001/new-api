@@ -153,6 +153,12 @@ func SetApiRouter(router *gin.Engine) {
 			// 与规则六四条分支不互斥：自营档先判，接不住时豆包 Fast 自然接手。
 			videoRouteAdmin.POST("/policy/promo-short-own", controller.SetPromoShortOwnAdmin)
 
+			// 促销族「满血档」开关（2026-11-25）：
+			// 打开后 ≤15 秒（不带参考音视频/首尾帧、720P 或未指定）的请求改派
+			// seedance-2-0（豆包官网标准版，固定 720p）；关闭则这批请求走自营短档
+			// （若勾选）或豆包 Fast。与自营短档三选一互斥：打开一个自动关另一个。
+			videoRouteAdmin.POST("/policy/promo-short-full", controller.SetPromoShortFullAdmin)
+
 			// 规则十「seedance-2-5 短时长 → 豆包 Fast」开关（2026-11-18）：
 			// 打开后 seedance-2-5 的 ≤15 秒请求改派 seedance-2-0-fast。
 			// 与规则六的四条分支不互斥（源模型不同），计费仍按 seedance-2-5 一口价。

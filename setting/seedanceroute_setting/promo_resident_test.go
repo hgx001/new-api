@@ -110,3 +110,63 @@ func TestPromoShortOwnCloneIsolation(t *testing.T) {
 	withSource := ApplyPromoShortOwnEnabled(policy, true)
 	assert.True(t, withSource.PromoShortOwnEnabled)
 }
+
+// TestPromoShortFullOffByDefault 旧 option（没有满血档字段）解析后必须是关闭状态。
+func TestPromoShortFullOffByDefault(t *testing.T) {
+	applyPolicyJSON(t, `{"enabled":true,"source_model":"seedance2.5-特惠","target_model":"seedance-2-5","trigger_seconds":20}`)
+
+	assert.False(t, IsPromoShortFullEnabled(), "升级当天行为必须不变：默认关闭")
+	assert.False(t, PromoShortFullEnabledFor("seedance2.5-特惠"))
+}
+
+// TestPromoShortTiersAreMutuallyExclusive 满血档 / 自营短档三选一，最多勾一个。
+//
+// 写入口保证互斥：勾满血档自动关自营短档，勾自营短档自动关满血档；
+// 两个都不勾 → 豆包 Fast。互斥必须落在设置层，否则控制器各写各的字段，
+// 总有一条路径会同时点亮两个按钮。
+func TestPromoShortTiersAreMutuallyExclusive(t *testing.T) {
+	applyPolicyJSON(t, promoPolicyJSON)
+
+	full := WithPromoShortFullEnabled(true)
+	assert.True(t, full.PromoShortFullEnabled)
+	assert.False(t, full.PromoShortOwnEnabled, "勾满血档必须关掉自营短档")
+
+	own := WithPromoShortOwnEnabled(true)
+	assert.True(t, own.PromoShortOwnEnabled)
+	assert.False(t, own.PromoShortFullEnabled, "勾自营短档必须关掉满血档")
+
+	applied := ApplyPromoShortFullEnabled(Policy{}, true)
+	assert.True(t, applied.PromoShortFullEnabled)
+	assert.False(t, applied.PromoShortOwnEnabled)
+
+	appliedOwn := ApplyPromoShortOwnEnabled(Policy{PromoShortFullEnabled: true}, true)
+	assert.True(t, appliedOwn.PromoShortOwnEnabled)
+	assert.False(t, appliedOwn.PromoShortFullEnabled)
+}
+
+// TestPromoShortFullEnabledForGates 满血档要同时满足总开关、源模型清单、短时长闸门。
+func TestPromoShortFullEnabledForGates(t *testing.T) {
+	applyPolicyJSON(t, `{
+	  "enabled": true,
+	  "source_model": "seedance2.5-特惠",
+	  "target_model": "seedance-2-5",
+	  "trigger_seconds": 20,
+	  "short_trigger_seconds": 15,
+	  "promo_short_full_enabled": true,
+	  "source_overrides": {"seedance2.5-特惠": {"short_rule_enabled": true}}
+	}`)
+
+	assert.True(t, PromoShortFullEnabledFor("seedance2.5-特惠"))
+	assert.True(t, IsPromoShortFullEnabled())
+
+	applyPolicyJSON(t, `{
+	  "enabled": true,
+	  "source_model": "seedance2.5-特惠",
+	  "target_model": "seedance-2-5",
+	  "trigger_seconds": 20,
+	  "promo_short_full_enabled": true,
+	  "source_overrides": {"seedance2.5-特惠": {"short_rule_enabled": false}}
+	}`)
+	assert.False(t, PromoShortFullEnabledFor("seedance2.5-特惠"),
+		"显式关掉 short_rule_enabled 后，满血档不能再接手")
+}

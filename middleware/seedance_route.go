@@ -508,6 +508,18 @@ func Seedance25TeHuiRoute() func(c *gin.Context) {
 			return
 		}
 
+		// ── 满血档（2026-11-25）：≤15 秒 → 豆包标准版 seedance-2-0 ──
+		//
+		// 与自营短档**三选一互斥**（满血档 / 自营短档 / 都不勾 → 豆包 Fast）。
+		// 写入口保证最多勾一个；读侧先判自营档 —— 配置被 SQL 手改过时
+		// 9:16 归自营档，这里只接它接不住的其它比例，落点始终确定。
+		//
+		// 同样排在规则六之前：规则六豆包 Fast 接的也是这批 ≤15 秒请求。
+		if tryPromoShortFullRoute(c, body, sourceModel, billingOriginModel) {
+			c.Next()
+			return
+		}
+
 		// ── 规则六（短时长分流）：排在规则一与规则二之前 ──
 		//
 		// 2026-11-13 老板定：请求时长 ≤ 阈值（默认 10 秒）→ 改派到**心笔内链**

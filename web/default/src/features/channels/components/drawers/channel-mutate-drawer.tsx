@@ -111,6 +111,7 @@ import {
 import { DoubaoLinkCard } from '@/features/video-route/components/doubao-link-card'
 import { EcommerceRouteCard } from '@/features/video-route/components/ecommerce-route-card'
 import { FailoverAltCard } from '@/features/video-route/components/failover-alt-card'
+import { PromoShortFullCard } from '@/features/video-route/components/promo-short-full-card'
 import { PromoShortOwnCard } from '@/features/video-route/components/promo-short-own-card'
 import { ShortCapcutCard } from '@/features/video-route/components/short-capcut-card'
 import { ShortLinkCard } from '@/features/video-route/components/short-link-card'
@@ -3664,7 +3665,18 @@ export function ChannelMutateDrawer({
                               的请求改派 sd-seedance-2.0fast（漫屋 ch20，固定
                               720p/9:16）；关闭则回到豆包 Fast。只在本渠道承载
                               目标模型（sd-seedance-2.0fast）时渲染。 */}
-                          <PromoShortOwnCard channelModels={currentModels ?? ''} />
+                          <PromoShortOwnCard
+                            channelModels={currentModels ?? ''}
+                          />
+
+                          {/* 促销族「满血档」开关（2026-11-25）：≤15 秒（不带
+                              参考音视频/首尾帧、720P 或未指定）的请求改派
+                              seedance-2-0（漫屋 ch20，豆包官网标准版，固定
+                              720p）。与自营短档三选一互斥：最多勾一个，都不勾
+                              → 豆包 Fast。同样只在本渠道承载目标模型时渲染。 */}
+                          <PromoShortFullCard
+                            channelModels={currentModels ?? ''}
+                          />
 
                           {/* 规则七（电商/产品推荐内容 → 有赞优先，接不住才 CapCut 2.5）：
                               提示词命中电商关键词，或勾选的参数条件（9:16

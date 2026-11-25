@@ -23,8 +23,22 @@ import (
 )
 
 // applyPromoPolicy 写一份「与生产同形」的策略：母本特惠走规则一/六 + 常驻改派，
-// 活动版不在本文件用例范围内。
+// 活动版不在本文件用例范围内。满血档默认关闭（与升级当天一致）。
 func applyPromoPolicy(t *testing.T, shortOwnEnabled bool, extraOverride map[string]interface{}) {
+	t.Helper()
+	applyPromoPolicyWithTiers(t, shortOwnEnabled, false, extraOverride)
+}
+
+// applyPromoPolicyWithTiers 同上，但可以单独指定满血档开关。
+//
+// 两个开关在写入口互斥；这里允许同时传 true 是为了验读侧兜底
+// （配置被 SQL 手改过时，落哪一条必须是确定的）。
+func applyPromoPolicyWithTiers(
+	t *testing.T,
+	shortOwnEnabled bool,
+	shortFullEnabled bool,
+	extraOverride map[string]interface{},
+) {
 	t.Helper()
 	previous := seedanceroute_setting.Get()
 
@@ -45,14 +59,15 @@ func applyPromoPolicy(t *testing.T, shortOwnEnabled bool, extraOverride map[stri
 	}
 
 	payload := map[string]interface{}{
-		"enabled":                 true,
-		"source_model":            "seedance2.5-特惠",
-		"source_models":           []string{"seedance2.5-特惠"},
-		"target_model":            "seedance-2-5",
-		"trigger_seconds":         20,
-		"short_trigger_seconds":   15,
-		"short_fast_enabled":      true,
-		"promo_short_own_enabled": shortOwnEnabled,
+		"enabled":                  true,
+		"source_model":             "seedance2.5-特惠",
+		"source_models":            []string{"seedance2.5-特惠"},
+		"target_model":             "seedance-2-5",
+		"trigger_seconds":          20,
+		"short_trigger_seconds":    15,
+		"short_fast_enabled":       true,
+		"promo_short_own_enabled":  shortOwnEnabled,
+		"promo_short_full_enabled": shortFullEnabled,
 		"source_overrides": map[string]interface{}{
 			"seedance2.5-特惠": override,
 		},
@@ -300,4 +315,91 @@ func TestPromoExactly15SecondsGoesShort(t *testing.T) {
 
 	assert.Equal(t, "seedance-2-0-fast", decodeBody(t, rec.body)["model"],
 		"15 秒必须走短档：老板口径是「大于 15 秒」才路由到 seedance-2-5")
+}
+
+// TestPromoShortFullRoutesToDoubaoStandard 满血档打开：促销族 ≤15 秒请求
+// （不带参考音视频/首尾帧、720P）改派 seedance-2-0（豆包官网标准版）。
+//
+// 参考图必须与豆包 Fast 同一条抬升路径：ArcReel 发的有赞 Wan3 形状把图放在
+// metadata.input.media，manwu 只认顶层白名单字段 —— 不抬就是重演 2026-11-25
+// 任务 4047「提供了图片却显示没有图」。
+func TestPromoShortFullRoutesToDoubaoStandard(t *testing.T) {
+	applyPromoPolicyWithTiers(t, false, true, nil)
+
+	body := `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"15",` +
+		`"metadata":{"ratio":"16:9","input":{"media":[` +
+		`{"type":"reference_image","url":"https://cdn.example.com/1.png"},` +
+		`{"type":"reference_image","url":"https://cdn.example.com/2.png"}]}}}`
+	rec := runRouteFull(t, body)
+
+	decoded := decodeBody(t, rec.body)
+	assert.Equal(t, seedanceroute_setting.DefaultPromoShortFullModel, decoded["model"])
+	assert.Equal(t, "seedance2.5-特惠", rec.originModel, "计费原点必须是源模型")
+
+	refs, ok := decoded["input_reference"].([]interface{})
+	require.True(t, ok, "参考图必须抬到顶层 input_reference，否则 manwu 丢弃")
+	require.Len(t, refs, 2)
+	assert.Equal(t, "https://cdn.example.com/1.png", refs[0])
+
+	_, hasMeta := decoded["metadata"]
+	assert.False(t, hasMeta, "metadata 必须整块剥掉，否则同图投两次")
+	assert.Equal(t, "16:9", decoded["ratio"], "画幅要抬到顶层，否则丢失")
+	assert.Equal(t, "15", decoded["seconds"], "秒数必须显式落盘")
+
+	require.True(t, rec.hasBillingSec, "必须记源模型口径的秒数")
+	assert.InDelta(t, 15.0, rec.billingSeconds, 1e-9)
+	require.True(t, rec.hasBillingSize)
+	assert.InDelta(t, 1.0, rec.billingSizeRatio, 1e-9)
+}
+
+// TestPromoShortFullOffFallsToDoubaoFast 两个都不勾 → 豆包 Fast（老板口径）。
+func TestPromoShortFullOffFallsToDoubaoFast(t *testing.T) {
+	applyPromoPolicyWithTiers(t, false, false, nil)
+
+	rec := runRouteFull(t, `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"10","ratio":"16:9"}`)
+
+	assert.Equal(t, "seedance-2-0-fast", decodeBody(t, rec.body)["model"])
+}
+
+// TestPromoShortFullSkipsNonFixedResolution 标准版固定 720p：显式 480P/1080P
+// 改派过去会被 adaptor 本地 400，必须留给支持三档的豆包 Fast。
+func TestPromoShortFullSkipsNonFixedResolution(t *testing.T) {
+	for _, resolution := range []string{"480P", "1080P"} {
+		t.Run(resolution, func(t *testing.T) {
+			applyPromoPolicyWithTiers(t, false, true, nil)
+
+			rec := runRouteFull(t, `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"10","resolution":"`+resolution+`"}`)
+
+			assert.Equal(t, "seedance-2-0-fast", decodeBody(t, rec.body)["model"],
+				resolution+" 不能改派固定 720p 的标准版（会本地 400）")
+		})
+	}
+}
+
+// TestPromoShortFullSkipsDataURIReferenceImage 与豆包 Fast 同口径：
+// data URI 参考图改派标准版必 400，必须放弃这条分支（交给后面的链路）。
+func TestPromoShortFullSkipsDataURIReferenceImage(t *testing.T) {
+	applyPromoPolicyWithTiers(t, false, true, nil)
+
+	body := `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"15",` +
+		`"metadata":{"input":{"media":[{"type":"reference_image","url":"data:image/png;base64,AAAA"}]}}}`
+	rec := runRouteFull(t, body)
+
+	decoded := decodeBody(t, rec.body)
+	assert.NotEqual(t, seedanceroute_setting.DefaultPromoShortFullModel, decoded["model"])
+	assert.NotNil(t, decoded["metadata"], "素材仍保留在 Wan3 形状里交给能处理它的链路")
+}
+
+// TestPromoShortOwnWinsWhenBothEnabled 读侧兜底：配置被 SQL 手改到两个都开时，
+// 9:16 归自营档、其它比例归满血档 —— 落哪一条必须是确定的。
+func TestPromoShortOwnWinsWhenBothEnabled(t *testing.T) {
+	applyPromoPolicyWithTiers(t, true, true, nil)
+
+	own := runRouteFull(t, `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"10","ratio":"9:16"}`)
+	assert.Equal(t, seedanceroute_setting.DefaultPromoShortOwnModel, decodeBody(t, own.body)["model"],
+		"两个都开时自营档先判（9:16 是它的专属区间）")
+
+	full := runRouteFull(t, `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"10","ratio":"16:9"}`)
+	assert.Equal(t, seedanceroute_setting.DefaultPromoShortFullModel, decodeBody(t, full.body)["model"],
+		"自营档接不住的非 9:16 请求由满血档接手")
 }

@@ -596,6 +596,8 @@ func doubaoRouteAdminState() gin.H {
 	appendWan3HkWan3TjState(state)
 	// 促销族自营短档（≤15 秒 + 9:16 → sd-seedance-2.0fast，2026-11-23）。
 	appendPromoShortOwnState(state)
+	// 促销族满血档（≤15 秒 → seedance-2-0，2026-11-25）：与自营短档三选一互斥。
+	appendPromoShortFullState(state)
 	state["updated_at"] = policy.UpdatedAt
 	return state
 }

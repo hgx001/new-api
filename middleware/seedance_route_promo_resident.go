@@ -25,6 +25,10 @@ package middleware
 //
 // 为什么自营短档排在**规则六之前**：规则六豆包 Fast 的目标同样接住 ≤15 秒，
 // 先判自营档才能让开关真正生效（否则永远被 Fast 抢走）。
+//
+// 满血档（tryPromoShortFullRoute，2026-11-25）与自营短档是**三选一**关系：
+// 满血档 / 自营短档 / 都不勾 → 豆包 Fast。写入口互斥；读侧先判自营档
+// （9:16 归它），满血档接其余比例，落哪一条始终是确定的。
 
 import (
 	"fmt"
@@ -260,5 +264,80 @@ func tryPromoShortOwnRoute(
 	logger.LogInfo(c, fmt.Sprintf(
 		"条件路由：命中自营短档（%d 秒，%s），改派 %s → %s（计费仍按 %s）",
 		seconds, seedanceroute_setting.PromoShortOwnRatio, sourceModel, target, billingOriginModel))
+	return true
+}
+
+// tryPromoShortFullRoute 把「≤15 秒」的促销族请求改派到豆包标准版 seedance-2-0。
+//
+// 返回 true = 已改派（调用方直接 return）。
+//
+// 与自营短档的关系：三选一互斥（满血档 / 自营短档 / 都不勾 → 豆包 Fast）。
+// 调用方先判自营档 —— 配置被手改到两个都开时，9:16 归自营档，
+// 这里只接它接不住的其它比例。
+func tryPromoShortFullRoute(
+	c *gin.Context,
+	body map[string]interface{},
+	sourceModel string,
+	billingOriginModel string,
+) bool {
+	if !seedanceroute_setting.PromoShortFullEnabledFor(sourceModel) {
+		return false
+	}
+	// 按次档（活动版）不参与短时长分流：它固定 30 秒一口价。
+	if constant.IsSeedance25PerCall(sourceModel) {
+		return false
+	}
+
+	seconds, ok := extractRequestSeconds(body)
+	if !ok {
+		// 未传时长不在路由层替客户做「这算短任务」的决定（与规则十同口径）。
+		return false
+	}
+	if seconds < seedanceroute_setting.PromoShortFullMinSeconds ||
+		seconds > seedanceroute_setting.PromoShortFullMaxSeconds {
+		// 越界（<4 或 >15）不路由，不做就近吸附 —— 吸附是静默改档。
+		return false
+	}
+
+	// 参考音视频 / 首尾帧：豆包官网只认参考图（改派过去是静默丢素材）。
+	if requestHasReferenceAudioVideo(body) || hasFrameMedia(body) {
+		return false
+	}
+
+	// 标准版**固定 720p**：显式 480P/1080P 改派过去会被 adaptor 本地 400。
+	// 这两档留给三档全支持的豆包 Fast，不替客户静默钉成 720p。
+	if tier := sourceResolutionTier(body); tier == "480P" || tier == "1080P" {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过满血档：请求指定 %s，豆包标准版固定 720p（留给豆包 Fast）", tier))
+		return false
+	}
+
+	target := seedanceroute_setting.DefaultPromoShortFullModel
+	if !channelAvailabilityProbe(c, target) {
+		logger.LogInfo(c, fmt.Sprintf(
+			"条件路由跳过满血档：目标 %s 在当前分组下没有可用渠道", target))
+		return false
+	}
+
+	// 与豆包 Fast 同一条改写路径：参考图从 media / metadata.input.media 抬到
+	// 顶层 input_reference，比例/秒数落顶层并整块剥掉 metadata。
+	// **不能只换 model 原样透传**：manwu 只读顶层白名单字段，素材留在
+	// metadata 里会被静默丢弃（2026-11-25 任务 4047 丢图事故）。
+	rewritten, routed := rewriteBodyForDoubaoWithDuration(
+		c, body, seedanceroute_setting.Policy{}, target, seconds)
+	if !routed {
+		return false
+	}
+	if !applyRewrittenBody(c, rewritten, billingOriginModel) {
+		return false
+	}
+	// 计费仍按源模型：秒数由路由层钉死（标准版 adaptor 不给 seconds，
+	// 漏记就会按 1 秒收费）；size 倍率按源模型 720P 口径（特惠 = 1.0）。
+	setRouteBillingContext(c, seconds,
+		sourceModelSizeRatio(sourceModel, shortRouteResolution(body)))
+
+	logger.LogInfo(c, fmt.Sprintf(
+		"条件路由：命中满血档（%d 秒），改派 %s → %s（计费仍按 %s）",
+		seconds, sourceModel, target, billingOriginModel))
 	return true
 }

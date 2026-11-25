@@ -507,6 +507,18 @@ type Policy struct {
 	// 解析为零值 false = 不启用，升级当天流量逐字节不变。
 	PromoShortOwnEnabled bool `json:"promo_short_own_enabled,omitempty"`
 
+	// PromoShortFullEnabled 是「≤15 秒 → 豆包标准版 seedance-2-0」的开关
+	// （2026-11-25 老板口径）。
+	//
+	// 打开：源模型收到 ≤15 秒、不带参考音视频/首尾帧、720P（或未指定）的
+	// 请求 → 改派 seedance-2-0（漫屋 ch20，固定 720p，4–15 秒）；
+	// 关闭（默认）：这类请求走豆包 Fast（seedance-2-0-fast）。
+	//
+	// ⚠️ 与 PromoShortOwnEnabled **三选一互斥**：两者最多勾一个
+	// （本开关打开时自动关闭自营短档，反之亦然），都不勾 → 豆包 Fast。
+	// 互斥由 With/Apply 入口保证；读侧还有「自营档先判」的优先级兜底。
+	PromoShortFullEnabled bool `json:"promo_short_full_enabled,omitempty"`
+
 	// PromoResidentModel（公共默认值）刻意**不提供**：常驻改派只对特定
 	// 源模型生效，一律写在 source_overrides[模型].promo_resident_model。
 	// 给一个全局默认会让「任何源模型都没配」变成「全部改派到同一个模型」。
@@ -670,6 +682,9 @@ type SourceOverride struct {
 
 	// PromoShortOwnEnabled 是三态开关：nil = 跟随全局，显式 false = 只停这个源模型。
 	PromoShortOwnEnabled *bool `json:"promo_short_own_enabled,omitempty"`
+
+	// PromoShortFullEnabled 同口径：nil = 跟随全局，显式 false = 只停这个源模型的满血档。
+	PromoShortFullEnabled *bool `json:"promo_short_full_enabled,omitempty"`
 }
 
 // overrideFor 返回「这个源模型的专属覆盖」以及是否存在。
@@ -1183,6 +1198,8 @@ func IsAnyRouteEnabled() bool {
 			shortYouzanReadyFor(current, source) ||
 			// 促销族自营短档（2026-11-23）：只开这一个按钮时同样要参与判定。
 			promoShortOwnReadyFor(current, source) ||
+			// 促销族满血档（2026-11-25）：与自营短档同口径，只开它也必须进场。
+			promoShortFullReadyFor(current, source) ||
 			// 常驻改派（2026-11-23）不是开关而是按源模型的字段：只要配了
 			// promo_resident_model 就必须进场，否则「配了却不生效」且无报错。
 			promoResidentConfiguredFor(current, source) {
@@ -1822,6 +1839,10 @@ func clonePolicy(p Policy) Policy {
 			if value.PromoShortOwnEnabled != nil {
 				enabled := *value.PromoShortOwnEnabled
 				value.PromoShortOwnEnabled = &enabled
+			}
+			if value.PromoShortFullEnabled != nil {
+				enabled := *value.PromoShortFullEnabled
+				value.PromoShortFullEnabled = &enabled
 			}
 			out.SourceOverrides[key] = value
 		}

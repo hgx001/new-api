@@ -69,7 +69,8 @@ func setPromoShortOwnAdmin(
 	audit(c, "video_route.promo_short_own_switch", map[string]interface{}{
 		"enabled": *req.Enabled,
 	})
-	state := promoShortOwnAdminState()
+	// 回包带上满血档的状态：两个开关三选一互斥，打开本档会关掉满血档。
+	state := promoShortTiersAdminState()
 	if c != nil {
 		// 可用性只在写入回包里探一次（读快照不带渠道探针，与其它卡片一致）。
 		state["promo_short_own_available"] = failoverChannelProbe(c, seedanceroute_setting.DefaultPromoShortOwnModel)
@@ -88,6 +89,8 @@ func promoShortOwnAdminState() gin.H {
 	note := ""
 	if enabled {
 		note = fmt.Sprintf("打开：≤15 秒且 %s（不带参考音视频/首尾帧、参考图 ≤%d 张）的请求改派 %s", ratio, seedanceroute_setting.PromoShortOwnMaxImages, target)
+	} else if seedanceroute_setting.IsPromoShortFullEnabled() {
+		note = "关闭：满血档（" + seedanceroute_setting.DefaultPromoShortFullModel + "）接管 ≤15 秒请求；本档只负责 9:16 的短请求"
 	} else {
 		note = "关闭：≤15 秒且 " + ratio + " 的请求走豆包 Fast（seedance-2-0-fast）"
 	}

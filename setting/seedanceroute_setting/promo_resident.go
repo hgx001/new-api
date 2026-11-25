@@ -36,6 +36,17 @@ const (
 	// 4–15 秒 / **9 张**参考图）。
 	DefaultPromoShortOwnModel = "sd-seedance-2.0fast"
 
+	// DefaultPromoShortFullModel 满血档（漫屋 ch20：豆包官网 Seedance 2.0
+	// **标准版**，固定 720p / 4–15 秒，按秒 ¥0.25）。
+	DefaultPromoShortFullModel = "seedance-2-0"
+
+	// PromoShortFullMinSeconds / MaxSeconds 满血档的物理时长区间。
+	//
+	// 2026-11-22 用户口径：标准版只到 15 秒（Fast 才是 4–30）。
+	// 越界不路由（落豆包 Fast），不做就近吸附 —— 吸附是静默改档。
+	PromoShortFullMinSeconds = 4
+	PromoShortFullMaxSeconds = 15
+
 	// PromoShortOwnRatio 自营档只在 9:16 时启用（老板口径「必须是 9:16 才路由」）。
 	// 自营档物理上固定 9:16，别的比例改派过去会被钉成 9:16 —— 那是静默改画幅。
 	PromoShortOwnRatio = "9:16"
@@ -96,11 +107,17 @@ func PromoShortOwnEnabledFor(sourceModel string) bool {
 }
 
 // WithPromoShortOwnEnabled 返回「把自营短档开关设成 enabled」的策略副本（不落库）。
+//
+// ⚠️ 打开自营短档时顺手关掉满血档：两者三选一互斥（都不勾 → 豆包 Fast）。
+// 只在 enabled=true 时联动 —— 关闭一条往往只是想换另一条，不该顺手全关。
 func WithPromoShortOwnEnabled(enabled bool) Policy {
 	mu.RLock()
 	out := clonePolicy(current)
 	mu.RUnlock()
 	out.PromoShortOwnEnabled = enabled
+	if enabled {
+		out.PromoShortFullEnabled = false
+	}
 	out.UpdatedAt = nowUnix()
 	return out
 }
@@ -108,8 +125,70 @@ func WithPromoShortOwnEnabled(enabled bool) Policy {
 // ApplyPromoShortOwnEnabled 在给定策略副本上设置开关（与其它开关一起落库时用）。
 func ApplyPromoShortOwnEnabled(p Policy, enabled bool) Policy {
 	p.PromoShortOwnEnabled = enabled
+	if enabled {
+		p.PromoShortFullEnabled = false
+	}
 	p.UpdatedAt = nowUnix()
 	return p
+}
+
+// PromoShortFullEnabledFor 判断该源模型是否走满血档分支。
+//
+// 与自营短档同口径：还要过按源模型的 short_rule_enabled，否则「打开按钮」
+// 会顺带把按次档（活动版）也带进短时长链路。
+//
+// 两个档位同时打开只可能来自 SQL 手改（写入口互斥）。读侧兜底：
+// 中间件先判自营档，9:16 归它；满血档只接它接不住的其它比例。
+func PromoShortFullEnabledFor(sourceModel string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	if !promoShortFullReadyFor(current, sourceModel) {
+		return false
+	}
+	if override, ok := current.overrideFor(sourceModel); ok && override.PromoShortFullEnabled != nil {
+		return *override.PromoShortFullEnabled
+	}
+	return true
+}
+
+// WithPromoShortFullEnabled 返回「把满血档开关设成 enabled」的策略副本（不落库）。
+//
+// ⚠️ 打开满血档时顺手关掉自营短档：两者三选一互斥（都不勾 → 豆包 Fast）。
+func WithPromoShortFullEnabled(enabled bool) Policy {
+	mu.RLock()
+	out := clonePolicy(current)
+	mu.RUnlock()
+	out.PromoShortFullEnabled = enabled
+	if enabled {
+		out.PromoShortOwnEnabled = false
+	}
+	out.UpdatedAt = nowUnix()
+	return out
+}
+
+// ApplyPromoShortFullEnabled 在给定策略副本上设置开关（与其它开关一起落库时用）。
+func ApplyPromoShortFullEnabled(p Policy, enabled bool) Policy {
+	p.PromoShortFullEnabled = enabled
+	if enabled {
+		p.PromoShortOwnEnabled = false
+	}
+	p.UpdatedAt = nowUnix()
+	return p
+}
+
+// promoShortFullReadyFor 判断满血档分支是否就绪（供 IsAnyRouteEnabled 用）。
+func promoShortFullReadyFor(p Policy, sourceModel string) bool {
+	return p.Enabled &&
+		p.hasSourceModel() &&
+		p.PromoShortFullEnabled &&
+		p.shortRuleEnabledFor(sourceModel)
+}
+
+// IsPromoShortFullEnabled 判断开关本体是否打开（给管理接口/前端状态用）。
+func IsPromoShortFullEnabled() bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	return current.PromoShortFullEnabled
 }
 
 // promoResidentConfiguredFor 判断该源模型是否配了常驻改派目标（不看开关）。

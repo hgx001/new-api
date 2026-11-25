@@ -119,6 +119,22 @@ export type VideoRoutePolicy = {
   /** 自营短档的一句话状态文案（后端给，与开关行为同源）。 */
   promo_short_own_note?: string
   /**
+   * 促销族「满血档」开关（2026-11-25）：≤15 秒的短请求改派 seedance-2-0
+   * （豆包官网标准版，固定 720p，4–15 秒）。
+   *
+   * ⚠️ 与自营短档**三选一互斥**：最多勾一个（勾一个自动关另一个），
+   * 都不勾 → 豆包 Fast（seedance-2-0-fast）。
+   */
+  promo_short_full_enabled?: boolean
+  /** 满血档的目标模型（seedance-2-0）。 */
+  promo_short_full_model?: string
+  /** 满血档的时长下界（秒，标准版 4 秒起）。 */
+  promo_short_full_min_seconds?: number
+  /** 满血档的时长上界（秒，标准版只到 15 秒）。 */
+  promo_short_full_max_seconds?: number
+  /** 满血档的一句话状态文案（后端给，与开关行为同源）。 */
+  promo_short_full_note?: string
+  /**
    * 规则一对主源模型的时长下界（秒，0 = 不设下界）。
    *
    * 2026-11-23 起促销族母本改为「> 15 秒才改派豆包」，
@@ -481,6 +497,25 @@ export async function setPromoShortOwnEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/promo-short-own', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换促销族「满血档」开关（2026-11-25）。
+ *
+ * 打开：≤15 秒（不带参考音视频/首尾帧、720P 或未指定）的请求改派
+ * seedance-2-0（豆包官网标准版，固定 720p）；
+ * 关闭（默认）：这批请求走自营短档（若勾选）或豆包 Fast（seedance-2-0-fast）。
+ *
+ * ⚠️ 与自营短档**三选一互斥**：打开本档会自动关掉自营短档，反之亦然。
+ * 回包同时带两个档位的状态（后端合并），旁边的卡片可以据此立刻更新。
+ */
+export async function setPromoShortFullEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/promo-short-full', {
     enabled,
   })
   return res.data.data

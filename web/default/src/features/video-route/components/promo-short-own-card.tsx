@@ -67,6 +67,17 @@ export function PromoShortOwnCard({ channelModels }: PromoShortOwnCardProps) {
     void load()
   }, [load])
 
+  // 与满血档卡联动：打开一个会关掉另一个（三选一互斥），两张卡在同一抽屉
+  // 并列显示，不重新拉一次就会一个亮一个灭地对不上（实际只有一个生效）。
+  useEffect(() => {
+    const refresh = () => {
+      void load()
+    }
+    window.addEventListener('video-route-policy-changed', refresh)
+    return () =>
+      window.removeEventListener('video-route-policy-changed', refresh)
+  }, [load])
+
   const targetModel = policy?.promo_short_own_model ?? ''
   const isRelevant = useMemo(() => {
     if (!targetModel) return false
@@ -82,6 +93,7 @@ export function PromoShortOwnCard({ channelModels }: PromoShortOwnCardProps) {
       setBusy(true)
       try {
         setPolicy(await setPromoShortOwnEnabled(nextOn))
+        window.dispatchEvent(new Event('video-route-policy-changed'))
         toast.success(
           t(nextOn ? 'Own short tier is on' : 'Own short tier is off')
         )
@@ -110,25 +122,32 @@ export function PromoShortOwnCard({ channelModels }: PromoShortOwnCardProps) {
     ? 'border-violet-500/40 bg-violet-500/[0.05]'
     : 'border-slate-500/40 bg-slate-500/[0.05]'
   const toneText = on ? 'text-violet-600' : 'text-slate-600'
-  const detail = on
-    ? t(
-        'Requests up to {{seconds}}s in {{ratio}} (no reference video/audio or first/last frame, at most {{images}} images) route to {{target}}; other short requests still go to Doubao Fast',
-        {
-          seconds: policy.short_trigger_seconds,
-          ratio,
-          images: maxImages,
-          target: targetModel,
-        }
-      )
-    : t(
-        'Requests up to {{seconds}}s in {{ratio}} stay on Doubao Fast ({{target}}); turn on to reroute them to {{own}}',
-        {
-          seconds: policy.short_trigger_seconds,
-          ratio,
-          target: 'seedance-2-0-fast',
-          own: targetModel,
-        }
-      )
+  const fullOn = Boolean(policy.promo_short_full_enabled)
+  let detail = t(
+    'Requests up to {{seconds}}s in {{ratio}} stay on Doubao Fast ({{target}}); turn on to reroute them to {{own}}',
+    {
+      seconds: policy.short_trigger_seconds,
+      ratio,
+      target: 'seedance-2-0-fast',
+      own: targetModel,
+    }
+  )
+  if (on) {
+    detail = t(
+      'Requests up to {{seconds}}s in {{ratio}} (no reference video/audio or first/last frame, at most {{images}} images) route to {{target}}; other short requests still go to Doubao Fast',
+      {
+        seconds: policy.short_trigger_seconds,
+        ratio,
+        images: maxImages,
+        target: targetModel,
+      }
+    )
+  } else if (fullOn) {
+    // 三选一：满血档开着时，短请求（含 9:16）归满血档，本档实际不生效。
+    detail = t('Full tier is on: short requests are routed to {{full}}', {
+      full: policy.promo_short_full_model ?? 'seedance-2-0',
+    })
+  }
 
   return (
     <div className={cn('rounded-lg border p-3 transition-colors', toneClasses)}>
@@ -175,6 +194,9 @@ export function PromoShortOwnCard({ channelModels }: PromoShortOwnCardProps) {
         {t(
           'Pricing is unchanged: customers are still billed for the model they requested.'
         )}
+      </p>
+      <p className='text-muted-foreground mt-1 text-[11px]'>
+        {t('Only one short tier can be on; enabling one turns the other off.')}
       </p>
     </div>
   )
