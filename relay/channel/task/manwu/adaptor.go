@@ -93,6 +93,8 @@ const (
 	// ⚠️ 与 CapCut（剪映国际版）是**两个独立平台**：不同站点、不同账号池、
 	// 不同风控身份，公开名也不复用 cp-* 前缀（cp-* 已被 CapCut 占用）。
 	PlatformIDTiktok = "tiktok"
+	// PlatformIDHiggsfield 是 Higgsfield（higgsfield.ai）平台。
+	PlatformIDHiggsfield = "higgsfield"
 
 	// baseURLDefault 为渠道未配置 BaseURL 时的兜底（ArcReel 生产地址）
 	baseURLDefault = "https://arcreel.heibaidao.cn"
@@ -270,6 +272,10 @@ const (
 	// （官网下拉里是三个不同档位），**不做互为别名**。
 	ModelTiktok20Fast = "sd-seedance-2.0fast"
 	ModelTiktok20     = "sd-seedance-2.0"
+
+	// ModelHiggsfield25 是 2026-11-25 上架的 higgsfield Seedance 2.5（¥0.25/秒、
+	// 分辨率固定 720p）。公开名单一来源在 constant/higgsfield_family.go。
+	ModelHiggsfield25 = constant.Higgsfield25Model
 	// tiktokUpstream20Fast / tiktokUpstream20 是发往 ArcReel 的上游模型名。
 	// 必须与 1.5 Pro 的 `tiktok-symphony` **区分开** —— Worker 靠它决定在官网
 	// 下拉里选哪一档；混用会导致「卖 2.0、跑 1.5 Pro」的错档交付。
@@ -415,6 +421,11 @@ const (
 	// ⚠️ 不复用 kindCapcutVideo：CapCut 是 4–30s / 六档比例 / 只卖 480p+720p，
 	// 两者参数空间完全不同；静默回落会把 12s 做成 5s（用户付费档位被降级）。
 	kindTikTokVideo = "tiktok_video"
+
+	// kindHiggsfieldVideo 是 Higgsfield 视频（Seedance 2.5）：
+	// 时长 4–30 秒逐秒、比例按官网白名单、**分辨率固定 720p**、
+	// 参考素材支持图片/视频/音频（站点 accept 已含 video/* 与 audio/*）。
+	kindHiggsfieldVideo = "higgsfield_video"
 )
 
 // 万相 wan2.7 免灵感值参数口径（与 Worker 侧 TONGYIWAN_UNLIMITED_VIDEO_PROFILE 同源：
@@ -525,6 +536,7 @@ var modelSpecs = map[string]modelSpec{
 	ModelTikTokSymphony:   {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstreamModel},
 	ModelTiktok20Fast:     {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstream20Fast},
 	ModelTiktok20:         {PlatformID: PlatformIDTiktok, OutputMode: OutputModeVideo, Kind: kindTikTokVideo, UpstreamModel: tiktokUpstream20},
+	ModelHiggsfield25:     {PlatformID: PlatformIDHiggsfield, OutputMode: OutputModeVideo, Kind: kindHiggsfieldVideo, UpstreamModel: "seedance-2.5"},
 }
 
 // capcutOfficialToPublic 是「官网档位真名 → 对外公开名」的**反向**映射
@@ -980,7 +992,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	// Picsart 同理：官网默认档是 adaptive（跟随输入图比例），缺省不能补成 16:9。
 	// 豆包系图片（kindSeedreamImage）同理：官网图片模式出厂档是「自动」，
 	// 未指定时必须留空 —— 补 16:9 等于把「用户没选」变成一次静默的参数改写。
-	if spec.Kind != kindDoubaoVideo && spec.Kind != kindPicsartVideo && spec.Kind != kindSeedreamImage && spec.Kind != kindTikTokVideo {
+	if spec.Kind != kindDoubaoVideo && spec.Kind != kindPicsartVideo && spec.Kind != kindSeedreamImage && spec.Kind != kindTikTokVideo && spec.Kind != kindHiggsfieldVideo {
 		ratio, err := resolveRatio(req)
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_ratio", http.StatusBadRequest)
@@ -1089,6 +1101,31 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
 		norm.Duration = duration
+	case kindHiggsfieldVideo:
+		// Higgsfield Seedance 2.5（2026-11-25 上架）：
+		//   - 时长 4–30 秒逐秒（官网滑杆 4..30，缺省 5 秒）；
+		//   - 分辨率固定 720p：未指定补 720p，显式传别的档位 400；
+		//   - 比例按官网白名单透传，空值不编造（保持官网当前档）。
+		duration, durErr := resolveHiggsfieldDuration(req)
+		if durErr != nil {
+			return service.TaskErrorWrapperLocal(durErr, "invalid_duration", http.StatusBadRequest)
+		}
+		norm.Duration = duration
+		rawRatioHF, ratioErr := resolveRawRatio(req, doubaoRatioCandidates(), nil)
+		if ratioErr != nil {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("ratio must be one of auto/16:9/9:16/1:1/4:3/3:4/21:9, %w", ratioErr),
+				"invalid_ratio", http.StatusBadRequest,
+			)
+		}
+		norm.Ratio = rawRatioHF
+		if resErr := validateHiggsfieldResolution(req.Resolution); resErr != nil {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("%s: %w", norm.Model, resErr),
+				"invalid_resolution", http.StatusBadRequest,
+			)
+		}
+		norm.Resolution = "720p"
 	case kindTikTokVideo:
 		// TikTok Symphony（图生视频）：
 		//   - 时长**只三档** 5 / 10 / 12 秒（官网原生下拉；单档 5s 是默认值）；
@@ -1647,6 +1684,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			Resolution: req.Resolution,
 		}
 		body.Inputs = toInputs(InputTypeImage, req.Images)
+	case kindHiggsfieldVideo:
+		// Higgsfield Seedance 2.5：model 传官网档位真名（seedance-2.5）；
+		// 素材顺序固定 图 → 视频 → 音频（Worker 按 inputs 顺序上传并算 @ 槽位）。
+		body.VideoParams = &videoParams{
+			Model:      firstNonEmpty(spec.UpstreamModel, req.Model),
+			Ratio:      req.Ratio,
+			Duration:   &req.Duration,
+			Resolution: req.Resolution,
+		}
+		body.Inputs = append(body.Inputs, toInputs(InputTypeImage, req.Images)...)
+		body.Inputs = append(body.Inputs, toInputs(InputTypeVideo, req.Videos)...)
+		body.Inputs = append(body.Inputs, toInputs(InputTypeAudio, req.Audios)...)
 	case kindTikTokVideo:
 		// TikTok Creative Studio（图生视频）：model 传上游官网档位真名
 		// （公开名 tk-*/sd-* 在本表内翻译成 tiktok-symphony / tiktok-seedance-2.0[-fast]）。
@@ -2044,6 +2093,13 @@ func rejectFields(req clientRequest, kind, modelName string) error {
 		if _, err := normalizeCapcutResolution(resolution); err != nil {
 			return fmt.Errorf("%s supports only 480p/720p resolution, got %q", modelName, resolution)
 		}
+	case kindHiggsfieldVideo:
+		// Higgsfield：分辨率**固定 720p**（本商品唯一规格）。
+		// 显式传别的档位 → 显式拒绝，不静默改交付规格。
+		resolution := strings.TrimSpace(req.Resolution)
+		if resolution != "" && !strings.EqualFold(resolution, "720p") {
+			return fmt.Errorf("%s supports only 720p resolution (fixed spec), got %q", modelName, resolution)
+		}
 	case kindTikTokVideo:
 		// TikTok Symphony：官网**没有比例控件**（成片固定 9:16，实测 720x1280 / 360x640）
 		// → 传其它比例显式拒绝（不能静默当成 9:16：用户会为一个没生效的档位付费）。
@@ -2416,6 +2472,44 @@ func tiktokDurationWhitelistFor(model string) []int {
 	default:
 		return tiktokDurationWhitelistSymphony
 	}
+}
+
+// validateHiggsfieldResolution 校验「分辨率固定 720p」这一商品规格。
+// 空值 / 720 / 720P 通过（缺省即 720p）；其余档位显式拒绝，
+// **绝不静默降成 720p 交付**（用户会为一个没生效的档位付费）。
+func validateHiggsfieldResolution(raw string) error {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "", "720", "720P":
+		return nil
+	}
+	return fmt.Errorf("resolution must be 720p (fixed spec), got %q", raw)
+}
+
+// resolveHiggsfieldDuration 归一 Higgsfield 时长：seconds → duration → 缺省 5 秒；
+// 允许区间 4–30 秒（官网滑杆 aria-valuemin=4 / aria-valuemax=30）。
+// 区间外**显式拒绝**，不吸附、不回落。
+func resolveHiggsfieldDuration(req clientRequest) (int, error) {
+	value := 0
+	found := false
+	if seconds, has, err := parseFlexibleInt(req.Seconds); err != nil {
+		return 0, fmt.Errorf("seconds %s: %w", string(req.Seconds), err)
+	} else if has {
+		value, found = seconds, true
+	}
+	if !found {
+		if duration, has, err := parseFlexibleInt(req.Duration); err != nil {
+			return 0, fmt.Errorf("duration %s: %w", string(req.Duration), err)
+		} else if has {
+			value, found = duration, true
+		}
+	}
+	if !found {
+		return 5, nil
+	}
+	if value < 4 || value > 30 {
+		return 0, fmt.Errorf("duration must be between 4 and 30 seconds, got %d", value)
+	}
+	return value, nil
 }
 
 // resolveTikTokDuration 归一时长：seconds → duration → 缺省 5 秒；

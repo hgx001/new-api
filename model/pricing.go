@@ -607,6 +607,13 @@ func isAllowedPricingModel(name string) bool {
 	if constant.IsTiktokFamily(name) {
 		return true
 	}
+	// 漫屋 ArcReel → Higgsfield 的 Seedance 2.5（2026-11-25 上架）：
+	// ¥0.25/秒、分辨率固定 720p、时长 4–30 秒。
+	// ⚠️ 与 TikTok 的 sd-seedance-2.0* / CapCut 的 cp-seedance-2.5 /
+	// ElevenLabs 的 el-seedance-2.5 都是不同商品，精确集合互不命中。
+	if constant.IsHiggsfieldFamily(name) {
+		return true
+	}
 	// 漫屋 ArcReel 豆包官网视频（公开短名，转发前由 manwu adaptor 翻译成官网真名；
 	// 2026-10-12 去掉 db- 前缀：db-seedance-2-0 → seedance-2-0-fast、db-seedance-2-5 → seedance-2-5）
 	if name == "seedance-2-5" || name == "seedance-2-0-fast" {

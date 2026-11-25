@@ -221,6 +221,14 @@ export function isPerSecondModel(model: PricingModel): boolean {
   if (name === 'seedance-2-5-flash') {
     return true
   }
+  // Higgsfield 的 Seedance 2.5（2026-11-25 上架，公开名 sd-seedance-2.5）：
+  // **按秒** ¥0.25/秒、分辨率固定 720p、时长 4–30 秒。
+  // ⚠️ 必须精确匹配：`sd-seedance-2.0*`（TikTok Symphony）与
+  // `cp-seedance-2.5`（CapCut）、`el-seedance-2.5`（ElevenLabs）都是不同商品，
+  // 前缀匹配会把不同上游不同价挂到同一个「/秒」口径下。
+  if (name === 'sd-seedance-2.5') {
+    return true
+  }
   if (name.startsWith('seedance-2-0')) {
     return true
   }

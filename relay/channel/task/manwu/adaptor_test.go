@@ -703,6 +703,9 @@ func TestModelListAndChannelName(t *testing.T) {
 		// 前缀不透露渠道）。与 cp-/el-/豆包短名均不是别名（不同官网、不同价）。
 		"sd-seedance-2.0",
 		"sd-seedance-2.0fast",
+		// 2026-11-25 上架 Higgsfield 的 Seedance 2.5（¥0.25/秒、分辨率固定 720p）。
+		// 字节序：`sd-seedance-2.0*` 在前，`sd-seedance-2.5` 在后。
+		"sd-seedance-2.5",
 		"seedance-2-0",
 		"seedance-2-0-fast",
 		"seedance-2-5",
