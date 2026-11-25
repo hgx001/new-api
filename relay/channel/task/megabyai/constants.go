@@ -18,17 +18,39 @@ const ChannelName = "MegaAI"
 // 上游目录（/api/pricing）描述：「30图10视频10音频，480p/720p，4-30秒，不卡脸，支持全比例」，
 // 按次计费、分辨率分档（上游 480p ¥3 / 720p ¥4；本站对外 480p ¥4 / 720p ¥5）。
 //
-// 与 wan-3.0 同走上游「统一参数」契约（duration / ratio / resolution /
-// referenceImages / referenceVideos / referenceAudios），差别只在能力边界：
-// **没有 1080p 档**、素材上限高得多（30/10/10）、时长区间 4–30 秒。
-// 能力差异全部写在下面的 megabyaiCapabilities 里，不在适配器里开 if 旁路。
+// ⚠️ **2026-11-24 下架**（用户口径「下架同渠道 T3-seedance-2.5」）：
+// 不再出现在 ModelList（渠道 models / 广场都看不到），生产库的能力行与
+// ModelPrice 键同步清除。代码里的能力表与映射**保留** —— 已建单的在途任务
+// 仍走同一条链路轮询，删掉映射会让在途单改派到 passthrough。
 const T3Seedance25Model = "T3-seedance-2.5"
+
+// Seedance20FastM5Model / Seedance20M5Model 是 2026-11-24 新接入的两档（同一上游）。
+//
+// 上游是两个独立商品（同族但不同价，不能互为别名）：
+//
+//	seedance-2.0-fast-m5：480p ¥0.16/秒、720p ¥0.35/秒（**按秒**）
+//	seedance-2.0-m5     ：480p ¥0.21/秒、720p ¥0.44/秒（**按秒**）
+//
+// 本站定价 = 上游各档 + ¥0.04/秒（老板口径「各个分辨率加 4 分钱」）：
+//
+//	seedance-2.0-fast-m5：480p ¥0.20/秒、720p ¥0.39/秒
+//	seedance-2.0-m5     ：480p ¥0.25/秒、720p ¥0.48/秒
+//
+// 能力（两档相同）：9 图 / 3 视频 / 3 音频、4–15 秒、比例含 21:9、参考视频不计费。
+const (
+	Seedance20FastM5Model = "seedance-2.0-fast-m5"
+	Seedance20M5Model     = "seedance-2.0-m5"
+)
+
+// ⚠️ 公开名带 `-m5` 后缀是**上游商品名**（老板指定沿用），不是渠道名：
+// 面对客户的模型卡片描述里**不得**出现上游平台/渠道名（脱敏名单里有 megabyai/megaai）。
 
 var ModelList = []string{
 	"sd-2.5",
 	wan30Model,
 	Seedance25TeHuiModel,
-	T3Seedance25Model,
+	Seedance20FastM5Model,
+	Seedance20M5Model,
 }
 
 // wan30Model 是走「统一参数 + 分辨率档按次计费」契约的模型名。
@@ -63,15 +85,31 @@ const Seedance25TeHuiModel = "seedance2.5-特惠"
 // ⚠️ 必须用**精确集合**判断，不能用前缀：站内还有 seedance-2-5 / seedance-2.5 /
 // seedance2.5特惠版 等一堆相近的 seedance 模型名，前缀匹配会误命中别家渠道的枚举表。
 var megabyaiUnifiedContractModels = map[string]bool{
-	wan30Model:           true,
-	Seedance25TeHuiModel: true,
-	T3Seedance25Model:    true,
+	wan30Model:            true,
+	Seedance25TeHuiModel:  true,
+	T3Seedance25Model:     true, // 2026-11-24 已下架，仅保在途单兼容
+	Seedance20FastM5Model: true,
+	Seedance20M5Model:     true,
 }
 
 // megabyaiResolutionTierModels 是**按分辨率档计价**的模型（其余统一契约模型是固定按次价）。
 var megabyaiResolutionTierModels = map[string]bool{
-	wan30Model:        true,
-	T3Seedance25Model: true,
+	wan30Model:            true,
+	T3Seedance25Model:     true, // 已下架，仅保在途单兼容
+	Seedance20FastM5Model: true,
+	Seedance20M5Model:     true,
+}
+
+// megabyaiPerSecondModels 是**按秒 + 分辨率档**双重计价的模型（2026-11-24）。
+//
+// ⚠️ 与 megabyaiResolutionTierModels 的分工：那个集合里的 wan-3.0 / T3 是
+// 「按次 + 分辨率档」（EstimateBilling 只给 size，**绝不能给 seconds**）；
+// 这里的 m5 两档是「按秒 + 分辨率档」，必须同时给 seconds 和 size。
+// 两边弄反的后果都是静默错价：少给 seconds 时 4 秒片只收 1 秒；
+// 多给 seconds 时按次价被乘秒数（¥4/条 → ¥120）。
+var megabyaiPerSecondModels = map[string]bool{
+	Seedance20FastM5Model: true,
+	Seedance20M5Model:     true,
 }
 
 // megabyaiUpstreamModels 是「对外模型名 → 上游模型名」的兜底表。
@@ -79,9 +117,11 @@ var megabyaiResolutionTierModels = map[string]bool{
 // 渠道的 model_mapping 是权威配置，但这里再兜一层：别名模型的语义是固定的
 // （seedance2.5-特惠 永远是 wan-3.0），不能因为渠道漏配 mapping 就把别名原样发给上游。
 var megabyaiUpstreamModels = map[string]string{
-	wan30Model:           wan30Model,
-	Seedance25TeHuiModel: wan30Model,
-	T3Seedance25Model:    T3Seedance25Model,
+	wan30Model:            wan30Model,
+	Seedance25TeHuiModel:  wan30Model,
+	T3Seedance25Model:     T3Seedance25Model,
+	Seedance20FastM5Model: Seedance20FastM5Model,
+	Seedance20M5Model:     Seedance20M5Model,
 }
 
 // wan30LockedTier 是「固定分辨率 + 固定时长」的档位。
@@ -127,6 +167,13 @@ const (
 	// 供 EstimateBilling 复用（保证计费档位与下发档位是同一个值）。
 	wan30ResolutionContextKey = "megabyai_wan30_resolution"
 
+	// wan30DurationContextKey 存放本次请求解析出的时长（秒）。
+	//
+	// 按秒计费的 m5 两档靠它算钱：EstimateBilling 只在 ValidateRequestAndSetAction
+	// 之后被调，把解析结果放 context 才能保证「计费秒数」与「实际下发秒数」
+	// 永远是同一个值（重新解析一遍会在默认值/字段优先级上漂）。
+	wan30DurationContextKey = "megabyai_wan30_duration"
+
 	// 上游 wan-3.0 的素材数量上限（上游价目说明：参考图 ≤10、参考视频 ≤5、参考音频 ≤5）。
 	wan30MaxReferenceImages = 10
 	wan30MaxReferenceVideos = 5
@@ -168,6 +215,32 @@ var t3ResolutionSizeRatio = map[string]float64{
 // 没告诉客户清晰度降了，静默按 1080p 计费则是多收钱。
 var t3Resolutions = []string{"480p", "720p"}
 
+// m5Resolutions 是上游 m5 两档的分辨率档（同样**没有 1080p**）。
+// 上游价目表只有 480p / 720p 两个 resolution_prices 键，多传档位只会让上游自己拒。
+var m5Resolutions = []string{"480p", "720p"}
+
+// m5 两档的对外价（按秒）：上游各档 + ¥0.04/秒（2026-11-24 老板口径）。
+//
+//	seedance-2.0-fast-m5：上游 0.16 / 0.35 → 对外 0.20 / 0.39 → 倍率 1 : 1.95
+//	seedance-2.0-m5     ：上游 0.21 / 0.44 → 对外 0.25 / 0.48 → 倍率 1 : 1.92
+//
+// 基准价（480p 元/秒）落在 defaultModelPrice，这里只放档位之间的相对倍率。
+// ⚠️ 改价必须两边成对改（基准价 × 倍率 = 720p 单价），否则两档差额会漂。
+var (
+	m5FastResolutionSizeRatio = map[string]float64{"480p": 1.0, "720p": 0.39 / 0.20}
+	m5ResolutionSizeRatio     = map[string]float64{"480p": 1.0, "720p": 0.48 / 0.25}
+)
+
+// m5 两档的素材/时长口径（上游目录原文：「9图3视频3音频，4-15秒…视频最大支持总共15s、
+// 音频总共15s」）。与 T3（30/10/10、4–30 秒）**不同**，不要共用同一份上限。
+const (
+	m5MaxReferenceImages = 9
+	m5MaxReferenceVideos = 3
+	m5MaxReferenceAudios = 3
+	m5MinSeconds         = 4
+	m5MaxSeconds         = 15
+)
+
 // megabyaiCapabilities 是「对外模型名 → 能力边界」。
 var megabyaiCapabilities = map[string]megabyaiCapability{
 	wan30Model: {
@@ -185,6 +258,24 @@ var megabyaiCapabilities = map[string]megabyaiCapability{
 		MaxAudios:   10,
 		MinSeconds:  4,
 		MaxSeconds:  30,
+	},
+	Seedance20FastM5Model: {
+		Resolutions: m5Resolutions,
+		SizeRatios:  m5FastResolutionSizeRatio,
+		MaxImages:   m5MaxReferenceImages,
+		MaxVideos:   m5MaxReferenceVideos,
+		MaxAudios:   m5MaxReferenceAudios,
+		MinSeconds:  m5MinSeconds,
+		MaxSeconds:  m5MaxSeconds,
+	},
+	Seedance20M5Model: {
+		Resolutions: m5Resolutions,
+		SizeRatios:  m5ResolutionSizeRatio,
+		MaxImages:   m5MaxReferenceImages,
+		MaxVideos:   m5MaxReferenceVideos,
+		MaxAudios:   m5MaxReferenceAudios,
+		MinSeconds:  m5MinSeconds,
+		MaxSeconds:  m5MaxSeconds,
 	},
 }
 

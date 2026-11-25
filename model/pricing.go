@@ -437,14 +437,18 @@ func isAllowedPricingModel(name string) bool {
 	if name == "sd-2.5" {
 		return true
 	}
-	// MegaAI 渠道（newapi.megabyai.cc）2026-11-23 重新接入后上架的 T3-seedance-2.5：
-	// 按次计费 + 分辨率分档（对外 480p ¥4 / 720p ¥5），4-30 秒、全比例、
-	// 参考图 ≤30 / 视频 ≤10 / 音频 ≤10。
-	// 精确匹配：站内还有 seedance-2-5 / seedance-2.5 / T2-seedance-2.0 等相近名，
-	// 前缀匹配会误命中别家商品。
-	if name == "T3-seedance-2.5" {
+	// MegaAI 渠道（newapi.megabyai.cc）2026-11-24 新上架的两档（按秒 + 分辨率档）：
+	//   seedance-2.0-fast-m5：480p ¥0.20/秒、720p ¥0.39/秒
+	//   seedance-2.0-m5     ：480p ¥0.25/秒、720p ¥0.48/秒
+	// 定价口径 = 上游各档 + ¥0.04/秒（用户 2026-11-24 口径「各个分辨率加 4 分钱」）。
+	// 均为 4–15 秒、480p/720p 两档、9 图/3 视频/3 音频。
+	//
+	// ⚠️ 精确匹配：站内还有 seedance-2-0-fast / seedance-2-5 / cp-seedance-2.0 等
+	// 相近名，前缀匹配会误命中别家商品。
+	if name == "seedance-2.0-fast-m5" || name == "seedance-2.0-m5" {
 		return true
 	}
+	// T3-seedance-2.5 已于 2026-11-24 下架（同渠道换成上面两档），不再上广场。
 	// 有赞渠道的新独立模型（2026-11-18 上架，公开名 **wan-3.0-yz**）：
 	// 上游独立模型 ID 是 wan-3.0，按秒计费 ¥0.20/秒（720P）/ ¥0.25/秒（1080P），
 	// 时长 10-30 秒逐秒可选。

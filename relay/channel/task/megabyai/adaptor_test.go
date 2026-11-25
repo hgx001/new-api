@@ -18,8 +18,9 @@ import (
 )
 
 func TestModelListContainsSD25AndWan30(t *testing.T) {
+	// 2026-11-24：T3-seedance-2.5 下架，同渠道换成按秒计费的 m5 两档。
 	require.Equal(t,
-		[]string{"sd-2.5", "wan-3.0-megabyai-retired", "seedance2.5-特惠", "T3-seedance-2.5"},
+		[]string{"sd-2.5", "wan-3.0-megabyai-retired", "seedance2.5-特惠", "seedance-2.0-fast-m5", "seedance-2.0-m5"},
 		(&TaskAdaptor{}).GetModelList())
 	require.Equal(t, "MegaAI", (&TaskAdaptor{}).GetChannelName())
 }

@@ -81,16 +81,16 @@ func TestModelInsertRespectsExplicitSortWeight(t *testing.T) {
 func TestPricingExposesSortWeight(t *testing.T) {
 	setupSortWeightDB(t)
 
-	channel := &Channel{Id: 1, Name: "c1", Type: 1, Status: 1, Models: "T3-seedance-2.5"}
+	channel := &Channel{Id: 1, Name: "c1", Type: 1, Status: 1, Models: "seedance-2.0-m5"}
 	require.NoError(t, DB.Create(channel).Error)
 	require.NoError(t, DB.Create(&Ability{
 		Group:     "default",
-		Model:     "T3-seedance-2.5",
+		Model:     "seedance-2.0-m5",
 		ChannelId: 1,
 		Enabled:   true,
 	}).Error)
 	require.NoError(t, DB.Create(&Model{
-		ModelName:   "T3-seedance-2.5",
+		ModelName:   "seedance-2.0-m5",
 		Status:      1,
 		SortWeight:  7,
 		Description: "test card",
@@ -101,7 +101,7 @@ func TestPricingExposesSortWeight(t *testing.T) {
 
 	var found bool
 	for _, p := range pricing {
-		if p.ModelName == "T3-seedance-2.5" {
+		if p.ModelName == "seedance-2.0-m5" {
 			found = true
 			assert.Equal(t, 7, p.SortWeight, "SortWeight 必须随 /api/pricing 下发，前端才能排序")
 		}

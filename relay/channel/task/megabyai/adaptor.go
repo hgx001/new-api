@@ -105,15 +105,29 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_resolution", http.StatusBadRequest)
 	}
-	// 时长同理：锁定时长只认自己那一档；有区间的模型（T3：4–30 秒）越界直接 400。
+	// 时长同理：锁定时长只认自己那一档；有区间的模型（T3：4–30 秒、m5：4–15 秒）越界直接 400。
+	var resolvedDuration *int
 	if locked {
 		if _, err := wan30LockedDuration(req, tier); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
 	} else {
-		if _, err := resolveMegabyaiDuration(req, caps); err != nil {
+		resolvedDuration, err = resolveMegabyaiDuration(req, caps)
+		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
+	}
+	// 按秒计费的档位（m5 两档）**必须**拿到确定秒数：
+	// ・不给 → 上游用自己的默认值，而我们只按「1 秒」算钱（少收，且客户看不到）；
+	// ・自己编一个默认值 → 客户没说多久，却被按我们编的秒数收费（多收）。
+	// 两种都是静默错价，所以缺时长直接 400，不猜。
+	if megabyaiPerSecondModels[info.OriginModelName] {
+		if resolvedDuration == nil || *resolvedDuration <= 0 {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("duration is required for %s (%d-%d seconds)", info.OriginModelName, caps.MinSeconds, caps.MaxSeconds),
+				"invalid_duration", http.StatusBadRequest)
+		}
+		c.Set(wan30DurationContextKey, *resolvedDuration)
 	}
 	if _, videos, _, err := buildMegabyaiMedia(req, caps); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
@@ -129,11 +143,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 // EstimateBilling 返回计费倍率。
 //
 //   - sd-2.5：固定按次价 → nil（禁止带入 seconds/size，否则会按秒多扣费）。
-//   - wan-3.0：上游按次计价（时长不参与），只有分辨率档参与 → 只给 size 倍率。
-//   - T3-seedance-2.5：同上，只是档位只有 480p / 720p（倍率 1 : 1.25）。
+//   - wan-3.0 / T3-seedance-2.5：上游按次计价（时长不参与），只有分辨率档参与 → **只给 size**。
+//   - seedance-2.0-fast-m5 / seedance-2.0-m5：上游**按秒** + 分辨率档 → size + seconds。
 //   - seedance2.5-特惠：固定 ¥3.0/条 → nil（不按分辨率分档，也不乘时长）。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	if !isResolutionTiered(info) {
+	if info == nil {
+		return nil
+	}
+	perSecond := megabyaiPerSecondModels[info.OriginModelName]
+	if !perSecond && !isResolutionTiered(info) {
 		return nil
 	}
 	resolution := ""
@@ -147,11 +165,26 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if ratio == 0 {
 		ratio = caps.SizeRatios[wan30DefaultResolution]
 	}
-	if ratio == 0 {
+	ratios := map[string]float64{}
+	if ratio != 0 {
 		// 能力表里没配倍率（按次固定价）→ 不带 size 倍率，避免凭空放大/缩小。
+		ratios["size"] = ratio
+	}
+	if perSecond {
+		// seconds 只能从 ValidateRequestAndSetAction 写下的 context 取：
+		// 那里已经做过「必填 + 4–15 区间」校验，重算一遍反而可能与下发值漂移。
+		if c != nil {
+			if value, ok := c.Get(wan30DurationContextKey); ok {
+				if seconds, okInt := value.(int); okInt && seconds > 0 {
+					ratios["seconds"] = float64(seconds)
+				}
+			}
+		}
+	}
+	if len(ratios) == 0 {
 		return nil
 	}
-	return map[string]float64{"size": ratio}
+	return ratios
 }
 
 func (a *TaskAdaptor) AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64 {

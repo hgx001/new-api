@@ -27,22 +27,26 @@
 - Validate 阶段必须 `StoreTaskRequest`，否则构造拿不到参数，计费也可能静默只收1秒。
 - `insufficient_balance_error/http_code=402` 保持上游失败身份，不包装成本端参数错误。
 
-## MegaAI（type=64）/ wan-3.0 与 T3-seedance-2.5
+## MegaAI（type=64）/ wan-3.0、T3-seedance-2.5 与 m5 两档
 
-时间线：2026-10-26 wan-3.0 与别名 seedance2.5-特惠 停售；2026-11-10 按「广场零卡片渠道全删」**退役 type=64**（删注册分支/端点声明/取件代理/前端下拉，并加建渠道闸门）；**2026-11-23 重新接入**同一上游 `newapi.megabyai.cc`，上架 `T3-seedance-2.5`，四处一并恢复，闸门名单清空（闸门本身保留）。适配器包 `relay/channel/task/megabyai` 不得整体删：youkou（type=59）靠它拿「按次计费」。
+时间线：2026-10-26 wan-3.0 与别名 seedance2.5-特惠 停售；2026-11-10 按「广场零卡片渠道全删」**退役 type=64**（删注册分支/端点声明/取件代理/前端下拉，并加建渠道闸门）；**2026-11-23 重新接入**同一上游 `newapi.megabyai.cc`，上架 `T3-seedance-2.5`；**2026-11-24 下架 T3**，同渠道换成按秒计费的 `seedance-2.0-fast-m5` / `seedance-2.0-m5`。适配器包 `relay/channel/task/megabyai` 不得整体删：youkou（type=59）靠它拿「按次计费」。
 
 现行能力（`megabyaiCapabilities`，按模型区分，不再用全局常量）：
 
 | 模型 | 分辨率 | 时长 | 素材上限 | 计价 |
 |---|---|---|---|---|
-| `T3-seedance-2.5`（在售） | 480p / 720p（**无 1080p**，传 1080p 本地 400） | 4–30 秒（越界 400；不给则不下发） | 图 ≤30 / 视频 ≤10 / 音频 ≤10 | 按次 + 分辨率档：对外 480p ¥4 / 720p ¥5（倍率 5.0/4.0） |
+| `seedance-2.0-fast-m5`（在售） | 480p / 720p | 4–15 秒，**必填**（缺则 400） | 图 ≤9 / 视频 ≤3 / 音频 ≤3 | **按秒 + 分辨率档**：对外 480p ¥0.20/秒、720p ¥0.39/秒（倍率 1.95） |
+| `seedance-2.0-m5`（在售） | 480p / 720p | 4–15 秒，**必填**（缺则 400） | 图 ≤9 / 视频 ≤3 / 音频 ≤3 | **按秒 + 分辨率档**：对外 480p ¥0.25/秒、720p ¥0.48/秒（倍率 1.92） |
+| `T3-seedance-2.5`（2026-11-24 下架） | 480p / 720p | 4–30 秒 | 30 / 10 / 10 | 按次 + 分辨率档（旧价 ¥4 / ¥5）；代码能力表保留仅供在途单 |
 | `wan-3.0-megabyai-retired` | 480p / 720p / 1080p | 不校验 | 10 / 5 / 5 | 归档，无路由 |
 
+- 定价口径（m5 两档）：上游各分辨率价 **+¥0.04/秒**；基准价写 480p 秒单价（`defaultModelPrice`），720p 倍率在适配器（`m5*ResolutionSizeRatio`），两处成对改。
 - 协议：`POST /v1/videos` 提交、`GET /v1/videos/{id}` 轮询、`GET /v1/videos/{id}/content` + Bearer 渠道密钥取片。参数统一用 duration/ratio/resolution/referenceImages|Videos|Audios，不与 seconds/size/image/input_reference 混用。
 - **成片地址对客户一律走站内代理**（2026-11-23 审查修正）：上游轮询回执里的 video_url / url / result_url 指向它自己的存储域名，adaptor 主动留空 Url，由 `service/task_polling.go` 落成 `/v1/videos/{本站ID}/content`，客户取片回源走 `controller/video_proxy.go` 的 type=64 分支。交付行为不变，代价是多一跳本站带宽；原直链在库里/管理员视图仍可见。
-- 按次模型只能带 size 倍率，**不能带 seconds**；基准价写 480p，720p 倍率在适配器（`t3ResolutionSizeRatio`），两处成对改。
+- 按次模型只能带 size 倍率，**不能带 seconds**；按秒模型（m5）**必须同时给 seconds 与 size** —— 只给 size 会按 1 秒收钱（少收 3/4）。
+- 按秒档缺时长直接 400：上游用自己的默认值而我们按 1 秒计费、或我们编一个默认值，两种都是静默错价。
 - 能力门控 fail-loud：不存在的档位/越界时长一律 400，不静默降档或截断。
-- 卡密/渠道名称/上游域名对客户不可见；`megabyai` 在 `upstreamVendorLiterals` 里。
+- 客户可见文案（模型描述、错误消息）不得出现上游平台名/域名；`megabyai`/`megaai` 在 `upstreamVendorLiterals` 里。公开模型名里的 `-m5` 是上游商品名（老板口径沿用），不属渠道名。
 - 历史契约见 [历史接入记录](../channel/megabyai-wan3-integration.md)；其中价格/上线状态是带日期记录，当前业务以代码、已授权配置和本指南为准。
 
 - 旧（已归档）：`wan-3.0` 与 `wan3.0-video` / `wan3.0-video-官网` 是不同公开名，不互相覆盖。别名 `seedance2.5-特惠` 实际上游仍是 wan-3.0，必须经 model_mapping 或兜底表翻译。
