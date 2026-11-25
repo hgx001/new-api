@@ -18,20 +18,11 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 
 ## 三项目关系链路
 
-三仓均属本团队，“漫屋”就是ArcReel，不是另一个第三方供应商。
-
-| 项目 | 位置 | 职责 |
-|---|---|---|
-| 燃境 Ai App | `C:/work/即梦网站/cron_video_brach` | Electron Worker，执行官网 |
-| ArcReel（漫屋） | `C:/work/即梦网站/ArcReel` | 建单、派单、钱包、产物托管；manwu-agent为gitee镜像 |
-| new-api（本仓库） | `C:/work/new-api-src`；维护目录 `C:/work/维护newapi` | 对外网关、渠道与计费 |
-
-客户端 → new-api → ArcReel → Worker WSS → 官网 → 托管产物 → 网关交付。
+三仓均属本团队，"漫屋"就是 ArcReel（不是第三方供应商）：燃境 Ai App `C:/work/即梦网站/cron_video_brach`（Electron Worker，执行官网）→ ArcReel `C:/work/即梦网站/ArcReel`（建单/派单/钱包/产物托管，gitee 镜像 manwu-agent）→ 本仓库 `C:/work/new-api-src`（维护目录 `C:/work/维护newapi`，对外网关与计费）。链路图与逐层契约见 [远端生成](docs/agent-guides/remote-generation.md)。
 
 - 改链路、模型公开名、参数/参考图覆盖度需同步三端实现及各自说明，不单改一个白名单。
 - 开发与生产的token/地址配对；客户端令牌、OpenAPI service token、Worker token不可互用。
 - 供应商联调可能还经自家sub2api；按请求ID、模型、时间联合取证，不以自动选渠道/降级成功证明目标渠道可用。
-- 完整协议与素材/归属边界见 [远端生成](docs/agent-guides/remote-generation.md)。
 
 ## 后端工程约束
 
@@ -104,8 +95,7 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
   - 入口：老机 `bash /home/ubuntu/deploy-new-api.sh <sha>`（连不上 github，bundle 传 SHA 后 `wc -c` 验字节）；新机 `DEPLOY_HOST=newapi DEPLOY_PORT=22 deploy/deploy-backend.sh <sha>`（必须 Git Bash，输出重定向到文件）。执行细节见 [deploy/README.md](deploy/README.md) 与上文「新生产实例」。
   - 验收：逐机核对部署 SHA / 前端 release `<timestamp>-<sha>` 与 `/api/status`（`success+setup`、PostgreSQL、未回落 SQLite），**两边一致才算完成**；不一致立即补齐落后的那台，不留待下次。回滚同样双机同版本，一台回滚后另一台不得留在高版本。
   - 版本对齐 ≠ 数据对齐：两台 DB/options/COS 凭据/sub2api 账号状态不随发版同步，差异见 `docs/new-server-migration-plan.md`；不得为追版本覆盖另一台的数据。
-- 后端用 `deploy/deploy-backend.sh <sha>`（老机另有 `/home/ubuntu/deploy-new-api.sh`）在生产远程构建精确提交，**两台各执行一次**；本地Docker不是前提。前后端发布路径独立，禁止临时脚本绕过canonical流程。
-- env快照完整且含关键配置才换容器；健康检查需success+setup、数据库后端与SQL_DSN都正确，不能以回落空SQLite的success:true判健康。
+- **执行体只在 [deploy/README.md](deploy/README.md)**：env 快照完整性、60s 未回落 SQLite、容器替换与自动回滚的判定都在脚本里，本文不复制。禁止临时脚本绕过 canonical 流程，前后端发布路径独立。
 - 模型变更**先发版、再改渠道/价表数据**；生产ModelPrice覆盖代码默认，价格与档位倍率/前端单位/最终结算一起核对。
 - 下架同步channels.models与abilities，AutoBan恢复同步status与enabled；缓存/目录/卡片是不同链路，不能只改一个字段宣布完成。
 - 别名对普通用户所有响应/DTO/日志/产物URL出口遮上游，数据库/管理员原文保留；不在写入层/重试分类前脱敏。

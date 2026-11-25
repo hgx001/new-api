@@ -166,26 +166,10 @@ wan3.0-video **不是同一套**，adaptor 里按模型名分支处理（`isWan3
 - **不要**因为这条抖动把母本回退成整条兜底（规则八）：2026-11-20 实测那条
   无条件兜底到 `cp-seedance-2.5flash` 时「大量失败」，比等对方线路恢复更糟。
 
-## wan3.0-720p-特惠 按能力分流到心笔（2026-11-06，⚠️ 2026-11-16 已下线）
-
-> **2026-11-16 下线**：心笔不稳定，用户要求特惠全部走 Wan3 官网链路（480P 生成 +
-> 超分交付 720P）。`Wan3TehuiXinbiRoute` 中间件已从 video-router 摘除；
-> 条件路由配置的 `ratio_target_model` / `short_target_model` 已从内链改回
-> `wan3.0-720p-特惠`；channel 25 已停用。以下保留为历史口径，
-> `middleware/wan3_tehui_xinbi_route.go` 不再挂载，仅作参考。
-
-对外仍是同一个模型名、同一个价（¥0.20/秒）、同一个 720P 承诺，只换更便宜的上游。
-
-- 心笔（channel 25，type 68）生成 480P + 交付前提升到 720P；官网 Wan3（channel 12，type 60）保留给心笔吃不住的请求。
-- 分流在 `middleware.Wan3TehuiXinbiRoute`（挂在 Seedance25TeHuiRoute 之后、Distribute 之前）：改写 body.model 为内部名 `wan3.0-720p-特惠-内链`，**不覆盖**已有的 RouteOriginModel —— 规则二/三先改派时计费原点仍是客户最初请求的促销族。
-- 特惠分流只改写参考图：带首尾帧、参考视频、参考音频、seed、>10 张图、http 图、非枚举比例、小数时长 → 一律留在原 Wan3 链路（规则三因此仍然可用）。心笔兼容口**本身**已支持 10 图 / 5 视频 / 5 音频（2026-11-11 `/docs/compat` + `GET /v1/media/models` 实核；同日真机 10 图 + 2 秒受理通过，约 ¥0.27），但首尾帧在兼容口没有字段、分流也不做音视频改写，故这些请求继续走官网。
-- 参考图上游硬约束（2026-11-11 真机）：单边像素须在 240–8000，小图在提交阶段 422 `REFERENCE_IMAGE_RESOLUTION_OUT_OF_RANGE`；同一张图用 `?query` 变体凑数量曾触发 `INVALID_INPUT_FILES`（是查询串还是重复内容导致尚未隔离）。两者都在建单前返回、不扣费，本地只校 https 与张数。
-- 分辨率**不参与**分流判断：特惠只有一个交付档位，原 Wan3 链路对它的 `resolveGenerationResolution` 无条件返回 480P，客户端传 480P/1080P 同样被忽略、成片统一提升到 720P。心笔侧 `generationResolution` 也是 480P，所以两条链路产物一致；顶层 `resolution`/`size` 在改写时剥掉（心笔会把像素尺寸当比例误读），`size` 里能推断出的画幅仍写进 `metadata.ratio`。
-- 提交回执的 `resolution` 报**实际交付档位** 720P（Wan3 与心笔两侧都改），不回显客户端请求值 —— 否则等于把「参数被忽略」包装成承诺。
-- 时长口径与 Wan3 一致：2–30 秒透传，缺省 5，越界夹取；内部名必须保持按秒，不能进 `IsSeedance25PerCall` 能力组。
-- 内部名**不进模型广场**、不配 ModelPrice（取价走 BillingModelName = 特惠）；生产需把该名字加进 channel 25 的 models 与 abilities。
-- 不同公开模型分别维护基础价与分辨率倍率；调价一起核对代码默认、生产option、各模型回归与前端展示，不把官网档倍率套给标准版。
-- 通用TaskSubmitReq不支持的顶层ratio会丢失，需要metadata.ratio；网关接不同适配器时不能假设字段位置相同。
+> **已下线，勿恢复**：`wan3.0-720p-特惠` 向心笔（ch25）的能力分流自 2026-11-16 起不再存在 ——
+> `Wan3TehuiXinbiRoute`
+> 中间件已从 video-router 摘除、ch25 停用，该模型全部走 Wan3 官网链路（480P 生成 + 超分交付 720P）。
+> 代码里残留的 `wan3.0-720p-特惠-内链`、`Wan3TehuiXinbiRoute` 表项都是**旧口径**，不要据此恢复分流或重新上架。
 
 ## SeetaCloud：自建 ComfyUI 实例（2026-11-06）
 
@@ -290,10 +274,10 @@ wan3.0-video **不是同一套**，adaptor 里按模型名分支处理（`isWan3
 
 **网关侧必须自己拦的（本地 400，不触上游）**
 
-- 分辨率不在白名单内（v2 6 档；omni 9 档含 1080p；v2 传 1080p 直接拒）；
-- 图生别名缺参考图（v2 正名缺图=文生，不拦）；
-- 参考图超限（v2 关键帧 **2 张**上限；omni 设定参考 **9 张**上限）；
-- 参考视频 > 3 个 / 参考音频 > 3 个（omni）；v2 传音频/视频参考直接拒；
+- 分辨率不在 omni 白名单内（9 档含 1080p；`minimax_h3_v2` 6 档、不认 1080p —— 该模型已于 2026-11-08 退役，仅给在途任务回滚参考）；
+- 图生别名缺参考图（正名缺图=文生，不拦）；
+- 参考图超限（omni 设定参考 **9 张**上限）；
+- 参考视频 > 3 个 / 参考音频 > 3 个；
 - 参考素材格式非法（非 data URI / 非 http(s) / MIME 前缀不符 / 超体积）；
 - ⚠️ 这些错误必须用 `taskcommon.NewUserError` 包起来 → relay_task 才降级成 400
   LocalError。裸 error 会变成 500，触发重试与 AutoBan —— 客户传错参数就能把渠道打掉。
