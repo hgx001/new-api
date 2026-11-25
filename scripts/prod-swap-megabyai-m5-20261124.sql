@@ -42,6 +42,10 @@ CREATE TABLE IF NOT EXISTS bak_20261124_m5_modelprice AS
   SELECT key, value FROM options WHERE key = 'ModelPrice';
 
 -- ---------- 1. 渠道 models：去掉 T3，追加两个新模型（保序、幂等）----------
+-- ⚠️ 必须从 channels LEFT JOIN parts 出发：这个渠道当前 models 里**只有** T3，
+--    先 WHERE 过滤再 GROUP BY 会得到零个分组，CTE 直接没行，UPDATE 静默改 0 行
+--    （2026-11-24 首轮就踩了：能力行已经换了、channels.models 还原地不动）。
+-- ⚠️ 两个新模型名也要从 joined 里排除、再统一追加，否则重复执行会越拼越长。
 WITH ch AS (
   SELECT id, COALESCE(models, '') AS models FROM channels WHERE name = 'MegaAI'
 ),
@@ -51,11 +55,13 @@ parts AS (
     CROSS JOIN LATERAL unnest(string_to_array(ch.models, ',')) WITH ORDINALITY AS part(value, ord)
 ),
 kept AS (
-  SELECT id,
-         string_agg(m, ',' ORDER BY ord) FILTER (WHERE m <> '') AS joined
-    FROM parts
-   WHERE m NOT IN ('T3-seedance-2.5')
-   GROUP BY id
+  SELECT ch.id,
+         string_agg(parts.m, ',' ORDER BY parts.ord)
+           FILTER (WHERE parts.m <> ''
+                     AND parts.m NOT IN ('T3-seedance-2.5', 'seedance-2.0-fast-m5', 'seedance-2.0-m5')) AS joined
+    FROM ch
+    LEFT JOIN parts ON parts.id = ch.id
+   GROUP BY ch.id
 ),
 want AS (
   SELECT id,
