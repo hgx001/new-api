@@ -121,6 +121,9 @@ const (
 	// maxReferenceVideos 反解只认 1 个视频：ArcReel create_job 硬约束「视频反解
 	// 任务必须且只能携带 1 个参考视频」，多传会被上游 400。
 	maxReferenceVideos = 1
+	// maxReferenceAudios 参考音频上限 1 条：官网「Add reference」的音频槽只有
+	// 一个（Seedance 2.5 多模态参考），传多条上游只会取首个 → 显式拒绝，不静默丢。
+	maxReferenceAudios = 1
 	// maxImageCount 与 ArcReel `_remote_image_count` 的 clamp 上限一致（1..10）。
 	maxImageCount     = 10
 	defaultImageCount = 1
@@ -1126,6 +1129,33 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			)
 		}
 		norm.Resolution = "720p"
+		// 参考视频 / 参考音频（2026-11-25）：官网「Add reference」收
+		// Image, Video or Audio，Seedance 2.5 是多模态参考模型。
+		// ⚠️ 必须写进 **norm**：BuildRequestBody 读的是 normalizedRequest，
+		// 不写 norm 就只有图片能到 ArcReel/Worker（真机实测：带 videos/audios
+		// 下单，ArcReel 侧 inputs 只有 reference_image，worker videoCount=0）。
+		if hasValue(req.Videos) || hasValue(req.Video) {
+			videos, vErr := resolveVideos(req)
+			if vErr != nil {
+				return service.TaskErrorWrapperLocal(vErr, "invalid_input_reference", http.StatusBadRequest)
+			}
+			if len(videos) > maxReferenceVideos {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("%s accepts at most %d reference video, got %d", norm.Model, maxReferenceVideos, len(videos)),
+					"invalid_input_reference", http.StatusBadRequest,
+				)
+			}
+			norm.Videos = videos
+		}
+		if hasValue(req.Audios) {
+			norm.Audios = rawURLList(req.Audios)
+			if len(norm.Audios) > maxReferenceAudios {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("%s accepts at most %d reference audio, got %d", norm.Model, maxReferenceAudios, len(norm.Audios)),
+					"invalid_input_reference", http.StatusBadRequest,
+				)
+			}
+		}
 	case kindTikTokVideo:
 		// TikTok Symphony（图生视频）：
 		//   - 时长**只三档** 5 / 10 / 12 秒（官网原生下拉；单档 5s 是默认值）；

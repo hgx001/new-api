@@ -2,6 +2,7 @@ package manwu
 
 import (
 	"encoding/json"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -125,4 +126,30 @@ func TestTiktokPerSecondModelsEstimateBilling(t *testing.T) {
 	// 1.5 Pro 不在按秒子集里，必须仍是 nil（否则 ¥x/次 会被乘成 ¥x×秒）。
 	assert.False(t, constant.IsTiktokPerSecond(ModelTikTokSymphony),
 		"tk-symphony-1.5pro 不按秒，不能被按秒判定命中")
+}
+
+// TestHiggsfieldReferenceVideoAudioNormalized 锁住「参考视频/音频必须写进
+// normalizedRequest」这条真机坑（2026-11-25）：BuildRequestBody 读的是 norm，
+// 只解析 req 不写 norm 时，带 videos/audios 下单到 ArcReel 只剩 reference_image。
+func TestHiggsfieldReferenceVideoAudioNormalized(t *testing.T) {
+	src, err := os.ReadFile("adaptor.go")
+	if err != nil {
+		t.Fatalf("read adaptor.go: %v", err)
+	}
+	code := string(src)
+	idx := strings.Index(code, "case kindHiggsfieldVideo:")
+	if idx < 0 {
+		t.Fatal("kindHiggsfieldVideo branch missing")
+	}
+	end := strings.Index(code[idx:], "case kindTikTokVideo:")
+	if end < 0 {
+		t.Fatal("next case missing")
+	}
+	branch := code[idx : idx+end]
+	if !strings.Contains(branch, "norm.Videos = videos") {
+		t.Error("higgsfield branch must assign norm.Videos (BuildRequestBody reads normalizedRequest)")
+	}
+	if !strings.Contains(branch, "norm.Audios = ") {
+		t.Error("higgsfield branch must assign norm.Audios")
+	}
 }
