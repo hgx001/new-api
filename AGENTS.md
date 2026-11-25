@@ -61,28 +61,12 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 | 账号池上游 | GPT-Pool = 容器 `sub2api`（`172.18.0.1:8080`，库容器 `sub2api-postgres`，psql 用户/库均 `sub2api`） |
 
 - 路由 = `channels` × `abilities`（group×model×channel_id 笛卡尔积）。**直接改 channels.models 不会同步 abilities**，须手动 INSERT abilities 行；`MEMORY_CACHE_ENABLED=true` 下 SyncChannelCache 每 60s 重建路由，改完等 60s 生效、无需重启。key 一律库内 INSERT...SELECT 复制，不走终端明文。
-- **真机测试统一令牌（2026-11-16 用户拍板）**：所有真机视频测试一律用 token **id=144**（user 28 `admin`，status=1，`unlimited_quota=false`，key 前缀 `rYvWwh`、后缀 `mapC0P`），不再各脚本自建/另取令牌。完整 key 由用户提供、不落仓库；用时从生产库 `SELECT key FROM tokens WHERE id=144` 取，按脚本惯例拼 `sk-` 前缀（或直接用用户提供的完整值）。余额随测随耗，提交前查 `users.quota`（id=28）。既有 `scripts/_probe_seedance_route_real.py` 取 admin 无限额度令牌的写法已不符合本口径。
-- **m3only 沙箱组**（视频优先级饿死图片时的服务器侧兜底路由，2026-11-07 配置）：用户 id=53 `m3only_user` / token id=166 `m3only受限令牌`（key 前缀 `FOd34WzRQY`），model_limits=`MiniMax-M3.1,Seedream 4.5,Nano Banana Pro,Seedream 5.0 Flash,gpt-image-2.5-官方`，unlimited_quota=t、cross_group_retry=f。专属通道 ch26 MiniMax-M3.1(type 35)、ch29 GPT-Pool-image(type 1，克隆 ch13)、ch30 漫屋ArcReel-image(type 66，克隆 ch20)；改动前备份表 `bak_20261107_img_channels`/`bak_20261107_img_abilities`。
-- **四图片模型调用协议**（真机台账 `scripts/prod-ledger-img4-20261107.sql`，commit `7bae1e06d`；两轨不可混用）：
-
-| 模型 | 协议 | 实测 | 客户侧成本 |
-|---|---|---|---|
-| gpt-image-2.5-官方 | 同步 `POST /v1/images/generations`，**只回 b64_json、无 url** | 40.6s | ¥0.15 |
-| Nano Banana Pro | 任务协议 `POST /v1/videos` → 轮询 `GET /v1/videos/{id}` → `GET /v1/videos/{id}/content` 取 PNG | ~110s | ¥0.30 |
-| Seedream 4.5 | 同上（轮询约 160s，timeout 至少 300s） | ~160s | ¥0.20 |
-| Seedream 5.0 Flash | 同上 | ~50s | ¥0.20 |
-
-  - 任务三模型走 `/v1/images/generations` 是 404。manwu 通道（type 66）硬约束：参考图只收公网 http(s) URL（data URI → 400 `invalid_input_reference`，不建单不扣费）；比例白名单随模型形态（kindImage 六档缺省 16:9 / kindSeedreamImage 八档含「自动」缺省不下发）；图片形态拒收 seconds/duration/resolution/negative_prompt；张数上限 10/4。
-  - 消费侧兜底链在 `ArcReelLocalDesktop/scripts/cloud_image_fallback.py`（双协议自动分派，单模型失败一次即切换），配置 `ARCREEL_CLOUD_IMAGE_*`（arcreel 机 `/opt/arcreel/gateway.env`）。
-- **未决坑（2026-11-07）**：gpt-image-2.5-官方 唯一出图账号 = sub2api group 4 的 `codex-plus-snehitoge828`（account 4）；其 OAuth 被上游吊销（`Token revoked (401)`）后 schedulable=f，调用只剩 503「No available compatible accounts」（sub2api 日志 `account_select_failed ... pool=1`）。恢复须在 sub2api 管理端重新授权该账号或补账号进 group 4——**禁止自动触发 OAuth 恢复**，先报用户拍板。
-- **参数矩阵实测（2026-11-07，台账 `scripts/prod-ledger-img4-paramatrix-20261107.sql`，¥6.40）**：三模型已在 default 组完整暴露（ch20 + abilities + ModelPrice + `/v1/models` 可见）。结论：
-  - Seedream 4.5（dola）：8 档比例 + count=2 + 参考图全过；**部分档交付低清预览**（9:16 216x384/134KB、3:4 288x384、4:3 384x288、ref 384x384），同档其它次为 5-6MB 全清，疑取图节点抓到站点预览图，待查。
-  - Seedream 5.0 Flash（doubao）：8 档比例 + count=2 全过（1536x1536~2848x1600）；**参考图当前不可用**——豆包官网无 `input[type=file]` 上传入口（页面结构变更），Worker 硬闸门拒单、未提交不扣费，换号无效。
-  - Nano Banana Pro（gemini）：比例**只有 3:4 / 16:9 生效**，9:16 与 1:1 均实出 1024x559（16:9 缺省）——Worker `buildFillImageParamsScript` 在找不到宽高比控件时按设计跳过（`image-params-skipped:aspect-ratio-unavailable`），不报错；唯一 gemini 账号 `MicahMaconv@gmail.com` 掉登录后整链排队/取消，须重登。
-  - new-api 侧参数校验（免费负向）3/3 通过：非法比例、`seconds` 字段、data URI 参考图均返回 400。
-- **SeetaCloud 渠道（ch28，type 70，2026-11-08 改版收口，台账 `scripts/prod-ledger-seeta-v2omni-20261107.sql`、`scripts/prod-omni-price-20261108.sql`、`scripts/prod-retire-v2-20261108.sql`、`scripts/prod-omni-refvideo-billing-20261108.sql`）**：上游 = 自建 ArcReel H3 网关（`u1133789-a936-c07acd4f.westd.seetacloud.com:8443`，AutoDL ComfyUI 协议，裸 token）。**对外只留 `minimax_h3_omni`**（多模态参考 9 图+3 视频+3 音频+1080p）；`minimax_h3_v2` 已于 2026-11-08 退役下架（ch28 models / abilities / 卡片 / ModelPrice 键均已清理），只在 `workflowByModel` 保留隐藏映射供在途任务与回滚。基准价=生产 ModelPrice（omni `0.0027397260273972603`，即 ¥0.02/7.3）+ 代码 `defaultModelPrice`；倍率 480P 1.0 / 768p 2.0 / 1080p 3.0 在 `seeta/constants.go`，**改价必须两边成对改**。**2026-11-08 起 omni 参考视频按秒并入计费**：`seconds = 生成秒数 + 参考视频总秒数`（逐条解析 mvhd 四舍五入后相加，再乘档位倍率），探测在 validate 阶段完成、解析不出时长即 400 拒单（仅 MP4/MOV 可读），参考图/音频不额外收费。真机 4/4 出片（48-70s）+ 负向 3/3。**2026-11-08 输入模式收口（台账 `scripts/prod-omni-input-modes-20261108.sql`）**：上游按 payload 派生三档，纯文生＝零素材、图生/首尾帧＝只传 `metadata.first_frame`(+`last_frame`)、多参考＝带 `ref_image_N`/`ref_video_N`/`ref_audio_N`；`images` 是设定参考不是首帧。带参考视频/音频却无设定参考图、只给尾帧不给首帧，均在 `ValidateRequestAndSetAction` 本地 400（预扣费之前，不建单不扣费不 AutoBan），上游内部工作流 ID `minimax_h3_lightx2v*` 走全局脱敏。**纯文生/首尾帧本站未做端到端真机验证（用户选择先不跑）**。参考视频计费真机 1 条已验证：768p横 5s + 11s 参考 = 16 计费秒 / ¥0.64 / 1344×768 出片。契约细节见 `docs/agent-guides/channel-contracts.md` SeetaCloud 节。
+- **真机测试统一令牌（2026-11-16 用户拍板）**：所有真机视频测试一律用 token **id=144**（user 28 `admin`，非无限额度）。key 从生产库 `SELECT key FROM tokens WHERE id=144` 取、拼 `sk-` 前缀使用，不落仓库、不各脚本自建；提交前查 `users.quota`。
+- **图片模型与 m3only 沙箱组**：`Nano Banana Pro` / `Seedream 4.5` / `Seedream 5.0 Flash` 走 `POST /v1/videos` 任务协议（`/v1/images/generations` 一律 404），`gpt-image-2.5-官方` 走同步 images 且只回 b64_json。**后者目前无可用路由**（ch13 已手动禁用、唯一账号 OAuth 未恢复），别当在售模型描述。m3only 兜底组 = user 53 / token 166 / ch26·ch29·ch30，改动前备份 `bak_20261107_img_*`。协议差异、参数矩阵反证与未决项见 [image-models.md](docs/agent-guides/image-models.md)。
+- **SeetaCloud（ch28，type 70）**：上游=自建 ArcReel-H3 ComfyUI 实例，对外只留 `minimax_h3_omni`（`minimax_h3_v2` 已于 2026-11-08 退役）；参考视频按秒并入计费，输入模式三档由 payload 派生。协议/计费/脱敏细节见 [channel-contracts.md](docs/agent-guides/channel-contracts.md) SeetaCloud 节。
 - **部署链路**：本地提交 → `git push fork main`（远端只有 `fork`，没有 `origin`）→ 服务器 `bash /home/ubuntu/deploy-new-api.sh <short-sha>`（带 SHA 断言：docker build → 换容器 → 健康检查）。**服务器连不上 github**：push 后服务器 fetch 不到会 ABORT，须本地 `git bundle create x.bundle refs/heads/main ^<服务器HEAD>` 经 ssh 管道传入、服务器 `git fetch x.bundle main:refs/remotes/bundle/main` 后再部署。⚠️ ssh 管道写文件与后台化组合会把文件截断成 0 字节——传完必须 `wc -c` 验字节数。⚠️ `git bundle` 的正端**必须是引用名**（`main ^<sha>`），裸 SHA 当正端会报「Refusing to create empty bundle」（2026-11-14 实踩）。
-- **素材直传 COS（2026-11-14 上线，端到端真机已验）**：`POST /v1/files`（TokenAuth，不挂 Distribute；路由在 `router/video-router.go` 的 filesV1Router，**不在** relay-router——那里 `/v1/files` 其余方法仍是 RelayNotImplemented 占位）。流程：客户端带文件名调 `/v1/files` → 网关按 manwu 渠道转发 ArcReel `/api/v1/remote-generation/cos-upload/presign`（service token 鉴权，与 staging 同口径）→ 返回预签名 PUT URL（30 分钟）+ `object_url`（CDN）→ 客户端**直传**腾讯云 COS，字节不过网关（老机出口仅 3Mbps；境外素材源实测 67-79KB/s，ArcReel 代下载 60s 硬预算下单图 >4MB 必 400——直传后无此限制，上限 25MB/对象）。建单时引用 `object_url`，ArcReel 从 CDN 拉取 TTFB 0.1-0.3s。实现 `controller/files.go` + `relay/channel/task/manwu/cos_presign.go`；大小上限默认 200MB（`FILES_PRESIGN_MAX_MB` 可调）。
+- **素材直传 COS（`POST /v1/files`，2026-11-14 上线）**：预签名直传腾讯云，字节不过网关（老机出口 3Mbps，代下载 60s 预算下单图 >4MB 必 400）。流程、路由位置与扩展名白名单同步要求见 [remote-generation.md](docs/agent-guides/remote-generation.md)「素材直传 COS」节。
+
 
 ## 新生产实例（迁移目标机，2026-11-12 起建）
 
@@ -100,16 +84,13 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 | 新机部署 | `DEPLOY_HOST=newapi DEPLOY_PORT=22 deploy/deploy-backend.sh <sha>`（ssh config 别名 `newapi`/`newapi-root`；ubuntu 已入 docker 组）。**PowerShell 里裸 `bash` 是 WSL，env 不继承会误打老机**——必须走 Git Bash 且重定向到文件才能拿到输出。新机可直接 fetch github（不需要 bundle）。⚠️ 新机 new-api 容器由 deploy 脚本 `docker run` 管理，勿对 `/home/ubuntu/new-api/docker-compose.yml` 跑 `compose up`，会把镜像回退到迁移时的旧版 |
 | COS 直存 | options 键 `CosDirectSetting`（2026-11-12 已下发，密钥源 `/root/.cos.env`，下发脚本 `/root/cosdirect-provision.sh`）；wan3 非超分模型成片经 `SubmitDirectRelocate` 拉片直传桶 `hbd-video-1256715892`，占位符 `cos-proxy://` 取片时按桶匹配凭据预签名 302 |
 
-- 迁移传输走 **COS 广州内网**中转（老机公网出口实测仅 2.6Mbps，直传不可行）；COS 中转完成后删除中转前缀。
-- 新机产物链路规划：一期 COS 直存 + 302 预签名（无损，不过 MPS 转码），二期 CDN 域名；复用 `wan3/relocate.go` 的 `cos-proxy://` 协议。
-- 双机并行期：老机的 DB/options/sub2api OAuth 账号状态变更不会自动同步新机；配置冻结或两边手动同步，sub2api 账号异常先报用户拍板。**代码版本必须双机一致**，见「部署与计费硬约束」。
-
 ## 按需必读索引
 
 | 任务 | 先读 |
 |---|---|
 | 漫屋/ArcReel/Worker、参考图、模型名、文本/产物代理 | [remote-generation.md](docs/agent-guides/remote-generation.md) |
-| MiniMax/H3、MegaAI别名、三元巡狩、Wan3规格/计费差异 | [channel-contracts.md](docs/agent-guides/channel-contracts.md) |
+| MiniMax/H3、MegaAI/SD/CapCut/有赞各档、三元巡狩、Wan3规格/计费差异 | [channel-contracts.md](docs/agent-guides/channel-contracts.md) |
+| 图片模型（Nano Banana Pro / Seedream / gpt-image）、m3only 兜底组、图片参数反证 | [image-models.md](docs/agent-guides/image-models.md) |
 | 模型改名/调价、目录/能力/缓存、上下架、AutoBan恢复 | [pricing-catalog.md](docs/agent-guides/pricing-catalog.md) |
 | 支付/回调、补单、额度缓存、兑换码/订阅并发安全 | [payments.md](docs/agent-guides/payments.md) |
 | 发布护栏、安全探针、误建撤销、sub2api/OAuth | [production-operations.md](docs/agent-guides/production-operations.md) |

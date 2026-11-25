@@ -74,6 +74,25 @@
 - 验交付用历史 ready 产物和正确用户鉴权；不因一次官网 something-went-wrong 就认定网关错误，也不能把过去验过的链路当永久不会出故障。
 - 模型广场与调用能力分离，反解价格未核定前不因占位价对外展示。上限/参数变动同步边界测试与三仓实现，不只改常量。
 
+## 素材直传 COS（`POST /v1/files`，2026-11-14 上线，端到端真机已验）
+
+大素材走这条，不要走「网关代下载」：
+
+```text
+客户端带文件名 POST /v1/files
+  → 网关按 manwu 渠道转发 ArcReel /api/v1/remote-generation/cos-upload/presign（service token）
+  → 返回预签名 PUT URL（30 分钟）+ object_url（CDN）
+  → 客户端直传腾讯云 COS（字节不过网关）
+  → 建单时引用 object_url，ArcReel 从 CDN 拉取（TTFB 0.1–0.3s）
+```
+
+- 为什么不走网关中转：老机出口仅 3Mbps，境外素材源实测 67–79KB/s，而 ArcReel 代下载有
+  **60s 硬总预算** —— 单图 >4MB 必 400。直传后无此限制（上限 25MB/对象，`FILES_PRESIGN_MAX_MB`）。
+- 路由在 `router/video-router.go` 的 `filesV1Router`，**不在** relay-router
+  （那里 `/v1/files` 其余方法仍是 `RelayNotImplemented` 占位）。TokenAuth，不挂 Distribute。
+- 扩展名白名单两侧同源：`controller/files.go` 与 ArcReel `remote_cos_upload.py` 必须同步放宽/收紧。
+- 实现：`controller/files.go` + `relay/channel/task/manwu/cos_presign.go`。密钥只在 ArcReel 侧，网关不持有。
+
 ## 两档 sd- 视频模型（2026-11-22 上架）
 
 | 公开名 | 上游名 | 价格 | 参数 |
