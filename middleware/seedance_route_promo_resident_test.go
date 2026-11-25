@@ -174,6 +174,47 @@ func TestPromoShortOwnNon916FallsToDoubaoFast(t *testing.T) {
 		"16:9 改派到固定 9:16 的自营档 = 静默改画幅")
 }
 
+// TestPromoRuleSixLiftsWan3MediaToInputReference 规则六（16:9 → 豆包 Fast）与自营档同口径：
+// ArcReel 的有赞 Wan3 形状把参考图放在 metadata.input.media，manwu 只认顶层别名，
+// 不抬就是静默丢图。2026-11-25 任务 4047（特惠 / 15 秒 / 16:9 / 8 张图）实测
+// 上游回「抱歉，没有参考图」并全额退款。
+func TestPromoRuleSixLiftsWan3MediaToInputReference(t *testing.T) {
+	applyPromoPolicy(t, false, nil)
+
+	body := `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"15",` +
+		`"metadata":{"ratio":"16:9","input":{"media":[` +
+		`{"type":"reference_image","url":"https://cdn.example.com/1.png"},` +
+		`{"type":"reference_image","url":"https://cdn.example.com/2.png"}]}}}`
+	rec := runRouteFull(t, body)
+
+	decoded := decodeBody(t, rec.body)
+	assert.Equal(t, "seedance-2-0-fast", decoded["model"], "16:9 + 15 秒应走豆包 Fast")
+
+	refs, ok := decoded["input_reference"].([]interface{})
+	require.True(t, ok, "参考图必须抬到顶层 input_reference，否则 manwu 丢弃")
+	require.Len(t, refs, 2)
+	assert.Equal(t, "https://cdn.example.com/1.png", refs[0])
+
+	_, hasMeta := decoded["metadata"]
+	assert.False(t, hasMeta, "metadata 里的旧素材位置要剥掉，否则同图投两次")
+	assert.Equal(t, "16:9", decoded["ratio"], "metadata.ratio 必须抬到顶层，否则画幅丢失")
+}
+
+// TestPromoRuleSixSkipsDataURIReferenceImage 漫屋只收公网 http(s)：
+// data URI 参考图改派 Fast 必 400，规则六必须放弃（后续由常驻链路按 Wan3 体接手）。
+func TestPromoRuleSixSkipsDataURIReferenceImage(t *testing.T) {
+	applyPromoPolicy(t, false, nil)
+
+	body := `{"model":"seedance2.5-特惠","prompt":"a cat","seconds":"15",` +
+		`"metadata":{"input":{"media":[{"type":"reference_image","url":"data:image/png;base64,AAAA"}]}}}`
+	rec := runRouteFull(t, body)
+
+	decoded := decodeBody(t, rec.body)
+	assert.NotEqual(t, "seedance-2-0-fast", decoded["model"],
+		"data URI 参考图不能改派豆包 Fast（会被上游 400/丢图）")
+	assert.NotNil(t, decoded["metadata"], "素材仍保留在 Wan3 形状里交给能处理它的链路")
+}
+
 // TestPromoShortOwnAccepts9Images 9 张参考图是自营档的上限（官网 Video 档口径），必须路由成功。
 func TestPromoShortOwnAccepts9Images(t *testing.T) {
 	applyPromoPolicy(t, true, nil)

@@ -1306,9 +1306,12 @@ func prepareShortYouzanRoute(c *gin.Context, body map[string]interface{}, target
 //   - 目标渠道可用性：没渠道就不改写（改写后重试只会用同一个模型名重选渠道，
 //     不会退回源模型，客户会直接失败）。
 //
-// 改写：只换 model、把触发判定拿到的秒数落成顶层 seconds。
-// 分辨率 / size / 比例 / 参考图原样保留 —— manwu 的字段解析顺序与有赞不同，
-// 多改一处就多一处丢参风险。
+// 改写：与规则一/九同一套转换（rewriteBodyForDoubaoWithDuration）——
+// 参考图从源链路的 media / metadata.input.media 抬到顶层 input_reference，
+// 分辨率抬到顶层 resolution，比例抬到顶层 ratio，秒数落成顶层 seconds，
+// 并整块剥掉 metadata。**不能只换 model 原样透传**：
+// manwu 只读顶层白名单字段，素材留在 metadata 里会被静默丢弃
+// （2026-11-25 任务 4047：特惠 / 15 秒 / 16:9 / 8 张图 → 上游「没有参考图」并退款）。
 func prepareShortFastRoute(c *gin.Context, body map[string]interface{}, targetModel string, seconds int) (map[string]interface{}, bool) {
 	if hasFrameMedia(body) {
 		logger.LogInfo(c, "条件路由跳过短时长豆包 Fast：请求带首尾帧")
@@ -1323,21 +1326,7 @@ func prepareShortFastRoute(c *gin.Context, body map[string]interface{}, targetMo
 			"条件路由跳过短时长豆包 Fast：目标 %s 在当前分组下没有可用渠道", targetModel))
 		return nil, false
 	}
-	return rewriteBodyForShortFast(body, targetModel, seconds), true
-}
-
-// rewriteBodyForShortFast 只换 model、把秒数落成顶层 seconds，其余字段原样保留。
-func rewriteBodyForShortFast(body map[string]interface{}, target string, seconds int) map[string]interface{} {
-	out := make(map[string]interface{}, len(body)+2)
-	for key, value := range body {
-		if key == "model" {
-			continue
-		}
-		out[key] = value
-	}
-	out["model"] = target
-	out["seconds"] = strconv.Itoa(seconds)
-	return out
+	return rewriteBodyForDoubaoWithDuration(c, body, seedanceroute_setting.Policy{}, targetModel, seconds)
 }
 
 // shortRouteResolution 返回「源链路实际生效的分辨率档」，供改派时显式钉住。
