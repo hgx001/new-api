@@ -216,11 +216,13 @@ export function isPerSecondModel(model: PricingModel): boolean {
   }
   // 豆包 Seedance 2.0 Fast 按秒（¥0.10/秒）；豆包 2.5 按次（¥5/次），不命中。
   // 2026-11-22 起 `seedance-2-0`（2.0 标准版，¥0.25/秒）也走这条前缀判定。
-  // `seedance-2-5-flash`（2.5 Flash，¥0.25/秒）单独登记：它**不**匹配
-  // `seedance-2-0` 前缀，也不是按次的 `seedance-2-5`，漏登记就会挂成「/次」。
-  if (name === 'seedance-2-5-flash') {
-    return true
-  }
+  //
+  // ⚠️ `seedance-2-5-flash` 曾经在这里（2026-11 初是 ¥0.25/秒，`b2dd3e3fd` 加的），
+  // 但 **2026-11-23 起已改成按条一口价 ¥4.0/条（4–30 秒同价）**，
+  // 后端 `constant.TaskPerCallModels` 有它、adaptor 的 EstimateBilling 返回 nil。
+  // 留着就是反向错价：广场会显示「¥4.0/秒」，客户按 4 秒算成 ¥16。
+  // 它**不**匹配下面的 `seedance-2-0` 前缀，也不属于任何按秒族，天然落到「/次」。
+  // 回归守卫：billing-unit-crosscheck.test.ts 直接读 Go 的 TaskPerCallModels。
   // Higgsfield 的 Seedance 2.5（2026-11-25 上架，公开名 sd-seedance-2.5）：
   // **按秒** ¥0.25/秒、分辨率固定 720p、时长 4–30 秒。
   // ⚠️ 必须精确匹配：`sd-seedance-2.0*`（TikTok Symphony）与

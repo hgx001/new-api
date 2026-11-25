@@ -2,8 +2,13 @@ package manwu
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestHiggsfieldSpecRegistered(t *testing.T) {
@@ -74,4 +79,50 @@ func TestHiggsfieldDescriptionMentionsFixedSpec(t *testing.T) {
 			t.Fatalf("上架脚本缺少 %q", want)
 		}
 	}
+}
+
+// EstimateBilling 必须给 seconds —— 否则不管时长都只扣 1 秒的价。
+//
+// 2026-11-25 生产台账：`sd-seedance-2.5` 从 06:04 到 10:03 的 12 条任务
+// 全部 quota=17123（= ¥0.25，ModelPrice 原值），4 秒的片子少收 ¥0.75、
+// 30 秒的少收 ¥7.25。根因是 EstimateBilling 没有 higgsfield 分支，
+// 直连请求也没有 `applyRouteBillingSeconds` 兜底。
+func TestHiggsfieldEstimateBillingReturnsSeconds(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		body     string
+		wantSecs float64
+	}{
+		{"4 秒下限", `{"model":"sd-seedance-2.5","prompt":"x","duration":4}`, 4},
+		{"15 秒", `{"model":"sd-seedance-2.5","prompt":"x","duration":15}`, 15},
+		{"30 秒上限", `{"model":"sd-seedance-2.5","prompt":"x","duration":30}`, 30},
+		{"缺省 5 秒", `{"model":"sd-seedance-2.5","prompt":"x"}`, 5},
+	} {
+		c, info, a := postVideoCtx(t, tc.body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), tc.name)
+		assert.Equal(t, map[string]float64{"seconds": tc.wantSecs}, a.EstimateBilling(c, info), tc.name)
+	}
+	// 它绝不能进按次名单：两边一起命中会互相抵消（按次名单挡倍率、adaptor 又给 seconds）。
+	assert.False(t, constant.IsTaskPerCallModel(ModelHiggsfield25),
+		"sd-seedance-2.5 按秒计价，不能登记进 TaskPerCallModels")
+}
+
+// TikTok Symphony 的 sd- 两档同为按秒，但 `tk-symphony-1.5pro` 是另一件商品：
+// 手写 kind 判断会把它一起乘上秒数，所以必须按**精确模型名**判断。
+func TestTiktokPerSecondModelsEstimateBilling(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		secs  float64
+	}{
+		{ModelTiktok20Fast, 10},
+		{ModelTiktok20, 5},
+	} {
+		body := `{"model":"` + tc.model + `","prompt":"x","duration":` + strconv.Itoa(int(tc.secs)) + `}`
+		c, info, a := postVideoCtx(t, body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), tc.model)
+		assert.Equal(t, map[string]float64{"seconds": tc.secs}, a.EstimateBilling(c, info), tc.model)
+	}
+	// 1.5 Pro 不在按秒子集里，必须仍是 nil（否则 ¥x/次 会被乘成 ¥x×秒）。
+	assert.False(t, constant.IsTiktokPerSecond(ModelTikTokSymphony),
+		"tk-symphony-1.5pro 不按秒，不能被按秒判定命中")
 }

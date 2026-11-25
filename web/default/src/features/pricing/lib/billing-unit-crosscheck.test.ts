@@ -154,6 +154,61 @@ function loadBackendFamily(): {
   }
 }
 
+/**
+ * 后端「站内一口价商品」名单（仓库根的 constant/task_billing_mode.go）。
+ *
+ * 与 seedance25_family.go 分开读的原因：那份只管促销能力组，
+ * 而 `seedance-2-5-flash`（豆包 2.5 Flash）属于「不属于任何族、但按条一口价」
+ * 的商品，登记在 `TaskPerCallModels` 里。2026-11-23 把它从按秒¥0.25 改成
+ * 按条¥4.0 时，前端没同步 → 广场显示「¥4.0/秒」（客户按 4 秒算成¥16），
+ * 这道断言就是为了让这类反向漂移在 CI 里当场变红。
+ */
+const BACKEND_PER_CALL_FILE = join(
+  fileURLToPath(new URL('.', import.meta.url)),
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  '..',
+  'constant',
+  'task_billing_mode.go'
+)
+
+/**
+ * 解析 `var X = map[string]bool{"字面名": true,}` 这种**字面量键**的 Go map。
+ *
+ * 与 parseGoBoolMap 的区别：那边键是常量标识符（需要再去 const 块解析），
+ * 这里直接是模型名字符串。注释行（`// ...`）自然会因为不匹配而跳过。
+ */
+function parseGoLiteralKeysMap(source: string, varName: string): string[] {
+  const startMarker = `var ${varName} = map[string]bool{`
+  const start = source.indexOf(startMarker)
+  assert.notEqual(
+    start,
+    -1,
+    `后端 constant/task_billing_mode.go 里找不到 ${varName} —— ` +
+      '前端交叉校验依赖这份名单，请确认定义没被改名或移走'
+  )
+  const end = source.indexOf('\n}', start)
+  assert.notEqual(end, -1, `${varName} 的 map 字面量没有闭合`)
+    const body = source.slice(start + startMarker.length, end)
+  const members: string[] = []
+  const entryPattern = /^\s*"([^"]+)":\s*true\s*,?\s*$/gm
+  let match: RegExpExecArray | null
+  while ((match = entryPattern.exec(body)) !== null) {
+    members.push(match[1])
+  }
+  return members
+}
+
+function loadBackendTaskPerCallModels(): string[] {
+  return parseGoLiteralKeysMap(
+    readFileSync(BACKEND_PER_CALL_FILE, 'utf-8'),
+    'TaskPerCallModels'
+  )
+}
+
 function pricingModel(modelName: string): PricingModel {
   return {
     id: 1,
@@ -232,5 +287,24 @@ describe('后端按秒模型清单 × 前端 isPerSecondModel', () => {
       false,
       'seedance2.5-活动 是按次档，前端必须显示「/次」'
     )
+  })
+
+  // ── 站内一口价商品（constant.TaskPerCallModels）──────
+  //
+  // 2026-11-25 真机发现的反向漂移：`seedance-2-5-flash` 在 2026-11-23 后端
+  // 由「按秒¥0.25」改成「按条¥4.0（4–30 秒同价）」并登记进 TaskPerCallModels，
+  // 但前端 isPerSecondModel 里旧分支没删 → 广场显示「¥4.0/秒」，
+  // 客户按 4 秒一算就是 ¥16，文字描述却写着「按条计费 ¥4.0/条」。
+  test('后端 TaskPerCallModels 成员在前端一律显示 /次', () => {
+    const members = loadBackendTaskPerCallModels()
+    assert.ok(members.length > 0, 'TaskPerCallModels 不应为空（否则本用例失去意义）')
+    for (const name of members) {
+      assert.equal(
+        isPerSecondModel(pricingModel(name)),
+        false,
+        `后端把 ${name} 定义为一口价（TaskPerCallModels），前端却会显示「/秒」 —— ` +
+          '这是静默超收观感：请从 isPerSecondModel 里删掉该模型（或它命中的前缀/集合）'
+      )
+    }
   })
 })

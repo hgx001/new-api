@@ -163,12 +163,13 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(isPerSecondModel(autoDLModel('seedance-2.5')), false)
   })
 
-  // 豆包 Seedance 2.5 Flash（2026-11-22 上架，¥0.25/秒）：既不是 `seedance-2-0`
-  // 前缀（那条只覆盖 2.0 两档），也不是按次的 `seedance-2-5` → 必须单列，
-  // 否则广场会把每秒价挂在「/次」下（与 seedance-2-0-fast 同类的静默错价）。
-  test('marks doubao seedance-2-5-flash per second', () => {
-    assert.equal(isPerSecondModel(autoDLModel('seedance-2-5-flash')), true)
-    // 两个近名不能被串档：按次的 2.5 本体、CapCut 的 cp- 版本
+  // 豆包 Seedance 2.5 Flash：2026-11-23 起从「按秒 ¥0.25」改成**按条一口价 ¥4.0/条**
+  // （4–30 秒同价，后端 `constant.TaskPerCallModels` 有它、EstimateBilling 返回 nil）。
+  // 所以前端必须显示「/次」—— 旧口径（按秒）留着就会把 ¥4.0 报成「/秒」，
+  // 客户按 4 秒一算就是 ¥16。
+  test('marks doubao seedance-2-5-flash per request (pricing changed 2026-11-23)', () => {
+    assert.equal(isPerSecondModel(autoDLModel('seedance-2-5-flash')), false)
+    // 两个近名不能被串档：按次的 2.5 本体、CapCut 的 cp- 版本（那两档真按秒）
     assert.equal(isPerSecondModel(autoDLModel('seedance-2-5')), false)
     assert.equal(isPerSecondModel(autoDLModel('cp-seedance-2.5flash')), true)
   })

@@ -1536,6 +1536,23 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, _ *relaycommon.RelayInfo) 
 	if req.Kind == kindDoubaoVideo && (req.Model == ModelDoubao20Fast || req.Model == ModelDoubao20) && req.Duration > 0 {
 		return map[string]float64{"seconds": float64(req.Duration)}
 	}
+	// 按秒的视频族：TikTok Symphony 的 sd-seedance-2.0 两档、higgsfield 的
+	// sd-seedance-2.5。
+	//
+	// ⚠️ 2026-11-25 补：之前这两族**没有分支**，EstimateBilling 直接落到末尾
+	// `return nil` → 不管时长都只扣「1 秒」的价。真机台账：
+	// `sd-seedance-2.5` 从 06:04 到 10:03 的每一条都是 ¥0.25（ModelPrice 原值），
+	// 4 秒的片子少收 ¥0.75、30 秒的片子少收 ¥7.25。
+	//
+	// 为什么以前没暴露：改派进来的单子（如 seedance2.5-特惠 → sd-seedance-2.0fast）
+	// 由 `relay_task.go::applyRouteBillingSeconds` 用源模型口径补了 seconds；
+	// **直连请求没有任何兜底**。
+	//
+	// 用能力组的按秒子集而不是手写模型名：`tk-symphony-1.5pro` 与 sd- 两档同属
+	// kindTikTokVideo，但它是另一件商品（不按秒），手写 `kind` 判断会把它一起乘上秒数。
+	if req.Duration > 0 && (constant.IsTiktokPerSecond(req.Model) || constant.IsHiggsfieldPerSecond(req.Model)) {
+		return map[string]float64{"seconds": float64(req.Duration)}
+	}
 	// CapCut 五档模型**统一按秒**：ModelPrice 配 480p 基准单价（元/秒），
 	// EstimateBilling 给 seconds 倍率；720p 再乘一个 size 倍率。
 	//
