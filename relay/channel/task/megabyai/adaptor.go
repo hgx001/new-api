@@ -376,6 +376,62 @@ type megaVideoResult struct {
 	} `json:"output"`
 }
 
+// ConvertToOpenAIVideo 把 `GET /v1/videos/{id}` 的响应改写成**对客口径**。
+//
+// 为什么必须覆盖（2026-11-24 真机发现）：不覆盖时走 Sora 的「透传上游回执」，
+// 而上游（newapi.megabyai.cc）的回执里带着三类**不能给客户**的东西：
+//
+//  1. url / video_url / metadata.final_video_url / metadata.origin_video_url
+//     = 它自己的对象存储直链（R2，路径里带 hailuo-video —— 直接报出真实货源）；
+//  2. billing_amount / billing_quota / billing_currency = **上游成本**（我们的进货价）；
+//  3. metadata.upstream_task_id = 上游任务号。
+//
+// 客户拿到任何一样都能反推货源与毛利。所以这里不「修补」而是**按白名单重建**：
+// 只保留 OpenAI Video 契约里的通用字段（status / progress / seconds / size …），
+// 下载地址一律换成本站 /content 代理，失败原因走脱敏。
+//
+// ⚠️ 新增字段时先想一遍「这个值是不是只能从上游回执里拿」：能自己算的就自己算，
+//
+//	从上游回执里捡的必须逐项确认不含货源/成本信息。
+func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
+	if task == nil {
+		return nil, fmt.Errorf("nil task")
+	}
+	origin := task.PublicModelName()
+	video := dto.NewOpenAIVideo()
+	video.ID = task.TaskID
+	video.TaskID = task.TaskID // 兼容旧接口字段
+	video.Model = origin
+	video.Status = task.Status.ToVideoStatus()
+	video.SetProgressStr(task.Progress)
+	video.CreatedAt = task.CreatedAt
+	video.CompletedAt = task.UpdatedAt
+	// 规格字段（seconds / size）是客户买的东西，不涉及货源 —— 从上游回执里捡回。
+	if len(task.Data) > 0 {
+		var spec struct {
+			Seconds string `json:"seconds"`
+			Size    string `json:"size"`
+		}
+		if err := common.Unmarshal(task.Data, &spec); err == nil {
+			video.Seconds = strings.TrimSpace(spec.Seconds)
+			video.Size = strings.TrimSpace(spec.Size)
+		}
+	}
+	switch task.Status {
+	case model.TaskStatusSuccess:
+		if task.TaskID != "" {
+			video.SetMetadata("url", taskcommon.BuildProxyURL(task.TaskID))
+		}
+	case model.TaskStatusFailure:
+		video.Error = &dto.OpenAIVideoError{Message: model.RedactUpstreamText(task.FailReason, origin)}
+	}
+	encoded, err := common.Marshal(video)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
 // ParseTaskResult 解析轮询结果。
 //
 // 不用 Sora 适配器的严格解析当唯一来源：上游错误字段可能是对象、字符串或自定义结构，
@@ -493,9 +549,4 @@ func megaFailureReason(parsed megaVideoResult) string {
 		}
 	}
 	return strings.TrimSpace(parsed.FailReason)
-}
-
-func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
-	a.ensureSub()
-	return a.sub.(channel.OpenAIVideoConverter).ConvertToOpenAIVideo(originTask)
 }

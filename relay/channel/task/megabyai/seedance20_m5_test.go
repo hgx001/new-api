@@ -29,6 +29,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -226,4 +228,79 @@ func TestT3RetiredFromModelList(t *testing.T) {
 	}
 	require.True(t, megabyaiUnifiedContractModels[T3Seedance25Model],
 		"已下架的模型仍要走统一参数契约：在途单的轮询/取片不能因为下架改道")
+}
+
+// ── 对客响应体不得泄露上游货源 / 成本（2026-11-24 真机发现）──
+//
+// 上游（newapi.megabyai.cc）的轮询回执里带着：
+//
+//	url / video_url / metadata.final_video_url / metadata.origin_video_url —— R2 直链，
+//	  路径里带 hailuo-video，直接报出真实货源；
+//	billing_amount / billing_quota / billing_currency —— 我们的**进货价**；
+//	metadata.upstream_task_id —— 上游任务号。
+//
+// 未覆盖 ConvertToOpenAIVideo 时这些会经 sora 的「透传上游回执」原样发给客户。
+func TestConvertToOpenAIVideoHidesUpstream(t *testing.T) {
+	raw := `{"billing_amount":0.64,"billing_currency":"CNY","billing_quota":320000,"billing_status":"settled",` +
+		`"completed_at":1795571684,"created_at":1795571334,"generated_seconds":4,"reference_video_seconds":2,` +
+		`"id":"task_x","task_id":"task_x","model":"seedance-2.0-fast-m5","object":"video","progress":100,` +
+		`"status":"completed","seconds":"4","size":"480p",` +
+		`"url":"https://abc.r2.cloudflarestorage.com/hailuo-video/aggregate/videos/vid_1.m4v?X-Amz-Signature=x",` +
+		`"video_url":"https://abc.r2.cloudflarestorage.com/hailuo-video/aggregate/videos/vid_1.m4v?X-Amz-Signature=x",` +
+		`"metadata":{"final_video_url":"https://abc.r2.cloudflarestorage.com/hailuo-video/aggregate/videos/vid_1.m4v",` +
+		`"origin_video_url":"https://abc.r2.cloudflarestorage.com/hailuo-video/aggregate/videos/vid_1.m4v",` +
+		`"upstream_task_id":"vid_1"}}`
+
+	task := &model.Task{
+		TaskID: "task_x",
+		Status: model.TaskStatusSuccess,
+		Data:   []byte(raw),
+	}
+	task.Properties.OriginModelName = Seedance20FastM5Model
+	task.PrivateData.ResultURL = "https://our.example/v1/videos/task_x/content"
+
+	adaptor := &TaskAdaptor{}
+	encoded, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	body := string(encoded)
+
+	for _, leak := range []string{
+		"r2.cloudflarestorage.com", "hailuo-video", // 上游存储域名 + 货源目录
+		"billing_amount", "billing_quota", "billing_currency", // 上游成本
+		"upstream_task_id", "vid_1", // 上游任务号
+	} {
+		assert.NotContains(t, body, leak, "对客响应体不得出现 %q", leak)
+	}
+
+	var video map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &video))
+	assert.Equal(t, "task_x", video["id"])
+	assert.Equal(t, Seedance20FastM5Model, video["model"])
+	assert.Equal(t, "completed", video["status"])
+	assert.Equal(t, "4", video["seconds"], "seconds/size 是客户可见规格，可以保留")
+	meta, ok := video["metadata"].(map[string]any)
+	require.True(t, ok, "成功任务要给 metadata.url（下载地址）")
+	assert.Contains(t, meta["url"], "/v1/videos/task_x/content",
+		"下载地址必须是本站代理（前缀取 ServerAddress，测试环境是 localhost）")
+	assert.NotContains(t, meta["url"], "r2.cloudflarestorage.com")
+}
+
+// 失败任务：不得在响应体里回显上游原文（含上游地址），只在 error.message 里给出脱敏原因。
+func TestConvertToOpenAIVideoFailureRedacted(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_y",
+		Status:     model.TaskStatusFailure,
+		FailReason: "上游 megabyai 拒绝了请求：https://abc.r2.cloudflarestorage.com/hailuo-video/x.m4v",
+	}
+	task.Properties.OriginModelName = Seedance20M5Model
+
+	adaptor := &TaskAdaptor{}
+	encoded, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	body := string(encoded)
+	assert.NotContains(t, body, "r2.cloudflarestorage.com")
+	assert.NotContains(t, body, "megabyai")
+	assert.NotContains(t, body, "hailuo-video")
+	assert.Contains(t, body, "failed")
 }
