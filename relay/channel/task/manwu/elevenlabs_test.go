@@ -193,6 +193,80 @@ func TestBuildRequestBodyMapsElevenlabsPayload(t *testing.T) {
 	}
 }
 
+// 参考图上限必须**按档位**（2026-11-26 生产事故）。
+//
+// 用户给 `el-seedance-2.5` 传 12 张参考图，在公共段按全局 maxReferenceImages=10 拒单：
+//
+//	reason=reference_images_too_many
+//	detail=manwu accepts at most 10 reference images, got 12
+//
+// 而 Worker（src/platforms/elevenlabs/params.ts ELEVENLABS_REFERENCE_CAPS）与官网口径：
+//
+//	seedance_2.5 / 2.5_flash / gemini_1_2_flash → 30 张
+//	seedance_2.0 / 2.0_fast / 2.0_mini           → 9 张
+//
+// 缺 kindElevenlabsVideo 分档 → 2.5 档被误压到 10 张；不分档还会反向放开 mini 到 30 张，
+// 让官网/Worker 在更晚的环节才拒（预扣已发生）。
+func TestElevenlabsReferenceImageLimitPerModel(t *testing.T) {
+	cases := []struct {
+		model string
+		want  int
+	}{
+		{ModelElevenlabs25, 30},
+		{ModelElevenlabs20Mini, 9},
+		{ModelElevenlabsGemini, 30},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, elevenlabsReferenceImageLimit(tc.model), tc.model)
+	}
+}
+
+// 上限内的张数必须放行（12 张是事故原样）。
+func TestElevenlabsReferenceImagesWithinCapAccepted(t *testing.T) {
+	cases := []struct {
+		model string
+		count int
+	}{
+		{ModelElevenlabs25, 12},
+		{ModelElevenlabs25, 30},
+		{ModelElevenlabs20Mini, 9},
+		{ModelElevenlabsGemini, 12},
+	}
+	for _, tc := range cases {
+		body := fmt.Sprintf(`{"model":%q,"prompt":"hi","duration":5,"input_reference":%s}`, tc.model, manyImages(tc.count))
+		c, info, a := postVideoCtx(t, body)
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info), "%s × %d 张必须放行", tc.model, tc.count)
+	}
+}
+
+// 超出**本档**上限才拒，且错误码/可读原因保持既有契约。
+func TestElevenlabsReferenceImagesOverCapRejected(t *testing.T) {
+	cases := []struct {
+		model string
+		count int
+	}{
+		{ModelElevenlabs25, 31},
+		{ModelElevenlabs20Mini, 10},
+	}
+	for _, tc := range cases {
+		body := fmt.Sprintf(`{"model":%q,"prompt":"hi","duration":5,"input_reference":%s}`, tc.model, manyImages(tc.count))
+		c, info, a := postVideoCtx(t, body)
+		taskErr := a.ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr, "%s × %d 张必须拒", tc.model, tc.count)
+		assert.Equal(t, "invalid_input_reference", taskErr.Code, tc.model)
+		assert.Contains(t, taskErr.Message, "reason=reference_images_too_many", tc.model)
+	}
+}
+
+// 回归：ElevenLabs 分档不得顺手放开其它 manwu 档的 10 张硬上限。
+func TestNonElevenlabsManwuStillRejectsElevenImages(t *testing.T) {
+	c, info, a := postVideoCtx(t, `{"model":"seedance-2.0","prompt":"hi","input_reference":`+manyImages(11)+`}`)
+	taskErr := a.ValidateRequestAndSetAction(c, info)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, "invalid_input_reference", taskErr.Code)
+	assert.Contains(t, taskErr.Message, "reason=reference_images_too_many")
+}
+
 // 豆包 Seedance 2.0 **标准版**（2026-11-22 上架，按秒 ¥0.25）。
 //
 // 与 dola 的 `seedance-2.0`（点号）、CapCut 的 `cp-seedance-2.0` 是三个不同商品，

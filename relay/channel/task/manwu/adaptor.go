@@ -118,6 +118,21 @@ const (
 	// （另有一条不同维度的限制：豆包官网对「多参考图 + 大量角色锁定」有内容难度门槛，
 	// 那由 ranjing-ai 侧 contentDifficulty.ts 识别并换号，与张数上限无关。）
 	maxReferenceImages = 10
+	// ElevenLabs 档的参考图上限**按模型分档**（2026-11-26 生产事故）。
+	//
+	// 事故：用户给 `el-seedance-2.5` 传 12 张，在公共段被全局 maxReferenceImages=10
+	// 拒掉（reason=reference_images_too_many）。而 Worker
+	// （cron_video_brach src/platforms/elevenlabs/params.ts ELEVENLABS_REFERENCE_CAPS）
+	// 与官网口径是：
+	//   seedance_2.5 / 2.5_flash / gemini_1_2_flash → images 30
+	//   seedance_2.0 / 2.0_fast / 2.0_mini           → images 9
+	// 不分档还会反向放开 mini 到 30 张，让 Worker/官网在预扣之后才拒单。
+	//
+	// ⚠️ 这是 images 单类名额；视频/音频名额（2.5 系 10/10、2.0 系 3/3）与参考图
+	// 独立计数，不在本常量表达。
+	elevenlabsMaxReferenceImages25     = 30
+	elevenlabsMaxReferenceImages20Mini = 9
+
 	// maxReferenceVideos 反解只认 1 个视频：ArcReel create_job 硬约束「视频反解
 	// 任务必须且只能携带 1 个参考视频」，多传会被上游 400。
 	maxReferenceVideos = 1
@@ -1009,6 +1024,11 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	referenceImageLimit := maxReferenceImages
 	if spec.Kind == kindCapcutVideo {
 		referenceImageLimit = capcutMaxReferenceImages
+	}
+	if spec.Kind == kindElevenlabsVideo {
+		// ElevenLabs 上限按模型分档（2.5 系 30 / 2.0 mini 9），与 Worker 同口径。
+		// 漏这一段 = 2.5 档的 11~30 张被全局 10 张误拒（2026-11-26 事故）。
+		referenceImageLimit = elevenlabsReferenceImageLimit(req.Model)
 	}
 	if spec.Kind == kindTikTokVideo {
 		// 官网 Video 档收 9 张（"maximum of 9 images"，2026-11-22 真机取证）；
@@ -3405,6 +3425,21 @@ func rejectReferenceRequest(c *gin.Context, model string, err error) *dto.TaskEr
 		fmt.Errorf("%w（reason=%s）", err, reason),
 		"invalid_input_reference", http.StatusBadRequest,
 	)
+}
+
+// elevenlabsReferenceImageLimit 返回 ElevenLabs 档**按模型**的参考图上限。
+//
+// 已注册的三档里（其余 2.0 / 2.0 Fast 未在本渠道售卖）：
+//   - `el-seedance-2.0mini` → 9 张（Worker caps：2.0 系统一 9）；
+//   - 2.5 / 2.5 Flash（上游真名）与 Gemini Omni → 30 张。
+//
+// 为什么不能沿用全局 maxReferenceImages=10：2.5 档的 11~30 张是合法请求
+// （2026-11-26 事故：12 张被误拒）；而 mini 放开到 30 又会让官网在预扣后拒单。
+func elevenlabsReferenceImageLimit(model string) int {
+	if strings.TrimSpace(model) == ModelElevenlabs20Mini {
+		return elevenlabsMaxReferenceImages20Mini
+	}
+	return elevenlabsMaxReferenceImages25
 }
 
 // resolveReferenceImages 解析参考图：按 referenceImageFields 的优先级取第一个有值的字段。
