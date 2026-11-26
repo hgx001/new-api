@@ -371,6 +371,9 @@ func validateExplicitDurationForModel(req relaycommon.TaskSubmitReq) *dto.TaskEr
 	switch {
 	case isWan30ProModel(req.Model):
 		lowerBound = wan30ProMinDuration
+	case isMagi2Model(req.Model):
+		// MAGI-2 上游三档分辨率都是 4–30 秒，下界 4 秒。
+		lowerBound = magi2MinDuration
 	case isWan30Model(req.Model):
 		// wan-3.0 实测硬边界 10 秒：上游原文 "Duration 4s is outside the
 		// allowed range 10-30 seconds for model wan-3.0"。
@@ -623,6 +626,14 @@ func validateGenerationSecondsWithReferenceVideo(c *gin.Context, media []relayco
 	if !hasReferenceVideo(media) {
 		return nil
 	}
+	// MAGI-2 的生成时长与参考素材时长是两条独立上限（各 30 秒，文档原文
+	// 「单段 2–30 秒，累计最多 30 秒」+「各支持 4–30 整数秒」）——
+	// 没有「有参考就只能生成 15 秒」这条约束，套上会把能跑的单挡掉。
+	if c != nil {
+		if taskReq, err := relaycommon.GetTaskRequest(c); err == nil && isMagi2Model(taskReq.Model) {
+			return nil
+		}
+	}
 	if generation <= maxGenerationSecondsWithVideo {
 		return nil
 	}
@@ -658,9 +669,20 @@ func (a *TaskAdaptor) setReferenceVideoSeconds(c *gin.Context, media []relaycomm
 	}
 	// 合计上限：上游官方约束「参考视频总时长 ≤ 15 秒」（与 wan3.0-video-官网同源）。
 	// 单条各 15 秒但总共 70 秒的组合同样会被上游拒，本地提前拦。
-	if total > maxTotalReferenceVideoSeconds {
+	//
+	// ⚠️ MAGI-2 的口径不同：文档写「单段 2–30 秒，累计最多 30 秒」。套 15 秒会
+	// 把上游接受的 16–30 秒素材本地 400 掉（客户照上游文档传 20 秒参考片被拒）。
+	limit := maxTotalReferenceVideoSeconds
+	// ⚠️ MAGI-2 的口径不同：文档写「单段 2–30 秒，累计最多 30 秒」。套 15 秒会
+	// 把上游接受的 16–30 秒素材本地 400 掉（客户照上游文档传 20 秒参考片被拒）。
+	if c != nil {
+		if taskReq, err := relaycommon.GetTaskRequest(c); err == nil && isMagi2Model(taskReq.Model) {
+			limit = magi2MaxReferenceSeconds
+		}
+	}
+	if total > limit {
 		return newReferenceLimitError("参考视频总时长 %d 秒超过 %d 秒上限，请裁剪后重试",
-			total, maxTotalReferenceVideoSeconds)
+			total, limit)
 	}
 	if total > 0 {
 		c.Set(refVideoSecondsContextKey, total)
@@ -706,6 +728,22 @@ func isWan30ProModel(model string) bool {
 //
 // 之所以必须单独判：所有分模型判断都要先认它，否则会落进旧标准版分支，
 // 发出 resolution+ratio 组合 → 上游回 "unsupported resolution or ratio"。
+// isMagi2Model 判断是不是 MAGI-2（2026-11-25 上架）。
+//
+// 它的边界与标准版/wan-3.0-pro 都不同：
+//   - 时长 4–30 秒（三档分辨率都一样）；
+//   - 参数形态是 **duration（整数）+ resolution（小写）+ ratio**，
+//     素材走顶层 **image_urls / video_urls / audio_urls**；
+//   - **按条计价 + 分辨率档**（480p ¥3.5 / 720p ¥3.9 / 1080p ¥3.9）；
+//   - 缺省分辨率是 **1080P**（其它模型都是最低档），画幅缺省 16:9；
+//   - 参考音视频单条与合计上限都是 **30 秒**（其它模型是 15 秒）。
+//
+// 所有分模型判断都要先认它，否则会落进标准版分支（10 秒下界 + 禁音视频 +
+// 按秒计费），表现是「客户按文档传 5 秒被拒」或「按秒多收」。
+func isMagi2Model(model string) bool {
+	return strings.TrimSpace(model) == magi2Model
+}
+
 func isWan30Model(model string) bool {
 	return strings.TrimSpace(model) == wan30Model
 }
@@ -869,9 +907,9 @@ func upstreamModelFor(model string) (string, error) {
 	case wan30ProModel:
 		// 公开名与上游 ID 完全一致（文档要求「请求使用精确模型 ID」）。
 		return wan30ProModel, nil
-	case hkWan3Model:
+	case hkWan3Model, magi2Model:
 		// 公开名 == 上游 ID，恒等映射（与 /v1/models 逐字一致）。
-		return hkWan3Model, nil
+		return strings.TrimSpace(model), nil
 	case r2vModel:
 		return "", errors.New("youzan wan2.7-r2v is not exposed by the current upstream API")
 	default:
@@ -979,6 +1017,17 @@ func normalizeResolutionForModel(model, resolution string) string {
 		}
 		return ""
 	}
+	if isMagi2Model(model) {
+		// MAGI-2：480P / 720P / 1080P 三档**逐档定价**（¥3.5 / ¥3.9 / ¥3.9）。
+		// 三档全放行 —— 480P 是最便宜的一档，不能像旧标准版那样静默升到 720P
+		// （那是「客户要便宜档、我们按贵档收」）。
+		switch resolution {
+		case "480P", "720P", "1080P":
+			return resolution
+		default:
+			return ""
+		}
+	}
 	if isHkWan3Model(model) {
 		// hk-wan3：480P / 720P / 1080P 三档都在售（上游分档计价 0.11/0.21/0.41）。
 		// 三档全部放行 —— 480P 是三档里最便宜的一档，不能像旧标准版那样
@@ -1032,6 +1081,12 @@ func defaultResolutionForModel(model string) string {
 	if isSJWan3PrimeModel(model) {
 		// SJ-wan3-prime 仅 720P。
 		return primeDefaultResolution
+	}
+	if isMagi2Model(model) {
+		// MAGI-2 上游文档明确「resolution 默认 1080p」—— 三档里最贵的那档。
+		// 这里必须跟着文档走：上游按 1080p 交付，价格也按 1080p 收；
+		// 若在这里落 480P，就成了「客户拿到 1080p 的片、我们只收 480p 的钱」。
+		return magi2DefaultResolution
 	}
 	if isHkWan3Model(model) {
 		// hk-wan3 文档缺省 720p（不是最低档 480P，也不是更贵的 1080P）。
@@ -1132,6 +1187,9 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 		switch {
 		case isWan30ProModel(model):
 			return wan30ProDefaultDuration
+		case isMagi2Model(model):
+			// 按条计费、与时长无关 → 不传就给上限 30 秒，客户不多付钱。
+			return magi2DefaultDuration
 		case isWan30Model(model):
 			return wan30DefaultDuration
 		case isSJWan3PrimeModel(model):
@@ -1154,6 +1212,16 @@ func resolveDurationForModel(req relaycommon.TaskSubmitReq, model string) int {
 	if isWan30ProModel(model) {
 		if duration < wan30ProMinDuration {
 			return wan30ProMinDuration
+		}
+		if duration > maxDuration {
+			return maxDuration
+		}
+		return duration
+	}
+	// MAGI-2：4-30 秒。显式越界已在 validate 阶段 400，这里夹紧只是兜底。
+	if isMagi2Model(model) {
+		if duration < magi2MinDuration {
+			return magi2MinDuration
 		}
 		if duration > maxDuration {
 			return maxDuration
@@ -1294,6 +1362,12 @@ func resolveRatio(req relaycommon.TaskSubmitReq) string {
 		allowedRatios = mwSd25FlashRatios
 		fallback = mwSd25FlashDefaultRatio
 	}
+	// MAGI-2：16:9 / 9:16 / 4:3 / 3:4 / 1:1 / 21:9，缺省 16:9。
+	// 上游不接受 adaptive / auto，两者都不在白名单 → 落缺省 16:9（不 400）。
+	if isMagi2Model(req.Model) {
+		allowedRatios = magi2Ratios
+		fallback = magi2DefaultRatio
+	}
 	candidates := make(relaycommon.TaskRatioCandidates, len(allowedRatios))
 	for _, ratio := range allowedRatios {
 		candidates[ratio] = true
@@ -1409,7 +1483,10 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 	// 「wan-3.0、wan-3.0-pro、seedance-2.0 支持 images / videos / audios 数组」
 	// —— wan-3.0 同样吃顶层音视频数组。只放 pro 会让 wan-3.0 的
 	// 顶层 videos/audios 静默丢失（任务成功、成片无参考素材）。
-	if isWan30ProModel(req.Model) || isWan30Model(req.Model) || isHkWan3Model(req.Model) || isPromoResidentMw(req.Model) {
+	// MAGI-2 同样收顶层数组（文档：使用 image_urls / video_urls / audio_urls 传素材），
+	// 客户照文档只传这些字段时，不并进来就会被静默丢弃（付了钱、成片里没素材）。
+	if isWan30ProModel(req.Model) || isWan30Model(req.Model) || isHkWan3Model(req.Model) ||
+		isPromoResidentMw(req.Model) || isMagi2Model(req.Model) {
 		media = append(media, legacyVideoAudioMedia(req)...)
 	}
 	return media, validateMedia(media, req.Model)
@@ -1548,7 +1625,7 @@ func validateMedia(media []relaycommon.TaskMedia, model string) error {
 	// （10 图 / 5 视频 / 5 音频）与首尾帧。不放行等于把「换更宽的上游」
 	// 变成「比原来更窄的能力」—— 原来音视频靠规则九改派 CapCut，现在直达。
 	if !isPrimeOnlyModel(model) && !isWan30ProModel(model) && !isWan30Model(model) && !isHkWan3Model(model) &&
-		!isPromoResidentMw(model) &&
+		!isPromoResidentMw(model) && !isMagi2Model(model) &&
 		(counts["reference_video"] > 0 || counts["reference_audio"] > 0) {
 		return errors.New("参考视频/参考音频已不再支持：上游 2026-11-15 切换后该链路仅接受 reference_image 参考图，请去掉视频/音频素材后重试（需要参考音视频请改用支持它们的模型）")
 	}
@@ -1787,6 +1864,10 @@ func (a *TaskAdaptor) buildRequestBodyWithOptions(req relaycommon.TaskSubmitReq,
 		// mw-sd2.5-flash 是 resolution + ratio 契约，但**参数名与取值不同**：
 		// 时长用 duration（整数）、分辨率小写、素材统一走 media。
 		return buildMwSd25FlashRequestBody(req, upstreamModel, prompt, media)
+	case isMagi2Model(req.Model):
+		// MAGI-2：duration（整数）+ resolution（小写）+ ratio，
+		// 素材走顶层 image_urls / video_urls / audio_urls。
+		return buildMagi2RequestBody(req, upstreamModel, prompt, media)
 	}
 	body := map[string]interface{}{
 		"model":      upstreamModel,
@@ -1797,6 +1878,61 @@ func (a *TaskAdaptor) buildRequestBodyWithOptions(req relaycommon.TaskSubmitReq,
 	}
 	if len(media) > 0 {
 		body["media"] = media
+	}
+	return common.Marshal(body)
+}
+
+// buildMagi2RequestBody 按上游 MAGI-2 的契约构造请求体。
+//
+// 上游文档（2026-11-25 版）示例：
+//
+//	{"model":"magi-2","prompt":"...","duration":30,"resolution":"1080p","ratio":"16:9"}
+//
+// 要点：
+//   - 时长字段叫 **duration**（整数），不是 seconds —— 与 wan3.0-video 系相反；
+//   - resolution 下发**小写**（480p / 720p / 1080p，文档示例即小写）；
+//   - ratio 直接下发归一到白名单的档位；
+//   - 素材走**顶层 image_urls / video_urls / audio_urls**（不是 media 数组，
+//     也不是 wan-3.0 的 images / videos / audios）。
+func buildMagi2RequestBody(
+	req relaycommon.TaskSubmitReq,
+	upstreamModel, prompt string,
+	media []relaycommon.TaskMedia,
+) ([]byte, error) {
+	resolution := strings.ToLower(resolveResolutionForModel(req, req.Model))
+	if resolution == "" {
+		// 理论上到不了：分辨率已归一为 480P/720P/1080P。
+		// 真到了说明调用顺序被人改坏了 —— 明确报错，不要发一个上游不认的档位。
+		return nil, errors.Errorf("MAGI-2 无法推导合法分辨率：resolution=%q", req.Resolution)
+	}
+	body := map[string]interface{}{
+		"model":      upstreamModel,
+		"prompt":     prompt,
+		"duration":   resolveDurationForModel(req, req.Model),
+		"resolution": resolution,
+		"ratio":      resolveRatio(req),
+	}
+	images := make([]string, 0, len(media))
+	videos := make([]string, 0)
+	audios := make([]string, 0)
+	for _, item := range media {
+		switch item.Type {
+		case "reference_image":
+			images = append(images, item.URL)
+		case "reference_video":
+			videos = append(videos, item.URL)
+		case "reference_audio":
+			audios = append(audios, item.URL)
+		}
+	}
+	if len(images) > 0 {
+		body["image_urls"] = images
+	}
+	if len(videos) > 0 {
+		body["video_urls"] = videos
+	}
+	if len(audios) > 0 {
+		body["audio_urls"] = audios
 	}
 	return common.Marshal(body)
 }
@@ -2088,6 +2224,15 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		resolution := resolveResolutionForModel(req, modelName)
 		return map[string]float64{"size": resolutionRatioForModel(modelName, resolution)}
 	}
+	// MAGI-2 同为「按条 + 分辨率档」（480p ¥3.5 / 720p ¥3.9 / 1080p ¥3.9），
+	// **与时长无关**、参考素材秒数也不并入。
+	//
+	// 只返回 size 倍率 —— 绝不能带 seconds：applyTaskOtherRatios 会把秒数乘进
+	// ¥3.5，30 秒的请求就变成 ¥105（同 wan-3.0-pro 那条注释记的坑）。
+	if isMagi2Model(modelName) {
+		resolution := resolveResolutionForModel(req, modelName)
+		return map[string]float64{"size": resolutionRatioForModel(modelName, resolution)}
+	}
 	// 两个在售模型均为按秒计费：quota = ModelPrice × seconds × size。
 	// prime 的 720P / 1080P 分档差价体现在 size 倍率（见 primeResolutionSizeRatio），
 	// 不再像旧版那样整条模型按次计价。
@@ -2180,6 +2325,18 @@ func resolutionRatioForModel(model, resolution string) float64 {
 			return ratio
 		}
 		if ratio := wan30ProResolutionSizeRatio[resolution]; ratio > 0 {
+			return ratio
+		}
+		return 1
+	}
+	if isMagi2Model(model) {
+		// MAGI-2：基价 480P ¥3.5，720P/1080P 各 ¥3.9（倍率 3.9/3.5）。
+		// 与其它模型一样先读动态倍率（同步任务若纳入它，改价无需发版），
+		// 读不到再用常量表。
+		if ratio, ok := youzanwan3_setting.GetResolutionRatio(magi2Model, resolution); ok {
+			return ratio
+		}
+		if ratio := magi2ResolutionSizeRatio[resolution]; ratio > 0 {
 			return ratio
 		}
 		return 1

@@ -207,6 +207,8 @@ var ModelList = []string{
 	hkWan3Model,
 	// 2026-11-20：妙物 Seedance 2.5 Flash，促销族母本的常驻上游。
 	mwSd25FlashModel,
+	// 2026-11-25：MAGI-2（多模态参考，按分辨率按条计费）。
+	magi2Model,
 }
 
 // videoResolutionSizeRatio：上游 wan3.0-video 三档同价（0.18 ⚡/秒 = ¥0.18/秒），
@@ -318,6 +320,69 @@ var hkWan3Ratios = []string{"16:9", "9:16", "1:1", "4:3", "3:4", "auto"}
 
 // hkWan3DefaultRatio 是 hk-wan3 没传画幅时的缺省值（与上游文档一致）。
 const hkWan3DefaultRatio = "16:9"
+
+// ════════════════════════════════════════════════════════════════════════════
+// MAGI-2（2026-11-25 上架）
+// ════════════════════════════════════════════════════════════════════════════
+//
+// 上游文档（api.youzan666.vip/docs，2026-11-25 版）：
+//
+//	通过 POST /v1/videos 提交。480p、720p 和 1080p 各支持 4–30 整数秒。
+//	resolution 默认 1080p，ratio 默认 16:9，支持 16:9、9:16、4:3、3:4、1:1 和 21:9。
+//	prompt 最多 20,000 个 Unicode 字符。
+//	支持纯文生视频与普通多模态参考。使用 image_urls、video_urls、audio_urls
+//	传入可匿名读取的公网 HTTPS 文件直链。最多 10 张图、5 段视频、5 段音频。
+//	按分辨率固定按条计费。同档分辨率下，各支持时长同价。
+//
+// 定价（用户 2026-11-25 口径「每个分辨率加一块」）：
+//
+//	上游 480p ⚡2.5 / 720p ⚡2.9 / 1080p ⚡2.9（每次）
+//	对外 480p ¥3.5 / 720p ¥3.9 / 1080p ¥3.9（每次）
+//
+// ⚠️ 上游 1 ⚡ = ¥1 是既有口径（见 upstream_pricing.go 的 creditCurrency），
+//
+//	所以「加一块」= 上游每档 + ¥1.0。
+//
+// ⚠️ 这是**按条**计价 + 分辨率档：EstimateBilling 只返回 size 倍率、
+//
+//	**绝不带 seconds**（带了会把 ¥3.5 乘成 ¥105）。与 wan-3.0-pro 同构。
+//
+// ⚠️ 缺省分辨率是 **1080P**（上游文档），不是最低档 480p —— 客户不传时
+//
+//	按上游默认档交付，价格也跟着走 1080p 那一档，不能静默降到 480p 却按 1080p 收。
+const magi2Model = "magi-2"
+
+// magi2Resolutions 是 MAGI-2 在售的三档分辨率（全部逐档定价，无「同价降档」）。
+var magi2Resolutions = []string{"480P", "720P", "1080P"}
+
+// magi2DefaultResolution 是没传分辨率时的缺省档（上游文档：默认 1080p）。
+const magi2DefaultResolution = "1080P"
+
+// magi2Ratios 是 MAGI-2 支持的成片画幅（文档原话：16:9、9:16、4:3、3:4、1:1、21:9）。
+// 不支持 adaptive / auto —— 都不在白名单里就是未指定，落缺省 16:9。
+var magi2Ratios = []string{"16:9", "9:16", "4:3", "3:4", "1:1", "21:9"}
+
+// magi2DefaultRatio 是没传画幅时的缺省值（与上游文档一致）。
+const magi2DefaultRatio = "16:9"
+
+// magi2ResolutionSizeRatio：MAGI-2 按条 + 分辨率档的 size 倍率。
+//
+// ⚠️ 基准档取 **1080P**（¥3.9 → 3.9/7.3 ≈ 0.5342465753），不是最低档 480p。
+// 理由：上游缺省分辨率就是 1080p（见 magi2DefaultResolution），而广场徽标只显示
+// ModelPrice 那一个数 —— 基准配 480p 会出现「标价 ¥3.5、默认档实收 ¥3.9」，
+// 客户看到的是一个价、账单是另一个价。与 wan-3.0-pro（基准 = 它的缺省 720P）同口径。
+//
+// 480P 是**低于基准**的一档，倍率 <1（3.5/3.9 ≈ 0.8974359）—— 这是正常的：
+// 贵的档做基准、便宜档打折，客户永远不会「按便宜的标价付贵的钱」。
+//
+// ⚠️ 改价时 ModelPrice 与本表必须一起改（与 wan-3.0-pro 同一条规矩）；
+//
+//	这里是动态倍率读不到时的兜底。
+var magi2ResolutionSizeRatio = map[string]float64{
+	"480P":  3.5 / 3.9,
+	"720P":  1.0,
+	"1080P": 1.0,
+}
 
 // mwSd25FlashRatios 是 mw-sd2.5-flash 支持的成片画幅。
 //
@@ -642,6 +707,20 @@ const (
 	// 换上游不是改对外承诺的理由；放宽到 4 秒是独立的商业决定。
 	mwSd25FlashMinDuration     = 4
 	mwSd25FlashDefaultDuration = 5
+
+	// magi2MinDuration / magi2DefaultDuration 是 MAGI-2（2026-11-25 上架）的时长口径。
+	//
+	// 上游文档：480p / 720p / 1080p **各支持 4–30 整数秒**，按分辨率固定按条计费
+	// （同档时长同价）。所以缺省给 **30 秒**：不传时长时让客户拿到最长的那条，
+	// 价格不变 —— 与按秒档相反，这里夹高不会让客户多付钱。
+	magi2MinDuration     = 4
+	magi2DefaultDuration = 30
+
+	// magi2MaxReferenceSeconds 是 MAGI-2 参考音视频的单条 / 合计时长上限（上游 30 秒）。
+	//
+	// ⚠️ 不能沿用标准版的 15 秒：那是 wan3.0-video 的约束，套到 magi-2 上会把
+	// 上游接受的 16–30 秒素材本地 400 掉（客户照上游文档传 20 秒参考片被拒）。
+	magi2MaxReferenceSeconds = 30
 )
 
 // 导出的限制值，供条件路由中间件（middleware/seedance_route.go）在**改派前**

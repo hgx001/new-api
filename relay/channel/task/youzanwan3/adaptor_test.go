@@ -903,9 +903,10 @@ func TestGetModelListExposesYouzanModels(t *testing.T) {
 	// 别名当成真实上游模型写回渠道配置，上游直接 404。
 	// 2026-11-19 上游在售 hk-wan3（公开名 == 上游 ID），一并列入。
 	// 2026-11-20 上游在售 mw-sd2.5-flash（促销族母本的常驻上游），一并列入。
+	// 2026-11-25 上游在售 magi-2（公开名 == 上游 ID，多模态参考、按分辨率按条计费）。
 	require.Equal(t, []string{
 		"wan3.0-video", "wan3.0-video-prime", "wan-3.0-pro",
-		"wan-3.0", "SJ-wan3-prime", "hk-wan3", "mw-sd2.5-flash",
+		"wan-3.0", "SJ-wan3-prime", "hk-wan3", "mw-sd2.5-flash", "magi-2",
 	}, adaptor.GetModelList())
 }
 

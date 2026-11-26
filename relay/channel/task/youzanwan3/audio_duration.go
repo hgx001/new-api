@@ -48,8 +48,16 @@ func (a *TaskAdaptor) setReferenceAudioSeconds(c *gin.Context, media []relaycomm
 		ctx = c.Request.Context()
 	}
 
+	// 上限口径按模型分：标准版系是 15 秒；MAGI-2 是 30 秒（上游文档「单段 2–30 秒，
+	// 累计最多 30 秒」）。套 15 秒会把上游接受的素材本地 400 掉。
+	audioLimit := float64(maxTotalReferenceAudioSeconds)
+	if c != nil {
+		if taskReq, err := relaycommon.GetTaskRequest(c); err == nil && isMagi2Model(taskReq.Model) {
+			audioLimit = float64(magi2MaxReferenceSeconds)
+		}
+	}
 	unmeasured, enforceErr := taskcommon.EnforceReferenceAudioMaxSeconds(
-		ctx, urls, maxTotalReferenceAudioSeconds, client)
+		ctx, urls, audioLimit, client)
 	if enforceErr != nil {
 		// 只有「实测超限」才是素材超限；其余（地址为空等）是参数/探测问题。
 		// 两类错误的文案归属不同：超限要原样透传给客户看，
