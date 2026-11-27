@@ -61,6 +61,10 @@ func WithWan3GuanwangTjEnabled(enabled bool) Policy {
 	out := clonePolicy(current)
 	mu.RUnlock()
 	out.Wan3GuanwangTJEnabled = enabled
+	if enabled {
+		// 与「官网 → 新大陆」互斥：同一商品只能有一个换货目标。
+		out.Wan3GuanwangXindaluEnabled = false
+	}
 	out.UpdatedAt = nowUnix()
 	return out
 }

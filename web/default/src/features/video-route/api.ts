@@ -177,6 +177,22 @@ export type VideoRoutePolicy = {
   /** 换货开关的目标模型（实际执行的渠道上的那个名字）。 */
   wan3_guanwang_tj_target_model: string
   /**
+   * 「万相官网 → wan3-新大陆」手动换货开关（2026-11-27）。
+   *
+   * 打开：`wan3_guanwang_xindalu_source_model`（wan3.0-video-官网）的请求
+   * 内部改名为 `wan3_guanwang_xindalu_target_model`（wan3-新大陆，渠道 34
+   * 二春 Erchun，上游 Wan3.0 新线路）执行，计费仍按客户请求的官网模型；
+   * 关闭（默认）：留在官网渠道。
+   *
+   * ⚠️ 与上面的客美开关**互斥**：两者都表达「官网商品由谁跑」，
+   * 打开任一都会自动关掉另一个。
+   */
+  wan3_guanwang_xindalu_enabled?: boolean
+  /** 换货开关的源模型（客户请求的那个名字）。 */
+  wan3_guanwang_xindalu_source_model?: string
+  /** 换货开关的目标模型（实际执行的渠道上的那个名字）。 */
+  wan3_guanwang_xindalu_target_model?: string
+  /**
    * 「hk-wan3 → 客美 tj」手动换货开关（2026-11-22）。
    *
    * 打开：`wan3_hk_wan3_tj_source_model`（hk-wan3）的请求（不带参考视频）
@@ -618,6 +634,28 @@ export async function setWan3GuanwangTjEnabled(
   enabled: boolean
 ): Promise<VideoRoutePolicy> {
   const res = await api.post('/api/video-route/policy/wan3-guanwang-tj', {
+    enabled,
+  })
+  return res.data.data
+}
+
+/**
+ * 切换「万相官网 → wan3-新大陆」手动换货开关（2026-11-27）。
+ *
+ * 打开：wan3.0-video-官网 的请求内部改名为 wan3-新大陆（渠道 34 二春
+ * Erchun，上游阿里云 Wan3.0 新线路）执行，计费仍按客户请求的官网模型；
+ * 关闭（默认）：请求留在官网渠道。
+ *
+ * ⚠️ 与客美换货开关**互斥**：打开本开关会自动关掉客美开关，反之亦然。
+ *
+ * 中间件会放行三类请求（留在官网）：目标模型在当前分组没有可用渠道、
+ * 带参考视频（新大陆会把参考视频秒数并入计费）、素材过不了目标链路校验。
+ * 与客美不同，自适应画幅可以改派 —— 新大陆有 adaptive 档。
+ */
+export async function setWan3GuanwangXindaluEnabled(
+  enabled: boolean
+): Promise<VideoRoutePolicy> {
+  const res = await api.post('/api/video-route/policy/wan3-guanwang-xindalu', {
     enabled,
   })
   return res.data.data

@@ -173,6 +173,7 @@ var upstreamModelLiterals = []string{
 	"wan3.0-video-480p",
 	"wan3.0-smart",
 	"wan3.0-480p",
+	"wan3-新大陆",
 	"wan3.0-video",
 	"wan3.0",
 	"wan-3.0",

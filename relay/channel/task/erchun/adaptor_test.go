@@ -29,22 +29,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// 本渠道只对外定价 480P。上游目录其实支持 720P/1080P（默认 1080P），若不在校验层
-// 拦死，非 480P 的请求会按 480P 收费却建出高分辨率单 —— 静默少收，且无法事后追回。
-func TestResolveResolutionRejectsNon480P(t *testing.T) {
+// 本渠道对外定价 480P/720P/1080P 三档（2026-11-27）。未定价的写法必须 400，
+// 不能静默改档 —— 否则会按 480P 收费却建出别的档位的单。
+func TestResolveResolutionAcceptsPricedTiers(t *testing.T) {
 	tests := []struct {
 		name       string
 		resolution string
 		want       string
 		wantErr    string
 	}{
-		{name: "缺省走 480P", resolution: "", want: onlyResolution},
-		{name: "小写 480p", resolution: "480p", want: onlyResolution},
-		{name: "大写 480P", resolution: "480P", want: onlyResolution},
-		{name: "裸 480", resolution: "480", want: onlyResolution},
-		{name: "720P 拒绝", resolution: "720P", wantErr: "only supports 480P"},
-		{name: "1080P 拒绝", resolution: "1080p", wantErr: "only supports 480P"},
-		{name: "未知档位拒绝", resolution: "4k", wantErr: "only supports 480P"},
+		{name: "缺省走 480P", resolution: "", want: "480P"},
+		{name: "小写 480p", resolution: "480p", want: "480P"},
+		{name: "大写 480P", resolution: "480P", want: "480P"},
+		{name: "裸 480", resolution: "480", want: "480P"},
+		{name: "720P", resolution: "720P", want: "720P"},
+		{name: "小写 720p", resolution: "720p", want: "720P"},
+		{name: "裸 720", resolution: "720", want: "720P"},
+		{name: "1080P", resolution: "1080P", want: "1080P"},
+		{name: "小写 1080p", resolution: "1080p", want: "1080P"},
+		{name: "未知档位拒绝", resolution: "4k", wantErr: "only supports 480P/720P/1080P"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,25 +134,33 @@ func TestUpstreamModelUsesStableID(t *testing.T) {
 	require.Equal(t, "mdl_custom", adaptor.upstreamModel(&relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "mdl_custom"},
 	}))
-	// 映射没生效（仍是我们的对外名）时不能把 wan3.0-480p 原样发给上游
+	// 映射没生效（仍是我们的对外名）时不能把 wan3-新大陆 原样发给上游
 	require.Equal(t, UpstreamModelWan3, adaptor.upstreamModel(&relaycommon.RelayInfo{
 		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: PublicModel},
 	}))
 }
 
-// 计费只乘 seconds：本渠道只允许 480P，分辨率维度恒为 1，不该再叠一个 size 倍率
-// （多一次浮点乘+截断只会引入不必要的不确定性）。
-func TestEstimateBillingOnlyMultipliesSeconds(t *testing.T) {
+// 计费 = seconds × size：480P 为基准倍率 1，720P/1080P 按对外定价反推
+// （2026-11-27 口径：¥0.138 / ¥0.24 / ¥0.5 每秒）。
+func TestEstimateBillingMultipliesSecondsAndResolutionTier(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	for _, tt := range []struct {
-		duration int
-		want     float64
-	}{{2, 2}, {5, 5}, {30, 30}} {
-		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-		ctx.Set("task_request", relaycommon.TaskSubmitReq{Duration: tt.duration, Resolution: "480P"})
-		billing := (&TaskAdaptor{}).EstimateBilling(ctx, &relaycommon.RelayInfo{OriginModelName: PublicModel})
-		require.Equal(t, tt.want, billing["seconds"], "duration=%d", tt.duration)
-		require.NotContains(t, billing, "size", "只允许 480P，不应下发 size 倍率")
+	tests := []struct {
+		resolution string
+		wantSize   float64
+	}{
+		{resolution: "480P", wantSize: 1},
+		{resolution: "720P", wantSize: 0.24 / 0.138},
+		{resolution: "1080P", wantSize: 0.5 / 0.138},
+		{resolution: "", wantSize: 1},
+	}
+	for _, tt := range tests {
+		for _, duration := range []int{2, 5, 30} {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Set("task_request", relaycommon.TaskSubmitReq{Duration: duration, Resolution: tt.resolution})
+			billing := (&TaskAdaptor{}).EstimateBilling(ctx, &relaycommon.RelayInfo{OriginModelName: PublicModel})
+			require.Equal(t, float64(duration), billing["seconds"], "resolution=%q duration=%d", tt.resolution, duration)
+			require.InDelta(t, tt.wantSize, billing["size"], 1e-9, "resolution=%q", tt.resolution)
+		}
 	}
 
 	// {"seconds":"2"} 这条真实入参形状：预扣必须是 2 秒而不是默认的 5 秒。
@@ -159,18 +170,17 @@ func TestEstimateBillingOnlyMultipliesSeconds(t *testing.T) {
 	require.Equal(t, float64(2), billing["seconds"], "seconds 字符串形状必须被采纳")
 }
 
-// 参考视频按秒同价：seconds = 生成时长 + 参考视频总秒数（2026-11-14 口径）。
-//
-// 白送等于每单按秒亏：成本侧上游的 input_video_second 与 output_video_second 同价。
+// 参考视频按秒同价：seconds = 生成时长 + 参考视频总秒数（2026-11-14 口径），
+// 再乘分辨率倍率 —— 720P 的参考秒数同样要按 720P 价收，不能按 480P 白送。
 func TestEstimateBillingAddsReferenceVideoSeconds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Set("task_request", relaycommon.TaskSubmitReq{Duration: 5, Resolution: "480P"})
+	ctx.Set("task_request", relaycommon.TaskSubmitReq{Duration: 5, Resolution: "720P"})
 	ctx.Set(refVideoSecondsContextKey, 8)
 
 	billing := (&TaskAdaptor{}).EstimateBilling(ctx, &relaycommon.RelayInfo{OriginModelName: PublicModel})
 	require.Equal(t, float64(13), billing["seconds"], "5 秒生成 + 8 秒参考视频 = 13 秒")
-	require.NotContains(t, billing, "size", "参考视频不该引入分辨率倍率")
+	require.InDelta(t, 0.24/0.138, billing["size"], 1e-9, "参考秒数同样乘档位倍率")
 }
 
 // 0 秒或缺失都不能改动 seconds —— 否则没有参考视频的请求会被凭空加价。
@@ -265,6 +275,6 @@ func TestParseTaskResultLeavesURLEmptyForProxy(t *testing.T) {
 
 func TestModelListExposesOnlyPublicModel(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	require.Equal(t, []string{"wan3.0-480p"}, adaptor.GetModelList())
+	require.Equal(t, []string{"wan3-新大陆"}, adaptor.GetModelList())
 	require.Equal(t, "二春 Erchun", adaptor.GetChannelName())
 }

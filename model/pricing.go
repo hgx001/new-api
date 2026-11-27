@@ -373,8 +373,8 @@ func isAllowedPricingModel(name string) bool {
 	if strings.EqualFold(name, "MiniMax-M3") || strings.EqualFold(name, "MiniMax-M3.1") {
 		return true
 	}
-	// 二春(erchun) wan3.0 仅开放 480P 的对外模型名
-	if name == "wan3.0-480p" {
+	// 二春(erchun) wan3 新线路：480P/720P/1080P 三档定价
+	if name == "wan3-新大陆" {
 		return true
 	}
 	// Youkou 直连文本模型

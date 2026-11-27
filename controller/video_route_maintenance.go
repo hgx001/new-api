@@ -590,6 +590,8 @@ func doubaoRouteAdminState() gin.H {
 	// 万相官网 → 客美 tj 的手动换货开关（2026-11-19）：
 	// 与上面那批促销族规则不同族，状态单算（见 controller/video_route_wan3_guanwang_tj_admin.go）。
 	appendWan3GuanwangTjState(state)
+	// 万相官网 → wan3-新大陆 的手动换货开关（2026-11-27，与客美开关互斥）。
+	appendWan3GuanwangXindaluState(state)
 	// 带参考视频的万相请求 → hk-wan3（2026-11-20，默认开启）。
 	appendWan3RefVideoHkState(state)
 	// hk-wan3 → 客美 tj 的手动换货开关（2026-11-22，默认关闭）。

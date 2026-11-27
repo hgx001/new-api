@@ -84,19 +84,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	return nil
 }
 
-// resolveResolution 只放行 480P。上游支持 720P/1080P，但本渠道只对外定价 480P，
-// 让非 480P 走到建单会按 480P 收费却出了 720P 的片，属于静默少收。
+// resolveResolution 解析分辨率档位，只放行已定价的 480P/720P/1080P。
+//
+// 不传时显式回落 480P：上游默认是 1080P，沿用默认会按 480P 收费却出 1080P，
+// 属于静默少收。未定价的写法一律 400，不静默改档。
 func resolveResolution(req relaycommon.TaskSubmitReq) (string, error) {
 	raw := strings.TrimSpace(req.Resolution)
 	if raw == "" {
-		return onlyResolution, nil
+		return defaultResolution, nil
 	}
-	switch strings.ToUpper(raw) {
-	case "480", "480P":
-		return onlyResolution, nil
-	default:
-		return "", errors.Errorf("%s only supports %s, got %q", PublicModel, onlyResolution, raw)
+	candidate := strings.ToUpper(raw)
+	if !strings.HasSuffix(candidate, "P") {
+		candidate += "P"
 	}
+	if allowedResolutions[candidate] {
+		return candidate, nil
+	}
+	return "", errors.Errorf("%s only supports 480P/720P/1080P, got %q", PublicModel, raw)
 }
 
 // resolveDuration 读时长。**req.Seconds 是必须的回退路径**：下游按 OpenAI video 形状
@@ -193,6 +197,15 @@ func buildMedia(req relaycommon.TaskSubmitReq) ([]relaycommon.TaskMedia, error) 
 		}
 	}
 	return media, validateMedia(media)
+}
+
+// ValidateIncomingMedia 供「官网 → 新大陆」路由中间件在改派前用目标链路口径预检素材。
+//
+// 与 kemeitv.ValidateIncomingMedia 同用途：官网适配器会静默丢弃素材，
+// 改派到本渠道后素材过不了校验就会硬 400 —— 提前判掉，让请求留在官网。
+func ValidateIncomingMedia(req relaycommon.TaskSubmitReq) error {
+	_, err := buildMedia(req)
+	return err
 }
 
 func metadataMedia(metadata map[string]interface{}) ([]relaycommon.TaskMedia, error) {
@@ -304,7 +317,9 @@ func checkReferenceVideoSeconds(c *gin.Context, media []relaycommon.TaskMedia) e
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
-		return nil
+		// 请求上下文缺失时按缺省秒数与 480P 倍率计费，绝不能返回 nil
+		// （nil 会被当成 1 秒，30 秒的请求只收 1 秒的钱）。
+		return map[string]float64{"seconds": float64(defaultDurationSeconds), "size": 1.0}
 	}
 	seconds := resolveDuration(req)
 	if c != nil {
@@ -314,7 +329,16 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 			}
 		}
 	}
-	return map[string]float64{"seconds": float64(seconds)}
+	resolution, resErr := resolveResolution(req)
+	if resErr != nil {
+		// 档位非法已在 Validate 阶段 400；这里失败只可能是上下文缺失，
+		// 按基准档计费，不能把账单清零。
+		resolution = defaultResolution
+	}
+	return map[string]float64{
+		"seconds": float64(seconds),
+		"size":    resolutionRatio(resolution),
+	}
 }
 
 // ---------------------------------------------------------------- 建单

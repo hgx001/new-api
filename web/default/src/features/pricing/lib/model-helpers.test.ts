@@ -174,13 +174,11 @@ describe('AutoDL H3 resolution tier note', () => {
     assert.equal(isPerSecondModel(autoDLModel('cp-seedance-2.5flash')), true)
   })
 
-  // Erchun wan3.0-480p 的 EstimateBilling 返回 {"seconds": D}（见
-  // relay/channel/task/erchun/adaptor.go），即按秒计费。但它的模型名既不以
-  // wan3.0-video 也不以 wan3.0-smart 开头 historically 从未被本函数命中，
-  // 卡片一直把 ¥0.28/秒 显示成「/ 次」。这是「硬编码前缀表漏登记」的实例，
-  // 同 seedance-2-0-fast 一起修。
-  test('marks erchun wan3.0-480p as per second', () => {
-    assert.equal(isPerSecondModel(autoDLModel('wan3.0-480p')), true)
+  // Erchun「wan3-新大陆」的 EstimateBilling 返回 {"seconds": D, "size": R}
+  // （见 relay/channel/task/erchun/adaptor.go），即按秒计费。但它的模型名
+  // 既不以 wan3.0-video 也不以 wan3.0-smart 开头，不单列就会被显示成「/ 次」。
+  test('marks erchun wan3-新大陆 as per second', () => {
+    assert.equal(isPerSecondModel(autoDLModel('wan3-新大陆')), true)
   })
 
   // SeetaCloud FastH3（2026-11-07 改版）：EstimateBilling 返回
@@ -201,7 +199,7 @@ describe('AutoDL H3 resolution tier note', () => {
   test('classifies every model currently sold by billing unit', () => {
     const perSecond = [
       'seedance-2-0-fast', // manwu 豆包 2.0 Fast
-      'wan3.0-480p', // Erchun（仅 480P）
+      'wan3-新大陆', // Erchun Wan3.0 新线路（480P/720P/1080P 三档）
       'wan3.0-smart', // 有赞智能调度（历史别名，等价 wan3.0-video）
       'wan3.0-video', // 有赞标准版
       'wan3.0-video-prime', // 有赞 Prime（720P/1080P 分档按秒）

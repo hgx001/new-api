@@ -491,6 +491,17 @@ type Policy struct {
 	// 这个字段，解析后零值 false = 不改派，升级当天线上流量逐字节不变。
 	Wan3GuanwangTJEnabled bool `json:"wan3_guanwang_tj_enabled,omitempty"`
 
+	// Wan3GuanwangXindaluEnabled 是「万相官网 → wan3-新大陆」改派开关（2026-11-27 起）。
+	//
+	// 打开：客户请求 wan3.0-video-官网 时，内部改名为 wan3-新大陆
+	// （渠道 34 二春 Erchun，上游阿里云 Wan 3.0 新线路），计费仍按官网模型算；
+	// 关闭（默认）：请求留在官网渠道。
+	//
+	// 与 Wan3GuanwangTJEnabled **互斥**：两者都表达「官网这个商品由谁来跑」，
+	// 同时打开会让一条请求被两个中间件先后改写。写入任意一个为 true 时，
+	// 另一个会被自动置 false（见 With* 构造函数）。
+	Wan3GuanwangXindaluEnabled bool `json:"wan3_guanwang_xindalu_enabled,omitempty"`
+
 	// PromoShortOwnEnabled 是「≤短时长阈值 且 9:16 → 自营 sd-seedance-2.0fast」
 	// 的开关（2026-11-23 老板口径）。
 	//

@@ -234,9 +234,9 @@ export function isPerSecondModel(model: PricingModel): boolean {
   if (name.startsWith('seedance-2-0')) {
     return true
   }
-  // Erchun 的 480P 专用档：名字不以 wan3.0-video 开头（那是官网/有赞的命名），
-  // 必须单列，否则 ¥0.28/秒 会被显示成按次。
-  if (name === 'wan3.0-480p') {
+  // Erchun 的 Wan3 新线路：名字不含 wan3.0-video（那是官网/有赞的命名），
+  // 必须单列，否则按秒价会被显示成按次。三档价格为 ¥0.138/0.24/0.5 每秒。
+  if (name === 'wan3-新大陆') {
     return true
   }
   // 有赞 Wan3 的对外别名：客户看到 seedance2.5-特惠，实际由 wan3.0-video-prime

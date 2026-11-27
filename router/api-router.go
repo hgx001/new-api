@@ -195,6 +195,11 @@ func SetApiRouter(router *gin.Engine) {
 			// 与上面那批促销族规则不同源模型、不同开关，互不连坐。
 			videoRouteAdmin.POST("/policy/wan3-guanwang-tj", controller.SetWan3GuanwangTjAdmin)
 
+			// 万相官网 → wan3-新大陆 的手动换货开关（2026-11-27）：
+			// 打开 = wan3.0-video-官网 的请求改派 wan3-新大陆（渠道 34 二春），
+			// 计费仍按官网模型；与客美开关互斥。
+			videoRouteAdmin.POST("/policy/wan3-guanwang-xindalu", controller.SetWan3GuanwangXindaluAdmin)
+
 			// 带参考视频的万相请求 → hk-wan3（2026-11-20，默认开启）：
 			// wan3.0-video-官网 / -tj / -prime-tj 上带 reference_video 且生成
 			// 4–15 秒的请求改派 hk-wan3（参考视频不计费）；关闭则留在原链路。

@@ -118,6 +118,7 @@ import { ShortLinkCard } from '@/features/video-route/components/short-link-card
 import { ShortYouzanCard } from '@/features/video-route/components/short-youzan-card'
 import { TotalFallbackCard } from '@/features/video-route/components/total-fallback-card'
 import { Wan3GuanwangTjCard } from '@/features/video-route/components/wan3-guanwang-tj-card'
+import { Wan3GuanwangXindaluCard } from '@/features/video-route/components/wan3-guanwang-xindalu-card'
 import { Wan3HkWan3TjCard } from '@/features/video-route/components/wan3-hk-wan3-tj-card'
 import { Wan3RefVideoHkCard } from '@/features/video-route/components/wan3-ref-video-hk-card'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -3601,6 +3602,15 @@ export function ChannelMutateDrawer({
                               只在本渠道承载源模型（wan3.0-video-官网，ch12）
                               或目标模型（wan3.0-video-tj，ch32）时渲染。 */}
                           <Wan3GuanwangTjCard
+                            channelModels={currentModels ?? ''}
+                          />
+
+                          {/* 万相官网 → wan3-新大陆 的手动换货开关（2026-11-27）。
+                              与上一张互为「官网商品由谁跑」的二选一：
+                              打开任一个，后端会同步关掉另一个。
+                              只在承载源模型（wan3.0-video-官网，ch12）
+                              或目标模型（wan3-新大陆，ch34）时渲染。 */}
+                          <Wan3GuanwangXindaluCard
                             channelModels={currentModels ?? ''}
                           />
 
