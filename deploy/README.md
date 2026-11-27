@@ -75,7 +75,9 @@ deploy/deploy-backend.sh --dry-run <sha>    # 只打印将执行的命令
 
 1. 按当前 `DEPLOY_MIN_FREE_MB` 阈值预检磁盘；SHA 前缀断言——checkout 后比对完整 SHA，防止用错误代码构建；
 2. `git fetch origin main`——失败但本地已有该 commit 时继续（生产机连不上 github），否则报错退出；
-3. 服务器上 `docker build -f Dockerfile.deploy`，保留构建日志并处理磁盘不足；
+3. 服务器上**带资源上限**地 `docker build -f Dockerfile.deploy`：默认 `CPUQuota=150%`、`MemoryMax=1536M`、`MemorySwapMax=1024M`（用 `systemd-run --scope` 套 cgroup），保留构建日志并处理磁盘不足；
+   - 2026-11-27 事故：无限制的 Go 全量编译把 4 核/3.7G 的生产机 CPU 打满，SSH 与站点一起失联、整机重启。加限制后超限只会让**构建失败**，不会拖垮线上。
+   - 可用 `DEPLOY_BUILD_CPU_QUOTA` / `DEPLOY_BUILD_MEMORY_MAX` / `DEPLOY_BUILD_MEMORY_SWAP_MAX` 调整；`DEPLOY_MIN_BUILD_FREE_MB`（默认 4096）是构建前的最低磁盘余量，不足时先回收构建缓存。
 4. **停旧容器前**导出 `/tmp/newapi-<ts>.env`（mode 600）；达到脚本最小字节要求且包含 `SQL_DSN`、`SESSION_SECRET`、`CRYPTO_SECRET` 后，才把旧容器改名为 `new-api-prev-<ts>`；空/缺项快照直接中止；
 5. 裸 `docker run` 按原参数重建 `new-api`（**生产不是 compose 管理**）；
 6. `/api/status` 必须同时 `success:true`、`setup:true`，新容器仍有 `SQL_DSN` 且日志未回落 SQLite；任一不满足自动回滚，不能把空库的 success 当健康；

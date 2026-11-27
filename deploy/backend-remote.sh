@@ -7,6 +7,15 @@ set -Eeuo pipefail
 TARGET="${1:?need target sha}"
 APP_DIR="${DEPLOY_APP_DIR:-/home/ubuntu/new-api-src}"
 MIN_FREE_MB="${DEPLOY_MIN_FREE_MB:-2048}"
+# 构建前至少要留出的磁盘：低于这个值先回收构建缓存，避免构建层把盘写满。
+MIN_BUILD_FREE_MB="${DEPLOY_MIN_BUILD_FREE_MB:-4096}"
+# 构建资源上限（2026-11-27 事故后加）：
+# 这台 4 核 / 3.7G 的机器同时跑着 postgres、mysql、emqx、sub2api、dcp、ArcReel，
+# 无限制的 Go 全量编译会把 CPU 打满、SSH 都连不上，整机失联后重启。
+# 用 systemd scope 给构建套 cgroup 上限：超限时**构建失败**，而不是拖垮整机。
+BUILD_CPU_QUOTA="${DEPLOY_BUILD_CPU_QUOTA:-150%}"
+BUILD_MEMORY_MAX="${DEPLOY_BUILD_MEMORY_MAX:-1536M}"
+BUILD_MEMORY_SWAP_MAX="${DEPLOY_BUILD_MEMORY_SWAP_MAX:-1024M}"
 cd "$APP_DIR"
 
 die() { echo "ABORT: $*" >&2; exit 1; }
@@ -55,9 +64,37 @@ echo "checkout OK: ${GOT:0:9} (requested $TARGET)"
 
 TS=$(date +%Y%m%d%H%M%S)
 BUILD_LOG="/tmp/newapi-build-$TS.log"
+
+# 构建前再确认一次磁盘余量：构建层写入很凶，余量不足时先回收可再生的缓存。
+if [ "$free_mb" -lt "$MIN_BUILD_FREE_MB" ]; then
+  echo "[deploy] 磁盘剩余 ${free_mb}MB < ${MIN_BUILD_FREE_MB}MB，先回收 docker 构建缓存"
+  docker builder prune -af >/dev/null 2>&1 || true
+  free_mb=$(df -Pm / | awk 'NR==2 {print $4}')
+  echo "[deploy] 回收后剩余 ${free_mb}MB"
+  if [ "$free_mb" -lt "$MIN_BUILD_FREE_MB" ]; then
+    die "磁盘剩余 ${free_mb}MB 仍不足 ${MIN_BUILD_FREE_MB}MB，拒绝构建"
+  fi
+fi
+
+# 带资源上限的构建：优先用 systemd scope（CPU/内存双限，超限只杀构建），
+# 没有 systemd-run / sudo 时退回 nice 降优先级（只能缓解 CPU，不能兜住内存）。
+build_limited() {
+  if command -v systemd-run >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    echo "[deploy] BUILD_LIMIT cpu=${BUILD_CPU_QUOTA} mem=${BUILD_MEMORY_MAX} swap=${BUILD_MEMORY_SWAP_MAX}"
+    sudo systemd-run --scope --collect -q \
+      -p "CPUQuota=${BUILD_CPU_QUOTA}" \
+      -p "MemoryMax=${BUILD_MEMORY_MAX}" \
+      -p "MemorySwapMax=${BUILD_MEMORY_SWAP_MAX}" \
+      -- docker build -f Dockerfile.deploy -t new-api-custom:latest .
+  else
+    echo "[deploy] BUILD_LIMIT=fallback(nice 19)，未限制内存"
+    nice -n 19 docker build -f Dockerfile.deploy -t new-api-custom:latest .
+  fi
+}
+
 # 构建日志落盘：构建失败或写盘失败（no space left on device）必须中止，
 # 不能让 `| tail -1` 把退出码吃掉。
-if ! docker build -f Dockerfile.deploy -t new-api-custom:latest . > "$BUILD_LOG" 2>&1; then
+if ! build_limited > "$BUILD_LOG" 2>&1; then
   tail -20 "$BUILD_LOG" >&2
   die "docker build 失败"
 fi
