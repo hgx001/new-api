@@ -62,3 +62,12 @@ func TestXinbiEndpointUsesOpenAIVideoContract(t *testing.T) {
 		common.GetEndpointTypesByChannelType(constant.ChannelTypeXinbi, "wan3.0-720p-按次"),
 	)
 }
+
+// 二春 Erchun（65）与心笔是同一类漏配：渠道是异步视频，但没登记进视频渠道列表
+// 就会回落到 openai 端点 —— 广场把 wan3-新大陆 归到文本分类，视频页签里看不到。
+func TestErchunEndpointUsesOpenAIVideoContract(t *testing.T) {
+	require.Equal(t,
+		[]constant.EndpointType{constant.EndpointTypeOpenAIVideo},
+		common.GetEndpointTypesByChannelType(constant.ChannelTypeErchun, "wan3-新大陆"),
+	)
+}
