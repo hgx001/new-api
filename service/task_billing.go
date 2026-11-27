@@ -114,9 +114,19 @@ func taskAdjustFunding(task *model.Task, delta int) error {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(task.UserId, delta, false)
+		// 片已交付：不允许把余额扣成负数（并发下多个任务同时结算会超额）。
+		// 扣不动的部分记欠费日志；used_quota 仍按全额统计，那是上游真实消耗。
+		shortfall, err := model.ChargeUserQuotaWithArrears(task.UserId, delta)
+		if err != nil {
+			return err
+		}
+		if shortfall > 0 {
+			common.SysLog(fmt.Sprintf("[billing] 钱包欠费：用户 %d 任务 %s 结算 %d 时余额不足，欠费 %d", task.UserId, task.TaskID, delta, shortfall))
+		}
+		return nil
 	}
-	return model.IncreaseUserQuota(task.UserId, -delta, false)
+	// 退款同步落库，理由同 WalletFunding.Refund
+	return model.IncreaseUserQuota(task.UserId, -delta, true)
 }
 
 // taskAdjustTokenQuota 调整任务的令牌额度，delta > 0 表示扣费，delta < 0 表示退还。

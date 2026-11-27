@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -215,6 +216,13 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 		}
 		// TODO: model 层应定义哨兵错误（如 ErrNoActiveSubscription），用 errors.Is 替代字符串匹配
 		errMsg := err.Error()
+		if errors.Is(err, model.ErrInsufficientWalletQuota) {
+			// 并发预扣多步：条件更新失败 = 余额已经被别的请求扣掉了（或本来就不够）。
+			return types.NewErrorWithStatusCode(
+				fmt.Errorf("用户额度不足，无法预扣 %s", logger.FormatQuota(effectiveQuota)),
+				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		}
 		if strings.Contains(errMsg, "no active subscription") || strings.Contains(errMsg, "subscription quota insufficient") {
 			return types.NewErrorWithStatusCode(fmt.Errorf("订阅额度不足或未配置订阅: %s", errMsg), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
@@ -232,8 +240,16 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 func (s *BillingSession) reserveFunding(delta int) error {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
-		if err := model.DecreaseUserQuota(funding.userId, delta, false); err != nil {
+		// 追加预扣同样必须条件扣减，否则并发下同样能把余额扣成负数。
+		ok, err := model.DecreaseUserQuotaConditional(funding.userId, delta)
+		if err != nil {
 			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+		}
+		if !ok {
+			return types.NewErrorWithStatusCode(
+				fmt.Errorf("用户额度不足，无法追加预扣 %s", logger.FormatQuota(delta)),
+				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
 		funding.consumed += delta
 		return nil

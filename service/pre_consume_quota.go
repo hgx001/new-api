@@ -68,9 +68,15 @@ func PreConsumeQuota(c *gin.Context, preConsumedQuota int, relayInfo *relaycommo
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
-		err = model.DecreaseUserQuota(relayInfo.UserId, preConsumedQuota, false)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+		ok, condErr := model.DecreaseUserQuotaConditional(relayInfo.UserId, preConsumedQuota)
+		if condErr != nil {
+			return types.NewError(condErr, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+		}
+		if !ok {
+			return types.NewErrorWithStatusCode(
+				fmt.Errorf("预扣费额度失败, 用户剩余额度不足, 需要预扣费额度: %s", logger.FormatQuota(preConsumedQuota)),
+				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
+				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
 		logger.LogInfo(c, fmt.Sprintf("用户 %d 预扣费 %s, 预扣费后剩余额度: %s", relayInfo.UserId, logger.FormatQuota(preConsumedQuota), logger.FormatQuota(userQuota-preConsumedQuota)))
 	}

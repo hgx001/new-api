@@ -192,9 +192,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 									logger.LogQuota(preConsumedQuota),
 									taskResult.TotalTokens,
 								))
-								if err := model.DecreaseUserQuota(task.UserId, quotaDelta, false); err != nil {
-									logger.LogError(ctx, fmt.Sprintf("补扣费失败: %s", err.Error()))
+								shortfall, chargeErr := model.ChargeUserQuotaWithArrears(task.UserId, quotaDelta)
+								if chargeErr != nil {
+									logger.LogError(ctx, fmt.Sprintf("补扣费失败: %s", chargeErr.Error()))
 								} else {
+									if shortfall > 0 {
+										logger.LogError(ctx, fmt.Sprintf("视频任务 %s 补扣费时余额不足，欠费：%s", task.TaskID, logger.LogQuota(shortfall)))
+									}
 									model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
 									model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 									task.Quota = actualQuota // 更新任务记录的实际扣费额度

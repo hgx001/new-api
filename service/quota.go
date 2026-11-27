@@ -420,9 +420,18 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 	} else {
 		// Wallet
 		if quota > 0 {
-			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
+			// 不能无条件扣：这条路径是事后结算（按次计费 / 无 BillingSession），
+			// 并发下同样能把余额扣成负数。改成条件扣减，扣不动的部分记欠费日志。
+			shortfall, chargeErr := model.ChargeUserQuotaWithArrears(relayInfo.UserId, quota)
+			if chargeErr != nil {
+				return chargeErr
+			}
+			if shortfall > 0 {
+				common.SysLog(fmt.Sprintf("[billing] 钱包欠费：用户 %d 结算 %d 时余额不足，欠费 %d", relayInfo.UserId, quota, shortfall))
+			}
 		} else {
-			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
+			// 退款同步落库：预扣走的是数据库条件更新，退款留在批量队列会造成短暂假「额度不足」
+			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, true)
 		}
 		if err != nil {
 			return err

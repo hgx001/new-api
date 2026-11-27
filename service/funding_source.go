@@ -1,8 +1,10 @@
 package service
 
 import (
+	"fmt"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -37,8 +39,15 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	if err := model.DecreaseUserQuota(w.userId, amount, false); err != nil {
+	// 必须用条件扣减：并发下同一用户多个请求各自读到同一个余额时，
+	// 无条件 UPDATE 会把余额扣成负数（透支）。这里只有一个能成功，
+	// 其余的拿到 ErrInsufficientWalletQuota → 403。
+	ok, err := model.DecreaseUserQuotaConditional(w.userId, amount)
+	if err != nil {
 		return err
+	}
+	if !ok {
+		return model.ErrInsufficientWalletQuota
 	}
 	w.consumed = amount
 	return nil
@@ -49,7 +58,15 @@ func (w *WalletFunding) Settle(delta int) error {
 		return nil
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(w.userId, delta, false)
+		// 片已经交付：能扣多少扣多少，差额算欠费（记日志），绝不把余额扣成负数。
+		shortfall, err := model.ChargeUserQuotaWithArrears(w.userId, delta)
+		if err != nil {
+			return err
+		}
+		if shortfall > 0 {
+			common.SysLog(fmt.Sprintf("[billing] 钱包欠费：用户 %d 结算补扣 %d 时余额不足，欠费 %d", w.userId, delta, shortfall))
+		}
+		return nil
 	}
 	return model.IncreaseUserQuota(w.userId, -delta, false)
 }
@@ -60,7 +77,10 @@ func (w *WalletFunding) Refund() error {
 	}
 	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
 	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
-	return model.IncreaseUserQuota(w.userId, w.consumed, false)
+	//
+	// 这里必须同步落库（db=true）：预扣已经改成数据库条件更新（quota >= ?），
+	// 若退款还留在批量队列里（默认 5s），紧接着的重提会用旧 DB 余额判定「不够」，产生假 403。
+	return model.IncreaseUserQuota(w.userId, w.consumed, true)
 }
 
 // ---------------------------------------------------------------------------

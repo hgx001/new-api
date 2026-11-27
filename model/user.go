@@ -984,6 +984,90 @@ func decreaseUserQuota(id int, quota int) (err error) {
 	return err
 }
 
+// ErrInsufficientWalletQuota 是「钱包余额不够本次扣款」的哨兵错误。
+// 调用方要用 errors.Is 判断并映射成 403，而不是当成 500 数据库错误。
+var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
+
+// DecreaseUserQuotaConditional 是**并发安全**的扣额度：只有余额足够时才扣。
+//
+// 与 DecreaseUserQuota 的区别在于 SQL 带了 `quota >= ?` 条件：
+// 并发下多个请求同时来扣，数据库只有一个能把 RowsAffected 变成 1，其余拿到 0。
+// 余额因此不会被扣成负数 —— 这是预扣费唯一正确的写法。
+//
+// 注意：条件更新必须在数据库里串行化，**不能走批量落库**（addNewRecord），
+// 否则并发窗口内大家看到的都是旧值，等于没加条件。
+func DecreaseUserQuotaConditional(id int, quota int) (bool, error) {
+	if quota < 0 {
+		return false, errors.New("quota 不能为负数！")
+	}
+	if quota == 0 {
+		return true, nil
+	}
+	res := DB.Model(&User{}).
+		Where("id = ? AND quota >= ?", id, quota).
+		Update("quota", gorm.Expr("quota - ?", quota))
+	if res.Error != nil {
+		return false, res.Error
+	}
+	if res.RowsAffected == 0 {
+		// 扣不动：把缓存校正成数据库真实值，避免后续请求继续拿旧值做判断。
+		if remaining, err := GetUserQuota(id, true); err == nil {
+			gopool.Go(func() {
+				if err := updateUserQuotaCache(id, remaining); err != nil {
+					common.SysLog("failed to sync user quota cache: " + err.Error())
+				}
+			})
+		}
+		return false, nil
+	}
+	gopool.Go(func() {
+		if err := cacheDecrUserQuota(id, int64(quota)); err != nil {
+			common.SysLog("failed to decrease user quota cache: " + err.Error())
+		}
+	})
+	return true, nil
+}
+
+// ChargeUserQuotaWithArrears 是结算补扣用的：能扣多少扣多少，**不允许把余额扣成负数**。
+// 返回扣不动的欠费额度（shortfall），调用方负责记日志/告警。
+//
+// 用于「片已经交付、钱必须结」的场景 —— 预扣阶段挡不住的事后差额，
+// 既不能因为余额不足就把整笔结算抛错（会导致日志/额度不一致），
+// 也不能无脑扣成负数（等于允许透支）。
+func ChargeUserQuotaWithArrears(id int, amount int) (shortfall int, err error) {
+	if amount <= 0 {
+		return 0, nil
+	}
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		ok, err := DecreaseUserQuotaConditional(id, amount)
+		if err != nil {
+			return 0, err
+		}
+		if ok {
+			return 0, nil
+		}
+		// 余额不足以支付全额：把剩下的全部收走，差额算欠费。
+		remaining, err := GetUserQuota(id, true)
+		if err != nil {
+			return 0, err
+		}
+		if remaining <= 0 {
+			return amount, nil
+		}
+		drained, err := DecreaseUserQuotaConditional(id, remaining)
+		if err != nil {
+			return 0, err
+		}
+		if drained {
+			return amount - remaining, nil
+		}
+		// 被别的请求抢先扣掉了，重试
+	}
+	// 重试用尽：保守返回全额欠费，本轮不扣（宁可少收也不透支）
+	return amount, nil
+}
+
 func DeltaUpdateUserQuota(id int, delta int) (err error) {
 	if delta == 0 {
 		return nil
