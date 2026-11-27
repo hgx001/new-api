@@ -55,7 +55,7 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 - **真机测试统一令牌（2026-11-16 用户拍板）**：所有真机视频测试一律用 token **id=144**（user 28 `admin`，非无限额度）。key 从生产库 `SELECT key FROM tokens WHERE id=144` 取、拼 `sk-` 前缀使用，不落仓库、不各脚本自建；提交前查 `users.quota`。
 - **图片模型与 m3only 沙箱组**：`Nano Banana Pro` / `Seedream 4.5` / `Seedream 5.0 Flash` 走 `POST /v1/videos` 任务协议（`/v1/images/generations` 一律 404），`gpt-image-2.5-官方` 走同步 images 且只回 b64_json。**后者目前无可用路由**（ch13 已手动禁用、唯一账号 OAuth 未恢复），别当在售模型描述。m3only 兜底组 = user 53 / token 166 / ch26·ch29·ch30，改动前备份 `bak_20261107_img_*`。协议差异、参数矩阵反证与未决项见 [image-models.md](docs/agent-guides/image-models.md)。
 - **SeetaCloud（ch28，type 70）**：上游=自建 ArcReel-H3 ComfyUI 实例，对外只留 `minimax_h3_omni`（`minimax_h3_v2` 已于 2026-11-08 退役）；参考视频按秒并入计费，输入模式三档由 payload 派生。协议/计费/脱敏细节见 [channel-contracts.md](docs/agent-guides/channel-contracts.md) SeetaCloud 节。
-- **部署链路**：本地提交 → `git push fork main`（远端只有 `fork`，没有 `origin`）→ 服务器 `bash /home/ubuntu/deploy-new-api.sh <short-sha>`（带 SHA 断言：docker build → 换容器 → 健康检查）。**服务器连不上 github**：push 后服务器 fetch 不到会 ABORT，须本地 `git bundle create x.bundle refs/heads/main ^<服务器HEAD>` 经 ssh 管道传入、服务器 `git fetch x.bundle main:refs/remotes/bundle/main` 后再部署。⚠️ ssh 管道写文件与后台化组合会把文件截断成 0 字节——传完必须 `wc -c` 验字节数。⚠️ `git bundle` 的正端**必须是引用名**（`main ^<sha>`），裸 SHA 当正端会报「Refusing to create empty bundle」（2026-11-14 实踩）。
+- **部署链路**：本地提交 → `git push fork main`（远端只有 `fork`，没有 `origin`）→ **新机构建上线** → 老机只 `docker load` 同一镜像再换容器（老机禁止 `docker build`，见下文硬约束）。**两台服务器都连不上 github**：push 后服务器 fetch 不到会 ABORT，须本地 `git bundle create x.bundle refs/heads/main ^<服务器HEAD>` 经 ssh 管道传入、服务器 `git fetch x.bundle main:refs/remotes/bundle/main` 后再 checkout。⚠️ ssh 管道写文件与后台化组合会把文件截断成 0 字节——传完必须 `wc -c` 验字节数。⚠️ `git bundle` 的正端**必须是引用名**（`main ^<sha>`），裸 SHA 当正端会报「Refusing to create empty bundle」（2026-11-14 实踩）。
 - **素材直传 COS（`POST /v1/files`，2026-11-14 上线）**：预签名直传腾讯云，字节不过网关（老机出口 3Mbps，代下载 60s 预算下单图 >4MB 必 400）。流程、路由位置与扩展名白名单同步要求见 [remote-generation.md](docs/agent-guides/remote-generation.md)「素材直传 COS」节。
 
 
@@ -92,9 +92,12 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 ## 部署与计费硬约束
 
 - **双机部署、严格同版本（2026-11-12 用户拍板）**：生产是老机 `api.heibaidao.cn`（`ubuntu@119.29.253.97:877`）与新机 `api2.heibaidao.cn`（ssh 别名 `newapi`）并存。**每次发版两台都要发，且必须锚定同一个 commit SHA**；只发一台＝发版未完成，任何时刻两台版本不得分叉。前后端产物同锚定该 SHA，前端用 `DEPLOY_HOST`/`DEPLOY_PORT` 覆盖老机默认值、两台各发一次。
-  - 入口：老机 `bash /home/ubuntu/deploy-new-api.sh <sha>`（连不上 github，bundle 传 SHA 后 `wc -c` 验字节）；新机 `DEPLOY_HOST=newapi DEPLOY_PORT=22 deploy/deploy-backend.sh <sha>`（必须 Git Bash，输出重定向到文件）。执行细节见 [deploy/README.md](deploy/README.md) 与上文「新生产实例」。
+  - 入口：新机 `DEPLOY_HOST=newapi DEPLOY_PORT=22 deploy/deploy-backend.sh <sha>`（必须 Git Bash，输出重定向到文件）。老机**不再构建**，只 load 新机导出的同 SHA 镜像再换容器，见下条与 [deploy/README.md](deploy/README.md)。
   - 验收：逐机核对部署 SHA / 前端 release `<timestamp>-<sha>` 与 `/api/status`（`success+setup`、PostgreSQL、未回落 SQLite），**两边一致才算完成**；不一致立即补齐落后的那台，不留待下次。回滚同样双机同版本，一台回滚后另一台不得留在高版本。
   - 版本对齐 ≠ 数据对齐：两台 DB/options/COS 凭据/sub2api 账号状态不随发版同步，差异见 `docs/new-server-migration-plan.md`；不得为追版本覆盖另一台的数据。
+- **老机禁止远程构建，构建只在新机（或本地）做（2026-11-27 用户拍板）**：老机根分区 40G、业务数据已占 33G，`docker build` 必把磁盘写满——实测构建到 96% 后 11:00 全机写失败停摆、22 分钟才重启，`new-api` 反复 `Exited (255)`，靠旧容器顶端口才没中断。
+  现行流程：新机 `deploy-backend.sh <sha>` 构建上线 → `ssh newapi 'sudo docker save new-api-custom:latest | gzip -1'`（约 76MB）→ 传老机 `docker load` → 从**在跑的**容器取 env 快照 → stop/rename 成 `new-api-prev-<ts>` → `docker run` 同参数 → 轮询 `/api/status`。
+  验收硬标准：两台 `docker exec new-api md5sum /new-api` **必须一致**（这是比 SHA 更硬的同二进制证据）。老机动手前 `df -h /` 需 ≥ 5G，不足先清构建残留（builder prune / 旧 prev 容器 / 旧 tag），不许靠重启腾空间。前端脚本也在目标机 `bun build`（临时占约 1G），两者同受此限。命令与回滚序列见 [deploy/README.md](deploy/README.md) 的「老机只 load 镜像」节；`/home/ubuntu/deploy-new-api.sh` 里那条 `docker build` 即事故根源，不再使用。
 - **执行体只在 [deploy/README.md](deploy/README.md)**：env 快照完整性、60s 未回落 SQLite、容器替换与自动回滚的判定都在脚本里，本文不复制。禁止临时脚本绕过 canonical 流程，前后端发布路径独立。
 - 模型变更**先发版、再改渠道/价表数据**；生产ModelPrice覆盖代码默认，价格与档位倍率/前端单位/最终结算一起核对。
 - 下架同步channels.models与abilities，AutoBan恢复同步status与enabled；缓存/目录/卡片是不同链路，不能只改一个字段宣布完成。

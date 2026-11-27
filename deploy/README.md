@@ -106,6 +106,55 @@ cd /home/ubuntu/new-api-src && git fetch /tmp/newapi-<sha>.bundle refs/heads/mai
   而 bundle 里没有 HEAD，报 `couldn't find remote ref HEAD`。目标用
   `refs/remotes/bundle/main` 而不是 `refs/heads/main`，避免动到 checkout 的分支。
 
+## 老机（api.heibaidao.cn）：只 load 镜像，不构建（2026-11-27 起）
+
+老机根分区 40G、业务数据已占 33G，**`docker build` 会把根分区写满**：2026-11-27 实测构建到 96%，
+11:00:08 全机写失败停摆（`rsyslogd: No space left on device` 刷屏），22 分钟后才重启回来，
+`new-api` 容器反复 `Exited (255)`，靠旧容器顶着 3000 端口才没对外中断。
+
+构建统一放在**新机**（或本地），老机只负责 load 镜像 + 换容器：
+
+```bash
+# 1) 新机照常构建并上线（唯一构建机）
+DEPLOY_HOST=newapi DEPLOY_PORT=22 deploy/deploy-backend.sh <sha>
+
+# 2) 新机导出镜像（实测 250MB 镜像 → 76MB gz）
+ssh newapi 'sudo docker save new-api-custom:latest | gzip -1' > /tmp/newapi-<sha>.tar.gz
+
+# 3) 传到老机，两端 md5 一致再 load
+scp -P 877 /tmp/newapi-<sha>.tar.gz ubuntu@119.29.253.97:/tmp/
+ssh -p 877 ubuntu@119.29.253.97 'md5sum /tmp/newapi-<sha>.tar.gz; \
+  sudo docker load -i /tmp/newapi-<sha>.tar.gz; \
+  sudo docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep new-api-custom'
+
+# 4) 换容器：env 必须从**当前正在跑的那个**容器取
+ssh -p 877 ubuntu@119.29.253.97 'bash -s' <<'EOS'
+set -euo pipefail
+cd /home/ubuntu/new-api-src && git checkout --detach <sha>
+LIVE=$(sudo docker ps --format '{{.Names}}' | grep -E '^new-api' | head -1)
+sudo docker inspect "$LIVE" --format '{{range .Config.Env}}{{println .}}{{end}}' > /tmp/newapi-swap.env
+sudo chmod 600 /tmp/newapi-swap.env
+TS=$(date +%Y%m%d%H%M%S)
+sudo docker stop "$LIVE"; sudo docker rename "$LIVE" "new-api-prev-$TS"
+sudo docker run -d --name new-api --restart always -p 127.0.0.1:3000:3000 \
+  -v /home/ubuntu/new-api/data:/data -v /home/ubuntu/new-api/logs:/app/logs \
+  --network new-api_new-api-network --env-file /tmp/newapi-swap.env \
+  new-api-custom:latest --log-dir /app/logs
+EOS
+
+# 5) 验收：两台二进制 md5 必须一致（构建机不同也能证明同一个二进制）
+sudo docker exec new-api md5sum /new-api      # 两台各跑一次
+```
+
+- **禁止**在老机跑 `docker build` / `docker compose build`，也禁止任何会把构建缓存写到根分区的操作。
+  `/home/ubuntu/deploy-new-api.sh` 里那条 `docker build` 就是这次事故的直接原因，别再走它。
+- **前端也一样**：`deploy/deploy-frontend.sh` 是在**目标机**上 `bun install + bun run build`（临时占用约 1G），
+  老机发前端前同样要过 5G 门槛；空间不够就先清 `node_modules`/旧 release，或先在新机发完再单独传 `releases/<ts>-<sha>` 到老机的 `/opt/new-api/frontend/default/releases/` 后指软链。
+- 老机换容器前先 `df -h /`，**可用空间 < 5G 不许动手**；不足就清构建残留
+  （`docker builder prune`、旧 `new-api-prev-*`、旧 `new-api-custom:<sha>` tag），不要靠重启腾空间。
+- 传镜像流程绕过了脚本的 SHA 断言，所以 **`git rev-parse --short HEAD` + 二进制 md5 两样都要人工核对**。
+- 换容器后如健康检查不通过：`docker rm -f new-api` → `docker rename new-api-prev-<ts> new-api` → `docker start new-api`（见下方「后端回滚」）。
+
 ## 回滚
 
 ### 前端回滚
