@@ -20,6 +20,7 @@ import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as ServersIndexRouteImport } from './routes/servers/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
 import { Route as PricingIndexRouteImport } from './routes/pricing/index'
+import { Route as CanvasIndexRouteImport } from './routes/canvas/index'
 import { Route as BlogIndexRouteImport } from './routes/blog/index'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
@@ -128,6 +129,11 @@ const RankingsIndexRoute = RankingsIndexRouteImport.update({
 const PricingIndexRoute = PricingIndexRouteImport.update({
   id: '/pricing/',
   path: '/pricing/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CanvasIndexRoute = CanvasIndexRouteImport.update({
+  id: '/canvas/',
+  path: '/canvas/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BlogIndexRoute = BlogIndexRouteImport.update({
@@ -467,6 +473,7 @@ export interface FileRoutesByFullPath {
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
   '/blog/': typeof BlogIndexRoute
+  '/canvas/': typeof CanvasIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/servers/': typeof ServersIndexRoute
@@ -533,6 +540,7 @@ export interface FileRoutesByTo {
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
   '/blog': typeof BlogIndexRoute
+  '/canvas': typeof CanvasIndexRoute
   '/pricing': typeof PricingIndexRoute
   '/rankings': typeof RankingsIndexRoute
   '/servers': typeof ServersIndexRoute
@@ -603,6 +611,7 @@ export interface FileRoutesById {
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
   '/blog/': typeof BlogIndexRoute
+  '/canvas/': typeof CanvasIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/servers/': typeof ServersIndexRoute
@@ -672,6 +681,7 @@ export interface FileRouteTypes {
     | '/oauth/$provider'
     | '/about/'
     | '/blog/'
+    | '/canvas/'
     | '/pricing/'
     | '/rankings/'
     | '/servers/'
@@ -738,6 +748,7 @@ export interface FileRouteTypes {
     | '/oauth/$provider'
     | '/about'
     | '/blog'
+    | '/canvas'
     | '/pricing'
     | '/rankings'
     | '/servers'
@@ -807,6 +818,7 @@ export interface FileRouteTypes {
     | '/oauth/$provider'
     | '/about/'
     | '/blog/'
+    | '/canvas/'
     | '/pricing/'
     | '/rankings/'
     | '/servers/'
@@ -868,6 +880,7 @@ export interface RootRouteChildren {
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
   BlogIndexRoute: typeof BlogIndexRoute
+  CanvasIndexRoute: typeof CanvasIndexRoute
   PricingIndexRoute: typeof PricingIndexRoute
   RankingsIndexRoute: typeof RankingsIndexRoute
   ServersIndexRoute: typeof ServersIndexRoute
@@ -954,6 +967,13 @@ declare module '@tanstack/react-router' {
       path: '/pricing'
       fullPath: '/pricing/'
       preLoaderRoute: typeof PricingIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/canvas/': {
+      id: '/canvas/'
+      path: '/canvas'
+      fullPath: '/canvas/'
+      preLoaderRoute: typeof CanvasIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/blog/': {
@@ -1506,6 +1526,7 @@ const rootRouteChildren: RootRouteChildren = {
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,
   BlogIndexRoute: BlogIndexRoute,
+  CanvasIndexRoute: CanvasIndexRoute,
   PricingIndexRoute: PricingIndexRoute,
   RankingsIndexRoute: RankingsIndexRoute,
   ServersIndexRoute: ServersIndexRoute,

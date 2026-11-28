@@ -17,7 +17,5 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export { CustomerServiceButton } from './customer-service-button'
-export { CanvasPanel } from './canvas-panel'
-export { HomeTabBar, type HomeTab } from './home-tab-bar'
 export { Features } from './sections/features'
 export { Hero } from './sections/hero'

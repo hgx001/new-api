@@ -16,17 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 
-import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
+import { PublicLayout } from '@/components/layout'
 import { api } from '@/lib/api'
-import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
+import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 
 /**
- * 无限画布（infinite-canvas）以 iframe 方式嵌在首页的「无限画布」标签页里。
+ * 无限画布（infinite-canvas）整页嵌入。
  *
  * 画布本身是纯前端应用，没有账号体系：它只认「服务地址 + 密钥」。
  * 这里把当前登录用户在本站的令牌取出来，通过同源 iframe 注入给画布：
@@ -80,21 +80,33 @@ function detectScriptId(capability: CanvasCapability): string {
   return 'openai-chat-text'
 }
 
-function isUsableToken(token: {
-  status: number
-  expired_time: number
-  remain_quota: number
-  unlimited_quota: boolean
-}): boolean {
-  if (token.status !== 1) return false
-  if (token.expired_time !== -1 && token.expired_time * 1000 < Date.now()) {
-    return false
-  }
-  if (!token.unlimited_quota && token.remain_quota <= 0) return false
-  return true
+/**
+ * 画布用哪一个令牌：优先「无限制 + 无限额度」，其次任意可用。
+ *
+ * 服务端列表按 id 倒序，直接取第一个可用会把画布绑到用户最后创建的那个令牌上；
+ * 那个令牌常常带 model_limits 或限了分组，画布上就会「少模型」或按非预期倍率扣费。
+ */
+function pickCanvasToken<
+  T extends {
+    status: number
+    expired_time: number
+    remain_quota: number
+    unlimited_quota: boolean
+    model_limits_enabled: boolean
+  },
+>(tokens: T[]): T | undefined {
+  const usable = tokens.filter((token) => {
+    if (token.status !== 1) return false
+    if (token.expired_time !== -1 && token.expired_time * 1000 < Date.now()) {
+      return false
+    }
+    if (!token.unlimited_quota && token.remain_quota <= 0) return false
+    return true
+  })
+  return usable.find((token) => !token.model_limits_enabled) ?? usable[0]
 }
 
-export function CanvasPanel() {
+export function Canvas() {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
@@ -109,10 +121,10 @@ export function CanvasPanel() {
     staleTime: 60_000,
   })
 
-  const usableToken = useMemo(() => {
-    const items = tokenList?.data?.items ?? []
-    return items.find(isUsableToken)
-  }, [tokenList])
+  const usableToken = useMemo(
+    () => pickCanvasToken(tokenList?.data?.items ?? []),
+    [tokenList]
+  )
 
   const { data: plainKey } = useQuery({
     queryKey: ['canvas', 'token-key', usableToken?.id],
@@ -135,9 +147,7 @@ export function CanvasPanel() {
       const list = res.data?.data
       if (!Array.isArray(list)) return []
       return list
-        .map(
-          (item: { id?: string; name?: string }) => item.id ?? item.name ?? ''
-        )
+        .map((item: { id?: string; name?: string }) => item.id ?? item.name ?? '')
         .filter((name: string) => Boolean(name))
     },
     enabled: !!plainKey,
@@ -151,13 +161,12 @@ export function CanvasPanel() {
     })
   }, [modelNames])
 
-  const baseUrl = useMemo(() => {
-    return `${window.location.origin}/v1`
-  }, [])
+  const baseUrl = useMemo(() => `${window.location.origin}/v1`, [])
 
   const inject = useCallback(async () => {
-    const frameWindow = iframeRef.current
-      ?.contentWindow as CanvasFrameWindow | null
+    const frameWindow = iframeRef.current?.contentWindow as
+      | CanvasFrameWindow
+      | null
     if (!frameWindow) return
     if (!plainKey) return
     if (!frameWindow.__infiniteCanvasApplyChannel) return
@@ -195,47 +204,49 @@ export function CanvasPanel() {
     }
   }, [frameReady, inject, injected, plainKey])
 
-  if (!user) {
-    return (
-      <div className='flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4 text-center'>
-        <p className='text-muted-foreground text-sm'>
-          {t(
-            'Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.'
-          )}
-        </p>
-      </div>
-    )
+  const buildNotice = () => {
+    if (!user) {
+      return t(
+        'Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.'
+      )
+    }
+    if (tokenList && !usableToken) {
+      return t(
+        'You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.'
+      )
+    }
+    return ''
   }
-
-  if (tokenList && !usableToken) {
-    return (
-      <div className='flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4 text-center'>
-        <p className='text-muted-foreground text-sm'>
-          {t(
-            'You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.'
-          )}
-        </p>
-      </div>
-    )
-  }
+  const notice = buildNotice()
 
   return (
-    <div className='relative flex min-h-[70vh] flex-col'>
-      {injectedError ? (
-        <p className='text-destructive px-4 py-2 text-sm'>{injectedError}</p>
-      ) : null}
-      {/* eslint-disable react/iframe-missing-sandbox -- 画布与本站同源，必须同时允许脚本与同源，宿主页面才能注入渠道配置。 */}
-      <iframe
-        ref={iframeRef}
-        src='/canvas/'
-        title={t('Infinite Canvas')}
-        sandbox='allow-scripts allow-same-origin allow-forms allow-popups'
-        className={cn(
-          'w-full flex-1 border-none',
-          injected ? 'opacity-100' : 'opacity-60'
+    <PublicLayout showMainContainer={false}>
+      {/* 顶部固定导航占 h-16，画布铺满剩余视口；页脚与首页内容都不出现在画布页。 */}
+      <div className='h-svh w-full pt-16'>
+        {notice ? (
+          <div className='flex h-full items-center justify-center px-4 text-center'>
+            <p className='text-muted-foreground max-w-md text-sm'>{notice}</p>
+          </div>
+        ) : (
+          <>
+            {injectedError ? (
+              <p className='text-destructive px-4 py-2 text-sm'>
+                {injectedError}
+              </p>
+            ) : null}
+            <iframe
+              ref={iframeRef}
+              src='/canvas/'
+              title={t('Infinite Canvas')}
+              className='h-full w-full border-none'
+              // 画布与本站同源，宿主页面要读 contentWindow 注入渠道配置，缺 allow-same-origin 会跨域。
+              // eslint-disable-next-line react/iframe-missing-sandbox
+              sandbox='allow-scripts allow-same-origin allow-forms allow-popups'
+              onLoad={() => setFrameReady(true)}
+            />
+          </>
         )}
-        onLoad={() => setFrameReady(true)}
-      />
-    </div>
+      </div>
+    </PublicLayout>
   )
 }

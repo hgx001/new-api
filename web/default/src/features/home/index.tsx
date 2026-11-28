@@ -16,24 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { PublicLayout } from '@/components/layout'
 import { Footer } from '@/components/layout/components/footer'
 import { RichContent } from '@/components/rich-content'
-import { ServersContent } from '@/features/servers'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import {
-  CanvasPanel,
-  CustomerServiceButton,
-  Features,
-  Hero,
-  HomeTabBar,
-  type HomeTab,
-} from './components'
+import { CustomerServiceButton, Features, Hero } from './components'
 import { useHomePageContent } from './hooks'
 
 export function Home() {
@@ -41,7 +32,6 @@ export function Home() {
   const { auth } = useAuthStore()
   const isAuthenticated = !!auth.user
   const { content, isLoaded, isUrl } = useHomePageContent()
-  const [activeTab, setActiveTab] = useState<HomeTab>('ai')
 
   if (!isLoaded) {
     return (
@@ -98,25 +88,12 @@ export function Home() {
     )
   }
 
-  const renderTabContent = () => {
-    if (activeTab === 'ai') {
-      return (
-        <>
-          <Hero isAuthenticated={isAuthenticated} />
-          <Features />
-        </>
-      )
-    }
-    if (activeTab === 'canvas') {
-      return <CanvasPanel />
-    }
-    return <ServersContent embedded />
-  }
-
   return (
     <PublicLayout showMainContainer={false} forceLightMode>
-      <HomeTabBar value={activeTab} onValueChange={setActiveTab} />
-      {renderTabContent()}
+      <main className='pt-20'>
+        <Hero isAuthenticated={isAuthenticated} />
+        <Features />
+      </main>
       <Footer />
       <CustomerServiceButton />
     </PublicLayout>

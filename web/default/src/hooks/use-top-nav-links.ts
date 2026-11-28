@@ -87,6 +87,11 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Cloud Servers'), href: '/servers' })
   }
 
+  // Infinite canvas (image/video creation workbench)
+  if (modules?.canvas !== false) {
+    links.push({ title: t('Infinite Canvas'), href: '/canvas' })
+  }
+
   // Tutorials (internal integration guide page)
   if (modules?.tutorials !== false) {
     links.push({ title: t('Tutorials'), href: '/tutorials' })
