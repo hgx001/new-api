@@ -37,17 +37,40 @@
 | 上游计费 | ¥2.50/小时（按 `duration`） | ¥3.5 / ¥2.0 每万字符 |
 | 本站计费 | ¥0.5/小时 | ¥3.5 / ¥2.0 每万字符 |
 
-- ASR 表单必须**白名单重建**（model / response_format / language / timestamp_level + file）：`temperature`、`prompt` 等 OpenAI 参数会被上游判非法。
+- ASR 表单必须**白名单重建**（model / response_format / timestamp_level + file）：`temperature`、`prompt` 等 OpenAI 参数会被上游判非法。
+- **`language` 是请求头**（BCP-47），不是表单字段；写进表单不会报错但也不生效。
+- ASR 必须走 `channel.DoFormRequest`：`DoApiRequest` 不转发客户请求的 Content-Type，
+  multipart 的 boundary 丢失后上游把 body 当空表单，报 `invalid params ... missing required parameter model`。
 - `response_format` 的 `text` 上游没有，归一到 `json`；`srt` / `vtt` 原样透传。
 - 上游回执 `{text,duration,segments,n_speakers,trace_id}` 要转成 OpenAI 形状；**`trace_id` 不外泄**。
 - 客户侧参数错误（缺 `file`）必须回 **400 invalid_request**，不能用普通 error —— 那会被上层归成 `convert_request_failed` + 500，既错状态码也可能计入 AutoBan。
+- TTS 的 **`output_format` 只接受 `hex` / `url`**，不是音频格式：把 OpenAI 的 `response_format=mp3`
+  透传上去直接 400。现在固定取 `hex` 直回二进制（`url` 会把客户 302 到上游 CDN，既泄露货源又过期）。
+  音频格式走 `audio_setting.format`（mp3/wav/flac/pcm），Content-Type 跟着格式走。
+- **voice 兜底**：OpenAI 的预置音色（alloy/nova/...）MiniMax 不认识，回 `2013 empty field`；
+  现在空值或预置名一律落 `male-qn-qingse`，客户自建 voice_id 原样透传。
 - 计费单位：转录沿用 `service/token_counter.go` 的时长口径（**1 分钟 = 1000 token**，1 小时 = 60000 token）；
   `¥ = token × ratio ÷ 500000 × 7.3`，所以 ¥0.5/小时 → `ratio = 0.5707762557077626`。
 - TTS 用我们的文本 token（= 输入 rune 数）计费，`ratio × 14.6 = ¥/1M token`；
   ⚠️ 上游「1 个汉字算 2 个字符」，所以纯中文时我们只收上游成本的一半 ——
   要成本对齐得把 ratio 加倍（hd `47.945..`、turbo `27.397..`），这是**未决**口径。
 - 广场单位显示：ASR 卡片按 token 显示成 `¥8.3333/1M`，TTS 显示成 `¥350/1M`，
-  与客户心智的「/小时」「/万字符」不一致，已在描述里写明真实单价；是否改成单位显示**待定**。
+  与客户心智的「/小时」「/万字符」不一致 —— 已在 `models.description` 里写明换算与真实单价，
+  是否改成单位显示**待定**。
+
+**真机实测（2026-11-28，token id=144，共 4 次成功调用 ≈ ¥0.0048）**
+
+| 调用 | 输入 | token | quota | 折合 |
+|---|---|---|---|---|
+| ASR json | 2.06 秒静音 mp3 | 50 | 29 | ¥0.00042 |
+| ASR json | 4.5 秒语音 mp3 | 83 | 47 | ¥0.00069 |
+| ASR verbose_json | 同上 | 83 | 47 | ¥0.00069 |
+| TTS turbo | 17 个汉字 | 17 | 233 | ¥0.0034 |
+
+- 转录 token = `ceil(秒数)/60×1000`：2.06 秒 → 3 秒 → 50 token；4.5 秒 → 5 秒 → 83 token。
+- 折回小时价：60000 token × 0.5707762 = 34247 quota = **¥0.5/小时**，与牌价一致。
+- TTS 17 token × 13.69863 = 233 quota，输出 73KB mp3、Content-Type `audio/mpeg`。
+- 预扣费是实际值的 10 倍（如 285 vs 29），结算后回冲；查余额要看结算后，不要看调用瞬间。
 
 ## MegaAI（type=64）/ wan-3.0、T3-seedance-2.5 与 m5 两档
 
