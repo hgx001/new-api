@@ -236,7 +236,7 @@ export function Canvas() {
             ) : null}
             <iframe
               ref={iframeRef}
-              src='/canvas/'
+              src='/canvas-app/'
               title={t('Infinite Canvas')}
               className='h-full w-full border-none'
               // 画布与本站同源，宿主页面要读 contentWindow 注入渠道配置，缺 allow-same-origin 会跨域。
