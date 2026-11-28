@@ -3,44 +3,35 @@ package ratio_setting
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// gpt-6 家族定价：与 gpt-5.6 同名模型同价（luna 为基准，sol = 20x luna），
-// 后端按 (prompt + completion*completionRatio) * modelRatio * groupRatio 结算，
-// modelRatio 等比放大即等比放大整单费用，无需动 completionRatio。
+// gpt-6 家族定价：全部按 OpenAI 官网 Standard 档（2026-11-28 实查），
+// ratio = 输入价($/1M) ÷ 2，output/input 官网统一 5 倍。
 func TestDefaultModelRatioGpt6Family(t *testing.T) {
 	InitRatioSettings()
 
-	luna, ok, _ := GetModelRatio("gpt-6-luna")
-	require.True(t, ok, "gpt-6-luna must have an explicit ratio")
-	require.Equal(t, 0.064212, luna, "gpt-6-luna must match gpt-5.6-luna price")
-
-	sol, ok, _ := GetModelRatio("gpt-6-sol")
-	require.True(t, ok, "gpt-6-sol must have an explicit ratio")
-	require.Equal(t, 1.28424, sol, "gpt-6-sol must match gpt-5.6-sol price")
-	require.InDelta(t, 20*luna, sol, 1e-12, "sol must be 20x luna")
-	require.Equal(t, 8.0, GetCompletionRatio("gpt-6-luna"), "gpt-6 must inherit the gpt-5 completion ratio")
-	require.Equal(t, 8.0, GetCompletionRatio("gpt-6-sol"))
-
-	// gpt-6.1-sol：上游（sub2api）实测可用，与 gpt-6-sol 同为 sol 档 → 必须同价。
-	// 它的输入倍率不会被前缀兜底（GetModelRatio 精确查表），所以必须显式登记；
-	// 补全倍率则由 gpt-6* 硬编码兜底为 8。
-	sol61, ok, _ := GetModelRatio("gpt-6.1-sol")
-	require.True(t, ok, "gpt-6.1-sol must have an explicit ratio")
-	require.Equal(t, sol, sol61, "gpt-6.1-sol must match gpt-6-sol price")
-	require.Equal(t, 8.0, GetCompletionRatio("gpt-6.1-sol"))
-
-	// gpt-5.6 只保留 luna/sol 两个兼容别名（渠道映射到 gpt-6），
-	// 同名同价：下游无需改模型名即可平滑迁移。
-	for alias, target := range map[string]string{"gpt-5.6-luna": "gpt-6-luna", "gpt-5.6-sol": "gpt-6-sol"} {
-		aliasRatio, ok := defaultModelRatio[alias]
-		require.True(t, ok, "%s compat alias must keep an explicit ratio", alias)
-		require.Equal(t, defaultModelRatio[target], aliasRatio, "%s must match %s price", alias, target)
+	expect := map[string]float64{
+		"gpt-6-astra":   5.0,   // $10.00 / $50.00
+		"gpt-6.1-sol":   1.0,   // $2.00 / $10.00
+		"gpt-6.1-terra": 0.25,  // $0.50 / $2.50
+		"gpt-6-luna":    0.025, // $0.05 / $0.25
+		"gpt-6-sol":     1.0,   // sol 档统一 $2（官网无 gpt-6-sol 单独条目）
+	}
+	for model, want := range expect {
+		got, ok, _ := GetModelRatio(model)
+		require.True(t, ok, "%s must have an explicit ratio", model)
+		require.InDelta(t, want, got, 1e-12, "%s ratio must follow official pricing", model)
+		require.Equal(t, 5.0, GetCompletionRatio(model), "%s completion ratio must be 5x", model)
 	}
 
-	// 其余 5.6 名字彻底下线，不应再有显式倍率。
-	for _, retired := range []string{"gpt-5.6", "gpt-5.6-terra"} {
+	// 未定价的 gpt-6 不得登记：广场不上架，GetModelRatio 会回落到 37.5（$75/1M），
+	// 宁可没有价格也不能带一个错价格上架。
+	require.NotContains(t, defaultModelRatio, "gpt-6")
+
+	// gpt-5.6 旧名随「只留 6.x」下线，不许再留别名倍率。
+	for _, retired := range []string{"gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"} {
 		_, exists := defaultModelRatio[retired]
 		require.False(t, exists, "%s must be removed from default ratios", retired)
 	}
@@ -113,6 +104,7 @@ func TestDefaultModelPriceWan3PerSecond(t *testing.T) {
 //     options.ModelPrice，代码默认值会直接写进 DB；
 //   - relay/helper/price.go 的 ModelPriceHelperPerCall 在 DB 查不到时回落到
 //     GetDefaultModelPriceMap()。
+//
 // 兜底值错了 = DB 被重置/迁移后价格静默回退到旧价。
 func TestDefaultModelPriceKemeitvSpecialTier(t *testing.T) {
 	InitRatioSettings()
@@ -334,4 +326,17 @@ func TestDefaultModelPriceAutoDLPerSecond(t *testing.T) {
 		require.True(t, ok, "AutoDL model must have an explicit per-second price: %s", model)
 		require.InDelta(t, want, price, 1e-12, "AutoDL base price must be ¥0.10/sec: %s", model)
 	}
+}
+
+// gpt-6 家族官网 output/input 全部是 5 倍，不能沿用 gpt-5.6 的 8 倍。
+func TestGpt6CompletionRatio(t *testing.T) {
+	for _, model := range []string{
+		"gpt-6", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra",
+	} {
+		assert.Equal(t, 5.0, GetCompletionRatio(model), "model=%s", model)
+	}
+	// gpt-5.x 保持原样，不受影响
+	assert.Equal(t, 8.0, GetCompletionRatio("gpt-5.6-sol"))
+	assert.Equal(t, 6.0, GetCompletionRatio("gpt-5.5"))
+	assert.Equal(t, 6.0, GetCompletionRatio("gpt-5.4"))
 }

@@ -107,22 +107,28 @@ var defaultModelRatio = map[string]float64{
 	"gpt-5-mini-2025-08-07":                   0.125,
 	"gpt-5-nano":                              0.025,
 	"gpt-5-nano-2025-08-07":                   0.025,
-	"gpt-6-luna":                              0.064212, // 与 gpt-5.6-luna 同名同价
-	"gpt-6-sol":                               1.28424,  // 与 gpt-5.6-sol 同名同价
-	// gpt-6.1-sol：上游（sub2api）实测可用、与 gpt-6-sol 同为 sol 档 → 同价。
-	// ⚠️ 必须显式登记：getHardcodedCompletionModelRatio 只兜底「补全倍率 8」，
-	// 输入侧倍率不会按前缀回落（GetModelRatio 精确查表），不登记就是「无价格可用」。
-	"gpt-6.1-sol": 1.28424,
+	// GPT-6 家族：全部按 OpenAI 官网 Standard 档定价（2026-11-28 实查
+	// developers.openai.com/api/docs/pricing），换算 ratio = 输入价($/1M) ÷ 2。
+	//   gpt-6-astra    $10.00 in / $50.00 out → 5.00
+	//   gpt-6.1-sol     $2.00 in / $10.00 out → 1.00
+	//   gpt-6.1-terra   $0.50 in /  $2.50 out → 0.25
+	//   gpt-6-luna      $0.05 in /  $0.25 out → 0.025
+	//   gpt-6-sol   官网无单独条目，sol 档统一按 $2 → 1.00
+	// ⚠️ 必须显式登记：GetModelRatio 精确查表，未登记的名字会回落到 37.5
+	// （那等于 $75/1M，不是“便宜”，是灾难）。
+	"gpt-6-astra":   5.0,
+	"gpt-6-luna":    0.025,
+	"gpt-6-sol":     1.0,
+	"gpt-6.1-sol":   1.0,
+	"gpt-6.1-terra": 0.25,
 	// MiniMax-M3 / M3.1 输入价：¥0.2205 / 1M tokens（本轮未调）。
 	// 换算：model_ratio = 1e6 × ¥0.2205 ÷ (500000 × 7.3) = 0.015103
 	// ⚠️ 与 M3.1 同价的原因同上：M3.1 实际转发到上游 M3，共用同一份上游成本。
 	// ⚠️ 官方 MiniMax-M3 输入价 ¥4.20/1M，本平台仍低于官方 19 倍。
 	"MiniMax-M3":   0.015103,
 	"MiniMax-M3.1": 0.015103, // 同 MiniMax-M3：实际转发到上游 M3，同价
-	// gpt-5.6 旧名保留为兼容别名（渠道 model_mapping 转发到 gpt-6），
-	// 不在模型广场展示，价格与同名 gpt-6 保持一致。
-	"gpt-5.6-luna":                              0.064212,
-	"gpt-5.6-sol":                               1.28424,
+	// gpt-5.6 旧名已于 2026-11-28 随「只留 6.x」下架：渠道映射、能力行、广场条目均已清掉，
+	// 这里也不再保留别名，避免旧名重新带上倍率无声复活。
 	"gpt-3.5-turbo":                             0.25,
 	"gpt-3.5-turbo-0613":                        0.75,
 	"gpt-3.5-turbo-16k":                         1.5, // $0.003 / 1K tokens
@@ -328,12 +334,12 @@ var defaultModelPrice = map[string]float64{
 	"el-seedance-2.5":          0.25 / USD2RMB,
 	"el-seedance-2.0mini":      0.25 / USD2RMB,
 	"el-gemini-1.2flash":       0.25 / USD2RMB,
-	"wan3.0-video":             0.0369863,      // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）。720P ¥0.54/秒、1080P ¥1.08/秒走分辨率倍率（2 / 4）
-	"wan3.0-video-prime":       0.05547945,     // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
-	"wan3.0-smart":             0.28 / USD2RMB, // 有赞智能调度版 480P 对外 ¥0.28/秒（720P ¥0.32/秒、1080P ¥0.40/秒走分辨率倍率）
+	"wan3.0-video":             0.0369863,       // 480P 对外 ¥0.27/秒；内部按 USD 等值存储（0.27/7.3）。720P ¥0.54/秒、1080P ¥1.08/秒走分辨率倍率（2 / 4）
+	"wan3.0-video-prime":       0.05547945,      // 480P 对外 ¥0.405/秒（标准版 1.5 倍）；内部按 USD 等值存储
+	"wan3.0-smart":             0.28 / USD2RMB,  // 有赞智能调度版 480P 对外 ¥0.28/秒（720P ¥0.32/秒、1080P ¥0.40/秒走分辨率倍率）
 	"wan3-新大陆":                 0.138 / USD2RMB, // 二春(erchun) Wan3.0 新线路：480P 对外 ¥0.138/秒，720P ¥0.24（×1.7391）、1080P ¥0.5（×3.6232）走分辨率倍率；上游成本 0.096/0.192/0.384 credits/秒
-	"wan3.0-video-prime-1080p": 8 / USD2RMB,    // 有赞满血 30 秒档，按次计费 ¥8/次（上游 20 点数/秒 × 固定 30 秒 ≈ ¥6/次），不乘时长/分辨率倍率
-	"wan3.0-video-官网":          0.2 / USD2RMB,  // 官方渠道独立模型名，上游同 wan3.0-video，480P 对外 ¥0.20/秒（720P ¥0.45/秒、1080P ¥0.80/秒）
+	"wan3.0-video-prime-1080p": 8 / USD2RMB,     // 有赞满血 30 秒档，按次计费 ¥8/次（上游 20 点数/秒 × 固定 30 秒 ≈ ¥6/次），不乘时长/分辨率倍率
+	"wan3.0-video-官网":          0.2 / USD2RMB,   // 官方渠道独立模型名，上游同 wan3.0-video，480P 对外 ¥0.20/秒（720P ¥0.45/秒、1080P ¥0.80/秒）
 	// 客美 Kemeitv（渠道 71，2026-11-19 上架）的两个万相「特价」变体。
 	//
 	// ⚠️ 它们与站内已有的 wan3.0-video / wan3.0-video-prime 是**两条独立货源**，
@@ -784,8 +790,14 @@ func getHardcodedCompletionModelRatio(name string) (float64, bool) {
 			}
 			return 4, false
 		}
-		// gpt-5 / gpt-6 匹配（gpt-6 与 gpt-5.6 同价，补全倍率保持一致）
-		if strings.HasPrefix(name, "gpt-5") || strings.HasPrefix(name, "gpt-6") {
+		// gpt-5 / gpt-6 匹配
+		// gpt-5.x 官方 output/input 是 6~8 倍（gpt-5.6 系列为 8）；
+		// gpt-6 家族（gpt-6、gpt-6-astra、gpt-6.1-sol、gpt-6.1-terra、gpt-6-luna）
+		// 官网全部是 5 倍（$10/$50、$2/$10、$0.5/$2.5、$0.05/$0.25），不能沿用 8。
+		if strings.HasPrefix(name, "gpt-6") {
+			return 5, true
+		}
+		if strings.HasPrefix(name, "gpt-5") {
 			if strings.HasPrefix(name, "gpt-5.5") {
 				return 6, true
 			}

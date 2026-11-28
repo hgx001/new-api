@@ -11,9 +11,10 @@ import (
 //   - Seedream 4.5（dola 官网）
 //
 // 两个关键约束：
-//   ① 新模型 ¥0.2/张；
-//   ② **不得**把既有的 Nano Banana Pro（¥0.3/张）一并降价 ——
-//      「两毛一张」针对的是新增的两个模型，不是整个图片品类。
+//
+//	① 新模型 ¥0.2/张；
+//	② **不得**把既有的 Nano Banana Pro（¥0.3/张）一并降价 ——
+//	   「两毛一张」针对的是新增的两个模型，不是整个图片品类。
 func TestSeedreamImagePriceIsTwoMaoPerImage(t *testing.T) {
 	InitRatioSettings()
 
