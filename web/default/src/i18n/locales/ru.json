@@ -5593,7 +5593,17 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Infinite Canvas": "Бесконечный холст",
+    "Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.": "Войдите в систему перед использованием бесконечного холста. Холст вызывает модели платформы вашим собственным токеном аккаунта.",
+    "You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.": "У вас пока нет доступного токена. Создайте и включите его на странице «Ключи», и холст подхватит его автоматически.",
+    "Dedicated inbound and outbound bandwidth": "Выделенный входящий и исходящий канал",
+    "Pick a region, a plan, the specs and the bandwidth you need. Pay for 6 months, 1 year or 3 years, and get your server credentials right after the payment succeeds.": "Выберите регион, линейку, конфигурацию и канал. Оплатите 6 месяцев, год или 3 года и сразу получите доступы к серверу.",
+    "Term": "Срок",
+    "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "После окончания срока сервер хранится ещё 7 дней для продления. Затем данные удаляются, а сервер возвращается в пул.",
+    "Upgrade any time": "Изменение в любой момент",
+    "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "Да. В обоих регионах одинаковые образы и каталог линеек: перенесите сервер, пересоздав его в другом регионе.",
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "При смене тарифа, конфигурации или полосы пропорционально оплачивается остаток периода."
   },
   "Integration Tutorial": "Руководство по интеграции",
   "Claude Code Installation": "Установка Claude Code",

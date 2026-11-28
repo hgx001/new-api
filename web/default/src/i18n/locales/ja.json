@@ -5593,7 +5593,17 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Infinite Canvas": "無限キャンバス",
+    "Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.": "無限キャンバスを使用するには先にログインしてください。キャンバスはアカウントのトークンでプラットフォームのモデルを呼び出します。",
+    "You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.": "利用可能なトークンがまだありません。「キー」ページで作成して有効にすると、キャンバスが自動的に読み込みます。",
+    "Dedicated inbound and outbound bandwidth": "上り・下りとも専用帯域",
+    "Pick a region, a plan, the specs and the bandwidth you need. Pay for 6 months, 1 year or 3 years, and get your server credentials right after the payment succeeds.": "リージョン・型号・仕様・帯域幅を選択。6 か月・1 年・3 年のいずれかで支払い、完了後すぐにサーバー情報が发放されます。",
+    "Term": "契約期間",
+    "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "期限切れ後も 7 日間インスタンスを保持し、更新できます。その後はデータが解放され、インスタンスも回収されます。",
+    "Upgrade any time": "いつでも変更可能",
+    "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "はい。両リージョンで同じイメージと同じカタログを提供しているので、もう一方のリージョンで再作成すれば移行できます。",
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "プラン・仕様・帯域を変更すると、残り期間は按分精算されます。"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",

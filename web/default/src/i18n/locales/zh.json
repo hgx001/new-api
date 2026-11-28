@@ -5593,7 +5593,17 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Infinite Canvas": "无限画布",
+    "Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.": "请先登录后再使用无限画布，画布会用你的账号令牌调用平台模型。",
+    "You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.": "你还没有可用的令牌，请先在「密钥」页面创建并启用一个，画布会自动使用它。",
+    "Dedicated inbound and outbound bandwidth": "独享进出带宽",
+    "Pick a region, a plan, the specs and the bandwidth you need. Pay for 6 months, 1 year or 3 years, and get your server credentials right after the payment succeeds.": "选择地区、型号、配置与带宽，半年 / 一年 / 三年任选，支付成功后立即拿到服务器账号信息。",
+    "Term": "购买周期",
+    "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "到期后实例保留 7 天供你续费，逾期数据将被释放、实例回收。",
+    "Upgrade any time": "随时升配",
+    "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "可以。两个地区使用相同的镜像与相同的型号目录，在另一地区重建即可完成迁移。",
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "变更型号、配置或带宽后，剩余周期按比例折算补差价。"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",

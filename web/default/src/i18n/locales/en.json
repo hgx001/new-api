@@ -5593,7 +5593,17 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Infinite Canvas": "Infinite Canvas",
+    "Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.": "Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.",
+    "You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.": "You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.",
+    "Dedicated inbound and outbound bandwidth": "Dedicated inbound and outbound bandwidth",
+    "Pick a region, a plan, the specs and the bandwidth you need. Pay for 6 months, 1 year or 3 years, and get your server credentials right after the payment succeeds.": "Pick a region, a plan, the specs and the bandwidth you need. Pay for 6 months, 1 year or 3 years, and get your server credentials right after the payment succeeds.",
+    "Term": "Term",
+    "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.",
+    "Upgrade any time": "Upgrade any time",
+    "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.",
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Change plan, specs or bandwidth and the remaining period is charged at a prorated price."
   },
   "Integration Tutorial": "Integration Tutorial",
   "Claude Code Installation": "Claude Code Installation",

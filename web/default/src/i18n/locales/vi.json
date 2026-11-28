@@ -5593,7 +5593,17 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Infinite Canvas": "Canvas vô hạn",
+    "Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.": "Vui lòng đăng nhập trước khi dùng canvas vô hạn. Canvas gọi mô hình của nền tảng bằng token tài khoản của bạn.",
+    "You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.": "Bạn chưa có token dùng được. Hãy tạo và kích hoạt trong trang «Khóa»; canvas sẽ tự động dùng token đó.",
+    "Dedicated inbound and outbound bandwidth": "Băng thông chiều ra và chiều vào riêng",
+    "Pick a region, a plan, the specs and the bandwidth you need. Pay for 6 months, 1 year or 3 years, and get your server credentials right after the payment succeeds.": "Chọn khu vực, dòng máy, cấu hình và băng thông. Trả 6 tháng, 1 năm hoặc 3 năm và nhận thông tin đăng nhập ngay sau khi thanh toán.",
+    "Term": "Thời hạn",
+    "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "Máy chủ được giữ thêm 7 ngày sau khi hết hạn để gia hạn. Sau đó dữ liệu bị thu hồi và máy chủ được tái cấp phối.",
+    "Upgrade any time": "Nâng cấp bất cứ lúc nào",
+    "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "Có. Cả hai khu vực dùng chung image và danh mục dòng máy, nên bạn có thể chuyển bằng cách dựng lại ở khu vực còn lại.",
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Khi đổi gói, cấu hình hoặc băng thông, thời gian còn lại được tính theo tỷ lệ."
   },
   "Integration Tutorial": "Hướng dẫn tích hợp",
   "Claude Code Installation": "Cài đặt Claude Code",

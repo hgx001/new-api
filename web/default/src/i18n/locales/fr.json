@@ -5593,7 +5593,17 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Infinite Canvas": "Canvas infini",
+    "Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.": "Veuillez vous connecter avant d'utiliser le canvas infini. Le canvas appelle les modèles de la plateforme avec votre propre jeton de compte.",
+    "You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.": "Vous n'avez pas encore de jeton utilisable. Créez-en un et activez-le sur la page « Clés » ; le canvas le prendra automatiquement.",
+    "Dedicated inbound and outbound bandwidth": "Bande passante entrante et sortante dédiée",
+    "Pick a region, a plan, the specs and the bandwidth you need. Pay for 6 months, 1 year or 3 years, and get your server credentials right after the payment succeeds.": "Choisissez région, gamme, configuration et bande passante. Payez 6 mois, 1 an ou 3 ans et recevez vos identifiants dès le paiement validé.",
+    "Term": "Durée",
+    "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "L’instance est conservée sept jours après l’expiration pour permettre le renouvellement. Ensuite les données sont libérées et l’instance récupérée.",
+    "Upgrade any time": "Évolvez à tout moment",
+    "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "Oui. Les deux régions utilisent les mêmes images et le même catalogue : migrez en reconstruisant l’instance dans l’autre région.",
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Modifier l’offre, les spécifications ou la bande passante : la période restante est facturée au prorata."
   },
   "Integration Tutorial": "Tutoriel d'intégration",
   "Claude Code Installation": "Installation de Claude Code",
