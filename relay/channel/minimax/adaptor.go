@@ -36,7 +36,10 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 	if info.RelayMode == constant.RelayModeAudioTranscription {
 		reader, contentType, err := buildAsrRequestBody(c, request)
 		if err != nil {
-			return nil, err
+			// 客户参数问题（没传 file / 表单解不开）必须回 400：
+			// 用普通 error 会被上层归成 convert_request_failed + 500，
+			// 那既是错的状态码，也可能被当成渠道故障计入 AutoBan。
+			return nil, types.NewOpenAIError(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest)
 		}
 		// 表单边界由 buildAsrRequestBody 生成，必须回写到请求头，DoApiRequest 不再改 Content-Type。
 		c.Request.Header.Set("Content-Type", contentType)
