@@ -394,6 +394,12 @@ func isAllowedPricingModel(name string) bool {
 	if name == "gpt-image-2.5" {
 		return true
 	}
+	// GPT 官方图片模型（2026-11-28 号池升 0.2.21 后可用）：官网真实名，
+	// 2.5/2.6 × flare/sunburst 四个变体，客户侧原样展示，不做改名。
+	if name == "gpt-image-2.5-flare" || name == "gpt-image-2.5-sunburst" ||
+		name == "gpt-image-2.6-flare" || name == "gpt-image-2.6-sunburst" {
+		return true
+	}
 	// 官方渠道图片模型：上游同为 gpt-image-2，独立命名以区分二手图片渠道
 	if name == "gpt-image-2.5-官方" {
 		return true
