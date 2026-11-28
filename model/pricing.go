@@ -414,6 +414,16 @@ func isAllowedPricingModel(name string) bool {
 	if name == "gemini-3.1-flash-image-preview" {
 		return true
 	}
+	// 语音模型（MiniMax 官方直连，2026-11-28 上架）：
+	//   语音识别 asr-1.0 按音频时长计费，对客户 ¥0.5/小时（上游 ¥2.50/小时）；
+	//   同步 TTS speech-2.8-hd / speech-2.8-turbo 按输入字符数计费。
+	// 三者都走 /v1/audio/*，不能与文本模型的前缀规则共用，必须逐字精确匹配。
+	if name == "asr-1.0" {
+		return true
+	}
+	if name == "speech-2.8-hd" || name == "speech-2.8-turbo" {
+		return true
+	}
 	// 视频模型：全部上游模型均展示
 	if name == "aliyun:wan-3.0" {
 		return true

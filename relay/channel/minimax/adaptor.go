@@ -33,6 +33,15 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.AudioRequest) (io.Reader, error) {
+	if info.RelayMode == constant.RelayModeAudioTranscription {
+		reader, contentType, err := buildAsrRequestBody(c, request)
+		if err != nil {
+			return nil, err
+		}
+		// 表单边界由 buildAsrRequestBody 生成，必须回写到请求头，DoApiRequest 不再改 Content-Type。
+		c.Request.Header.Set("Content-Type", contentType)
+		return reader, nil
+	}
 	if info.RelayMode != constant.RelayModeAudioSpeech {
 		return nil, errors.New("unsupported audio relay mode")
 	}
@@ -121,6 +130,17 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if info.RelayMode == constant.RelayModeAudioTranscription {
+		responseFormat := "json"
+		if audioRequest, ok := info.Request.(*dto.AudioRequest); ok {
+			responseFormat = audioRequest.ResponseFormat
+		}
+		asrUsage, asrErr := handleAsrResponse(c, resp, info, responseFormat)
+		if asrErr != nil {
+			return nil, types.NewOpenAIError(asrErr, types.ErrorCodeBadResponse, http.StatusBadRequest)
+		}
+		return asrUsage, nil
+	}
 	if info.RelayMode == constant.RelayModeAudioSpeech {
 		return handleTTSResponse(c, resp, info)
 	}

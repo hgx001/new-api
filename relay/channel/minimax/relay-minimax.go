@@ -25,6 +25,9 @@ func GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			return fmt.Sprintf("%s/v1/image_generation", baseUrl), nil
 		case constant.RelayModeAudioSpeech:
 			return fmt.Sprintf("%s/v1/t2a_v2", baseUrl), nil
+		case constant.RelayModeAudioTranscription:
+			// 语音识别（asr-1.0）：音频转文本，按音频时长计费（见 service/token_counter.go）。
+			return fmt.Sprintf("%s/v1/speech_to_text", baseUrl), nil
 		default:
 			return "", fmt.Errorf("unsupported relay mode: %d", info.RelayMode)
 		}
