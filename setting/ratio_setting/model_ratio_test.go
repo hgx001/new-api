@@ -13,6 +13,9 @@ func TestDefaultModelRatioGpt6Family(t *testing.T) {
 	InitRatioSettings()
 
 	expect := map[string]float64{
+		"gpt-6":         1.0,   // 官网无单独条目，按 sol 档 $2/$10
+		"gpt-6.2-sol":   1.0,   // $2.00 / $10.00
+		"gpt-6.2-astra": 4.0,   // $8.00 / $40.00
 		"gpt-6-astra":   5.0,   // $10.00 / $50.00
 		"gpt-6.1-sol":   1.0,   // $2.00 / $10.00
 		"gpt-6.1-terra": 0.25,  // $0.50 / $2.50
@@ -28,7 +31,9 @@ func TestDefaultModelRatioGpt6Family(t *testing.T) {
 
 	// 未定价的 gpt-6 不得登记：广场不上架，GetModelRatio 会回落到 37.5（$75/1M），
 	// 宁可没有价格也不能带一个错价格上架。
-	require.NotContains(t, defaultModelRatio, "gpt-6")
+	// 官网有价但号池不供的档位（cyber/rosalind）不得登记，避免挂上即 503。
+	require.NotContains(t, defaultModelRatio, "gpt-6-cyber")
+	require.NotContains(t, defaultModelRatio, "gpt-6-rosalind")
 
 	// gpt-5.6 旧名随「只留 6.x」下线，不许再留别名倍率。
 	for _, retired := range []string{"gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"} {

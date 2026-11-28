@@ -116,6 +116,9 @@ var defaultModelRatio = map[string]float64{
 	//   gpt-6-sol   官网无单独条目，sol 档统一按 $2 → 1.00
 	// ⚠️ 必须显式登记：GetModelRatio 精确查表，未登记的名字会回落到 37.5
 	// （那等于 $75/1M，不是“便宜”，是灾难）。
+	"gpt-6":         1.0, // 官网无单独条目 → sol 档 $2/$10
+	"gpt-6.2-sol":   1.0, // $2/$10（2026-11-28 官网实查）
+	"gpt-6.2-astra": 4.0, // $8/$40
 	"gpt-6-astra":   5.0,
 	"gpt-6-luna":    0.025,
 	"gpt-6-sol":     1.0,
