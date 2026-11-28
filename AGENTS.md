@@ -85,6 +85,7 @@ Go/Gin/GORM API网关，前端为 `web/default/`（React/TypeScript/Rsbuild）�
 | 模型改名/调价、目录/能力/缓存、上下架、AutoBan恢复 | [pricing-catalog.md](docs/agent-guides/pricing-catalog.md) |
 | 支付/回调、补单、额度缓存、兑换码/订阅并发安全 | [payments.md](docs/agent-guides/payments.md) |
 | 发布护栏、安全探针、误建撤销、sub2api/OAuth | [production-operations.md](docs/agent-guides/production-operations.md) |
+| 无限画布（首页标签页）、iframe 凭据注入、new-api 任务协议脚本 | [infinite-canvas.md](docs/agent-guides/infinite-canvas.md) |
 | 实际发布/回滚步骤（单机执行体） | [deploy/README.md](deploy/README.md)（唯一权威流程）；双机同版本编排见本文「部署与计费硬约束」 |
 | 有赞上游余额对账、怀疑异常扣款 | `bash scripts/audit-youzan-balance.sh <人工抄的余额>`（在生产服务器执行；节点与用法见脚本头注释） |
 | 表达式/动态分层计费 | [pkg/billingexpr/expr.md](pkg/billingexpr/expr.md) |
