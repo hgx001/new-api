@@ -157,8 +157,8 @@ func handleTTSResponse(c *gin.Context, resp *http.Response, info *relaycommon.Re
 			)
 		}
 
-		// Determine content type - default to mp3
-		contentType := "audio/mpeg"
+		// 按客户要的格式回 Content-Type（这里只可能是 mp3 / wav / flac / pcm）。
+		contentType := getContentTypeByFormat(requestedAudioFormat(info))
 
 		c.Data(http.StatusOK, contentType, audioData)
 	}
@@ -195,4 +195,44 @@ func handleChatCompletionResponse(c *gin.Context, resp *http.Response, info *rel
 
 	c.Data(resp.StatusCode, "application/json", body)
 	return nil, nil
+}
+
+// OpenAI 的六个预置音色名 MiniMax 不认识，直接透传会被上游判 empty field。
+var openAIPresetVoices = map[string]struct{}{
+	"alloy": {}, "echo": {}, "fable": {}, "onyx": {}, "nova": {}, "shimmer": {}, "ash": {}, "sage": {}, "coral": {},
+}
+
+// defaultMinimaxVoiceID 是官方文档 T2A 示例用的音色，中文朗读自然，作为兜底。
+const defaultMinimaxVoiceID = "male-qn-qingse"
+
+// normalizeVoiceID：客户没指定或用了 OpenAI 的预置名时落到默认音色。
+// 其余值原样透传 —— 客户自己克隆的音色 id 必须能透过去。
+func normalizeVoiceID(voice string) string {
+	trimmed := strings.TrimSpace(voice)
+	if trimmed == "" {
+		return defaultMinimaxVoiceID
+	}
+	if _, isOpenAI := openAIPresetVoices[strings.ToLower(trimmed)]; isOpenAI {
+		return defaultMinimaxVoiceID
+	}
+	return trimmed
+}
+
+// requestedAudioFormat 安全取出客户要的音频格式（Request 理论上可能不是 AudioRequest）。
+func requestedAudioFormat(info *relaycommon.RelayInfo) string {
+	if audioRequest, ok := info.Request.(*dto.AudioRequest); ok {
+		return normalizeAudioFormat(audioRequest.ResponseFormat)
+	}
+	return "mp3"
+}
+
+// normalizeAudioFormat：OpenAI 的 response_format 同时充当音频格式，
+// MiniMax 只认 mp3 / pcm / flac / wav（audio_setting.format），其余归到 mp3。
+func normalizeAudioFormat(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "pcm", "flac", "wav", "mp3":
+		return strings.ToLower(strings.TrimSpace(format))
+	default:
+		return "mp3"
+	}
 }

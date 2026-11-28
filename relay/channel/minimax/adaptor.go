@@ -57,13 +57,16 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 		Model: info.OriginModelName,
 		Text:  request.Input,
 		VoiceSetting: VoiceSetting{
-			VoiceID: voiceID,
+			VoiceID: normalizeVoiceID(voiceID),
 			Speed:   speed,
 		},
 		AudioSetting: &AudioSetting{
-			Format: outputFormat,
+			Format: normalizeAudioFormat(outputFormat),
 		},
-		OutputFormat: outputFormat,
+		// output_format 只接受 hex / url，它描述的是「音频怎么回给调用方」，
+		// 不是音频格式。取 hex 直回二进制：另外两种取值里 url 会把客户
+		// 302 到上游 CDN（泄露货源，链接还会过期）。
+		OutputFormat: "hex",
 	}
 
 	// 同步扩展字段的厂商自定义metadata
@@ -76,9 +79,6 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 	jsonData, err := json.Marshal(minimaxRequest)
 	if err != nil {
 		return nil, fmt.Errorf("error marshalling minimax request: %w", err)
-	}
-	if outputFormat != "hex" {
-		outputFormat = "url"
 	}
 
 	c.Set("response_format", outputFormat)

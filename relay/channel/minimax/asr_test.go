@@ -158,3 +158,22 @@ func TestAsrUsageUsesDurationTokens(t *testing.T) {
 	// 走文本结算分支（音频明细为空），因此不能被 PostAudioConsumeQuota 的音频倍率再乘一次。
 	assert.Zero(t, usage.PromptTokensDetails.AudioTokens)
 }
+
+// OpenAI 客户端常传 alloy 这类预置音色，MiniMax 不认识会回 empty field，
+// 必须落默认音色；客户自己克隆的 voice_id 则要原样透传。
+func TestNormalizeVoiceID(t *testing.T) {
+	assert.Equal(t, "male-qn-qingse", normalizeVoiceID(""))
+	assert.Equal(t, "male-qn-qingse", normalizeVoiceID("alloy"))
+	assert.Equal(t, "male-qn-qingse", normalizeVoiceID("Nova"))
+	assert.Equal(t, "my-cloned-voice-01", normalizeVoiceID("my-cloned-voice-01"))
+}
+
+// output_format 只接受 hex/url：把 OpenAI 的 mp3 透传上去，上游直接 400。
+func TestNormalizeAudioFormat(t *testing.T) {
+	assert.Equal(t, "mp3", normalizeAudioFormat(""))
+	assert.Equal(t, "mp3", normalizeAudioFormat("mp3"))
+	assert.Equal(t, "mp3", normalizeAudioFormat("opus"))
+	assert.Equal(t, "wav", normalizeAudioFormat("wav"))
+	assert.Equal(t, "flac", normalizeAudioFormat("flac"))
+	assert.Equal(t, "pcm", normalizeAudioFormat("pcm"))
+}
