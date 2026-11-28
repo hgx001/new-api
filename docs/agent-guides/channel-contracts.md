@@ -73,6 +73,30 @@
 - TTS 17 token × 13.69863 = 233 quota，输出 73KB mp3、Content-Type `audio/mpeg`。
 - 预扣费是实际值的 10 倍（如 285 vs 29），结算后回冲；查余额要看结算后，不要看调用瞬间。
 
+## 号池（sub2api）与 GPT 官方图片模型
+
+- 号池 sub2api 2026-11-28 从 0.2.3 升到 **0.2.21**：图片桥接主模型已上游化（`SUB2API_IMAGES_MAIN_MODEL`，compose 里设 `gpt-5.6-luna`），
+  DefaultModels 已含 2.5/2.6 四变体 —— 旧的三段自定义补丁**全部不再需要**。
+- 图片驱动模型被上游 plan-gated 是常态：基础名先挂（gpt-5.4-mini → 5.5 → 写死 5.6-luna），带 `-sol/-luna/-terra` 后缀的存活更久。
+  出问题时先看号池日志里的 `model_not_found`，改 env 重启即可，不要重建镜像。
+- 构建（本机无 docker → 本地出二进制，服务器套最小层）：
+  `pnpm build`（前端产出 `backend/internal/web/dist`）→ `CGO_ENABLED=0 GOOS=linux go build -tags embed -trimpath`
+  → 服务器 `FROM <上一版镜像>` + `COPY sub2api /app/sub2api` + `chmod 755` → compose 改 tag `up -d --no-deps sub2api`。
+  品牌（天幕号池 + logo）已在源码里，重建不会丢；合规文本仍写 Sub2API 属正常。
+
+| 模型 | 官网真名 = 本站公开名 | 本站价 |
+|---|---|---|
+| 2.6 写实 | `gpt-image-2.6-flare` | ¥0.1/张 |
+| 2.6 插画 | `gpt-image-2.6-sunburst` | ¥0.1/张 |
+| 2.5 写实 | `gpt-image-2.5-flare` | ¥0.1/张 |
+| 2.5 插画 | `gpt-image-2.5-sunburst` | ¥0.1/张 |
+
+- 上游对 `image_generation` 工具里的模型名**不做校验**（假名也出图），所以验证真实性必须靠 `/v1/models` 清单 + 实际出图，不能只看 200。
+- 旧名 `gpt-image-2.5-官方`（映射 `gpt-image-2`）已失效并清理；它的失败根因是 Codex 链路驱动模型被写死且账号不支持，与模型名无关。
+- 客户侧入口仍是 `POST /v1/images/generations`，返回 `b64_json`（PNG，约 1.8-2 MB/张），结算固定 6849 quota。
+
+已下架（用户 2026-11-28 决定「GPT 文本只留 6.x」）：`gpt-5.2/5.3-codex-spark/5.4/5.4-mini/5.5/5.6*`、`gpt-6`（官网无单独定价，未登记 ratio 会回落 37.5 = $75/1M，绝不能带错价上架）。
+
 ## MegaAI（type=64）/ wan-3.0、T3-seedance-2.5 与 m5 两档
 
 时间线：2026-10-26 wan-3.0 与别名 seedance2.5-特惠 停售；2026-11-10 按「广场零卡片渠道全删」**退役 type=64**（删注册分支/端点声明/取件代理/前端下拉，并加建渠道闸门）；**2026-11-23 重新接入**同一上游 `newapi.megabyai.cc`，上架 `T3-seedance-2.5`；**2026-11-24 下架 T3**，同渠道换成按秒计费的 `seedance-2.0-fast-m5` / `seedance-2.0-m5`。适配器包 `relay/channel/task/megabyai` 不得整体删：youkou（type=59）靠它拿「按次计费」。
