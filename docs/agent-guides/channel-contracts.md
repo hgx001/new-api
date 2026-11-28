@@ -27,6 +27,28 @@
 - Validate 阶段必须 `StoreTaskRequest`，否则构造拿不到参数，计费也可能静默只收1秒。
 - `insufficient_balance_error/http_code=402` 保持上游失败身份，不包装成本端参数错误。
 
+### 语音：ASR 与 TTS（2026-11-28 上架，官方直连 type=35）
+
+| | 语音识别 | 同步 TTS |
+|---|---|---|
+| 对外模型 | `asr-1.0` | `speech-2.8-hd` / `speech-2.8-turbo` |
+| 客户入口 | `POST /v1/audio/transcriptions` | `POST /v1/audio/speech` |
+| 上游端点 | `/v1/speech_to_text`（multipart） | `/v1/t2a_v2`（JSON） |
+| 上游计费 | ¥2.50/小时（按 `duration`） | ¥3.5 / ¥2.0 每万字符 |
+| 本站计费 | ¥0.5/小时 | ¥3.5 / ¥2.0 每万字符 |
+
+- ASR 表单必须**白名单重建**（model / response_format / language / timestamp_level + file）：`temperature`、`prompt` 等 OpenAI 参数会被上游判非法。
+- `response_format` 的 `text` 上游没有，归一到 `json`；`srt` / `vtt` 原样透传。
+- 上游回执 `{text,duration,segments,n_speakers,trace_id}` 要转成 OpenAI 形状；**`trace_id` 不外泄**。
+- 客户侧参数错误（缺 `file`）必须回 **400 invalid_request**，不能用普通 error —— 那会被上层归成 `convert_request_failed` + 500，既错状态码也可能计入 AutoBan。
+- 计费单位：转录沿用 `service/token_counter.go` 的时长口径（**1 分钟 = 1000 token**，1 小时 = 60000 token）；
+  `¥ = token × ratio ÷ 500000 × 7.3`，所以 ¥0.5/小时 → `ratio = 0.5707762557077626`。
+- TTS 用我们的文本 token（= 输入 rune 数）计费，`ratio × 14.6 = ¥/1M token`；
+  ⚠️ 上游「1 个汉字算 2 个字符」，所以纯中文时我们只收上游成本的一半 ——
+  要成本对齐得把 ratio 加倍（hd `47.945..`、turbo `27.397..`），这是**未决**口径。
+- 广场单位显示：ASR 卡片按 token 显示成 `¥8.3333/1M`，TTS 显示成 `¥350/1M`，
+  与客户心智的「/小时」「/万字符」不一致，已在描述里写明真实单价；是否改成单位显示**待定**。
+
 ## MegaAI（type=64）/ wan-3.0、T3-seedance-2.5 与 m5 两档
 
 时间线：2026-10-26 wan-3.0 与别名 seedance2.5-特惠 停售；2026-11-10 按「广场零卡片渠道全删」**退役 type=64**（删注册分支/端点声明/取件代理/前端下拉，并加建渠道闸门）；**2026-11-23 重新接入**同一上游 `newapi.megabyai.cc`，上架 `T3-seedance-2.5`；**2026-11-24 下架 T3**，同渠道换成按秒计费的 `seedance-2.0-fast-m5` / `seedance-2.0-m5`。适配器包 `relay/channel/task/megabyai` 不得整体删：youkou（type=59）靠它拿「按次计费」。
