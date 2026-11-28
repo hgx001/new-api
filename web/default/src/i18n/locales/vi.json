@@ -5603,7 +5603,8 @@
     "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "Máy chủ được giữ thêm 7 ngày sau khi hết hạn để gia hạn. Sau đó dữ liệu bị thu hồi và máy chủ được tái cấp phối.",
     "Upgrade any time": "Nâng cấp bất cứ lúc nào",
     "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "Có. Cả hai khu vực dùng chung image và danh mục dòng máy, nên bạn có thể chuyển bằng cách dựng lại ở khu vực còn lại.",
-    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Khi đổi gói, cấu hình hoặc băng thông, thời gian còn lại được tính theo tỷ lệ."
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Khi đổi gói, cấu hình hoặc băng thông, thời gian còn lại được tính theo tỷ lệ.",
+    "Default Group": "Nhóm mặc định"
   },
   "Integration Tutorial": "Hướng dẫn tích hợp",
   "Claude Code Installation": "Cài đặt Claude Code",

@@ -16,14 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
+import { useQuery } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import { useAuthStore } from "@/stores/auth-store";
-import { fetchTokenKey, getApiKeys } from "@/features/keys/api";
+import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
+import { api } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * 无限画布（infinite-canvas）以 iframe 方式嵌在首页的「无限画布」标签页里。
@@ -36,204 +36,206 @@ import { fetchTokenKey, getApiKeys } from "@/features/keys/api";
  * - 画布不另做登录：身份完全由本站会话决定。
  */
 
-type CanvasCapability = "text" | "image" | "video" | "audio";
+type CanvasCapability = 'text' | 'image' | 'video' | 'audio'
 
 type CanvasModel = {
-  name: string;
-  capability: CanvasCapability;
-  scriptId: string;
-};
+  name: string
+  capability: CanvasCapability
+  scriptId: string
+}
 
 type InjectedChannelPayload = {
-  baseUrl: string;
-  apiKey: string;
-  models: CanvasModel[];
-  channelId: string;
-  channelName: string;
-};
+  baseUrl: string
+  apiKey: string
+  models: CanvasModel[]
+  channelId: string
+  channelName: string
+  groupName: string
+}
 
 type CanvasFrameWindow = Window & {
   __infiniteCanvasApplyChannel?: (
-    payload: InjectedChannelPayload,
-  ) => Promise<unknown>;
-};
+    payload: InjectedChannelPayload
+  ) => Promise<unknown>
+}
 
 // 画布的调用脚本按用途区分：视频与图片走 new-api 的任务协议，文本走 chat completions。
 const VIDEO_MODEL_PATTERN =
-  /seedance|wan\d|wan3|video|magi|omni|kling|vidu|hailuo|h3/i;
+  /seedance|wan\d|wan3|video|magi|omni|kling|vidu|hailuo|h3/i
 const IMAGE_MODEL_PATTERN =
-  /seedream|banana|image|nano|flux|dall|midjourney|mj/i;
-const AUDIO_MODEL_PATTERN = /tts|speech|voice|audio|music|suno/i;
+  /seedream|banana|image|nano|flux|dall|midjourney|mj/i
+const AUDIO_MODEL_PATTERN = /tts|speech|voice|audio|music|suno/i
 
 function detectCapability(name: string): CanvasCapability {
-  if (VIDEO_MODEL_PATTERN.test(name)) return "video";
-  if (IMAGE_MODEL_PATTERN.test(name)) return "image";
-  if (AUDIO_MODEL_PATTERN.test(name)) return "audio";
-  return "text";
+  if (VIDEO_MODEL_PATTERN.test(name)) return 'video'
+  if (IMAGE_MODEL_PATTERN.test(name)) return 'image'
+  if (AUDIO_MODEL_PATTERN.test(name)) return 'audio'
+  return 'text'
 }
 
 function detectScriptId(capability: CanvasCapability): string {
-  if (capability === "video") return "newapi-video";
-  if (capability === "image") return "newapi-image";
-  if (capability === "audio") return "openai-chat-audio";
-  return "openai-chat-text";
+  if (capability === 'video') return 'newapi-video'
+  if (capability === 'image') return 'newapi-image'
+  if (capability === 'audio') return 'openai-chat-audio'
+  return 'openai-chat-text'
 }
 
 function isUsableToken(token: {
-  status: number;
-  expired_time: number;
-  remain_quota: number;
-  unlimited_quota: boolean;
+  status: number
+  expired_time: number
+  remain_quota: number
+  unlimited_quota: boolean
 }): boolean {
-  if (token.status !== 1) return false;
+  if (token.status !== 1) return false
   if (token.expired_time !== -1 && token.expired_time * 1000 < Date.now()) {
-    return false;
+    return false
   }
-  if (!token.unlimited_quota && token.remain_quota <= 0) return false;
-  return true;
+  if (!token.unlimited_quota && token.remain_quota <= 0) return false
+  return true
 }
 
 export function CanvasPanel() {
-  const { t } = useTranslation();
-  const user = useAuthStore((state) => state.auth.user);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const [frameReady, setFrameReady] = useState(false);
-  const [injected, setInjected] = useState(false);
-  const [injectedError, setInjectedError] = useState("");
+  const { t } = useTranslation()
+  const user = useAuthStore((state) => state.auth.user)
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const [frameReady, setFrameReady] = useState(false)
+  const [injected, setInjected] = useState(false)
+  const [injectedError, setInjectedError] = useState('')
 
   const { data: tokenList } = useQuery({
-    queryKey: ["canvas", "api-keys"],
+    queryKey: ['canvas', 'api-keys'],
     queryFn: () => getApiKeys({ p: 1, size: 50 }),
     enabled: !!user,
     staleTime: 60_000,
-  });
+  })
 
   const usableToken = useMemo(() => {
-    const items = tokenList?.data?.items ?? [];
-    return items.find(isUsableToken);
-  }, [tokenList]);
+    const items = tokenList?.data?.items ?? []
+    return items.find(isUsableToken)
+  }, [tokenList])
 
   const { data: plainKey } = useQuery({
-    queryKey: ["canvas", "token-key", usableToken?.id],
+    queryKey: ['canvas', 'token-key', usableToken?.id],
     queryFn: async () => {
-      if (!usableToken) return "";
-      const res = await fetchTokenKey(usableToken.id);
-      const key = res.data?.key ?? "";
-      return key ? `sk-${key.replace(/^sk-/, "")}` : "";
+      if (!usableToken) return ''
+      const res = await fetchTokenKey(usableToken.id)
+      const key = res.data?.key ?? ''
+      return key ? `sk-${key.replace(/^sk-/, '')}` : ''
     },
     enabled: !!usableToken,
     staleTime: 60_000,
-  });
+  })
 
   const { data: modelNames } = useQuery({
-    queryKey: ["canvas", "models", plainKey],
+    queryKey: ['canvas', 'models', plainKey],
     queryFn: async () => {
-      const res = await api.get("/v1/models", {
+      const res = await api.get('/v1/models', {
         headers: { Authorization: `Bearer ${plainKey}` },
-      });
-      const list = res.data?.data;
-      if (!Array.isArray(list)) return [];
+      })
+      const list = res.data?.data
+      if (!Array.isArray(list)) return []
       return list
         .map(
-          (item: { id?: string; name?: string }) => item.id ?? item.name ?? "",
+          (item: { id?: string; name?: string }) => item.id ?? item.name ?? ''
         )
-        .filter((name: string) => Boolean(name));
+        .filter((name: string) => Boolean(name))
     },
     enabled: !!plainKey,
     staleTime: 300_000,
-  });
+  })
 
   const models = useMemo<CanvasModel[]>(() => {
     return (modelNames ?? []).map((name: string) => {
-      const capability = detectCapability(name);
-      return { name, capability, scriptId: detectScriptId(capability) };
-    });
-  }, [modelNames]);
+      const capability = detectCapability(name)
+      return { name, capability, scriptId: detectScriptId(capability) }
+    })
+  }, [modelNames])
 
   const baseUrl = useMemo(() => {
-    return `${window.location.origin}/v1`;
-  }, []);
+    return `${window.location.origin}/v1`
+  }, [])
 
   const inject = useCallback(async () => {
     const frameWindow = iframeRef.current
-      ?.contentWindow as CanvasFrameWindow | null;
-    if (!frameWindow) return;
-    if (!plainKey) return;
-    if (!frameWindow.__infiniteCanvasApplyChannel) return;
+      ?.contentWindow as CanvasFrameWindow | null
+    if (!frameWindow) return
+    if (!plainKey) return
+    if (!frameWindow.__infiniteCanvasApplyChannel) return
     try {
       await frameWindow.__infiniteCanvasApplyChannel({
         baseUrl,
         apiKey: plainKey,
         models,
-        channelId: "newapi",
-        channelName: "new-api",
-      });
-      setInjected(true);
-      setInjectedError("");
+        channelId: 'newapi',
+        channelName: 'new-api',
+        groupName: t('Default Group'),
+      })
+      setInjected(true)
+      setInjectedError('')
     } catch (error) {
-      setInjectedError(error instanceof Error ? error.message : String(error));
+      setInjectedError(error instanceof Error ? error.message : String(error))
     }
-  }, [baseUrl, models, plainKey]);
+  }, [baseUrl, models, plainKey, t])
 
   useEffect(() => {
-    if (!frameReady || injected || !plainKey) return;
+    if (!frameReady || injected || !plainKey) return
     // 画布是单页应用，注入入口在首屏脚本执行后才挂上，这里轮询等待。
-    let cancelled = false;
-    let timer = 0;
+    let cancelled = false
+    let timer = 0
     const attempt = async () => {
-      if (cancelled) return;
-      await inject();
-      if (cancelled || injected) return;
-      timer = window.setTimeout(attempt, 500);
-    };
-    void attempt();
+      if (cancelled) return
+      await inject()
+      if (cancelled || injected) return
+      timer = window.setTimeout(attempt, 500)
+    }
+    void attempt()
     return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [frameReady, inject, injected, plainKey]);
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [frameReady, inject, injected, plainKey])
 
   if (!user) {
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4 text-center">
-        <p className="text-muted-foreground text-sm">
+      <div className='flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4 text-center'>
+        <p className='text-muted-foreground text-sm'>
           {t(
-            "Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.",
+            'Please sign in before using the infinite canvas. The canvas calls platform models with your own account token.'
           )}
         </p>
       </div>
-    );
+    )
   }
 
   if (tokenList && !usableToken) {
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4 text-center">
-        <p className="text-muted-foreground text-sm">
+      <div className='flex min-h-[60vh] flex-col items-center justify-center gap-3 px-4 text-center'>
+        <p className='text-muted-foreground text-sm'>
           {t(
-            "You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.",
+            'You have no usable token yet. Create and enable one on the Keys page; the canvas will pick it up automatically.'
           )}
         </p>
       </div>
-    );
+    )
   }
 
   return (
-    <div className="relative flex min-h-[70vh] flex-col">
+    <div className='relative flex min-h-[70vh] flex-col'>
       {injectedError ? (
-        <p className="text-destructive px-4 py-2 text-sm">{injectedError}</p>
+        <p className='text-destructive px-4 py-2 text-sm'>{injectedError}</p>
       ) : null}
       {/* eslint-disable react/iframe-missing-sandbox -- 画布与本站同源，必须同时允许脚本与同源，宿主页面才能注入渠道配置。 */}
       <iframe
         ref={iframeRef}
-        src="/canvas/"
-        title={t("Infinite Canvas")}
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        src='/canvas/'
+        title={t('Infinite Canvas')}
+        sandbox='allow-scripts allow-same-origin allow-forms allow-popups'
         className={cn(
-          "w-full flex-1 border-none",
-          injected ? "opacity-100" : "opacity-60",
+          'w-full flex-1 border-none',
+          injected ? 'opacity-100' : 'opacity-60'
         )}
         onLoad={() => setFrameReady(true)}
       />
     </div>
-  );
+  )
 }

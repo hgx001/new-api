@@ -16,15 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from "react";
-import { useTranslation } from "react-i18next";
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-import { PublicLayout } from "@/components/layout";
-import { Footer } from "@/components/layout/components/footer";
-import { RichContent } from "@/components/rich-content";
-import { ServersContent } from "@/features/servers";
-import { isLikelyHtml } from "@/lib/content-format";
-import { useAuthStore } from "@/stores/auth-store";
+import { PublicLayout } from '@/components/layout'
+import { Footer } from '@/components/layout/components/footer'
+import { RichContent } from '@/components/rich-content'
+import { ServersContent } from '@/features/servers'
+import { isLikelyHtml } from '@/lib/content-format'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   CanvasPanel,
@@ -33,24 +33,24 @@ import {
   Hero,
   HomeTabBar,
   type HomeTab,
-} from "./components";
-import { useHomePageContent } from "./hooks";
+} from './components'
+import { useHomePageContent } from './hooks'
 
 export function Home() {
-  const { t } = useTranslation();
-  const { auth } = useAuthStore();
-  const isAuthenticated = !!auth.user;
-  const { content, isLoaded, isUrl } = useHomePageContent();
-  const [activeTab, setActiveTab] = useState<HomeTab>("ai");
+  const { t } = useTranslation()
+  const { auth } = useAuthStore()
+  const isAuthenticated = !!auth.user
+  const { content, isLoaded, isUrl } = useHomePageContent()
+  const [activeTab, setActiveTab] = useState<HomeTab>('ai')
 
   if (!isLoaded) {
     return (
       <PublicLayout showMainContainer={false}>
-        <main className="flex min-h-screen items-center justify-center">
-          <div className="text-muted-foreground">{t("Loading...")}</div>
+        <main className='flex min-h-screen items-center justify-center'>
+          <div className='text-muted-foreground'>{t('Loading...')}</div>
         </main>
       </PublicLayout>
-    );
+    )
   }
 
   if (content) {
@@ -59,59 +59,59 @@ export function Home() {
         <PublicLayout showMainContainer={false}>
           <iframe
             src={content}
-            className="h-screen w-full border-none"
-            title={t("Custom Home Page")}
-            sandbox="allow-forms allow-popups allow-popups-to-escape-sandbox allow-scripts"
+            className='h-screen w-full border-none'
+            title={t('Custom Home Page')}
+            sandbox='allow-forms allow-popups allow-popups-to-escape-sandbox allow-scripts'
           />
           <CustomerServiceButton />
         </PublicLayout>
-      );
+      )
     }
 
-    const contentIsHtml = isLikelyHtml(content);
+    const contentIsHtml = isLikelyHtml(content)
 
     if (contentIsHtml) {
       return (
         <PublicLayout showMainContainer={false}>
           <RichContent
-            mode="html"
-            htmlVariant="isolated"
+            mode='html'
+            htmlVariant='isolated'
             content={content}
-            className="custom-home-content"
+            className='custom-home-content'
           />
           <CustomerServiceButton />
         </PublicLayout>
-      );
+      )
     }
 
     return (
       <PublicLayout>
-        <div className="mx-auto max-w-6xl px-4 py-8">
+        <div className='mx-auto max-w-6xl px-4 py-8'>
           <RichContent
-            mode="markdown"
+            mode='markdown'
             content={content}
-            className="custom-home-content"
+            className='custom-home-content'
           />
         </div>
         <CustomerServiceButton />
       </PublicLayout>
-    );
+    )
   }
 
   const renderTabContent = () => {
-    if (activeTab === "ai") {
+    if (activeTab === 'ai') {
       return (
         <>
           <Hero isAuthenticated={isAuthenticated} />
           <Features />
         </>
-      );
+      )
     }
-    if (activeTab === "canvas") {
-      return <CanvasPanel />;
+    if (activeTab === 'canvas') {
+      return <CanvasPanel />
     }
-    return <ServersContent embedded />;
-  };
+    return <ServersContent embedded />
+  }
 
   return (
     <PublicLayout showMainContainer={false} forceLightMode>
@@ -120,5 +120,5 @@ export function Home() {
       <Footer />
       <CustomerServiceButton />
     </PublicLayout>
-  );
+  )
 }

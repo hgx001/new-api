@@ -5603,7 +5603,8 @@
     "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "После окончания срока сервер хранится ещё 7 дней для продления. Затем данные удаляются, а сервер возвращается в пул.",
     "Upgrade any time": "Изменение в любой момент",
     "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "Да. В обоих регионах одинаковые образы и каталог линеек: перенесите сервер, пересоздав его в другом регионе.",
-    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "При смене тарифа, конфигурации или полосы пропорционально оплачивается остаток периода."
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "При смене тарифа, конфигурации или полосы пропорционально оплачивается остаток периода.",
+    "Default Group": "Группа по умолчанию"
   },
   "Integration Tutorial": "Руководство по интеграции",
   "Claude Code Installation": "Установка Claude Code",

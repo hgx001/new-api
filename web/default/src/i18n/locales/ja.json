@@ -5603,7 +5603,8 @@
     "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "期限切れ後も 7 日間インスタンスを保持し、更新できます。その後はデータが解放され、インスタンスも回収されます。",
     "Upgrade any time": "いつでも変更可能",
     "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "はい。両リージョンで同じイメージと同じカタログを提供しているので、もう一方のリージョンで再作成すれば移行できます。",
-    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "プラン・仕様・帯域を変更すると、残り期間は按分精算されます。"
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "プラン・仕様・帯域を変更すると、残り期間は按分精算されます。",
+    "Default Group": "既定のグループ"
   },
   "Integration Tutorial": "連携チュートリアル",
   "Claude Code Installation": "Claude Code インストール",

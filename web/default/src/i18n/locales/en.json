@@ -5603,7 +5603,8 @@
     "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.",
     "Upgrade any time": "Upgrade any time",
     "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.",
-    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Change plan, specs or bandwidth and the remaining period is charged at a prorated price."
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.",
+    "Default Group": "Default Group"
   },
   "Integration Tutorial": "Integration Tutorial",
   "Claude Code Installation": "Claude Code Installation",

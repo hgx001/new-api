@@ -16,52 +16,52 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Cpu, Server, Waypoints } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { Cpu, Server, Waypoints } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
-import { cn } from "@/lib/utils";
+import { cn } from '@/lib/utils'
 
-export type HomeTab = "ai" | "servers" | "canvas";
+export type HomeTab = 'ai' | 'servers' | 'canvas'
 
 interface HomeTabBarProps {
-  value: HomeTab;
-  onValueChange: (value: HomeTab) => void;
+  value: HomeTab
+  onValueChange: (value: HomeTab) => void
 }
 
 const TABS: { id: HomeTab; labelKey: string; icon: typeof Cpu }[] = [
-  { id: "ai", labelKey: "AI Gateway", icon: Cpu },
-  { id: "servers", labelKey: "Cloud Servers", icon: Server },
-  { id: "canvas", labelKey: "Infinite Canvas", icon: Waypoints },
-];
+  { id: 'ai', labelKey: 'AI Gateway', icon: Cpu },
+  { id: 'servers', labelKey: 'Cloud Servers', icon: Server },
+  { id: 'canvas', labelKey: 'Infinite Canvas', icon: Waypoints },
+]
 
 export function HomeTabBar({ value, onValueChange }: HomeTabBarProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation()
 
   return (
-    <div className="border-border/60 bg-background/85 sticky top-0 z-40 border-b pt-16 backdrop-blur-md">
-      <div className="mx-auto max-w-6xl px-4 py-2.5">
-        <div className="bg-muted inline-flex items-center gap-1 rounded-full p-1">
+    <div className='border-border/60 bg-background/85 sticky top-0 z-40 border-b pt-16 backdrop-blur-md'>
+      <div className='mx-auto max-w-6xl px-4 py-2.5'>
+        <div className='bg-muted inline-flex items-center gap-1 rounded-full p-1'>
           {TABS.map((tab) => {
-            const active = value === tab.id;
+            const active = value === tab.id
             return (
               <button
                 key={tab.id}
-                type="button"
+                type='button'
                 onClick={() => onValueChange(tab.id)}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-all",
+                  'inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-medium transition-all',
                   active
-                    ? "bg-[#7dd3c0] text-[#06231d] shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
+                    ? 'bg-[#7dd3c0] text-[#06231d] shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
                 )}
               >
-                <tab.icon className="size-3.5" />
+                <tab.icon className='size-3.5' />
                 {t(tab.labelKey)}
               </button>
-            );
+            )
           })}
         </div>
       </div>
     </div>
-  );
+  )
 }

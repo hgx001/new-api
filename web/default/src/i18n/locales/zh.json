@@ -5603,7 +5603,8 @@
     "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "到期后实例保留 7 天供你续费，逾期数据将被释放、实例回收。",
     "Upgrade any time": "随时升配",
     "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "可以。两个地区使用相同的镜像与相同的型号目录，在另一地区重建即可完成迁移。",
-    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "变更型号、配置或带宽后，剩余周期按比例折算补差价。"
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "变更型号、配置或带宽后，剩余周期按比例折算补差价。",
+    "Default Group": "默认分组"
   },
   "Integration Tutorial": "接入教程",
   "Claude Code Installation": "Claude Code 安装",

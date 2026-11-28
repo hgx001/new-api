@@ -5603,7 +5603,8 @@
     "The instance is kept for seven days after the expiry date so you can renew it. After that the data is released and the instance is reclaimed.": "L’instance est conservée sept jours après l’expiration pour permettre le renouvellement. Ensuite les données sont libérées et l’instance récupérée.",
     "Upgrade any time": "Évolvez à tout moment",
     "Yes. Both regions run the same images and the same plan catalogue, so you can move an instance by rebuilding it in the other region.": "Oui. Les deux régions utilisent les mêmes images et le même catalogue : migrez en reconstruisant l’instance dans l’autre région.",
-    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Modifier l’offre, les spécifications ou la bande passante : la période restante est facturée au prorata."
+    "Change plan, specs or bandwidth and the remaining period is charged at a prorated price.": "Modifier l’offre, les spécifications ou la bande passante : la période restante est facturée au prorata.",
+    "Default Group": "Groupe par défaut"
   },
   "Integration Tutorial": "Tutoriel d'intégration",
   "Claude Code Installation": "Installation de Claude Code",
