@@ -15,9 +15,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ASR（asr-1.0）只认这几个字段，多余的 OpenAI 参数（temperature / prompt / timestamp_granularities）
-// 会被上游当成非法参数拒绝，所以这里按白名单重建表单，不做整体透传。
-var minimaxAsrFormFields = []string{"response_format", "language", "timestamp_level"}
+// ASR（asr-1.0）只认这几个表单字段，多余的 OpenAI 参数（temperature / prompt /
+// timestamp_granularities）会被上游当成非法参数拒绝，所以这里按白名单重建表单。
+// ⚠️ language 不在表单里 —— 官方文档把它定义成**请求头**（BCP-47 标签）。
+var minimaxAsrFormFields = []string{"response_format", "timestamp_level"}
 
 // OpenAI 的 response_format 允许 plain text，MiniMax 没有这个取值，统一归到 json。
 func normalizeAsrResponseFormat(format string) string {
@@ -67,6 +68,11 @@ func buildAsrRequestBody(c *gin.Context, request dto.AudioRequest) (io.Reader, s
 				return nil, "", err
 			}
 		}
+	}
+
+	// language 是请求头而不是表单字段，带了就必须搬到 header 上，否则上游按混合语言识别。
+	if language := firstNonEmpty(formData.Value["language"]); language != "" {
+		c.Request.Header.Set("language", language)
 	}
 
 	fileHeader := fileHeaders[0]
@@ -173,4 +179,16 @@ func asrUsageFromDuration(info *relaycommon.RelayInfo) *dto.Usage {
 		CompletionTokens: 0,
 		TotalTokens:      tokens,
 	}
+}
+
+// firstNonEmpty 取第一个非空值；表单字段优先于 DTO 字段（客户显式传的更可信）。
+func firstNonEmpty(groups ...[]string) string {
+	for _, group := range groups {
+		for _, value := range group {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
 }

@@ -129,6 +129,12 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
+	if info.RelayMode == constant.RelayModeAudioTranscription {
+		// 语音识别是 multipart：boundary 写在 Content-Type 里，而 DoApiRequest
+		// 不会把客户请求的 Content-Type 带上去，上游会把整个 body 当空表单，
+		// 报 `missing required parameter model`。必须走 DoFormRequest。
+		return channel.DoFormRequest(a, c, info, requestBody)
+	}
 	return channel.DoApiRequest(a, c, info, requestBody)
 }
 
